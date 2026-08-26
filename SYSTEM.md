@@ -19,6 +19,9 @@ Every implementation session must follow this order:
 6. Update the relevant project Markdown when behavior, APIs, configuration, project
    structure, or test counts change.
 7. Run the complete test suite and record the result before closing the session.
+8. Commit and push the corresponding feature after its tests and documentation pass.
+   A local implementation is not complete until the remote branch contains it, unless
+   the user explicitly asks to keep the work local or the push is blocked externally.
 
 ## 3. Completion Rules
 
@@ -28,6 +31,12 @@ Every implementation session must follow this order:
 - A partially implemented part remains `[ ]`; its current state must be noted below it.
 - Failed or skipped verification must be recorded explicitly and must not be described
   as complete.
+- Every feature or fix must have a TODO item, focused unit-test coverage, relevant
+  Markdown updates, and its own traceable commit before that item can be checked.
+- Update TODO checkboxes as each part finishes; do not defer all progress updates until
+  the end of the session.
+- Record the pushed branch and commit in the verification log. If a push fails, leave
+  the delivery item unchecked and record the exact blocker without exposing secrets.
 - Existing user changes must be preserved. Unrelated cleanup is outside the task.
 - Test totals in project documentation must come from the latest full test run.
 
@@ -272,3 +281,76 @@ requires the user's real browser session.
    whether Zepp changed its cookie name/domain or moved the session to web storage.
 7. After resolving Part 12, add focused coverage, rerun the complete suite, update this
    checklist and README's test total, and configure a stable production HTTPS origin.
+
+## 7. Current Work Session - 2026-08-27
+
+Goal: document and implement the verified Zepp workout-history and high-frequency
+workout heart-rate path, following the repository's plan/test/document/push contract.
+
+### Detailed TODO
+
+- [x] Part 1 - Establish the delivery baseline.
+  - Confirm the worktree is clean and inspect the current branch, commit, and remote.
+  - Confirm `main` and `origin/main` both point to `661430a` before new work begins.
+- [x] Part 2 - Strengthen the repository execution contract.
+  - Require a written TODO for every feature or fix.
+  - Require incremental checkbox updates, focused unit tests, Markdown synchronization,
+    a traceable commit, and a successful push before declaring delivery complete.
+- [x] Part 3 - Audit the reference implementation and real Zepp response shapes.
+  - Compare Vitalis with ZeppBridge history extraction, pagination, detail fetching,
+    heart-rate delta decoding, normalization, and storage behavior.
+  - Record only endpoint contracts and aggregate evidence; never commit credentials,
+    device identifiers, workout identifiers, or raw personal health payloads.
+- [x] Part 4 - Correct real workout-history ingestion.
+  - Accept the verified `data.summary` list while preserving supported legacy shapes.
+  - Parse verified real summary field names and keep the opaque `source` needed by the
+    detail endpoint.
+  - Add focused parser and fetcher regression tests.
+- [x] Part 5 - Add high-frequency workout heart-rate normalization.
+  - Decode Zepp's cumulative heart-rate delta stream into timestamped samples.
+  - Preserve workout scope and avoid claiming the originating sensor when Zepp omits
+    per-sample device provenance.
+  - Persist and expose the normalized series without storing test fixtures from the
+    real account; add focused decoder, storage, and API tests.
+- [x] Part 6 - Synchronize project documentation and verify the complete change.
+  - Update `README.md` and `docs/ARCHITECTURE.md` with the verified workout-only
+    high-frequency interface, source-attribution limitation, and current test total.
+  - Run focused tests, the complete suite, and `git diff --check`; record all results.
+- [ ] Part 7 - Commit and push the corresponding feature.
+  - Review the diff for secrets and unrelated files.
+  - Commit the tested code and Markdown together, push `main` to `origin`, and record
+    the resulting commit and remote synchronization state.
+
+### Verification Log
+
+- Part 1: the worktree was clean; local `main` and `origin/main` both pointed to
+  `661430a` (`feat: implement Vitalis Zepp health platform`).
+- Part 2: the required workflow and completion rules now explicitly require incremental
+  TODO updates, focused unit tests, synchronized Markdown, a traceable commit, and a
+  successful remote push for every delivered feature.
+- Part 3: ZeppBridge reads workout history through its generic extractor, including the
+  verified `data.summary` array, prioritizes each record's numeric sport type, fetches
+  every detail through `/v1/sport/run/detail.json`, cumulatively decodes the compressed
+  heart-rate deltas, and replaces per-second rows in a dedicated `workout_samples`
+  table. Its normalized samples do not establish a separate Helio sensor identity when
+  the detail payload omits that provenance; Vitalis will preserve the same limitation.
+- Part 4: Vitalis now reads real workout rows from `data.summary`, supports the verified
+  heart-rate/load field names and epoch start/end times, and refuses to inherit the
+  aggregate `/run/history.json` label for an unknown numeric sport type. `_payload_items`
+  also recognizes `data.summary`. The focused parser/fetcher run passed 28 tests.
+- Part 5: Vitalis now cumulatively decodes Zepp workout heart-rate deltas into UTC
+  per-second `WorkoutSample` records, atomically replaces them in the new
+  `workout_samples` table, and exposes them with workout detail while preserving user
+  isolation. The raw vendor detail is reduced to normalized metadata. Focused parser,
+  fetcher, sync, storage, and API tests passed 39 tests. A read-only real-account check
+  decoded the latest available detail into 1,995 samples over 1,994 seconds; every row
+  retained `source_scope=unknown` and no device identifier because the payload supplied
+  no sensor provenance.
+- Part 6: `README.md` and `docs/ARCHITECTURE.md` now distinguish minute-level all-day
+  band heart rate from workout-only second-level detail, document `data.summary`, the
+  `workout_samples` table and API surface, and explicitly prohibit inferred Helio
+  attribution. A real-account compatibility pass normalized all 426 workout summaries,
+  including decimal strings, `-1` sentinels and a maximum observed training load of
+  851. The complete suite passed 83 tests in 2.75 seconds with 105 existing Python 3.14
+  `datetime.utcnow()` deprecation warnings; Python compilation and `git diff --check`
+  also passed.

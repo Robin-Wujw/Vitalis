@@ -122,17 +122,18 @@ def _heart_rate_cursor(items: list[dict]) -> int | None:
 
 
 def _payload_items(payload: dict) -> list[dict]:
-    """提取 payload 中的结构化 items 列表。"""
+    """提取 payload 中的结构化记录列表。"""
     if not isinstance(payload, dict):
         return []
-    for key in ("items", "data"):
+    for key in ("items", "records", "results", "list", "data"):
         val = payload.get(key)
         if isinstance(val, list):
             return val
         if isinstance(val, dict):
-            inner = val.get("items")
-            if isinstance(inner, list):
-                return inner
+            for inner_key in ("items", "records", "results", "list", "summary"):
+                inner = val.get(inner_key)
+                if isinstance(inner, list):
+                    return inner
     return []
 
 

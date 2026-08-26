@@ -5,7 +5,7 @@
 2. 所有字段使用统一单位：
    - 时长 time: 分钟 (minutes)
    - 心率 heart_rate: bpm
-   - 负荷 load: 相对单位（0~100）
+   - 负荷 load: 厂商训练负荷（非负，不假设固定上限）
 3. Pydantic v2 模型，同时作为 API 响应和存储前的校验层。
 """
 
@@ -24,6 +24,7 @@ from .models import (
     TrainingRecord,
     User,
     Workout,
+    WorkoutSample,
 )
 
 __all__ = [
@@ -44,5 +45,6 @@ __all__ = [
     "TrainingRecord",
     "User",
     "Workout",
+    "WorkoutSample",
     "WorkoutType",
 ]

@@ -91,10 +91,23 @@ class Workout(BaseModel):
     duration: int = Field(ge=0, description="时长（分钟）")
     heart_rate_avg: int = Field(default=0, ge=0, description="平均心率 bpm")
     heart_rate_max: int = Field(default=0, ge=0)
-    load: int = Field(default=0, ge=0, le=100, description="训练负荷 0-100")
+    load: int = Field(default=0, ge=0, description="厂商训练负荷（非负，无固定上限）")
     calories: int = Field(default=0, ge=0)
     distance_km: float | None = Field(default=None, ge=0)
     vendor_source: str | None = Field(default=None, description="Zepp workout detail source")
+
+
+class WorkoutSample(BaseModel):
+    """One normalized heart-rate sample within a workout."""
+
+    workout_id: str = ""
+    timestamp: datetime
+    heart_rate: int = Field(ge=1, le=300, description="Heart rate in bpm")
+    source_scope: str = Field(
+        default="unknown",
+        description="Sensor provenance; unknown when the vendor detail omits it",
+    )
+    device_id: str | None = None
 
 
 class MetricSample(BaseModel):

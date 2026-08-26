@@ -114,7 +114,7 @@ class DailyMetric(Base):
 
 
 class Workout(Base):
-    """One workout summary plus the vendor detail payload when available."""
+    """One workout summary plus normalized detail metadata when available."""
 
     __tablename__ = "workouts"
     __table_args__ = (
@@ -131,6 +131,24 @@ class Workout(Base):
     data: Mapped[dict] = mapped_column(JSON, default=dict)
     detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     detail_synced: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class WorkoutSample(Base):
+    """High-frequency samples normalized from one workout detail payload."""
+
+    __tablename__ = "workout_samples"
+    __table_args__ = (
+        UniqueConstraint("user_id", "workout_id", "timestamp", name="uq_workout_sample"),
+        {"info": {"timescale": True}},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    workout_id: Mapped[str] = mapped_column(String(128), index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, index=True)
+    heart_rate: Mapped[int] = mapped_column(Integer)
+    source_scope: Mapped[str] = mapped_column(String(32), default="unknown")
+    device_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
 class HealthDaily(Base):

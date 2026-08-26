@@ -336,14 +336,27 @@ def health_workouts(
 @router.get("/workouts/{workout_id}")
 def health_workout_detail(workout_id: str, user_id: str = Depends(require_user_id)) -> dict:
     with session_scope() as db:
-        row = HealthRepository(db).workout(user_id, workout_id)
+        repo = HealthRepository(db)
+        row = repo.workout(user_id, workout_id)
         if row is None:
             raise HTTPException(status_code=404, detail="运动记录不存在")
+        detail = dict(row.detail or {})
+        samples = repo.workout_samples(user_id, workout_id)
+        if samples:
+            detail["samples"] = [
+                {
+                    "timestamp": _iso_utc(sample.timestamp),
+                    "heart_rate": sample.heart_rate,
+                    "source_scope": sample.source_scope,
+                    "device_id": sample.device_id,
+                }
+                for sample in samples
+            ]
         return {
             "user_id": user_id,
             "workout": row.data,
             "detail_available": row.detail_synced,
-            "detail": row.detail,
+            "detail": detail or None,
         }
 
 

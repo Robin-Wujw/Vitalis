@@ -300,7 +300,9 @@ class SyncManager:
                 written += 1
 
         elif stream == "workouts":
-            workouts = parser.parse_sport_history(payload)
+            parts = record.raw.source_key.split(":", 2)
+            sport_hint = parts[1] if len(parts) >= 2 else ""
+            workouts = parser.parse_sport_history(payload, sport_hint=sport_hint)
             # 按天聚合写入 training
             from collections import defaultdict
             by_day: dict = defaultdict(list)
@@ -323,7 +325,19 @@ class SyncManager:
         elif stream == "workout_detail":
             parts = record.raw.source_key.split(":", 2)
             workout_id = parts[1] if len(parts) >= 2 else ""
-            written = int(bool(workout_id) and repo.save_workout_detail(user.id, workout_id, payload))
+            workout = repo.workout(user.id, workout_id) if workout_id else None
+            summary_end = None
+            if workout and isinstance(workout.data, dict):
+                summary_end = parser._parse_datetime_value(workout.data.get("ended_at"))
+            samples = parser.parse_workout_heart_rate(payload, summary_end=summary_end)
+            detail = {
+                "sample_count": len(samples),
+                "sampling": "second_level" if samples else "unavailable",
+                "heart_rate_source": "unknown",
+            }
+            written = int(bool(workout_id) and repo.save_workout_detail(
+                user.id, workout_id, detail, samples=samples
+            ))
 
         elif stream == "heart_rate":
             samples = parser.parse_heart_rate_samples(payload)

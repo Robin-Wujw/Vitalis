@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
-from vitalis.models import AuthToken, DailyHealth, DailyMetric, MetricSample, Workout
+from vitalis.models import AuthToken, DailyHealth, DailyMetric, MetricSample, Workout, WorkoutSample
 
 from . import models as orm
 
@@ -250,7 +250,13 @@ class HealthRepository:
             ).order_by(orm.Workout.started_at).limit(limit)
         ).scalars().all())
 
-    def save_workout_detail(self, user_id: str, workout_id: str, detail: dict) -> bool:
+    def save_workout_detail(
+        self,
+        user_id: str,
+        workout_id: str,
+        detail: dict,
+        samples: list[WorkoutSample] | None = None,
+    ) -> bool:
         row = self.db.execute(
             select(orm.Workout).where(
                 orm.Workout.user_id == user_id,
@@ -261,8 +267,34 @@ class HealthRepository:
             return False
         row.detail = detail
         row.detail_synced = True
+        if samples is not None:
+            self.db.execute(delete(orm.WorkoutSample).where(
+                orm.WorkoutSample.user_id == user_id,
+                orm.WorkoutSample.workout_id == workout_id,
+            ))
+            self.db.add_all([
+                orm.WorkoutSample(
+                    user_id=user_id,
+                    workout_id=workout_id,
+                    timestamp=_naive_utc(sample.timestamp),
+                    heart_rate=sample.heart_rate,
+                    source_scope=sample.source_scope,
+                    device_id=sample.device_id,
+                )
+                for sample in samples
+            ])
         self.db.flush()
         return True
+
+    def workout_samples(
+        self, user_id: str, workout_id: str, limit: int = 50_000
+    ) -> list[orm.WorkoutSample]:
+        return list(self.db.execute(
+            select(orm.WorkoutSample).where(
+                orm.WorkoutSample.user_id == user_id,
+                orm.WorkoutSample.workout_id == workout_id,
+            ).order_by(orm.WorkoutSample.timestamp).limit(limit)
+        ).scalars().all())
 
     def workouts(self, user_id: str, start: date, end: date, limit: int = 500) -> list[orm.Workout]:
         start_dt = datetime.combine(start, datetime.min.time())

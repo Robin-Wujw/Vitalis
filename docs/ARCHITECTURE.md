@@ -61,8 +61,10 @@ class HealthConnector(ABC):
 ### 2.3 Storage（vitalis/storage）
 
 - 初期 PostgreSQL（psycopg），开发/测试可切 SQLite（`DATABASE_URL`）。
-- 表：`users`、`devices`、`health_daily`、`sleep_records`、`activity_records`、`training_records`、`analysis_records`、`auth_tokens`、`zepp_pairing_sessions`、`zepp_browser_links`。
+- 表：`users`、`devices`、`health_daily`、`sleep_records`、`activity_records`、`training_records`、`workouts`、`workout_samples`、`analysis_records`、`auth_tokens`、`zepp_pairing_sessions`、`zepp_browser_links`。
 - 健康数据以 JSON 列存统一 Schema，同时保留结构化列；ORM 已为 TimescaleDB 超表迁移预留（`__table_args__`）。
+- Zepp 运动摘要从真实 `data.summary` 响应归一化；详情中的累积心率增量被展开为 UTC 秒级 `workout_samples`。同一运动重新同步时整组替换，避免重复或残留样本。
+- 运动详情没有提供逐样本设备身份时，样本来源必须保持 `unknown`，不得根据运动摘要设备推断为 Balance 2、Helio Strap 或融合数据。
 - Zepp 访问凭据加密存储；长期浏览器链接只保存 Bearer 令牌的 SHA-256 摘要及连接状态，不保存原始链接令牌。
 
 ### 2.4 Analysis Engine（vitalis/analysis）
@@ -90,6 +92,8 @@ Hermes Skill：`SKILL.md` 声明能力（查询/分析/建议）与规则（不�
 - `POST /connect/zepp/link/disconnected` — 记录浏览器退出登录，向用户暴露重登提示
 - `GET /connect/zepp/token` — 查询凭据、最近验证/同步时间和 `needs_login` 状态
 - `GET /health/today` — 今日状态摘要 `{score, sleep, training, stress}`
+- `GET /health/workouts` — 按日期查询运动摘要和详情可用状态
+- `GET /health/workouts/{workout_id}` — 查询归一化详情及秒级运动心率样本
 - `POST /analyze` — 完整分析（规则+统计+LLM 解释）
 - 多用户：`X-User-Id` 请求头
 
@@ -103,6 +107,8 @@ Hermes Skill：`SKILL.md` 声明能力（查询/分析/建议）与规则（不�
 续期：Cookie 变化事件或 30 分钟检查 → Bearer 浏览器链接验证
       → 凭据变化时换存并增量同步；退出登录时标记 needs_login
 每日：定时 sync job（用已保存 token）→ 更新数据/连接状态 → Hermes 可调用
+运动：`run/history.json` 的 `data.summary` → 运动摘要
+      → `run/detail.json` 的压缩增量 → UTC 秒级 `workout_samples`
 ```
 
 ## 5. 与任务书的对应

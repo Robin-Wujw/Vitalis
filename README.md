@@ -33,7 +33,7 @@ vitalis/
 │       ├── fetcher.py       # 数据获取器（7天分块、心率分页、运动翻页）
 │       ├── sync_manager.py  # 同步管理器（6条流、逐流报告、超时控制）
 │       ├── auth_parser.py   # Cookie 解析器（自动提取 userid/apptoken/region）
-│       └── parser.py        # 厂商格式 → Vitalis Schema
+│       └── parser.py        # 厂商格式 → Vitalis Schema + 运动心率增量解码
 ├── models/                  # 统一健康数据模型（Vitalis Schema）
 ├── storage/                 # SQLAlchemy + SQLite/PostgreSQL
 ├── analysis/                # 三层分析引擎：rule / statistical / ai
@@ -99,6 +99,19 @@ Vitalis 通过用户浏览器中的官方登录会话连接 Zepp，不要求打�
 - **最长 730 天（2 年）**：按 7 天窗口分块，避免单次请求过大
 - **6 条数据流逐流报告**：heart_rate → daily_summary → workouts → workout_detail → sleep → hrv
 
+### 运动期间高频心率
+
+真实 Zepp 运动历史由 `/v1/sport/run/history.json` 返回，记录数组位于
+`data.summary`；这个入口会混合多种运动，类型以每条记录的数字 `type` 为准。
+运动详情统一通过 `/v1/sport/run/detail.json` 获取，`data.heart_rate` 是“秒数增量、
+心率增量”的压缩序列。Vitalis 将它累计解码为 UTC 秒级样本并存入独立的
+`workout_samples` 表。
+
+该高频流只覆盖运动详情，不等同于全天高频心率。详情响应没有提供逐样本传感器
+身份，因此 API 返回 `source_scope=unknown`、`device_id=null`；即使运动摘要来自
+Balance 2，也不能据此把心率样本标记为 Balance 2 或 Helio Strap。当前
+`band_data.data_hr` 仍是每天 1,440 个槽位的分钟级数据。
+
 ## 自动调度策略
 
 解决「早上 9:30 用户还没起床，数据不完整」的问题：
@@ -132,6 +145,8 @@ Vitalis 通过用户浏览器中的官方登录会话连接 Zepp，不要求打�
 | POST | `/health/sync?days=7` | **手动触发增量同步** |
 | GET | `/health/token-status` | 凭据有效性 + 下次同步时间 |
 | GET | `/health/range?from=&to=&granularity=` | 多级聚合：180d/90d/30d/7d/1d |
+| GET | `/health/workouts?from=&to=` | 运动摘要列表及详情可用状态 |
+| GET | `/health/workouts/{workout_id}` | 运动详情和按时间排序的秒级心率样本 |
 | POST | `/analyze` | 完整 AI 分析 |
 
 **示例：**
@@ -162,16 +177,16 @@ curl 'localhost:8000/api/v1/health/range?from=2026-01-01&to=2026-08-25&granulari
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest -q        # 75 个测试，全部通过
+.venv/bin/python -m pytest -q        # 83 个测试，全部通过
 ```
 
 覆盖范围：
 - `test_api.py` — 28 个 API 端到端（连接、同步、查询、启动、HTTPS、配对、续期、断联、用户隔离）
 - `test_browser_extension.py` — 扩展后台监听、周期检查和无密码输入约束
 - `test_fetcher.py` — FetchWindow、心率分页、payload 解析
-- `test_health_data_api.py` — 时序指标、每日指标和运动详情查询
-- `test_sync_manager.py` — 同步报告、取消、失败报告
-- `test_parser.py` — band_data、sport_history 解析
+- `test_health_data_api.py` — 时序指标、每日指标、运动详情和秒级样本隔离
+- `test_sync_manager.py` — 同步报告、取消、失败报告和运动详情持久化
+- `test_parser.py` — band_data、`data.summary` 运动摘要和心率增量解码
 - `test_rule_engine.py` — 规则引擎
 - `test_statistical_engine.py` — 统计引擎
 

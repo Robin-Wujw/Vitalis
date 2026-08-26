@@ -15,8 +15,11 @@ from vitalis.models import (
     SleepRecord,
     TrainingRecord,
     Workout,
+    WorkoutSample,
     WorkoutType,
 )
+
+MAX_WORKOUT_SECONDS = 12 * 60 * 60
 
 _TYPE_MAP = {
     "running": WorkoutType.RUNNING,
@@ -146,14 +149,40 @@ class ZeppParser:
         """运动历史 -> Workout 列表。type 为数字 id（1=run, 6=walking...）。"""
         from .client import SPORT_TYPE_MAP
 
-        items = ((raw or {}).get("data") or {}).get("items") or []
+        items = self._items(raw)
         workouts: list[Workout] = []
         for it in items:
+            if not isinstance(it, dict):
+                continue
             type_id = it.get("type")
-            wtype = SPORT_TYPE_MAP.get(int(type_id)) if isinstance(type_id, (int, float)) else None
-            wtype = wtype or it.get("sportType") or sport_hint or "unknown"
+            numeric_type: int | None = None
+            if isinstance(type_id, (int, float)):
+                numeric_type = int(type_id)
+            elif isinstance(type_id, str):
+                try:
+                    numeric_type = int(type_id.strip())
+                except ValueError:
+                    pass
+            wtype = SPORT_TYPE_MAP.get(numeric_type) if numeric_type is not None else None
+            wtype = wtype or it.get("sportType") or it.get("sport")
+            # /run/history.json is an aggregate endpoint in real accounts. Only use
+            # its URL segment when the record itself has no numeric sport type.
+            if not wtype and numeric_type is None:
+                wtype = sport_hint
+            wtype = wtype or "unknown"
             wtype = _WORKOUT_TYPE_MAP.get(wtype, WorkoutType.OTHER)
             started = self._parse_start(it)
+            avg_hr = self._first_number(
+                it, ("avg_hr", "avgHr", "avg_heart_rate")
+            ) or 0
+            max_hr = self._first_number(
+                it, ("max_hr", "maxHr", "max_heart_rate")
+            ) or 0
+            load = self._first_number(
+                it, ("training_load", "trainLoad", "exercise_load")
+            ) or 0
+            calories = self._first_number(it, ("calories", "calorie")) or 0
+            distance = self._first_number(it, ("distance", "dis"))
             workouts.append(Workout(
                 user_id="", source=self.source,
                 workout_id=str(it.get("trackid") or it.get("trackId") or ""),
@@ -163,18 +192,111 @@ class ZeppParser:
                 ),
                 type=wtype,
                 duration=max((self._duration_minutes(it)), 0),
-                heart_rate_avg=int(it.get("avg_hr", 0) or it.get("avgHr", 0) or 0),
-                heart_rate_max=int(it.get("max_hr", 0) or it.get("maxHr", 0) or 0),
-                load=int(it.get("training_load", 0) or it.get("trainLoad", 0) or 0),
-                calories=int(it.get("calories", 0) or it.get("calorie", 0) or 0),
+                heart_rate_avg=max(int(avg_hr), 0),
+                heart_rate_max=max(int(max_hr), 0),
+                load=max(int(load), 0),
+                calories=max(int(calories), 0),
                 distance_km=(
-                    round(float(it.get("distance") or it.get("dis") or 0) / 1000, 3)
-                    if (it.get("distance") is not None or it.get("dis") is not None)
+                    round(max(distance, 0) / 1000, 3)
+                    if distance is not None
                     else None
                 ),
                 vendor_source=str(it.get("source")) if it.get("source") else None,
             ))
         return workouts
+
+    @staticmethod
+    def parse_workout_heart_rate(
+        raw: dict, summary_end: datetime | None = None
+    ) -> list[WorkoutSample]:
+        """Decode Zepp workout heart-rate deltas into per-second samples.
+
+        Each entry is ``seconds_since_previous_change,heart_rate_delta``. The first
+        heart-rate delta is the absolute value because accumulation starts at zero.
+        Zepp does not include per-sample sensor provenance in this payload, so these
+        samples deliberately remain ``source_scope=unknown``.
+        """
+        if not isinstance(raw, dict):
+            return []
+        nested = raw.get("data")
+        data = nested if isinstance(nested, dict) else raw
+        encoded = data.get("heart_rate")
+        start = ZeppParser._parse_datetime_value(data.get("trackid"))
+        if not isinstance(encoded, str) or start is None:
+            return []
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        else:
+            start = start.astimezone(timezone.utc)
+
+        pairs: list[tuple[int, int]] = []
+        for part in encoded.split(";"):
+            if not part:
+                continue
+            raw_seconds, separator, raw_delta = part.partition(",")
+            if not separator:
+                continue
+            try:
+                seconds = 1 if raw_seconds == "" else int(raw_seconds)
+                delta = int(raw_delta)
+            except ValueError:
+                continue
+            pairs.append((max(seconds, 0), delta))
+        if not pairs:
+            return []
+
+        time_span = 0
+        raw_time = data.get("time")
+        if isinstance(raw_time, str):
+            for part in raw_time.split(";"):
+                try:
+                    time_span += max(int(part), 0)
+                except ValueError:
+                    continue
+        if time_span <= 0:
+            time_span = sum(seconds for seconds, _ in pairs)
+
+        end = start + timedelta(seconds=min(time_span, MAX_WORKOUT_SECONDS))
+        if summary_end is not None:
+            normalized_end = summary_end
+            if normalized_end.tzinfo is None:
+                normalized_end = normalized_end.replace(tzinfo=timezone.utc)
+            else:
+                normalized_end = normalized_end.astimezone(timezone.utc)
+            end = max(end, normalized_end)
+        max_end = start + timedelta(seconds=MAX_WORKOUT_SECONDS)
+        end = min(max(end, start + timedelta(seconds=1)), max_end)
+
+        workout_id = str(data.get("trackid") or "")
+        samples: list[WorkoutSample] = []
+        working = start
+        heart_rate = 0
+        for index, (seconds, delta) in enumerate(pairs):
+            heart_rate += delta
+            first_second = 0 if index == 0 else 1
+            if seconds < first_second:
+                continue
+            for _ in range(first_second, seconds + 1):
+                if working > end:
+                    break
+                if 1 <= heart_rate <= 300:
+                    samples.append(WorkoutSample(
+                        workout_id=workout_id,
+                        timestamp=working,
+                        heart_rate=heart_rate,
+                        source_scope="unknown",
+                    ))
+                working += timedelta(seconds=1)
+        while working <= end:
+            if 1 <= heart_rate <= 300:
+                samples.append(WorkoutSample(
+                    workout_id=workout_id,
+                    timestamp=working,
+                    heart_rate=heart_rate,
+                    source_scope="unknown",
+                ))
+            working += timedelta(seconds=1)
+        return samples
 
     # ================= 通用指标（时序 + 每日） =================
 
@@ -589,18 +711,7 @@ class ZeppParser:
     @staticmethod
     def _parse_start(it: dict) -> datetime | None:
         v = it.get("start_time") or it.get("startTime") or it.get("beginTime") or it.get("trackid")
-        if not v:
-            return None
-        try:
-            return datetime.fromisoformat(str(v))
-        except ValueError:
-            try:
-                ts = float(v)
-                if ts > 1e12:
-                    ts /= 1000
-                return datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)
-            except (TypeError, ValueError, OSError):
-                return None
+        return ZeppParser._parse_datetime_value(v)
 
     @staticmethod
     def _parse_datetime_value(value) -> datetime | None:
@@ -683,11 +794,9 @@ class ZeppParser:
         start = ZeppParser._parse_start(it)
         v = it.get("end_time") or it.get("endTime") or it.get("finishTime")
         if start and v:
-            try:
-                end = datetime.fromisoformat(str(v))
+            end = ZeppParser._parse_datetime_value(v)
+            if end:
                 return max(int((end - start).total_seconds() // 60), 0)
-            except ValueError:
-                pass
         dur = it.get("duration") or it.get("durationMinutes") or 0
         try:
             return int(float(dur))

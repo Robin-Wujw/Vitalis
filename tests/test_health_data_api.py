@@ -2,7 +2,7 @@
 
 from datetime import date, datetime, timezone
 
-from vitalis.models import DailyMetric, MetricSample, Workout, WorkoutType
+from vitalis.models import DailyMetric, MetricSample, Workout, WorkoutSample, WorkoutType
 from vitalis.storage import HealthRepository, session_scope
 
 
@@ -100,3 +100,47 @@ def test_workout_list_and_detail(client):
     )
     assert detail.status_code == 200
     assert detail.json()["detail"]["samples"][0]["heart_rate"] == 145
+
+
+def test_normalized_workout_samples_are_isolated_and_returned_in_order(client):
+    workout_id = "second-level-run"
+    start = datetime(2026, 8, 26, 6, 0, tzinfo=timezone.utc)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        for user_id in ("sample-user", "other-sample-user"):
+            repo.upsert_user(user_id)
+            repo.save_workout(Workout(
+                user_id=user_id,
+                workout_id=workout_id,
+                started_at=start,
+                duration=1,
+                type=WorkoutType.RUNNING,
+                vendor_source="opaque-source",
+            ))
+        assert repo.save_workout_detail(
+            "sample-user",
+            workout_id,
+            {"sample_count": 2, "heart_rate_source": "unknown"},
+            samples=[
+                WorkoutSample(workout_id=workout_id, timestamp=start.replace(second=1), heart_rate=121),
+                WorkoutSample(workout_id=workout_id, timestamp=start, heart_rate=120),
+            ],
+        )
+
+    detail = client.get(
+        f"/api/v1/health/workouts/{workout_id}",
+        headers={"X-User-Id": "sample-user"},
+    )
+    assert detail.status_code == 200
+    payload = detail.json()["detail"]
+    assert payload["sample_count"] == 2
+    assert payload["heart_rate_source"] == "unknown"
+    assert [sample["heart_rate"] for sample in payload["samples"]] == [120, 121]
+    assert {sample["source_scope"] for sample in payload["samples"]} == {"unknown"}
+
+    other = client.get(
+        f"/api/v1/health/workouts/{workout_id}",
+        headers={"X-User-Id": "other-sample-user"},
+    )
+    assert other.status_code == 200
+    assert other.json()["detail"] is None

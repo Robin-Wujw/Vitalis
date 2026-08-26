@@ -1,11 +1,13 @@
 """测试 Zepp 同步管理器（SyncManager）。"""
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from vitalis.connectors.zepp.client import ZeppAuthError
 from vitalis.connectors.zepp.fetcher import FetchWindow, FetchedRecord, RawRecord
 from vitalis.connectors.zepp.sync_manager import SyncManager
-from vitalis.models import User
+from vitalis.models import User, Workout, WorkoutType
 from vitalis.storage import HealthRepository, init_db, session_scope
 
 
@@ -147,3 +149,45 @@ class TestSyncManager:
         report = manager._unavailable_report("test_stream", err)
         assert report.stream == "test_stream"
         assert report.status == "unavailable"
+
+    def test_workout_detail_is_decoded_and_persisted(self, mock_fetcher, setup_db):
+        manager = SyncManager(mock_fetcher)
+        user = User(id="workout-detail-user")
+        start = datetime(2026, 8, 26, 6, 0, tzinfo=timezone.utc)
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            repo.save_workout(Workout(
+                user_id=user.id,
+                workout_id="detail-run",
+                started_at=start,
+                ended_at=start + timedelta(seconds=3),
+                duration=1,
+                type=WorkoutType.RUNNING,
+                vendor_source="opaque-source",
+            ))
+            written = manager._write_stream(FetchedRecord(raw=RawRecord(
+                stream="workout_detail",
+                source_key="workout_detail:detail-run:opaque-source",
+                start_utc=start,
+                end_utc=start + timedelta(seconds=3),
+                payload={
+                    "data": {
+                        "trackid": int(start.timestamp()),
+                        "time": "1;1;1;",
+                        "heart_rate": "1,80;1,2;1,-1;",
+                    }
+                },
+            )), repo, user)
+
+            workout = repo.workout(user.id, "detail-run")
+            samples = repo.workout_samples(user.id, "detail-run")
+
+        assert written == 1
+        assert workout is not None and workout.detail_synced is True
+        assert workout.detail == {
+            "sample_count": 4,
+            "sampling": "second_level",
+            "heart_rate_source": "unknown",
+        }
+        assert [sample.heart_rate for sample in samples] == [80, 80, 82, 81]

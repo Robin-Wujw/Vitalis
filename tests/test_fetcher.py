@@ -82,5 +82,10 @@ class TestPayloadItems:
     def test_data_object_items(self):
         assert len(_payload_items({"data": {"items": [1, 2]}})) == 2
 
+    def test_real_workout_summary(self):
+        assert _payload_items({"data": {"summary": [{"trackid": 1}]}}) == [
+            {"trackid": 1}
+        ]
+
     def test_empty(self):
         assert _payload_items({}) == []

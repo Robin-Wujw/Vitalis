@@ -316,7 +316,7 @@ workout heart-rate path, following the repository's plan/test/document/push cont
   - Update `README.md` and `docs/ARCHITECTURE.md` with the verified workout-only
     high-frequency interface, source-attribution limitation, and current test total.
   - Run focused tests, the complete suite, and `git diff --check`; record all results.
-- [ ] Part 7 - Commit and push the corresponding feature.
+- [x] Part 7 - Commit and push the corresponding feature.
   - Review the diff for secrets and unrelated files.
   - Commit the tested code and Markdown together, push `main` to `origin`, and record
     the resulting commit and remote synchronization state.
@@ -354,3 +354,6 @@ workout heart-rate path, following the repository's plan/test/document/push cont
   851. The complete suite passed 83 tests in 2.75 seconds with 105 existing Python 3.14
   `datetime.utcnow()` deprecation warnings; Python compilation and `git diff --check`
   also passed.
+- Part 7: secret review found no saved credential, real user/device/workout identifier,
+  `.env`, or database file in the diff. Commit `6a6bbda` (`feat: ingest Zepp workout
+  heart rate samples`) was pushed from local `main` to `origin/main` successfully.

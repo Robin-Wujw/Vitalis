@@ -1,0 +1,30 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: #172026;
+  background: #f4f7f6;
+}
+
+* { box-sizing: border-box; }
+body { width: 360px; margin: 0; }
+main { padding: 18px; }
+header { display: grid; grid-template-columns: 38px 1fr auto; align-items: center; gap: 10px; padding-bottom: 16px; border-bottom: 1px solid #d6dfdc; }
+.mark { width: 38px; height: 38px; display: grid; place-items: center; color: white; background: #16745b; border-radius: 6px; font-weight: 800; }
+strong, small { display: block; letter-spacing: 0; }
+strong { font-size: 15px; }
+small { color: #6b7875; margin-top: 2px; }
+.state { font-size: 12px; color: #8a5a12; }
+section { padding: 16px 0 14px; }
+p, footer { color: #6b7875; font-size: 12px; line-height: 1.5; }
+p { margin: 7px 0 0; }
+form { display: grid; gap: 7px; }
+label { margin-top: 5px; color: #42514d; font-size: 12px; font-weight: 600; }
+input { width: 100%; height: 40px; padding: 0 10px; border: 1px solid #bdcac6; border-radius: 5px; background: white; color: #172026; font: inherit; font-size: 13px; }
+input:focus { outline: 2px solid #8dc5b6; outline-offset: 1px; border-color: #16745b; }
+button { min-height: 40px; border: 0; border-radius: 5px; background: #16745b; color: white; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+button:disabled { cursor: wait; opacity: .6; }
+button.secondary { width: 100%; color: #12634e; background: white; border: 1px solid #9db8b0; }
+#submit { margin-top: 8px; }
+#message { min-height: 22px; margin-top: 10px; font-size: 12px; line-height: 1.5; color: #9b3d2f; }
+#message.ok { color: #12634e; }
+footer { border-top: 1px solid #d6dfdc; margin-top: 12px; padding-top: 12px; }

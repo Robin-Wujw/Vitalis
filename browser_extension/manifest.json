@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Vitalis Zepp Login",
+  "version": "0.2.2",
+  "description": "把当前浏览器中的 Zepp 官方登录会话安全配对到你的 Vitalis 云端。",
+  "permissions": ["alarms", "cookies", "storage"],
+  "host_permissions": [
+    "https://*.zepp.com/*",
+    "https://*.huami.com/*"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "action": {
+    "default_title": "连接 Zepp 到 Vitalis",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

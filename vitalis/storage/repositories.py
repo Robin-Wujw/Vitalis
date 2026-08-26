@@ -1,0 +1,470 @@
+"""仓储层：封装对 ORM 的读写，业务层只依赖仓储接口。"""
+
+from datetime import date, datetime, timedelta, timezone
+
+from sqlalchemy import delete, select, update
+from sqlalchemy.orm import Session
+
+from vitalis.models import AuthToken, DailyHealth, DailyMetric, MetricSample, Workout
+
+from . import models as orm
+
+
+class HealthRepository:
+    """健康数据仓储：负责 vitalis.models（schema）<-> ORM（表）的映射。"""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    # ---- 用户 ----
+    def upsert_user(self, user_id: str, name: str = "", source: str = "zepp", source_user_id: str | None = None) -> orm.User:
+        u = self.db.get(orm.User, user_id)
+        if u is None:
+            u = orm.User(id=user_id, name=name, source=source, source_user_id=source_user_id)
+            self.db.add(u)
+        else:
+            u.name = name or u.name
+            u.source = source
+            u.source_user_id = source_user_id or u.source_user_id
+        return u
+
+    # ---- 每日健康 ----
+    def save_daily(self, daily: DailyHealth) -> None:
+        """把 DailyHealth（含 sleep/activity/training）写入对应表（按 user+date upsert）。"""
+        if daily.sleep:
+            self._upsert(orm.SleepRecord, daily.user_id, daily.date,
+                         daily.sleep.model_dump(mode="json", exclude_none=True))
+        if daily.activity:
+            self._upsert(orm.ActivityRecord, daily.user_id, daily.date,
+                         daily.activity.model_dump(mode="json", exclude_none=True))
+        if daily.training:
+            self._upsert(orm.TrainingRecord, daily.user_id, daily.date,
+                         daily.training.model_dump(mode="json", exclude_none=True))
+
+        # 更新 health_daily 快照（分析结果部分）
+        existing = self.db.execute(
+            select(orm.HealthDaily).where(
+                orm.HealthDaily.user_id == daily.user_id,
+                orm.HealthDaily.date == daily.date,
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            hd = orm.HealthDaily(
+                user_id=daily.user_id, date=daily.date,
+                hrv=daily.hrv, hrv_trend_pct=daily.hrv_trend_pct,
+                recovery_score=daily.recovery_score,
+                recovery_level=daily.recovery_level,
+                stress_level=daily.stress_level,
+                overall_score=daily.overall_score,
+                summary=daily.summary,
+            )
+            self.db.add(hd)
+        else:
+            for field in ("hrv", "hrv_trend_pct", "recovery_score", "recovery_level",
+                          "stress_level", "overall_score", "summary"):
+                setattr(existing, field, getattr(daily, field))
+        self.db.flush()
+
+    def _upsert(self, model, user_id: str, day, data: dict) -> None:
+        """JSON 列数据按 (user_id, date) 唯一键更新或插入。"""
+        existing = self.db.query(model).filter(
+            model.user_id == user_id, model.date == day
+        ).one_or_none()
+        if existing:
+            existing.data = data
+        else:
+            self.db.add(model(user_id=user_id, date=day, data=data))
+
+    # ---- 查询 ----
+    def get_sleep(self, user_id: str, day: date) -> dict | None:
+        row = self.db.execute(
+            select(orm.SleepRecord).where(orm.SleepRecord.user_id == user_id, orm.SleepRecord.date == day)
+        ).scalar_one_or_none()
+        return row.data if row else None
+
+    def sleep_range(self, user_id: str, start: date, end: date) -> list[dict]:
+        rows = self.db.execute(
+            select(orm.SleepRecord).where(
+                orm.SleepRecord.user_id == user_id,
+                orm.SleepRecord.date.between(start, end),
+            ).order_by(orm.SleepRecord.date)
+        ).scalars().all()
+        return [r.data for r in rows]
+
+    def health_daily(self, user_id: str, day: date) -> orm.HealthDaily | None:
+        return self.db.execute(
+            select(orm.HealthDaily).where(orm.HealthDaily.user_id == user_id, orm.HealthDaily.date == day)
+        ).scalar_one_or_none()
+
+    def health_daily_range(self, user_id: str, start: date, end: date) -> list[orm.HealthDaily]:
+        rows = self.db.execute(
+            select(orm.HealthDaily).where(
+                orm.HealthDaily.user_id == user_id,
+                orm.HealthDaily.date.between(start, end),
+            ).order_by(orm.HealthDaily.date)
+        ).scalars().all()
+        return list(rows)
+
+    def activity_range(self, user_id: str, start: date, end: date) -> list[dict]:
+        rows = self.db.execute(
+            select(orm.ActivityRecord).where(
+                orm.ActivityRecord.user_id == user_id,
+                orm.ActivityRecord.date.between(start, end),
+            ).order_by(orm.ActivityRecord.date)
+        ).scalars().all()
+        return [r.data for r in rows]
+
+    def training_range(self, user_id: str, start: date, end: date) -> list[dict]:
+        rows = self.db.execute(
+            select(orm.TrainingRecord).where(
+                orm.TrainingRecord.user_id == user_id,
+                orm.TrainingRecord.date.between(start, end),
+            ).order_by(orm.TrainingRecord.date)
+        ).scalars().all()
+        return [r.data for r in rows]
+
+    # ---- 通用指标时序 ----
+
+    def save_metric_samples(self, samples: list[MetricSample]) -> int:
+        """Idempotently upsert timestamped measurements."""
+        deduplicated: dict[tuple[str, str, str, datetime], MetricSample] = {}
+        for sample in samples:
+            key = (
+                sample.user_id,
+                sample.source,
+                sample.metric,
+                _naive_utc(sample.timestamp),
+            )
+            deduplicated[key] = sample
+
+        written = 0
+        for (user_id, source, metric, timestamp), sample in deduplicated.items():
+            row = self.db.execute(
+                select(orm.MetricSample).where(
+                    orm.MetricSample.user_id == user_id,
+                    orm.MetricSample.source == source,
+                    orm.MetricSample.metric == metric,
+                    orm.MetricSample.timestamp == timestamp,
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                row = orm.MetricSample(
+                    user_id=user_id,
+                    source=source,
+                    metric=metric,
+                    timestamp=timestamp,
+                )
+                self.db.add(row)
+            row.value = sample.value
+            row.unit = sample.unit
+            row.source_scope = sample.source_scope
+            row.device_id = sample.device_id
+            written += 1
+        self.db.flush()
+        return written
+
+    def metric_samples(
+        self, user_id: str, metric: str, start: datetime, end: datetime, limit: int = 50_000
+    ) -> list[orm.MetricSample]:
+        return list(self.db.execute(
+            select(orm.MetricSample).where(
+                orm.MetricSample.user_id == user_id,
+                orm.MetricSample.metric == metric,
+                orm.MetricSample.timestamp.between(_naive_utc(start), _naive_utc(end)),
+            ).order_by(orm.MetricSample.timestamp).limit(limit)
+        ).scalars().all())
+
+    def save_daily_metrics(self, metrics: list[DailyMetric]) -> int:
+        """Idempotently upsert sparse daily vendor metrics."""
+        deduplicated: dict[tuple[str, str, date, str], DailyMetric] = {}
+        for metric in metrics:
+            key = (metric.user_id, metric.source, metric.date, metric.metric)
+            deduplicated[key] = metric
+
+        written = 0
+        for (user_id, source, day, metric_name), metric in deduplicated.items():
+            row = self.db.execute(
+                select(orm.DailyMetric).where(
+                    orm.DailyMetric.user_id == user_id,
+                    orm.DailyMetric.source == source,
+                    orm.DailyMetric.date == day,
+                    orm.DailyMetric.metric == metric_name,
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                row = orm.DailyMetric(
+                    user_id=user_id,
+                    source=source,
+                    date=day,
+                    metric=metric_name,
+                )
+                self.db.add(row)
+            row.value = metric.value
+            row.unit = metric.unit
+            row.source_scope = metric.source_scope
+            row.device_id = metric.device_id
+            written += 1
+        self.db.flush()
+        return written
+
+    def daily_metrics(self, user_id: str, start: date, end: date, metric: str | None = None) -> list[orm.DailyMetric]:
+        stmt = select(orm.DailyMetric).where(
+            orm.DailyMetric.user_id == user_id,
+            orm.DailyMetric.date.between(start, end),
+        )
+        if metric:
+            stmt = stmt.where(orm.DailyMetric.metric == metric)
+        return list(self.db.execute(stmt.order_by(orm.DailyMetric.date, orm.DailyMetric.metric)).scalars().all())
+
+    # ---- 单次运动 ----
+
+    def save_workout(self, workout: Workout) -> None:
+        row = self.db.execute(
+            select(orm.Workout).where(
+                orm.Workout.user_id == workout.user_id,
+                orm.Workout.source == workout.source,
+                orm.Workout.workout_id == workout.workout_id,
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            row = orm.Workout(
+                user_id=workout.user_id,
+                source=workout.source,
+                workout_id=workout.workout_id,
+            )
+            self.db.add(row)
+        row.started_at = _naive_utc(workout.started_at) if workout.started_at else None
+        row.vendor_source = workout.vendor_source
+        row.data = workout.model_dump(mode="json", exclude_none=True)
+        self.db.flush()
+
+    def pending_workout_details(
+        self, user_id: str, start: datetime, end: datetime, limit: int = 100
+    ) -> list[orm.Workout]:
+        return list(self.db.execute(
+            select(orm.Workout).where(
+                orm.Workout.user_id == user_id,
+                orm.Workout.started_at.between(_naive_utc(start), _naive_utc(end)),
+                orm.Workout.vendor_source.is_not(None),
+                orm.Workout.detail_synced.is_(False),
+            ).order_by(orm.Workout.started_at).limit(limit)
+        ).scalars().all())
+
+    def save_workout_detail(self, user_id: str, workout_id: str, detail: dict) -> bool:
+        row = self.db.execute(
+            select(orm.Workout).where(
+                orm.Workout.user_id == user_id,
+                orm.Workout.workout_id == workout_id,
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return False
+        row.detail = detail
+        row.detail_synced = True
+        self.db.flush()
+        return True
+
+    def workouts(self, user_id: str, start: date, end: date, limit: int = 500) -> list[orm.Workout]:
+        start_dt = datetime.combine(start, datetime.min.time())
+        end_dt = datetime.combine(end + timedelta(days=1), datetime.min.time())
+        return list(self.db.execute(
+            select(orm.Workout).where(
+                orm.Workout.user_id == user_id,
+                orm.Workout.started_at >= start_dt,
+                orm.Workout.started_at < end_dt,
+            ).order_by(orm.Workout.started_at.desc()).limit(limit)
+        ).scalars().all())
+
+    def workout(self, user_id: str, workout_id: str) -> orm.Workout | None:
+        return self.db.execute(
+            select(orm.Workout).where(
+                orm.Workout.user_id == user_id,
+                orm.Workout.workout_id == workout_id,
+            )
+        ).scalar_one_or_none()
+
+    def add_analysis(self, record: orm.AnalysisRecord) -> None:
+        """按主键 upsert 分析记录（重复调用不冲突）。"""
+        self.db.merge(record)
+
+    # ---- OAuth 令牌 ----
+
+    def save_token(self, token: AuthToken) -> None:
+        """保存/更新某用户的厂商访问令牌。"""
+        row = self.db.execute(
+            select(orm.AuthToken).where(
+                orm.AuthToken.user_id == token.user_id,
+                orm.AuthToken.source == token.source,
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            row = orm.AuthToken(user_id=token.user_id, source=token.source)
+            self.db.add(row)
+        from .token_cipher import encrypt_token
+
+        row.access_token = encrypt_token(token.access_token)
+        row.refresh_token = encrypt_token(token.refresh_token)
+        row.expires_at = token.expires_at
+        row.scope = token.scope
+        row.region_host = token.region_host
+        row.source_user_id = token.source_user_id
+        self.db.flush()
+
+    def get_token(self, user_id: str, source: str = "zepp") -> AuthToken | None:
+        row = self.db.execute(
+            select(orm.AuthToken).where(
+                orm.AuthToken.user_id == user_id,
+                orm.AuthToken.source == source,
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+        from .token_cipher import decrypt_token
+
+        return AuthToken(
+            user_id=row.user_id, source=row.source,
+            access_token=decrypt_token(row.access_token), refresh_token=decrypt_token(row.refresh_token),
+            expires_at=row.expires_at, scope=row.scope,
+            region_host=row.region_host or "",
+            source_user_id=row.source_user_id,
+        )
+
+    def save_oauth_state(self, state: str, user_id: str, source: str = "zepp") -> None:
+        self.db.merge(orm.OAuthState(id=state, user_id=user_id, source=source))
+        self.db.flush()
+
+    def oauth_state_exists(self, state: str) -> bool:
+        return self.db.get(orm.OAuthState, state) is not None
+
+    def consume_oauth_state(self, state: str) -> str | None:
+        """校验并消费一次性 state，返回绑定用户 id（不存在/已用返回 None）。"""
+        row = self.db.get(orm.OAuthState, state)
+        if row is None:
+            return None
+        self.db.delete(row)
+        self.db.flush()
+        return row.user_id
+
+    # ---- Zepp 浏览器扩展配对 ----
+
+    def create_pairing_session(self, pairing_id: str, user_id: str, expires_at: datetime, sync_days: int = 30) -> orm.ZeppPairingSession:
+        self.upsert_user(user_id)
+        row = orm.ZeppPairingSession(
+            id=pairing_id,
+            user_id=user_id,
+            expires_at=_naive_utc(expires_at),
+            sync_days=sync_days,
+        )
+        self.db.add(row)
+        self.db.flush()
+        return row
+
+    def pairing_session(self, pairing_id: str) -> orm.ZeppPairingSession | None:
+        return self.db.get(orm.ZeppPairingSession, pairing_id)
+
+    def claim_pairing_session(self, pairing_id: str) -> bool:
+        now = datetime.utcnow()
+        result = self.db.execute(
+            update(orm.ZeppPairingSession).where(
+                orm.ZeppPairingSession.id == pairing_id,
+                orm.ZeppPairingSession.status.in_(("waiting", "failed")),
+                orm.ZeppPairingSession.expires_at > now,
+            ).values(status="processing", message="正在验证 Zepp 凭据")
+        )
+        self.db.flush()
+        return bool(result.rowcount)
+
+    def finish_pairing_session(self, pairing_id: str, message: str = "已连接") -> None:
+        row = self.db.get(orm.ZeppPairingSession, pairing_id)
+        if row:
+            row.status = "connected"
+            row.message = message
+            row.consumed_at = datetime.utcnow()
+            self.db.flush()
+
+    def fail_pairing_session(self, pairing_id: str, message: str) -> None:
+        row = self.db.get(orm.ZeppPairingSession, pairing_id)
+        if row and row.status != "connected":
+            row.status = "failed"
+            row.message = message[:512]
+            self.db.flush()
+
+    # ---- Zepp 浏览器持续连接 ----
+
+    def create_browser_link(self, token_digest: str, user_id: str) -> orm.ZeppBrowserLink:
+        self.upsert_user(user_id)
+        row = orm.ZeppBrowserLink(
+            token_digest=token_digest,
+            user_id=user_id,
+            status="connected",
+            message="浏览器已连接",
+            last_verified_at=datetime.utcnow(),
+        )
+        self.db.add(row)
+        self.db.flush()
+        return row
+
+    def browser_link(self, token_digest: str) -> orm.ZeppBrowserLink | None:
+        return self.db.get(orm.ZeppBrowserLink, token_digest)
+
+    def latest_browser_link(self, user_id: str) -> orm.ZeppBrowserLink | None:
+        return self.db.execute(
+            select(orm.ZeppBrowserLink).where(
+                orm.ZeppBrowserLink.user_id == user_id,
+                orm.ZeppBrowserLink.revoked_at.is_(None),
+            ).order_by(orm.ZeppBrowserLink.created_at.desc()).limit(1)
+        ).scalar_one_or_none()
+
+    def mark_browser_link_verified(self, token_digest: str, message: str = "登录状态有效") -> None:
+        row = self.browser_link(token_digest)
+        if row and row.revoked_at is None:
+            now = datetime.utcnow()
+            row.status = "connected"
+            row.message = message[:512]
+            row.last_seen_at = now
+            row.last_verified_at = now
+            self.db.flush()
+
+    def mark_browser_link_reauth(self, token_digest: str, message: str) -> None:
+        row = self.browser_link(token_digest)
+        if row and row.revoked_at is None:
+            row.status = "needs_login"
+            row.message = message[:512]
+            row.last_seen_at = datetime.utcnow()
+            self.db.flush()
+
+    def mark_user_browser_links_reauth(self, user_id: str, message: str) -> None:
+        rows = self.db.execute(
+            select(orm.ZeppBrowserLink).where(
+                orm.ZeppBrowserLink.user_id == user_id,
+                orm.ZeppBrowserLink.revoked_at.is_(None),
+            )
+        ).scalars().all()
+        now = datetime.utcnow()
+        for row in rows:
+            row.status = "needs_login"
+            row.message = message[:512]
+            row.last_seen_at = now
+        self.db.flush()
+
+    def mark_browser_link_synced(self, token_digest: str, message: str) -> None:
+        row = self.browser_link(token_digest)
+        if row and row.revoked_at is None:
+            if row.status != "needs_login":
+                row.status = "connected"
+                row.message = message[:512]
+            row.last_sync_at = datetime.utcnow()
+            self.db.flush()
+
+    def delete_for_user(self, user_id: str) -> None:
+        for model in (
+            orm.SleepRecord, orm.ActivityRecord, orm.TrainingRecord, orm.HealthDaily,
+            orm.MetricSample, orm.DailyMetric, orm.Workout,
+        ):
+            self.db.execute(delete(model).where(model.user_id == user_id))
+
+
+def _naive_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vitalis Zepp Login</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <header>
+      <span class="mark">V</span>
+      <div><strong>Vitalis</strong><small>Zepp 登录桥</small></div>
+      <span id="state" class="state">待连接</span>
+    </header>
+
+    <section>
+      <button id="login" class="secondary" type="button">打开 Zepp 官方登录</button>
+      <p>可使用官方页面提供的手机号或账号方式。登录完成后会自动连接。</p>
+    </section>
+
+    <form id="pair">
+      <label for="base">Vitalis 地址</label>
+      <input id="base" name="base" type="url" placeholder="https://health.example.com" required>
+      <label for="code">一次性配对码</label>
+      <input id="code" name="code" autocomplete="off" spellcheck="false" required>
+      <button id="submit" type="submit">登录并自动连接</button>
+    </form>
+    <div id="message" role="status" aria-live="polite"></div>
+    <footer>密码只提交给 Zepp 官方页面。本扩展仅发送登录后的临时访问凭据。</footer>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

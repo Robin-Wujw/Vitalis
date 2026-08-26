@@ -1,0 +1,38 @@
+[project]
+name = "vitalis"
+version = "0.1.0"
+description = "Vitalis Health Agent - 可扩展的个人健康数据平台（第一阶段：Zepp 连接器 + 统一 Schema + FastAPI + Hermes Skill）"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.1",
+    "httpx>=0.27",
+    "apscheduler>=3.10",
+    "qrcode[pil]>=7.4",
+    "python-dotenv>=1.0",
+    "cryptography>=43.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "httpx2>=2.12",
+]
+
+[project.scripts]
+vitalis = "vitalis.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["vitalis"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

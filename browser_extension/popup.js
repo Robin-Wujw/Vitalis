@@ -3,6 +3,8 @@ const codeInput = document.querySelector("#code");
 const submitButton = document.querySelector("#submit");
 const message = document.querySelector("#message");
 const state = document.querySelector("#state");
+const diagnostics = document.querySelector("#diagnostics");
+const pageStorageDiagnostics = document.querySelector("#page-storage-diagnostics");
 let baseDirty = false;
 let codeDirty = false;
 
@@ -10,20 +12,34 @@ persistDraft(baseInput, "vitalisBase", () => { baseDirty = true; });
 persistDraft(codeInput, "pairingCode", () => { codeDirty = true; });
 
 document.querySelector("#login").addEventListener("click", async () => {
-  await chrome.tabs.create({ url: "https://watchface.zepp.com/" });
+  const watchface = "https://watchface.zepp.com/";
+  const login = "https://user.zepp.com/universalLogin/index.html#/login" +
+    `?project_name=watchface&project_redirect_uri=${encodeURIComponent(watchface)}` +
+    "&platform_app=com.huami.webapp&specify_lang=en";
+  await chrome.tabs.create({ url: login });
 });
 
-chrome.storage.local.get(["vitalisBase", "pairingCode", "pairingState", "pairingMessage"], (saved) => {
+chrome.storage.local.get([
+  "vitalisBase", "pairingCode", "pairingState", "pairingMessage", "cookieDiagnostics",
+  "pageStorageDiagnostics"
+], (saved) => {
   if (!baseDirty) baseInput.value = saved.vitalisBase || "";
   if (!codeDirty) codeInput.value = saved.pairingCode || "";
   renderStatus(saved.pairingState, saved.pairingMessage);
+  renderDiagnostics(saved.cookieDiagnostics);
+  renderPageStorageDiagnostics(saved.pageStorageDiagnostics);
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
-  if (changes.pairingState || changes.pairingMessage) {
-    chrome.storage.local.get(["pairingState", "pairingMessage"], (saved) => {
+  if (changes.pairingState || changes.pairingMessage || changes.cookieDiagnostics ||
+      changes.pageStorageDiagnostics) {
+    chrome.storage.local.get([
+      "pairingState", "pairingMessage", "cookieDiagnostics", "pageStorageDiagnostics"
+    ], (saved) => {
       renderStatus(saved.pairingState, saved.pairingMessage);
+      renderDiagnostics(saved.cookieDiagnostics);
+      renderPageStorageDiagnostics(saved.pageStorageDiagnostics);
     });
   }
 });
@@ -94,4 +110,37 @@ function renderStatus(pairingState, pairingMessage) {
   state.textContent = labels[pairingState] || "待连接";
   message.className = pairingState === "connected" ? "ok" : "";
   message.textContent = pairingMessage || "";
+}
+
+function renderDiagnostics(cookieDiagnostics) {
+  if (!cookieDiagnostics) {
+    diagnostics.hidden = true;
+    diagnostics.textContent = "";
+    return;
+  }
+  const entries = cookieDiagnostics.entries || [];
+  const suffix = cookieDiagnostics.truncated ? "（仅显示前 50 项）" : "";
+  diagnostics.hidden = false;
+  diagnostics.textContent = [
+    `本地 Cookie 诊断：可见 ${cookieDiagnostics.visibleCount || 0} 项，已知登录项 ${cookieDiagnostics.matchedCount || 0} 项。`,
+    entries.length ? `${entries.join("\n")}${suffix}` : "未发现扩展权限范围内的 Zepp/Huami Cookie。"
+  ].join("\n");
+}
+
+function renderPageStorageDiagnostics(value) {
+  if (!value) {
+    pageStorageDiagnostics.hidden = true;
+    pageStorageDiagnostics.textContent = "";
+    return;
+  }
+  const localKeys = value.localStorageKeys || [];
+  const sessionKeys = value.sessionStorageKeys || [];
+  const cookieNames = value.documentCookieNames || [];
+  pageStorageDiagnostics.hidden = false;
+  pageStorageDiagnostics.textContent = [
+    `页面存储诊断：${value.origin || "Zepp/Huami"}`,
+    `document.cookie：${cookieNames.length ? cookieNames.join(", ") : "无"}`,
+    `localStorage：${localKeys.length ? localKeys.join(", ") : "无"}`,
+    `sessionStorage：${sessionKeys.length ? sessionKeys.join(", ") : "无"}`
+  ].join("\n");
 }

@@ -278,8 +278,8 @@ def _initial_pairing_sync(
                 User(id=user_id), days=sync_days, repo=HealthRepository(db)
             )
         message = f"Zepp 已连接，首次同步写入 {report.records_written} 条记录"
-    except Exception as exc:
-        message = f"Zepp 已连接，但首次同步失败：{exc}"
+    except Exception:
+        message = "Zepp 已连接，但首次同步失败，将稍后重试"
     with session_scope() as db:
         repo = HealthRepository(db)
         row = repo.pairing_session(pairing_id)
@@ -298,8 +298,13 @@ def _linked_incremental_sync(user_id: str, link_digest: str) -> None:
         message = f"登录凭据已更新，同步写入 {report.records_written} 条记录"
         with session_scope() as db:
             HealthRepository(db).mark_browser_link_synced(link_digest, message)
-    except Exception as exc:
+    except ZeppAuthError as exc:
         with session_scope() as db:
             HealthRepository(db).mark_browser_link_reauth(
                 link_digest, f"同步验证失败，请重新登录：{exc}"
+            )
+    except Exception:
+        with session_scope() as db:
+            HealthRepository(db).mark_browser_link_sync_failed(
+                link_digest, "登录状态有效，但数据同步失败，将稍后重试"
             )

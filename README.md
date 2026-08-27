@@ -86,14 +86,15 @@ Vitalis 通过用户浏览器中的官方登录会话连接 Zepp，不要求打�
 1. 打开 `https://<你的域名>/api/v1/connect/zepp/scan?user=001`。
 2. 按页面提示安装 `browser_extension/` 扩展，并在扩展中填写页面显示的 Vitalis 地址和一次性配对码。
 3. 点击“登录并自动连接”。扩展会打开 Zepp 官方登录页，可使用页面提供的手机号或账号方式登录。
-4. 登录成功后扩展自动读取临时访问凭据并完成配对，Vitalis 随即开始同步数据。
+4. 登录成功后扩展从官方页面的一方 Cookie 视图或扩展 Cookie API 自动读取临时访问凭据并完成配对，Vitalis 随即开始同步数据。
 
 账号密码、短信验证码只提交给官方登录页，Vitalis 不接收也不保存这些字段。
 
 **特性**：
-- **自动解析**：从 cookie 自动提取 userid + apptoken + region
+- **自动解析**：从扩展 Cookie API 或 Zepp 页面的第一方 Cookie 视图自动提取 userid + apptoken + region，兼容分区 Cookie
 - **自动探测区域**：同时探测 15 个 Zepp 区域主机，找可用的那个
 - **自动保活**：登录 Cookie 变化时立即更新，并每 30 分钟检查一次浏览器登录状态
+- **同步串行化**：同一用户的首次、续期、手动和调度同步共用一把进程内锁，避免 SQLite 并发写冲突
 - **断联提示**：浏览器退出登录或云端验证失败后，状态 API 返回 `needs_login=true`
 - **安全链接**：长期浏览器链接使用高熵 Bearer 令牌，服务端只保存 SHA-256 摘要
 - **最长 730 天（2 年）**：按 7 天窗口分块，避免单次请求过大
@@ -177,12 +178,12 @@ curl 'localhost:8000/api/v1/health/range?from=2026-01-01&to=2026-08-25&granulari
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest -q        # 83 个测试，全部通过
+.venv/bin/python -m pytest -q        # 89 个测试，全部通过
 ```
 
 覆盖范围：
-- `test_api.py` — 28 个 API 端到端（连接、同步、查询、启动、HTTPS、配对、续期、断联、用户隔离）
-- `test_browser_extension.py` — 扩展后台监听、周期检查和无密码输入约束
+- `test_api.py` — 29 个 API 端到端（连接、同步、查询、启动、HTTPS、配对、续期、断联、用户隔离）
+- `test_browser_extension.py` — 扩展后台监听、页面一方 Cookie 桥接、周期检查和无密码输入约束
 - `test_fetcher.py` — FetchWindow、心率分页、payload 解析
 - `test_health_data_api.py` — 时序指标、每日指标、运动详情和秒级样本隔离
 - `test_sync_manager.py` — 同步报告、取消、失败报告和运动详情持久化

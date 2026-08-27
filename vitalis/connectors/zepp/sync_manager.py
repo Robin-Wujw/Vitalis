@@ -10,11 +10,22 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from vitalis.connectors.zepp.client import ZeppAuthError
 from vitalis.connectors.zepp.fetcher import DataFetcher, FetchWindow, FetchedRecord, _payload_items
 from vitalis.connectors.zepp.parser import ZeppParser
 from vitalis.models import ActivityRecord, DailyHealth, SleepRecord, TrainingRecord, User
 from vitalis.storage import HealthRepository
+
+
+_user_sync_locks_guard = threading.Lock()
+_user_sync_locks: dict[str, threading.Lock] = {}
+
+
+def _sync_lock_for_user(user_id: str) -> threading.Lock:
+    with _user_sync_locks_guard:
+        return _user_sync_locks.setdefault(user_id, threading.Lock())
 
 
 @dataclass
@@ -50,7 +61,6 @@ class SyncManager:
     def __init__(self, fetcher: DataFetcher, cancel_event: threading.Event | None = None):
         self.fetcher = fetcher
         self._cancel = cancel_event or threading.Event()
-        self._run_lock = threading.Lock()
 
     def request_cancel(self) -> None:
         self._cancel.set()
@@ -63,8 +73,8 @@ class SyncManager:
         on_progress: Callable[[SyncProgress], None] | None = None,
     ) -> SyncReport:
         """执行一次完整同步，返回逐流报告。"""
-        if not self._run_lock.acquire(blocking=False):
-            raise ZeppAuthError("已有同步在进行中")
+        run_lock = _sync_lock_for_user(user.id)
+        run_lock.acquire()
         try:
             self._cancel.clear()
             window = FetchWindow.days_back(days)
@@ -203,7 +213,7 @@ class SyncManager:
                 message="至少一个核心数据流失败；同步未报告成功" if core_failed else None,
             )
         finally:
-            self._run_lock.release()
+            run_lock.release()
 
     # ---- internal ----
 
@@ -268,6 +278,8 @@ class SyncManager:
         try:
             written = self._write_stream(record, repo, user)
             report.records_written = written
+        except SQLAlchemyError:
+            raise
         except Exception as exc:
             report.status = "failed"
             report.capability = "unavailable"

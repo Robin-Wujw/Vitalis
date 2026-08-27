@@ -347,6 +347,28 @@ def test_browser_link_rejects_invalid_token(client):
     assert "browser_link_token" not in response.text
 
 
+def test_non_auth_link_sync_failure_keeps_connection_valid(monkeypatch):
+    from vitalis.api.routes import zepp_pairing
+
+    digest = hashlib.sha256(b"sync-failure-link").hexdigest()
+    with session_scope() as db:
+        HealthRepository(db).create_browser_link(digest, "sync-failure-user")
+
+    class FailingConnector:
+        def sync_with_report(self, *_args, **_kwargs):
+            raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr(zepp_pairing, "get_connector", lambda _source: FailingConnector())
+    zepp_pairing._linked_incremental_sync("sync-failure-user", digest)
+
+    with session_scope() as db:
+        link = HealthRepository(db).browser_link(digest)
+        assert link is not None
+        assert link.status == "connected"
+        assert link.last_sync_at is None
+        assert link.message == "登录状态有效，但数据同步失败，将稍后重试"
+
+
 def test_browser_link_cannot_be_rebound_by_user_header(client):
     def pair(user_id: str) -> str:
         code = client.post(

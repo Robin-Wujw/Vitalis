@@ -488,6 +488,13 @@ class HealthRepository:
             row.last_sync_at = datetime.utcnow()
             self.db.flush()
 
+    def mark_browser_link_sync_failed(self, token_digest: str, message: str) -> None:
+        row = self.browser_link(token_digest)
+        if row and row.revoked_at is None and row.status != "needs_login":
+            row.status = "connected"
+            row.message = message[:512]
+            self.db.flush()
+
     def delete_for_user(self, user_id: str) -> None:
         for model in (
             orm.SleepRecord, orm.ActivityRecord, orm.TrainingRecord, orm.HealthDaily,

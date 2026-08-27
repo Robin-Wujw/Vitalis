@@ -1,8 +1,10 @@
 """测试 Zepp 同步管理器（SyncManager）。"""
 
 from datetime import datetime, timedelta, timezone
+import threading
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from vitalis.connectors.zepp.client import ZeppAuthError
 from vitalis.connectors.zepp.fetcher import FetchWindow, FetchedRecord, RawRecord
@@ -191,3 +193,57 @@ class TestSyncManager:
             "heart_rate_source": "unknown",
         }
         assert [sample.heart_rate for sample in samples] == [80, 80, 82, 81]
+
+    def test_sync_report_serializes_same_user_across_managers(self):
+        first_entered = threading.Event()
+        release_first = threading.Event()
+        second_entered = threading.Event()
+
+        class BlockingFetcher(MockDataFetcher):
+            def fetch_heart_rate_records(self, window):
+                first_entered.set()
+                assert release_first.wait(timeout=2)
+                return super().fetch_heart_rate_records(window)
+
+        class ObservedFetcher(MockDataFetcher):
+            def fetch_heart_rate_records(self, window):
+                second_entered.set()
+                return super().fetch_heart_rate_records(window)
+
+        first = threading.Thread(
+            target=SyncManager(BlockingFetcher()).sync_report,
+            args=(User(id="serialized-user"), 1),
+        )
+        second = threading.Thread(
+            target=SyncManager(ObservedFetcher()).sync_report,
+            args=(User(id="serialized-user"), 1),
+        )
+        first.start()
+        assert first_entered.wait(timeout=2)
+        second.start()
+        assert not second_entered.wait(timeout=0.1)
+        release_first.set()
+        first.join(timeout=2)
+        second.join(timeout=2)
+
+        assert not first.is_alive()
+        assert not second.is_alive()
+        assert second_entered.is_set()
+
+    def test_database_error_aborts_stream_instead_of_poisoning_session(self):
+        class LockedRepository:
+            def save_metric_samples(self, _samples):
+                raise OperationalError("insert", {}, RuntimeError("database is locked"))
+
+        record = FetchedRecord(raw=RawRecord(
+            stream="heart_rate",
+            source_key="hr:locked",
+            start_utc=datetime.now(timezone.utc),
+            end_utc=datetime.now(timezone.utc),
+            payload={"items": [{"timestamp": 1, "value": 72}]},
+        ))
+
+        with pytest.raises(OperationalError, match="database is locked"):
+            SyncManager(MockDataFetcher())._persist_record(
+                record, LockedRepository(), User(id="locked-user")
+            )

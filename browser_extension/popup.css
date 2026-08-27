@@ -27,4 +27,5 @@ button.secondary { width: 100%; color: #12634e; background: white; border: 1px s
 #submit { margin-top: 8px; }
 #message { min-height: 22px; margin-top: 10px; font-size: 12px; line-height: 1.5; color: #9b3d2f; }
 #message.ok { color: #12634e; }
+#diagnostics, #page-storage-diagnostics { max-height: 150px; overflow: auto; margin: 8px 0 0; padding: 9px; border: 1px solid #d6dfdc; border-radius: 5px; background: white; color: #42514d; font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 footer { border-top: 1px solid #d6dfdc; margin-top: 12px; padding-top: 12px; }

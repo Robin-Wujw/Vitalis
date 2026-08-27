@@ -17,6 +17,21 @@ while copying the second value does not discard the first one.
 Cookie discovery uses only the known Zepp login-cookie names on permitted Zepp/Huami
 domains and is independent of the cookie's URL path.
 
+When an existing login cannot be detected, the popup shows a local-only diagnostic with
+the visible cookie count and cookie name/domain pairs. Cookie values are never included
+in that diagnostic or uploaded to Vitalis, and the diagnostic is cleared after pairing.
+
+Current Zepp pages may keep the active `apptoken` and user id in page storage instead of
+the former login cookie. An allowlisted content script reads only the fixed credential
+keys from page storage or the page's own first-party cookie view on Zepp/Huami HTTPS
+origins and passes them directly to the background worker. This covers partitioned or
+profile-specific cookie stores that are not returned to the extension cookie API. The
+credential is never written to extension storage or logs.
+
+Pairing opens Zepp's own `universalLogin` route with the Watchface application as its
+official callback. An existing account-center session can therefore complete the app
+handoff without another password prompt before the page-storage bridge runs.
+
 The extension reads only Zepp/Huami cookies. Access to a Vitalis origin is
 requested at runtime and granted for the exact origin entered by the user. It checks
 the session when the cookie changes and every 30 minutes, updates Vitalis through a

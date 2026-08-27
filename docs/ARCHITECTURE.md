@@ -88,7 +88,7 @@ Hermes Skill：`SKILL.md` 声明能力（查询/分析/建议）与规则（不�
 - `POST /connect/zepp` — 连接数据源、同步历史、生成健康档案
 - `POST /connect/zepp/pair` — 创建绑定 Vitalis 用户的短期一次性配对码
 - `POST /connect/zepp/pair/{code}/credentials` — 扩展提交官方网页登录结果，签发长期浏览器链接并开始同步
-- `POST /connect/zepp/link/credentials` — Cookie 变化或周期检查时验证并更新访问凭据
+- `POST /connect/zepp/link/credentials` — Cookie 变化、页面一方 Cookie 桥接或周期检查时验证并更新访问凭据
 - `POST /connect/zepp/link/disconnected` — 记录浏览器退出登录，向用户暴露重登提示
 - `GET /connect/zepp/token` — 查询凭据、最近验证/同步时间和 `needs_login` 状态
 - `GET /health/today` — 今日状态摘要 `{score, sleep, training, stress}`
@@ -102,10 +102,11 @@ Hermes Skill：`SKILL.md` 声明能力（查询/分析/建议）与规则（不�
 ```
 公网：浏览器 → 受信任 HTTPS 反向代理 / 隧道 → 回环地址上的 FastAPI
 首次：用户 → Vitalis 配对页 → 扩展打开 Zepp 官方登录页
-      → 手机号/账号登录 → 扩展检测 Cookie → 一次性配对码提交
+      → 手机号/账号登录 → 扩展检测 Cookie API / 页面一方 Cookie → 一次性配对码提交
       → 保存 auth_tokens + 签发浏览器链接 → 同步历史 → 生成健康档案
 续期：Cookie 变化事件或 30 分钟检查 → Bearer 浏览器链接验证
       → 凭据变化时换存并增量同步；退出登录时标记 needs_login
+并发：同一用户的各同步入口 → 进程内用户锁串行执行 → 独立事务提交/回滚
 每日：定时 sync job（用已保存 token）→ 更新数据/连接状态 → Hermes 可调用
 运动：`run/history.json` 的 `data.summary` → 运动摘要
       → `run/detail.json` 的压缩增量 → UTC 秒级 `workout_samples`

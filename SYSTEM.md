@@ -357,3 +357,89 @@ workout heart-rate path, following the repository's plan/test/document/push cont
 - Part 7: secret review found no saved credential, real user/device/workout identifier,
   `.env`, or database file in the diff. Commit `6a6bbda` (`feat: ingest Zepp workout
   heart rate samples`) was pushed from local `main` to `origin/main` successfully.
+
+## 8. Current Work Session - 2026-08-27 (Zepp Pairing Diagnostics)
+
+Goal: finish the still-open real-browser acceptance for Part 12 by diagnosing why an
+already signed-in Zepp page does not produce a credential submission from extension
+0.2.2, without exposing or uploading cookie values.
+
+### Detailed TODO
+
+- [x] Part 1 - Restore and verify the real acceptance environment.
+  - Run the backend on loopback and expose it through a browser-trusted temporary HTTPS
+    tunnel.
+  - Verify health, pairing-page rendering, extension archive integrity, and extension
+    version 0.2.2.
+  - Reproduce the real-browser attempt and inspect only non-secret request/state data.
+- [x] Part 2 - Add privacy-preserving local cookie diagnostics.
+  - Enumerate only cookies visible under the existing Zepp/Huami host permissions.
+  - Store and display cookie count, known-login-cookie match count, and unique
+    name/domain pairs locally in the extension; never include cookie values or upload
+    diagnostics to Vitalis.
+  - Clear stale diagnostics after a successful credential submission and bump the
+    extension version.
+- [x] Part 3 - Add focused regression coverage and publish the diagnostic build.
+  - Assert the diagnostics contain no cookie value and use only local extension storage.
+  - Run extension syntax checks and focused tests, then the complete suite.
+  - Download the HTTPS archive and verify its version, integrity, and diagnostic code.
+- [ ] Part 4 - Complete real-browser acceptance and delivery.
+  - Reload the diagnostic extension, repeat a fresh pairing, and use the local result to
+    identify a changed cookie contract, missing permission, or web-storage migration.
+  - Resolve the discovered cause with focused tests, observe a real credential POST,
+    connected pairing, browser-link creation, and sync outcome without exposing secrets.
+  - Synchronize Markdown, commit the completed change, and push `main`.
+
+### Verification Log
+
+- Part 1: the clean `main` branch started from `af098a8`. All 83 tests passed with 105
+  existing Python 3.14 deprecation warnings, both extension scripts passed `node
+  --check`, and the database contained no browser link. A new HTTPS tunnel passed its
+  health check and served a valid extension 0.2.2 ZIP. The user's real attempt produced
+  pairing-status GET requests but no credential POST; the fresh pairing remained
+  `waiting` and no browser link was created.
+- Part 2: extension 0.2.3 locally enumerates only cookies under exact Zepp/Huami root or
+  subdomains, stores counts and unique name/domain pairs without values, renders the
+  result in the popup, and clears it after successful pairing. No diagnostic data is
+  added to a Vitalis request or server endpoint. Five focused extension tests and both
+  JavaScript syntax checks passed.
+- Part 3: the complete suite passed all 84 tests with 105 existing Python 3.14
+  deprecation warnings, and `git diff --check` passed. The live HTTPS endpoint served a
+  valid ZIP whose manifest reports 0.2.3 and whose background worker contains the
+  local-only diagnostic collector. The tunnel health check remained HTTP 200.
+- Part 4 (diagnosis): the real 0.2.3 popup saw one unrelated gateway cookie on
+  `user.zepp.com` and zero known login cookies, proving cookie permission worked but the
+  former login-cookie contract no longer represented the active session. The current
+  public Watchface JavaScript explicitly reads `apptoken` from `localStorage` to decide
+  whether the user is signed in, so the fallback must bridge fixed page-storage keys
+  from an allowlisted Zepp/Huami origin instead of asking the user to sign in again.
+- Part 4 (handoff diagnosis): extension 0.2.4 confirmed the Watchface origin contained
+  no `apptoken` or user-id key; its session storage contained only a cached user profile.
+  The current public application constructs an explicit Zepp `universalLogin` URL with
+  `project_name=watchface`, a Watchface callback, and `com.huami.webapp`. Opening only
+  the Watchface home page skipped that account-center-to-application token handoff.
+- Part 4 (login requirement): extension 0.2.5 reached the official `universalLogin`
+  origin, but the real browser exposed only analytics/monitoring storage keys and no
+  vendor credential. The current official login bundle configures Watchface with
+  `getTokenMethod: "cookies"` and writes `hm-user-login-info`, `apptoken`, and `userid`
+  only after its login submission succeeds. A subsequent screenshot showed the
+  Watchface application itself displaying the signed-in account, so the missing result
+  is instead consistent with a partitioned/profile-specific cookie-store mismatch in
+  the extension background API. The content script must also inspect the current
+  page's first-party `document.cookie` view for only the fixed credential names.
+- Part 4 (real pairing): extension 0.2.6 read the first-party page cookie and completed
+  the real credential POST. The pairing became connected, one digest-only browser link
+  was created and verified, and the extension performed a linked credential update.
+  Two near-simultaneous background syncs then contended on SQLite; a swallowed
+  `OperationalError` left one session rollback-only and its error handler also hit the
+  database lock. The connected link survived, but synchronization must be serialized
+  per user and storage errors must abort their transaction before final delivery.
+- Part 4 (sync fix and acceptance): all sync-manager instances now share a per-user
+  process lock, SQLAlchemy errors abort the active transaction immediately, and generic
+  storage failures keep a verified browser link connected instead of requesting a new
+  login. The focused API/sync run passed 35 tests and three targeted regressions passed.
+  After restarting the backend, a real seven-day sync returned HTTP 200 with all seven
+  streams successful and 3,362 normalized records written; no database-lock error
+  followed. The complete suite passed all 89 tests with 113 existing Python 3.14
+  deprecation warnings, all three extension scripts passed syntax checks, and `git
+  diff --check` passed.

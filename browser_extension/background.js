@@ -1,4 +1,7 @@
-const LOGIN_URL = "https://watchface.zepp.com/";
+const WATCHFACE_URL = "https://watchface.zepp.com/";
+const LOGIN_URL = "https://user.zepp.com/universalLogin/index.html#/login" +
+  `?project_name=watchface&project_redirect_uri=${encodeURIComponent(WATCHFACE_URL)}` +
+  "&platform_app=com.huami.webapp&specify_lang=en";
 const COOKIE_NAMES = new Set(["hm-user-login-info", "hm_user_login_info"]);
 const REFRESH_ALARM = "vitalis-zepp-session-refresh";
 
@@ -26,11 +29,38 @@ chrome.cookies.onChanged.addListener((change) => {
 });
 
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
-  if (request?.type !== "startPairing") return false;
-  startPairing(request.base, request.code)
-    .then(sendResponse)
-    .catch((error) => sendResponse({ status: "error", message: error.message || String(error) }));
-  return true;
+  if (request?.type === "startPairing") {
+    startPairing(request.base, request.code)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ status: "error", message: error.message || String(error) }));
+    return true;
+  }
+  if (request?.type === "zeppPageCredential") {
+    if (!isAllowedPageSender(_sender) || !isSafeCredentialMessage(request.credential)) {
+      sendResponse({ status: "ignored" });
+      return false;
+    }
+    submitCredential(request.credential)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ status: "error", message: error.message || String(error) }));
+    return true;
+  }
+  if (request?.type === "zeppPageStorageDiagnostics") {
+    if (!isAllowedPageSender(_sender)) {
+      sendResponse({ status: "ignored" });
+      return false;
+    }
+    const url = new URL(_sender.url);
+    const pageStorageDiagnostics = {
+      origin: url.origin,
+      documentCookieNames: safeStorageKeys(request.pageStorageDiagnostics?.documentCookieNames),
+      localStorageKeys: safeStorageKeys(request.pageStorageDiagnostics?.localStorageKeys),
+      sessionStorageKeys: safeStorageKeys(request.pageStorageDiagnostics?.sessionStorageKeys)
+    };
+    chrome.storage.local.set({ pageStorageDiagnostics }).then(() => sendResponse({ status: "stored" }));
+    return true;
+  }
+  return false;
 });
 
 async function startPairing(base, code) {
@@ -44,6 +74,7 @@ async function startPairing(base, code) {
   const cookie = await findLoginCookie();
   if (cookie) return submitCredential(cookie.value);
 
+  await collectCookieDiagnostics();
   await setPairingStatus("waiting_login", "请在新页面完成 Zepp 官方登录，登录后会自动连接");
   await chrome.tabs.create({ url: LOGIN_URL });
   return { status: "waiting_login" };
@@ -58,6 +89,7 @@ async function refreshCredential() {
   if (cookie) {
     await submitCredential(cookie.value);
   } else if (state.browserLinkToken) {
+    await collectCookieDiagnostics();
     await reportDisconnected("未检测到 Zepp 网页登录，请重新登录以继续自动更新");
   }
 }
@@ -97,7 +129,9 @@ async function submitCredential(cookieValue) {
     };
     if (result.browser_link_token) changes.browserLinkToken = result.browser_link_token;
     await chrome.storage.local.set(changes);
-    await chrome.storage.local.remove("pairingCode");
+    await chrome.storage.local.remove([
+      "pairingCode", "cookieDiagnostics", "pageStorageDiagnostics"
+    ]);
     return { status: "connected" };
   } catch (error) {
     await setPairingStatus("error", error.message || String(error));
@@ -132,9 +166,53 @@ async function findLoginCookie() {
   return null;
 }
 
+async function collectCookieDiagnostics() {
+  const visible = (await chrome.cookies.getAll({})).filter(isAllowedCookieDomain);
+  const entries = [...new Set(visible.map((cookie) =>
+    `${cookie.name}@${cookie.domain.replace(/^\./, "")}`
+  ))].sort();
+  const cookieDiagnostics = {
+    visibleCount: visible.length,
+    matchedCount: visible.filter((cookie) => COOKIE_NAMES.has(cookie.name)).length,
+    entries: entries.slice(0, 50),
+    truncated: entries.length > 50
+  };
+  await chrome.storage.local.set({ cookieDiagnostics });
+  return cookieDiagnostics;
+}
+
 function isLoginCookie(cookie) {
-  return COOKIE_NAMES.has(cookie.name) &&
-    (cookie.domain.endsWith("zepp.com") || cookie.domain.endsWith("huami.com"));
+  return COOKIE_NAMES.has(cookie.name) && isAllowedCookieDomain(cookie);
+}
+
+function isAllowedCookieDomain(cookie) {
+  const domain = cookie.domain.replace(/^\./, "").toLowerCase();
+  return isAllowedHostname(domain);
+}
+
+function isAllowedPageSender(sender) {
+  try {
+    const url = new URL(sender.url || "");
+    return url.protocol === "https:" && isAllowedHostname(url.hostname.toLowerCase());
+  } catch (_error) {
+    return false;
+  }
+}
+
+function isSafeCredentialMessage(credential) {
+  return typeof credential === "string" && credential.length > 0 && credential.length <= 65536;
+}
+
+function safeStorageKeys(keys) {
+  if (!Array.isArray(keys)) return [];
+  return [...new Set(keys.filter((key) =>
+    typeof key === "string" && key.length > 0 && key.length <= 128
+  ))].sort().slice(0, 50);
+}
+
+function isAllowedHostname(hostname) {
+  return hostname === "zepp.com" || hostname.endsWith(".zepp.com") ||
+    hostname === "huami.com" || hostname.endsWith(".huami.com");
 }
 
 async function setPairingStatus(state, message) {

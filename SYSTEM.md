@@ -383,7 +383,7 @@ already signed-in Zepp page does not produce a credential submission from extens
   - Assert the diagnostics contain no cookie value and use only local extension storage.
   - Run extension syntax checks and focused tests, then the complete suite.
   - Download the HTTPS archive and verify its version, integrity, and diagnostic code.
-- [ ] Part 4 - Complete real-browser acceptance and delivery.
+- [x] Part 4 - Complete real-browser acceptance and delivery.
   - Reload the diagnostic extension, repeat a fresh pairing, and use the local result to
     identify a changed cookie contract, missing permission, or web-storage migration.
   - Resolve the discovered cause with focused tests, observe a real credential POST,
@@ -443,3 +443,5 @@ already signed-in Zepp page does not produce a credential submission from extens
   followed. The complete suite passed all 89 tests with 113 existing Python 3.14
   deprecation warnings, all three extension scripts passed syntax checks, and `git
   diff --check` passed.
+- Part 4 (delivery): commit `e44a615` (`feat: complete Zepp browser pairing`) was
+  pushed from local `main` to `origin/main` successfully.

@@ -274,7 +274,7 @@ analysis behavior does not require fallback paths or compatibility adapters.
     evening, weekly, and on-demand views without recomputing health decisions.
   - Add schemas, workflows, and evidence notes needed by the renderer while keeping
     calculation rules in Python.
-- [ ] Part 6 - Complete tests, documentation, and delivery.
+- [x] Part 6 - Complete tests, documentation, and delivery.
   - Add focused unit and API coverage for baseline isolation, insufficient-data
     abstention, analyzer behavior, decision explanations, and the Hermes boundary.
   - Update `README.md` and `docs/ARCHITECTURE.md` for the implemented data flow, API,
@@ -301,6 +301,8 @@ analysis behavior does not require fallback paths or compatibility adapters.
   OpenAPI generation (24 paths), Hermes JSON Schema parsing, both browser-extension
   JavaScript syntax checks, and `git diff --check` passed. OpenAPI contains the new
   daily-profile endpoint and excludes both removed prototype analysis paths.
+- Delivery: feature commit `d003587` (`feat: add deterministic health intelligence
+  pipeline`) was pushed to `origin/main`.
 
 ## 6. Next Session Handoff
 

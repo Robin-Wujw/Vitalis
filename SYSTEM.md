@@ -67,7 +67,13 @@ and data ingested after that contract is implemented.
 
 ## 4. Project Documentation Map
 
-- `README.md`: user-facing capabilities, setup, API usage, and current test result.
+- `README.md`: product-facing positioning, experiences, capabilities, trust boundaries,
+  project status, and links to technical documentation.
+- `docs/GETTING_STARTED.md`: installation, local operation, deployment, scheduling, and
+  verification commands.
+- `docs/ZEPP_INTEGRATION.md`: Zepp connection, credential lifecycle, normalized data
+  coverage, workout heart rate, and the Balance 2 bridge.
+- `docs/API.md`: current HTTP endpoints, identity requirements, and request examples.
 - `docs/ARCHITECTURE.md`: system boundaries, data flow, implemented architecture, and
   future work.
 - `SYSTEM.md`: working agreement, current detailed TODO list, progress, and verification
@@ -1077,3 +1083,50 @@ structured inputs for Hermes rather than model-side calculations.
   the 20 KB limit.
 - Part 6 delivery: implementation commit `7a844dd` (`feat: add longitudinal health
   intelligence`) was pushed from local `main` to `origin/main` successfully.
+
+## 15. Product README Session
+
+Date: 2026-08-28
+
+Goal: turn the repository root README into a product showcase that explains what
+Vitalis does and why it is useful without forcing visitors through implementation
+details. Preserve all operational and integration information in focused files under
+`docs/` and keep the architecture contract in `docs/ARCHITECTURE.md`.
+
+### Detailed TODO
+
+- [x] Part 1 - Establish the publication structure.
+  - Reserve README for product positioning, user questions, experiences, capability
+    summary, trust boundaries, current status, and documentation navigation.
+  - Move installation, deployment, scheduling, test commands, API tables, credentials,
+    data-stream details, and repository internals out of README.
+- [x] Part 2 - Create focused technical guides.
+  - Add Getting Started, Zepp Integration, and API documents without dropping current
+    setup, security, data-coverage, endpoint, or verification information.
+  - Link detailed intelligence policies to Architecture instead of duplicating them.
+- [x] Part 3 - Rewrite the product README.
+  - Lead with the personal health intelligence product rather than the implementation.
+  - Show representative Morning, Evening, Weekly, Monthly, training-response, and
+    conversational experiences without presenting fabricated live user measurements.
+  - State the deterministic/LLM boundary, explicit missing-data behavior, device
+    isolation, non-diagnostic scope, and current supported ecosystem in plain language.
+- [ ] Part 4 - Verify and deliver.
+  - Check internal Markdown links, headings, formatting, moved-content coverage, and
+    `git diff --check`.
+  - Commit and push the documentation restructure to `origin/main`, then record the
+    delivery commit here.
+
+### Verification Log
+
+- Parts 1-3: the root README is now a 194-line product page centered on the questions
+  Vitalis answers, representative Morning/Evening and longitudinal experiences,
+  training response, Agent interaction, product capabilities, and trust boundaries.
+  Project layout, setup, deployment, scheduler, test commands, credential mechanics,
+  source payload semantics, API tables, and request examples were removed from README.
+- Technical content now lives in `docs/GETTING_STARTED.md`,
+  `docs/ZEPP_INTEGRATION.md`, `docs/API.md`, and the existing architecture document.
+  The documentation map identifies one owner for each type of information.
+- Part 4 verification: all local Markdown links resolve, heading structure and moved
+  technical-content coverage were reviewed, `git diff --check` and the added-content
+  secret scan passed, and the full suite passed all 165 tests with 184 existing Python
+  3.14 `datetime.utcnow()` deprecation warnings. Delivery is pending commit and push.

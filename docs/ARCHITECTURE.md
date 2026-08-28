@@ -41,6 +41,11 @@ Workout summaries retain the original numeric vendor type ID. Verified Zepp OS t
 `52` (`0x34`) maps to strength training; unknown IDs remain auditable even when their
 normalized category is `other`.
 
+Timestamped measurements remain stored in UTC. Daily intelligence groups them by the
+configured application timezone (`VITALIS_TIMEZONE`, currently `Asia/Shanghai`). Sleep
+clock times use the vendor-provided offset, and workout summaries are assigned to the
+local date on which the session started.
+
 ## 3. Intelligence Layer
 
 The implementation lives in `vitalis/intelligence`:
@@ -113,7 +118,9 @@ require 14. These minimums are versioned product policy, not medical truth.
 ### 3.4 Feature and Decision Policy
 
 The preferred HRV stream must have a target-day observation. Selection ranks usable
-28-day coverage first, then metric preference (`RMSSD`, sleep HRV, SDNN). RHR is paired
+28-day coverage first, then metric preference (`RMSSD`, sleep HRV, SDNN). Every current
+device stream for the selected metric remains visible with its own baseline deviation;
+deterministic selection does not claim that one device is more accurate. RHR is paired
 conservatively and is not substituted into an HRV baseline.
 
 Recovery requires at least two baseline-interpretable signals from HRV, RHR, sleep,
@@ -175,7 +182,8 @@ so `device_validity.status` remains `UNKNOWN`.
 
 Implemented: versioned DailyProfile, deterministic quality/provenance, device-isolated
 7/28-day baselines, sleep/HRV/recovery/training features, explainable decisions,
-Morning/Evening pushes, and thin Hermes workflows.
+local-day handling, explicit recent workout types/details, Morning/Evening pushes, and
+thin Hermes workflows. User-scoped APIs and Hermes tools require an explicit identity.
 
 Not implemented: 60/90-day personal correlations, health anomaly persistence,
 minute-level stress load, Energy Dynamics, weekly sleep/recovery review, training RPE,

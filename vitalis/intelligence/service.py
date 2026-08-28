@@ -3,6 +3,7 @@
 from datetime import date
 
 from vitalis.storage import HealthRepository, session_scope
+from vitalis.time import local_today
 
 from .analyzers import HrvAnalyzer, RecoveryAnalyzer, SleepAnalyzer, TrainingAnalyzer, build_states
 from .baseline import BaselineEngine
@@ -47,7 +48,7 @@ EVIDENCE_REFS = [
 
 class IntelligenceService:
     def daily_profile(self, user_id: str, day: date | None = None) -> DailyProfile:
-        target = day or date.today()
+        target = day or local_today()
         with session_scope() as db:
             repo = HealthRepository(db)
             raw = ProfileLoader(repo).load(user_id, target)

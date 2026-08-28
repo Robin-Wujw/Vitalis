@@ -2,7 +2,7 @@
 """Vitalis Skill 工具：同步数据（连接 Zepp）。
 
 用法:
-    python sync.py [--user 001] [--start 2026-08-01] [--end 2026-08-25]
+    python sync.py --user <local-user-id> [--start 2026-08-01] [--end 2026-08-25]
 """
 
 import argparse
@@ -32,7 +32,8 @@ def sync(user: str, start: str | None = None, end: str | None = None) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="同步 Zepp 数据到 Vitalis")
-    parser.add_argument("--user", default=os.getenv("VITALIS_USER", "001"))
+    configured_user = os.getenv("VITALIS_USER")
+    parser.add_argument("--user", default=configured_user, required=not configured_user)
     parser.add_argument("--start")
     parser.add_argument("--end")
     args = parser.parse_args()

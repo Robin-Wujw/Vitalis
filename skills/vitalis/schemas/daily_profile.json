@@ -29,9 +29,35 @@
       "required": ["sleep", "hrv", "recovery", "training"],
       "properties": {
         "sleep": {"type": "object"},
-        "hrv": {"type": "object"},
+        "hrv": {
+          "type": "object",
+          "properties": {
+            "streams": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["metric", "value_ms", "selected"]
+              }
+            }
+          }
+        },
         "recovery": {"type": "object"},
-        "training": {"type": "object"}
+        "training": {
+          "type": "object",
+          "properties": {
+            "workout_type_counts_7d": {
+              "type": "object",
+              "additionalProperties": {"type": "integer", "minimum": 0}
+            },
+            "recent_workouts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["date", "type", "duration_minutes", "vendor_load", "detail_available"]
+              }
+            }
+          }
+        }
       }
     },
     "states": {"type": "object"},

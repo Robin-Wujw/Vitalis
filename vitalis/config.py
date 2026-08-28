@@ -9,6 +9,7 @@ load_dotenv()
 
 class Settings:
     env: str = os.getenv("VITALIS_ENV", "dev")
+    timezone: str = os.getenv("VITALIS_TIMEZONE", "Asia/Shanghai")
 
     # 存储
     database_url: str = os.getenv(

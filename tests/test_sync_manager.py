@@ -1,6 +1,6 @@
 """测试 Zepp 同步管理器（SyncManager）。"""
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import threading
 
 import pytest
@@ -198,6 +198,31 @@ class TestSyncManager:
             "heart_rate_source": "unknown",
         }
         assert [sample.heart_rate for sample in samples] == [80, 80, 82, 81]
+
+    def test_workout_training_record_uses_shanghai_start_day(self, mock_fetcher, setup_db):
+        manager = SyncManager(mock_fetcher)
+        user = User(id="workout-local-day-user")
+        start = datetime(2026, 8, 27, 16, 30, tzinfo=timezone.utc)
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            manager._write_stream(FetchedRecord(raw=RawRecord(
+                stream="workouts",
+                source_key="sport_history:run:test",
+                start_utc=start,
+                end_utc=start + timedelta(minutes=30),
+                payload={"data": {"summary": [{
+                    "trackid": int(start.timestamp()),
+                    "end_time": int((start + timedelta(minutes=30)).timestamp()),
+                    "type": 1,
+                    "exercise_load": 40,
+                }]}},
+            )), repo, user)
+            rows = repo.training_range(user.id, date(2026, 8, 28), date(2026, 8, 28))
+
+        assert len(rows) == 1
+        assert rows[0]["workout_count"] == 1
+        assert rows[0]["total_duration"] == 30
 
     def test_dense_file_index_is_persisted_without_fake_samples(self, mock_fetcher, setup_db):
         manager = SyncManager(mock_fetcher)

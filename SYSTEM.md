@@ -679,3 +679,44 @@ the current weekly training interpretation.
   warnings; `git diff --check` passed.
 - Delivery: commit `7816a09` (`fix: preserve Zepp strength workout types`) was pushed
   to `origin/main`.
+
+## 9. Daily Pipeline Fidelity Session
+
+Date: 2026-08-28
+
+Goal: audit the real Zepp-to-DailyProfile pipeline after the workout mapping fix and
+correct any remaining loss of target-day HRV, local time, workout detail, or identity.
+
+### Detailed TODO
+
+- [x] Part 1 - Trace real data end to end.
+  - Compare normalized RMSSD streams, sleep, workout rows, analyzer features, and the
+    final decision for the connected local user.
+  - Verify each weekly workout type and each target-day HRV device stream.
+- [x] Part 2 - Correct natural-day semantics.
+  - Keep timestamp storage in UTC while grouping analysis by `Asia/Shanghai` day.
+  - Render Zepp sleep start/end using its supplied timezone offset and assign workouts
+    to their local start date.
+- [x] Part 3 - Preserve analysis-facing detail.
+  - Expose all device streams for the selected HRV metric with independent deviations.
+  - Expose recent workout type, vendor type, duration, load, HR summary, and type counts.
+  - Require explicit user identity in scoped APIs and Hermes tools.
+- [x] Part 4 - Verify and document.
+  - Re-sync the real seven-day window, regenerate the profile, run the complete suite,
+    and update architecture and operator documentation.
+
+### Verification Log
+
+- The audit found that UTC midnight, rather than the configured personal day, split
+  overnight RMSSD. The truncated target-day medians were 69/61 ms; grouping the same
+  source measurements by Shanghai day produced 71/68 ms.
+- A successful real seven-day sync wrote 40,087 normalized records. Sleep now renders
+  00:58-08:36 for the target day instead of the UTC clock values 16:58-00:36.
+- The current weekly profile explicitly contains three strength sessions (vendor type
+  52) and two runs (vendor type 1), including each session's duration, vendor load,
+  average/max heart rate, and detail availability.
+- The regenerated decision remains `TRAIN_NORMAL`, moderate, 45-60 minutes, with Zone 2
+  as the suggested type. The profile still states that aerobic intensity classification
+  is unavailable; the suggestion is not a claim that prior running minutes were Zone 2.
+- The complete suite passed 117 tests with 153 existing Python 3.14 deprecation
+  warnings; schema JSON parsing and `git diff --check` passed.

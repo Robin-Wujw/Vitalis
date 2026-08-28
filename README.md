@@ -100,8 +100,10 @@ Vitalis 通过用户浏览器中的官方登录会话连接 Zepp，不要求打�
 
 - `band_data.data_hr` 解码为带 UTC 时间戳的分钟心率，最多每天 1,440 个槽位；响应提供设备标识时保留 Balance 2 / Helio Strap 的来源边界。
 - SDNN、RMSSD、Charge/身体电量、Readiness（含皮温、睡眠 HRV/RHR、AHI/AFib）、压力、SpO2/ODI、PAI、呼吸率和乳酸阈值进入独立的时序或每日指标表。
+- UTC 时间戳按 `VITALIS_TIMEZONE`（默认 `Asia/Shanghai`）切分个人自然日；睡眠时钟使用 Zepp 返回的本地时区偏移，不把 UTC 时钟直接展示给用户。
 - `second_heart_rate/real_data` 当前只保存 `SEC_HR` 文件覆盖元数据。文件 ID 不通过健康查询 API 返回，`sample_count=0`、`parse_status=indexed` 明确表示载荷尚未解码。
 - 运动摘要保留厂商数字类型 ID；已验证的 Zepp OS `52` (`0x34`) 归一化为力量训练，未知类型仍保留原始 ID 供后续映射审计。
+- DailyProfile 保留最近 7 天每次训练的类型、厂商类型 ID、时长、负荷、平均/最大心率和详情可用状态，并提供按类型计数。
 - 各事件面按 7 天窗口拉取；API 和同步入口最多接受 730 天。实际覆盖取决于账号创建时间、佩戴情况和厂商保留窗口，空白日期不会被补造。
 
 ### 运动期间高频心率
@@ -175,7 +177,7 @@ curl localhost:8000/api/v1/health/token-status -H 'X-User-Id: 001'
 
 # 获取确定性的每日状态与训练决策
 curl 'localhost:8000/api/v1/intelligence/daily-profile?day=2026-08-27' \
-  -H 'X-User-Id: 001'
+  -H 'X-User-Id: <local-user-id>'
 
 # 查看最近 30 天月度聚合
 curl 'localhost:8000/api/v1/health/range?from=2026-01-01&to=2026-08-25&granularity=30d' \
@@ -196,7 +198,7 @@ Cookie 暂时不可见时，扩展会调用 `/connect/zepp/link/validate` 验证
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest -q        # 111 个测试，全部通过
+.venv/bin/python -m pytest -q        # 117 个测试，全部通过
 ```
 
 覆盖范围：
@@ -218,7 +220,7 @@ Cookie 暂时不可见时，扩展会调用 `/connect/zepp/link/validate` 验证
 1. **数据源插件化**：`HealthConnector` 抽象 + `register_connector` 注册表
 2. **厂商格式隔离**：`connectors/zepp/parser.py` 把 Zepp JSON 转成 Vitalis Schema，上层永远看不到厂商字段
 3. **分析逻辑与采集解耦**：连接器只产出 Schema，分析引擎只消费 Schema + 存储
-4. **多用户**：`X-User-Id` 请求头 + 表按 user_id 索引 + 调度器按用户逐一同步
+4. **多用户**：`X-User-Id` 是必填请求头，不存在隐式用户兜底；表按 user_id 索引，调度器按已授权用户逐一同步
 5. **LLM 只渲染不计算**：Hermes 只消费 DailyProfile，不生成分数、趋势、阈值或替代建议
 6. **密码不经过云端**：登录在官方页面完成，Vitalis 只接收登录后的临时访问凭据
 7. **缺失即 abstain**：缺关键目标日信号或可解释基线时输出 `INSUFFICIENT_DATA`

@@ -17,6 +17,7 @@ from vitalis.connectors.zepp.fetcher import DataFetcher, FetchWindow, FetchedRec
 from vitalis.connectors.zepp.parser import ZeppParser
 from vitalis.models import ActivityRecord, DailyHealth, SleepRecord, TrainingRecord, User
 from vitalis.storage import HealthRepository
+from vitalis.time import local_day
 
 
 _user_sync_locks_guard = threading.Lock()
@@ -343,7 +344,7 @@ class SyncManager:
                 w.user_id = user.id
                 repo.save_workout(w)
                 if w.started_at:
-                    by_day[w.started_at.date()].append(w)
+                    by_day[local_day(w.started_at)].append(w)
             for day, ws in by_day.items():
                 training = TrainingRecord(
                     user_id=user.id,

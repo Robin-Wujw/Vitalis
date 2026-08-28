@@ -101,13 +101,14 @@ class ZeppParser:
                 st_val, ed_val = sleep.get("st"), sleep.get("ed")
                 # 真实数据 st/ed 可能是时间戳（int）或 HH:MM 字符串
                 if isinstance(st_val, (int, float)) and isinstance(ed_val, (int, float)):
-                    from datetime import datetime, timezone
                     st_dt = datetime.fromtimestamp(st_val, tz=timezone.utc)
                     ed_dt = datetime.fromtimestamp(ed_val, tz=timezone.utc)
                     span = int((ed_dt - st_dt).total_seconds() // 60)
                     duration = max(span - int(sleep.get("wk", 0) or 0), 0)
-                    bedtime = st_dt.time().replace(tzinfo=None)
-                    wake_time = ed_dt.time().replace(tzinfo=None)
+                    offset = self._first_number(summary, ("tz",)) or 0
+                    offset = max(min(int(offset), 18 * 60 * 60), -18 * 60 * 60)
+                    bedtime = (st_dt + timedelta(seconds=offset)).time().replace(tzinfo=None)
+                    wake_time = (ed_dt + timedelta(seconds=offset)).time().replace(tzinfo=None)
                 else:
                     start_min, end_min = self._parse_hhmm(st_val), self._parse_hhmm(ed_val)
                     if start_min is not None and end_min is not None:

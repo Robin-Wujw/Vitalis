@@ -23,7 +23,8 @@ def query(user: str, day: str | None = None) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Fetch a Vitalis DailyProfile")
-    parser.add_argument("--user", default=os.getenv("VITALIS_USER", "001"))
+    configured_user = os.getenv("VITALIS_USER")
+    parser.add_argument("--user", default=configured_user, required=not configured_user)
     parser.add_argument("--date", help="YYYY-MM-DD; defaults to today")
     args = parser.parse_args()
     print(json.dumps(query(args.user, args.date), ensure_ascii=False, indent=2))

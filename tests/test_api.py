@@ -12,7 +12,11 @@ from vitalis.storage import HealthRepository, session_scope
 
 
 def test_connect_and_sync(client):
-    resp = client.post("/api/v1/connect/zepp", json={"source": "zepp", "sync_history": True})
+    resp = client.post(
+        "/api/v1/connect/zepp",
+        json={"source": "zepp", "sync_history": True},
+        headers={"X-User-Id": "001"},
+    )
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "connected"
@@ -22,7 +26,11 @@ def test_connect_and_sync(client):
 
 
 def test_daily_profile_after_sync(client):
-    client.post("/api/v1/connect/zepp", json={"sync_history": True})
+    client.post(
+        "/api/v1/connect/zepp",
+        json={"sync_history": True},
+        headers={"X-User-Id": "001"},
+    )
     resp = client.get("/api/v1/intelligence/daily-profile", headers={"X-User-Id": "001"})
     assert resp.status_code == 200
     body = resp.json()
@@ -104,7 +112,11 @@ def test_daily_profile_api_runs_device_baseline_to_decision(client):
 
 
 def test_unknown_source(client):
-    resp = client.post("/api/v1/connect/nonexistent", json={"sync_history": False})
+    resp = client.post(
+        "/api/v1/connect/nonexistent",
+        json={"sync_history": False},
+        headers={"X-User-Id": "001"},
+    )
     assert resp.status_code == 200
     assert resp.json()["status"] == "error"
 
@@ -113,6 +125,11 @@ def test_root_lists_sources(client):
     resp = client.get("/")
     assert resp.status_code == 200
     assert "zepp" in resp.json()["available_sources"]
+
+
+def test_user_scoped_endpoint_requires_explicit_identity(client):
+    response = client.get("/api/v1/intelligence/daily-profile")
+    assert response.status_code == 422
 
 
 def test_browser_get_connect_zepp_opens_pairing_page(client):

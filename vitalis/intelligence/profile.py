@@ -14,6 +14,7 @@ from vitalis.intelligence.contracts import (
     QualityStatus,
 )
 from vitalis.storage import HealthRepository
+from vitalis.time import local_day, local_day_utc_bounds
 
 
 SAMPLE_METRICS = (
@@ -78,9 +79,12 @@ class ProfileLoader:
                 "started_at": row.started_at,
                 "source": row.source,
                 "vendor_source": row.vendor_source,
+                "local_day": local_day(row.started_at) if row.started_at else None,
+                "detail_available": row.detail_synced,
                 "data": row.data or {},
             }
-            for row in self.repo.workouts(user_id, start, day)
+            for row in self.repo.workouts(user_id, start - timedelta(days=1), day)
+            if row.started_at and start <= local_day(row.started_at) <= day
         ]
         raw.facts = self._facts_for_day(raw)
         raw.data_quality = self._quality(raw)
@@ -112,8 +116,9 @@ class ProfileLoader:
             )
 
     def _add_sample_metrics(self, raw: RawDailyProfile, start: date) -> None:
-        start_at = datetime.combine(start, time.min)
-        end_at = datetime.combine(raw.day + timedelta(days=1), time.min) - timedelta(microseconds=1)
+        start_at, _ = local_day_utc_bounds(start)
+        _, end_at = local_day_utc_bounds(raw.day)
+        end_at -= timedelta(microseconds=1)
         for metric in SAMPLE_METRICS:
             for row in self.repo.metric_samples(
                 raw.user_id, metric, start_at, end_at, limit=MAX_SAMPLES_PER_METRIC
@@ -123,7 +128,7 @@ class ProfileLoader:
                     row.metric,
                     row.value,
                     row.unit,
-                    row.timestamp.date(),
+                    local_day(row.timestamp),
                     row.source,
                     row.source_scope,
                     row.device_id or None,

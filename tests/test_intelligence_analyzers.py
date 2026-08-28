@@ -80,3 +80,59 @@ def test_decision_abstains_when_baselines_are_not_interpretable():
     assert recovery.state == RecoveryState.INSUFFICIENT_DATA
     assert decision.action == DecisionAction.INSUFFICIENT_DATA
     assert decision.confidence.value == "NONE"
+
+
+def test_training_preserves_recent_workout_types_and_details():
+    raw = _profile()
+    raw.workouts = [
+        {
+            "local_day": TARGET - timedelta(days=1),
+            "detail_available": True,
+            "data": {
+                "type": "strength",
+                "vendor_type_id": 52,
+                "duration": 47,
+                "load": 9,
+                "heart_rate_avg": 103,
+                "heart_rate_max": 142,
+            },
+        },
+        {
+            "local_day": TARGET - timedelta(days=2),
+            "detail_available": True,
+            "data": {
+                "type": "running",
+                "vendor_type_id": 1,
+                "duration": 33,
+                "load": 92,
+                "heart_rate_avg": 151,
+                "heart_rate_max": 173,
+            },
+        },
+    ]
+
+    training = TrainingAnalyzer().analyze(raw, BaselineEngine().build(raw.series, raw.day))
+
+    assert training.workout_type_counts_7d == {"running": 1, "strength": 1}
+    assert training.strength_sessions_7d == 1
+    assert training.aerobic_minutes_7d == 33
+    assert [item.type for item in training.recent_workouts] == ["strength", "running"]
+    assert training.recent_workouts[0].vendor_type_id == 52
+    assert training.recent_workouts[1].heart_rate_max_bpm == 173
+
+
+def test_hrv_exposes_all_device_streams_without_merging_them():
+    raw = _profile(hrv_today=62)
+    raw.series["hrv_rmssd"] += _series(
+        "hrv_rmssd",
+        [58] + [48 + (i % 3) for i in range(1, 22)],
+        device="balance",
+        scope="device",
+    )
+
+    hrv = HrvAnalyzer().analyze(raw, BaselineEngine().build(raw.series, raw.day))
+
+    assert {stream.device_id for stream in hrv.streams} == {"helio", "balance"}
+    assert {stream.value_ms for stream in hrv.streams} == {58, 62}
+    assert sum(stream.selected for stream in hrv.streams) == 1
+    assert "multiple_hrv_devices_no_preferred_device_configured" in hrv.limitations

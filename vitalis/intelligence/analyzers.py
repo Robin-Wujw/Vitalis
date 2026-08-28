@@ -9,6 +9,7 @@ from .contracts import (
     Availability,
     BaselineStats,
     HrvFeatures,
+    HrvStreamFeature,
     LoadState,
     ProfileStates,
     RecoveryFeatures,
@@ -16,6 +17,7 @@ from .contracts import (
     SleepFeatures,
     SleepState,
     TrainingFeatures,
+    WorkoutFeature,
 )
 from .profile import RawDailyProfile, SeriesPoint
 
@@ -100,9 +102,31 @@ class HrvAnalyzer:
                 status=Availability.INSUFFICIENT_DATA,
                 limitations=["target_day_hrv_missing"],
             )
-        selected = max(candidates, key=lambda item: item[:3])
+        selected = max(
+            candidates,
+            key=lambda item: item[:3] + (item[3], item[4], item[5] or ""),
+        )
         _, _, _, source, scope, device_id, metric, value, baseline = selected
         deviation = BaselineEngine.deviation(value, baseline) if baseline else None
+        streams = [
+            HrvStreamFeature(
+                metric=item[6],
+                device_id=item[5],
+                value_ms=round(item[7], 2),
+                ln_rmssd=(
+                    round(log(item[7]), 4)
+                    if item[6] == "hrv_rmssd" and item[7] > 0
+                    else None
+                ),
+                deviation=(BaselineEngine.deviation(item[7], item[8]) if item[8] else None),
+                selected=item[3:8] == selected[3:8],
+            )
+            for item in sorted(
+                candidates,
+                key=lambda item: (item[6], item[5] or "", item[3], item[4]),
+            )
+            if item[6] == metric
+        ]
 
         rhr_candidates = []
         for rhr_metric in ("sleep_rhr", "resting_hr"):
@@ -120,6 +144,8 @@ class HrvAnalyzer:
         limitations = []
         if baseline is None or baseline.status == Availability.INSUFFICIENT_DATA:
             limitations.append("hrv_28d_baseline_insufficient")
+        if len({item.device_id for item in streams if item.device_id}) > 1:
+            limitations.append("multiple_hrv_devices_no_preferred_device_configured")
         if rhr_value is None:
             limitations.append("target_day_rhr_missing")
         elif rhr_deviation is None or rhr_deviation.direction == "unknown":
@@ -133,6 +159,7 @@ class HrvAnalyzer:
             deviation=deviation,
             rhr_bpm=round(rhr_value, 1) if rhr_value is not None else None,
             rhr_deviation=rhr_deviation,
+            streams=streams,
             limitations=limitations,
         )
 
@@ -176,16 +203,29 @@ class TrainingAnalyzer:
 
         aerobic_minutes = 0
         strength_sessions = 0
+        type_counts: dict[str, int] = {}
+        recent_workouts: list[WorkoutFeature] = []
         for workout in raw.workouts:
-            started = workout.get("started_at")
-            if not started or started.date() < raw.day - timedelta(days=6):
+            workout_day = workout.get("local_day")
+            if not workout_day or workout_day < raw.day - timedelta(days=6):
                 continue
             data = workout.get("data", {})
             workout_type = str(data.get("type", "")).lower()
+            type_counts[workout_type] = type_counts.get(workout_type, 0) + 1
             if workout_type in self.AEROBIC_TYPES:
                 aerobic_minutes += int(data.get("duration", 0) or 0)
             if workout_type in self.STRENGTH_TYPES:
                 strength_sessions += 1
+            recent_workouts.append(WorkoutFeature(
+                date=workout_day,
+                type=workout_type,
+                vendor_type_id=data.get("vendor_type_id"),
+                duration_minutes=int(data.get("duration", 0) or 0),
+                vendor_load=float(data.get("load", 0) or 0),
+                heart_rate_avg_bpm=int(data.get("heart_rate_avg", 0) or 0) or None,
+                heart_rate_max_bpm=int(data.get("heart_rate_max", 0) or 0) or None,
+                detail_available=bool(workout.get("detail_available")),
+            ))
         limitations = ["training_load_is_vendor_derived"]
         if baseline is None or baseline.status == Availability.INSUFFICIENT_DATA:
             limitations.append("training_load_28d_baseline_insufficient")
@@ -201,6 +241,8 @@ class TrainingAnalyzer:
             load_28d=round(sum(float(item.get("total_load", 0)) for item in recent_28), 1),
             aerobic_minutes_7d=aerobic_minutes,
             strength_sessions_7d=strength_sessions,
+            workout_type_counts_7d=dict(sorted(type_counts.items())),
+            recent_workouts=sorted(recent_workouts, key=lambda item: item.date, reverse=True),
             load_deviation=deviation,
             load_state=load_state,
             limitations=limitations,

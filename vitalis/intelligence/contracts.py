@@ -152,6 +152,15 @@ class SleepFeatures(BaseModel):
     limitations: list[str] = Field(default_factory=list)
 
 
+class HrvStreamFeature(BaseModel):
+    metric: Literal["hrv_rmssd", "hrv_sdnn", "sleep_hrv"]
+    device_id: str | None = None
+    value_ms: float
+    ln_rmssd: float | None = None
+    deviation: Deviation | None = None
+    selected: bool = False
+
+
 class HrvFeatures(BaseModel):
     status: Availability
     preferred_metric: Literal["hrv_rmssd", "hrv_sdnn", "sleep_hrv"] | None = None
@@ -161,6 +170,7 @@ class HrvFeatures(BaseModel):
     deviation: Deviation | None = None
     rhr_bpm: float | None = None
     rhr_deviation: Deviation | None = None
+    streams: list[HrvStreamFeature] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
 
 
@@ -174,6 +184,17 @@ class RecoveryFeatures(BaseModel):
     limitations: list[str] = Field(default_factory=list)
 
 
+class WorkoutFeature(BaseModel):
+    date: date
+    type: str
+    vendor_type_id: int | None = None
+    duration_minutes: int = Field(ge=0)
+    vendor_load: float = Field(ge=0)
+    heart_rate_avg_bpm: int | None = Field(default=None, ge=1)
+    heart_rate_max_bpm: int | None = Field(default=None, ge=1)
+    detail_available: bool = False
+
+
 class TrainingFeatures(BaseModel):
     status: Availability
     today_duration_minutes: int | None = None
@@ -184,6 +205,8 @@ class TrainingFeatures(BaseModel):
     load_28d: float | None = None
     aerobic_minutes_7d: int | None = None
     strength_sessions_7d: int | None = None
+    workout_type_counts_7d: dict[str, int] = Field(default_factory=dict)
+    recent_workouts: list[WorkoutFeature] = Field(default_factory=list)
     load_deviation: Deviation | None = None
     load_state: LoadState = LoadState.INSUFFICIENT_DATA
     limitations: list[str] = Field(default_factory=list)

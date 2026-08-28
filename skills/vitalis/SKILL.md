@@ -46,4 +46,4 @@ interpretation limits are summarized in `knowledge/evidence.md`.
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
 | `VITALIS_API` | `http://localhost:8000` | Vitalis API origin |
-| `VITALIS_USER` | `001` | Local Vitalis user ID |
+| `VITALIS_USER` | required | Local Vitalis user ID; there is no implicit user fallback |

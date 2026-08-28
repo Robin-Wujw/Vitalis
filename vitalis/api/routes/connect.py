@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 import qrcode
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
@@ -59,7 +59,7 @@ def zepp_authorize(user_id: str = Depends(require_user_id)) -> dict:
 
 
 @router.get("/zepp/scan", response_class=HTMLResponse, summary="网页扫码页（渲染二维码）")
-def zepp_scan_page(request: Request, user: str = "001") -> str:
+def zepp_scan_page(request: Request, user: str = Query(..., min_length=1)) -> str:
     """扫码网页：展示二维码 PNG，自动轮询授权结果，成功后自动同步。
 
     公网部署时浏览器访问：
@@ -622,7 +622,7 @@ async function doImport(){{
 
 
 @router.get("/zepp", include_in_schema=False)
-def zepp_connect_browser(user: str = "001") -> RedirectResponse:
+def zepp_connect_browser(user: str = Query(..., min_length=1)) -> RedirectResponse:
     """Send browser navigation to the user-facing pairing flow."""
     query = urlencode({"user": user})
     return RedirectResponse(url=f"/api/v1/connect/zepp/scan?{query}")

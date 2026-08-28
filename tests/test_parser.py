@@ -290,6 +290,31 @@ def test_parse_band_heart_rate_uses_local_midnight_and_device():
     assert {row.device_id for row in rows} == {"A1B2C3D4E5F60708"}
 
 
+def test_parse_band_sleep_renders_vendor_local_clock_time():
+    start = datetime(2026, 8, 27, 16, 58, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 28, 0, 36, tzinfo=timezone.utc)
+    summary = base64.b64encode(json.dumps({
+        "tz": 8 * 60 * 60,
+        "slp": {
+            "st": int(start.timestamp()),
+            "ed": int(end.timestamp()),
+            "wk": 11,
+            "dp": 70,
+            "lt": 300,
+            "ss": 83,
+        },
+    }).encode()).decode()
+
+    sleeps, _ = ZeppParser().parse_band({"data": {"items": [{
+        "date_time": "2026-08-28",
+        "summary": summary,
+    }]}})
+
+    sleep = sleeps[date(2026, 8, 28)]
+    assert sleep.bedtime.isoformat() == "00:58:00"
+    assert sleep.wake_time.isoformat() == "08:36:00"
+
+
 def test_parse_charge_daily_and_timestamped_samples():
     raw = {"items": [{
         "eventType": "Charge",

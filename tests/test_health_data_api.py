@@ -2,7 +2,14 @@
 
 from datetime import date, datetime, timezone
 
-from vitalis.models import DailyMetric, MetricSample, Workout, WorkoutSample, WorkoutType
+from vitalis.models import (
+    DailyMetric,
+    DenseDataFile,
+    MetricSample,
+    Workout,
+    WorkoutSample,
+    WorkoutType,
+)
 from vitalis.storage import HealthRepository, session_scope
 
 
@@ -70,6 +77,35 @@ def test_metric_writes_deduplicate_same_batch(client):
     assert [metric["value"] for metric in daily.json()["metrics"]] == [75]
 
 
+def test_metric_writes_preserve_two_devices_at_same_timestamp(client):
+    user_id = "multi-device-metrics-user"
+    timestamp = datetime(2026, 8, 25, 8, 5, tzinfo=timezone.utc)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        written = repo.save_metric_samples([
+            MetricSample(
+                user_id=user_id, metric="hrv_rmssd", timestamp=timestamp,
+                value=52, unit="ms", device_id="A1B2C3D4E5F60708",
+            ),
+            MetricSample(
+                user_id=user_id, metric="hrv_rmssd", timestamp=timestamp,
+                value=59, unit="ms", device_id="B1C2D3E4F5061728",
+            ),
+        ])
+
+    assert written == 2
+    series = client.get(
+        "/api/v1/health/metrics/hrv_rmssd"
+        "?from=2026-08-25T00:00:00Z&to=2026-08-26T00:00:00Z&resolution=raw",
+        headers={"X-User-Id": user_id},
+    )
+    assert series.status_code == 200
+    assert {point["device_id"] for point in series.json()["points"]} == {
+        "A1B2C3D4E5F60708", "B1C2D3E4F5061728",
+    }
+
+
 def test_workout_list_and_detail(client):
     user_id = "workout-user"
     workout = Workout(
@@ -100,6 +136,52 @@ def test_workout_list_and_detail(client):
     )
     assert detail.status_code == 200
     assert detail.json()["detail"]["samples"][0]["heart_rate"] == 145
+
+
+def test_dense_file_coverage_withholds_file_ids_and_reports_indexed_state(client):
+    user_id = "dense-file-user"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        written = repo.save_dense_data_files([
+            DenseDataFile(
+                user_id=user_id,
+                stream="second_heart_rate",
+                file_id="private-opaque-file-id",
+                file_type="SEC_HR",
+                date=date(2026, 8, 25),
+                start_utc=datetime(2026, 8, 25, 8, 0, tzinfo=timezone.utc),
+                end_utc=datetime(2026, 8, 25, 9, 0, tzinfo=timezone.utc),
+                source_scope="device",
+                device_id="A1B2C3D4E5F60708",
+            ),
+            DenseDataFile(
+                user_id=user_id,
+                stream="second_heart_rate",
+                file_id="private-opaque-file-id",
+                file_type="SEC_HR",
+                date=date(2026, 8, 25),
+                start_utc=datetime(2026, 8, 25, 10, 0, tzinfo=timezone.utc),
+                end_utc=datetime(2026, 8, 25, 11, 0, tzinfo=timezone.utc),
+                source_scope="device",
+                device_id="A1B2C3D4E5F60708",
+            ),
+        ])
+        assert written == 2
+
+    response = client.get(
+        "/api/v1/health/dense-files/second_heart_rate"
+        "?from=2026-08-25&to=2026-08-25",
+        headers={"X-User-Id": user_id},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["payload_decoded"] is False
+    assert len(payload["files"]) == 2
+    assert payload["files"][0]["parse_status"] == "indexed"
+    assert payload["files"][0]["sample_count"] == 0
+    assert "file_id" not in payload["files"][0]
+    assert "private-opaque-file-id" not in response.text
 
 
 def test_normalized_workout_samples_are_isolated_and_returned_in_order(client):

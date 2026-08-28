@@ -445,3 +445,90 @@ already signed-in Zepp page does not produce a credential submission from extens
   diff --check` passed.
 - Part 4 (delivery): commit `e44a615` (`feat: complete Zepp browser pairing`) was
   pushed from local `main` to `origin/main` successfully.
+
+## 9. Current Work Session - 2026-08-28 (Complete Zepp Data Coverage)
+
+Goal: ingest every real Zepp stream that can be identified and normalized without
+inventing fields, preserve Balance 2 and Helio Strap provenance, verify the longest
+practical history and credential-continuity boundary, and start the Zepp OS device-side
+fallback when browser credentials cannot be renewed indefinitely.
+
+### Detailed TODO
+
+- [x] Part 1 - Establish the clean baseline and audit the latest reference behavior.
+  - Confirm local `main` and `origin/main` start at `ea6e18a` with a clean worktree.
+  - Review the latest public Zepp reference changes and the official Zepp OS sensor,
+    background-service, messaging, and HTTP capabilities.
+  - Record only aggregate real-account evidence; never persist credentials, device
+    identifiers, file identifiers, signed URLs, or measured health values in Git.
+- [x] Part 2 - Inventory every real-account cloud capability and response contract.
+  - Probe inline V2 events, user events, date-string events, and file-info events over a
+    cadence-appropriate read-only window.
+  - Attribute supported streams to Balance 2, Helio Strap, user-fused, or unknown using
+    verified vendor device maps.
+  - Separate unavailable streams from available-but-not-yet-decoded streams.
+- [ ] Part 3 - Complete structured all-day and wellness normalization.
+  - Decode minute-level `band_data.data_hr` with timestamps and device provenance when
+    supplied.
+  - Preserve per-sample SDNN/RMSSD attribution, Charge/body-battery, readiness including
+    skin-temperature and sleep-derived fields, stress summaries, SpO2/ODI, PAI, and
+    lactate-threshold fields that are present in verified response shapes.
+  - Add focused parser, fetcher, storage, and synchronization regressions for each new
+    normalized contract.
+- [ ] Part 4 - Represent and investigate dense second-heart-rate files honestly.
+  - Fetch `second_heart_rate/real_data` file indexes and store only normalized metadata
+    needed for resumable ingestion, with device attribution and no signed URL leakage.
+  - Determine the official file-resolution/download contract and decode `SEC_HR` only
+    if the binary format can be verified from real data or a trustworthy public source.
+  - Never present file metadata as decoded heart-rate samples; expose capability and
+    coverage separately until actual samples pass validation.
+- [ ] Part 5 - Perform real historical synchronization and coverage acceptance.
+  - Synchronize the longest safe history supported by each stream with chunking that
+    avoids vendor response caps and SQLite contention.
+  - Report record counts, date coverage, device attribution, gaps, and residual raw-only
+    streams without exposing identifiers or measured values.
+  - Run focused tests, the complete suite, syntax checks, and `git diff --check`.
+- [ ] Part 6 - Establish the credential-continuity boundary.
+  - Verify browser-link renewal while the official session remains valid and distinguish
+    server token validity from extension cookie visibility.
+  - Document that logout, cookie expiry, password changes, and vendor risk controls
+    cannot be bypassed without an official refresh credential.
+  - Fix any false `needs_login` transition that can be reproduced while the saved
+    credential still validates.
+- [ ] Part 7 - Start the Balance 2 Zepp OS fallback channel if renewal is finite.
+  - Scaffold a Zepp OS API_LEVEL-compatible device app, persistent app service, and
+    companion-side upload path for Balance 2.
+  - Collect only supported sensor data with explicit permissions and bounded buffering;
+    do not claim Helio Strap support because it is not a Zepp OS app device.
+  - Add local validation instructions and keep cloud synchronization as the historical
+    source of truth.
+- [ ] Part 8 - Synchronize documentation and deliver.
+  - Update `README.md` and `docs/ARCHITECTURE.md` with implemented streams, provenance,
+    history limits, renewal limits, and the Zepp OS fallback boundary.
+  - Review changes for secrets and unrelated files, commit the verified implementation,
+    push `main`, record commit hashes, and confirm local and remote branches match.
+
+### Verification Log
+
+- Part 1 (baseline): local `main` and `origin/main` both started at `ea6e18a`; the
+  worktree was clean. The latest public reference commits dated 2026-08-25 add event
+  capability probing, three event surfaces, ODI and body/training views, but still stop
+  at `second_heart_rate` file metadata rather than downloading `SEC_HR` payloads.
+- Part 1 (Zepp OS boundary): official documentation lists Balance 2 at API_LEVEL 4.2
+  and Zepp OS 5.0, while Helio Strap is absent from the Zepp OS app-device list. Device
+  app services may use HeartRate in the background but not high-power Accelerometer;
+  a companion service can relay binary messages and upload through HTTP.
+- Part 2 (initial capability evidence): a read-only real-account probe found available
+  RMSSD/SDNN, stress, body-battery, readiness, daily health, SpO2/ODI, respiratory rate,
+  PAI, lactate threshold, and `second_heart_rate` file indexes. Blood pressure, emotion,
+  weight, and standalone skin-temperature events were empty; readiness still contained
+  skin-temperature, AHI, AFib, sleep-HRV, and sleep-RHR fields.
+- Part 2 (dense-heart evidence): the latest seven-day index contained `SEC_HR` entries
+  for both devices. Helio Strap entries represented much longer sessions (about 147.5
+  indexed hours total, 106.7 minutes average, 7.8 hours maximum) than Balance 2 entries
+  (about 34.9 hours total, 20.1 minutes average, 1.7 hours maximum). These are coverage
+  metadata, not decoded heart-rate readings.
+- Part 2 (verified shapes): real `band_data.data_hr` decodes to at most 1,440
+  single-byte minute slots positioned by the item's local date and summary timezone;
+  Charge, SDNN and RMSSD use `startTime` plus millisecond offsets, while readiness
+  directly exposes skin-temperature, AHI, AFib, sleep-HRV and sleep-RHR fields.

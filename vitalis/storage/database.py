@@ -62,6 +62,147 @@ def _lightweight_migrations() -> None:
         if cols and "region_host" not in cols:
             conn.execute(sa_text("ALTER TABLE auth_tokens ADD COLUMN region_host VARCHAR(256) DEFAULT ''"))
 
+        if is_sqlite:
+            indexes = conn.execute(sa_text("PRAGMA index_list(metric_samples)")).fetchall()
+            unique_columns: list[list[str]] = []
+            for index in indexes:
+                if not index[2]:
+                    continue
+                name = str(index[1]).replace("'", "''")
+                unique_columns.append([
+                    row[2] for row in conn.execute(sa_text(f"PRAGMA index_info('{name}')"))
+                ])
+            old_key = ["user_id", "source", "metric", "timestamp"]
+            if old_key in unique_columns:
+                old_count = conn.execute(sa_text("SELECT COUNT(*) FROM metric_samples")).scalar_one()
+                conn.execute(sa_text("ALTER TABLE metric_samples RENAME TO metric_samples_legacy"))
+                conn.execute(sa_text("""
+                    CREATE TABLE metric_samples (
+                        id INTEGER NOT NULL PRIMARY KEY,
+                        user_id VARCHAR(64) NOT NULL,
+                        source VARCHAR(32) NOT NULL,
+                        metric VARCHAR(64) NOT NULL,
+                        timestamp DATETIME NOT NULL,
+                        value FLOAT NOT NULL,
+                        unit VARCHAR(24) NOT NULL,
+                        source_scope VARCHAR(24) NOT NULL,
+                        device_id VARCHAR(128) NOT NULL DEFAULT '',
+                        CONSTRAINT uq_metric_sample UNIQUE
+                            (user_id, source, metric, timestamp, device_id)
+                    )
+                """))
+                conn.execute(sa_text("""
+                    INSERT INTO metric_samples
+                        (id, user_id, source, metric, timestamp, value, unit, source_scope, device_id)
+                    SELECT id, user_id, source, metric, timestamp, value, unit, source_scope,
+                           COALESCE(device_id, '')
+                    FROM metric_samples_legacy
+                """))
+                new_count = conn.execute(sa_text("SELECT COUNT(*) FROM metric_samples")).scalar_one()
+                if new_count != old_count:
+                    raise RuntimeError("metric_samples migration row-count mismatch")
+                conn.execute(sa_text("DROP TABLE metric_samples_legacy"))
+                conn.execute(sa_text("CREATE INDEX ix_metric_samples_user_id ON metric_samples (user_id)"))
+                conn.execute(sa_text("CREATE INDEX ix_metric_samples_metric ON metric_samples (metric)"))
+                conn.execute(sa_text("CREATE INDEX ix_metric_samples_timestamp ON metric_samples (timestamp)"))
+
+            dense_indexes = conn.execute(
+                sa_text("PRAGMA index_list(dense_data_files)")
+            ).fetchall()
+            dense_unique_columns: list[list[str]] = []
+            for index in dense_indexes:
+                if not index[2]:
+                    continue
+                name = str(index[1]).replace("'", "''")
+                dense_unique_columns.append([
+                    row[2] for row in conn.execute(sa_text(f"PRAGMA index_info('{name}')"))
+                ])
+            dense_old_key = ["user_id", "source", "stream", "file_id"]
+            if dense_old_key in dense_unique_columns:
+                old_count = conn.execute(sa_text("SELECT COUNT(*) FROM dense_data_files")).scalar_one()
+                conn.execute(sa_text("ALTER TABLE dense_data_files RENAME TO dense_data_files_legacy"))
+                conn.execute(sa_text("""
+                    CREATE TABLE dense_data_files (
+                        id INTEGER NOT NULL PRIMARY KEY,
+                        user_id VARCHAR(64) NOT NULL,
+                        source VARCHAR(32) NOT NULL,
+                        stream VARCHAR(64) NOT NULL,
+                        file_id VARCHAR(256) NOT NULL,
+                        file_type VARCHAR(64) NOT NULL,
+                        date DATE,
+                        start_utc DATETIME,
+                        end_utc DATETIME,
+                        source_scope VARCHAR(24) NOT NULL,
+                        device_id VARCHAR(128) NOT NULL DEFAULT '',
+                        parse_status VARCHAR(24) NOT NULL,
+                        sample_count INTEGER NOT NULL,
+                        CONSTRAINT uq_dense_data_file UNIQUE
+                            (user_id, source, stream, file_id, start_utc, device_id)
+                    )
+                """))
+                conn.execute(sa_text("""
+                    INSERT INTO dense_data_files
+                        (id, user_id, source, stream, file_id, file_type, date, start_utc,
+                         end_utc, source_scope, device_id, parse_status, sample_count)
+                    SELECT id, user_id, source, stream, file_id, file_type, date, start_utc,
+                           end_utc, source_scope, COALESCE(device_id, ''), parse_status, sample_count
+                    FROM dense_data_files_legacy
+                """))
+                new_count = conn.execute(sa_text("SELECT COUNT(*) FROM dense_data_files")).scalar_one()
+                if new_count != old_count:
+                    raise RuntimeError("dense_data_files migration row-count mismatch")
+                conn.execute(sa_text("DROP TABLE dense_data_files_legacy"))
+                for column in ("user_id", "stream", "date", "start_utc", "parse_status"):
+                    conn.execute(sa_text(
+                        f"CREATE INDEX ix_dense_data_files_{column} ON dense_data_files ({column})"
+                    ))
+        else:
+            constraint_columns = [
+                row[0] for row in conn.execute(sa_text("""
+                    SELECT kcu.column_name
+                    FROM information_schema.table_constraints tc
+                    JOIN information_schema.key_column_usage kcu
+                      ON tc.constraint_name = kcu.constraint_name
+                     AND tc.table_schema = kcu.table_schema
+                    WHERE tc.table_name = 'metric_samples'
+                      AND tc.constraint_name = 'uq_metric_sample'
+                    ORDER BY kcu.ordinal_position
+                """))
+            ]
+            if constraint_columns == ["user_id", "source", "metric", "timestamp"]:
+                conn.execute(sa_text("UPDATE metric_samples SET device_id = '' WHERE device_id IS NULL"))
+                conn.execute(sa_text("ALTER TABLE metric_samples ALTER COLUMN device_id SET DEFAULT ''"))
+                conn.execute(sa_text("ALTER TABLE metric_samples ALTER COLUMN device_id SET NOT NULL"))
+                conn.execute(sa_text("ALTER TABLE metric_samples DROP CONSTRAINT uq_metric_sample"))
+                conn.execute(sa_text("""
+                    ALTER TABLE metric_samples ADD CONSTRAINT uq_metric_sample
+                    UNIQUE (user_id, source, metric, timestamp, device_id)
+                """))
+
+            dense_constraint_columns = [
+                row[0] for row in conn.execute(sa_text("""
+                    SELECT kcu.column_name
+                    FROM information_schema.table_constraints tc
+                    JOIN information_schema.key_column_usage kcu
+                      ON tc.constraint_name = kcu.constraint_name
+                     AND tc.table_schema = kcu.table_schema
+                    WHERE tc.table_name = 'dense_data_files'
+                      AND tc.constraint_name = 'uq_dense_data_file'
+                    ORDER BY kcu.ordinal_position
+                """))
+            ]
+            if dense_constraint_columns == ["user_id", "source", "stream", "file_id"]:
+                conn.execute(sa_text(
+                    "UPDATE dense_data_files SET device_id = '' WHERE device_id IS NULL"
+                ))
+                conn.execute(sa_text(
+                    "ALTER TABLE dense_data_files DROP CONSTRAINT uq_dense_data_file"
+                ))
+                conn.execute(sa_text("""
+                    ALTER TABLE dense_data_files ADD CONSTRAINT uq_dense_data_file
+                    UNIQUE (user_id, source, stream, file_id, start_utc, device_id)
+                """))
+
 
 def get_session() -> Iterator[Session]:
     db = SessionLocal()

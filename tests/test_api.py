@@ -1,6 +1,7 @@
 """API 端到端测试：mock Zepp 下完整走通 连接 -> 同步 -> 查询 -> 分析。"""
 
 import hashlib
+from datetime import datetime, timezone
 import importlib
 
 from starlette.requests import Request
@@ -337,6 +338,67 @@ def test_browser_link_renews_and_reports_disconnect(client):
     assert status["connection_message"] == "browser session ended"
 
 
+def test_browser_link_server_validation_recovers_false_disconnect(client):
+    code = client.post(
+        "/api/v1/connect/zepp/pair?sync_days=1",
+        headers={"X-User-Id": "validate-user"},
+    ).json()["pairing_code"]
+    paired = client.post(
+        f"/api/v1/connect/zepp/pair/{code}/credentials",
+        json={"cookie": '{"userid":"vendor-validate","apptoken":"saved-token"}'},
+    ).json()
+    auth = {"Authorization": f"Bearer {paired['browser_link_token']}"}
+    client.post(
+        "/api/v1/connect/zepp/link/disconnected",
+        headers=auth,
+        json={"reason": "cookie temporarily invisible"},
+    )
+
+    validated = client.post("/api/v1/connect/zepp/link/validate", headers=auth)
+    assert validated.status_code == 200
+    assert validated.json()["status"] == "connected"
+    status = client.get(
+        "/api/v1/connect/zepp/token", headers={"X-User-Id": "validate-user"}
+    ).json()
+    assert status["connection_status"] == "connected"
+
+
+def test_browser_link_validation_network_failure_keeps_connection(client, monkeypatch):
+    from vitalis.api.routes import zepp_pairing
+    from vitalis.connectors.zepp import ZeppAuthError
+
+    code = client.post(
+        "/api/v1/connect/zepp/pair?sync_days=1",
+        headers={"X-User-Id": "validate-network-user"},
+    ).json()["pairing_code"]
+    paired = client.post(
+        f"/api/v1/connect/zepp/pair/{code}/credentials",
+        json={"cookie": '{"userid":"vendor-network","apptoken":"saved-token"}'},
+    ).json()
+    auth = {"Authorization": f"Bearer {paired['browser_link_token']}"}
+
+    class UnavailableClient:
+        def verify(self):
+            raise ZeppAuthError("网络错误: temporary failure")
+
+    class UnavailableConnector:
+        def _client_for(self, *_args, **_kwargs):
+            return UnavailableClient()
+
+    monkeypatch.setattr(
+        zepp_pairing, "get_connector", lambda _source: UnavailableConnector()
+    )
+    response = client.post("/api/v1/connect/zepp/link/validate", headers=auth)
+
+    assert response.status_code == 503
+    status = client.get(
+        "/api/v1/connect/zepp/token",
+        headers={"X-User-Id": "validate-network-user"},
+    ).json()
+    assert status["connection_status"] == "connected"
+    assert status["needs_login"] is False
+
+
 def test_browser_link_rejects_invalid_token(client):
     response = client.post(
         "/api/v1/connect/zepp/link/credentials",
@@ -345,6 +407,56 @@ def test_browser_link_rejects_invalid_token(client):
     )
     assert response.status_code == 401
     assert "browser_link_token" not in response.text
+
+
+def test_balance2_device_link_ingests_idempotent_callback_samples(client):
+    created = client.post(
+        "/api/v1/connect/zepp/device-link",
+        headers={"X-User-Id": "balance2-device-user"},
+    )
+    assert created.status_code == 200
+    token = created.json()["device_link_token"]
+    assert len(token) >= 32
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    auth = {"Authorization": f"Bearer {token}"}
+    batch = {"samples": [
+        {"timestamp": now_ms - 2000, "heart_rate": 72},
+        {"timestamp": now_ms - 1000, "heart_rate": 73},
+    ]}
+
+    first = client.post(
+        "/api/v1/connect/zepp/device-link/heart-rate", headers=auth, json=batch
+    )
+    second = client.post(
+        "/api/v1/connect/zepp/device-link/heart-rate", headers=auth, json=batch
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["accepted"] == 2
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        rows = repo.metric_samples(
+            "balance2-device-user",
+            "heart_rate",
+            datetime.fromtimestamp((now_ms - 3000) / 1000, tz=timezone.utc),
+            datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc),
+        )
+        link = repo.device_link(hashlib.sha256(token.encode()).hexdigest())
+    assert len(rows) == 2
+    assert {row.source for row in rows} == {"zepp_os"}
+    assert {row.source_scope for row in rows} == {"device_callback"}
+    assert {row.device_id for row in rows} == {"balance2_zepp_os"}
+    assert link is not None and link.last_seen_at is not None
+
+
+def test_balance2_device_upload_rejects_invalid_link(client):
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    response = client.post(
+        "/api/v1/connect/zepp/device-link/heart-rate",
+        headers={"Authorization": f"Bearer {'x' * 48}"},
+        json={"samples": [{"timestamp": now_ms, "heart_rate": 72}]},
+    )
+    assert response.status_code == 401
 
 
 def test_non_auth_link_sync_failure_keeps_connection_valid(monkeypatch):

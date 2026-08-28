@@ -78,7 +78,10 @@ class MetricSample(Base):
 
     __tablename__ = "metric_samples"
     __table_args__ = (
-        UniqueConstraint("user_id", "source", "metric", "timestamp", name="uq_metric_sample"),
+        UniqueConstraint(
+            "user_id", "source", "metric", "timestamp", "device_id",
+            name="uq_metric_sample",
+        ),
         {"info": {"timescale": True}},
     )
 
@@ -90,7 +93,7 @@ class MetricSample(Base):
     value: Mapped[float] = mapped_column(Float)
     unit: Mapped[str] = mapped_column(String(24), default="")
     source_scope: Mapped[str] = mapped_column(String(24), default="unknown")
-    device_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    device_id: Mapped[str] = mapped_column(String(128), default="", nullable=False)
 
 
 class DailyMetric(Base):
@@ -111,6 +114,33 @@ class DailyMetric(Base):
     unit: Mapped[str] = mapped_column(String(24), default="")
     source_scope: Mapped[str] = mapped_column(String(24), default="unknown")
     device_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class DenseDataFile(Base):
+    """Indexed vendor file whose payload has not necessarily been decoded."""
+
+    __tablename__ = "dense_data_files"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "source", "stream", "file_id", "start_utc", "device_id",
+            name="uq_dense_data_file",
+        ),
+        {"info": {"timescale": True}},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    source: Mapped[str] = mapped_column(String(32), default="zepp")
+    stream: Mapped[str] = mapped_column(String(64), index=True)
+    file_id: Mapped[str] = mapped_column(String(256))
+    file_type: Mapped[str] = mapped_column(String(64), default="")
+    date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    start_utc: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    end_utc: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    source_scope: Mapped[str] = mapped_column(String(24), default="unknown")
+    device_id: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    parse_status: Mapped[str] = mapped_column(String(24), default="indexed", index=True)
+    sample_count: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class Workout(Base):
@@ -239,4 +269,17 @@ class ZeppBrowserLink(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     last_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ZeppDeviceLink(Base):
+    """Revocable upload link for the user-owned Balance 2 Zepp OS app."""
+
+    __tablename__ = "zepp_device_links"
+
+    token_digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    device_label: Mapped[str] = mapped_column(String(64), default="balance2_zepp_os")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

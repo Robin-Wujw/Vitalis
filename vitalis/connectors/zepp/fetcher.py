@@ -311,42 +311,38 @@ class DataFetcher:
 
     def fetch_daily_statistics_records(self, window: FetchWindow) -> list[FetchedRecord]:
         records: list[FetchedRecord] = []
-        from_ms = int(window.start.timestamp() * 1000)
-        to_ms = int(window.end.timestamp() * 1000)
-        # DailyHealth / summary
-        event = self.connector.fetch_events("DailyHealth", "summary", from_ms, to_ms, 2000, True)
-        records.append(
-            FetchedRecord(
-                raw=RawRecord(
-                    stream="daily_summary",
-                    source_key=f"events:DailyHealth:summary:{from_ms}:{to_ms}",
-                    start_utc=window.start,
-                    end_utc=window.end,
-                    payload=event,
-                )
-            )
-        )
-        # 可选子流：Charge / readiness
-        for event_type, sub_type in (("Charge", "real_data"), ("readiness", "watch_score")):
-            try:
-                payload = self.connector.fetch_events(
-                    event_type, sub_type, from_ms, to_ms, 2000, True
-                )
-                records.append(
-                    FetchedRecord(
-                        raw=RawRecord(
-                            stream="daily_summary",
-                            source_key=f"events:{event_type}:{sub_type}:{from_ms}:{to_ms}",
-                            start_utc=window.start,
-                            end_utc=window.end,
-                            payload=payload,
-                        )
+        for chunk in window.chunks(CHUNK_DAYS):
+            from_ms = int(chunk.start.timestamp() * 1000)
+            to_ms = int(chunk.end.timestamp() * 1000)
+            event = self.connector.fetch_events("DailyHealth", "summary", from_ms, to_ms, 2000, True)
+            records.append(FetchedRecord(raw=RawRecord(
+                stream="daily_summary",
+                source_key=f"events:DailyHealth:summary:{from_ms}:{to_ms}",
+                start_utc=chunk.start,
+                end_utc=chunk.end,
+                payload=event,
+            )))
+            for event_type, sub_type in (
+                ("Charge", "real_data"),
+                ("Charge", "stress_data"),
+                ("Charge", "insight_data"),
+                ("readiness", "watch_score"),
+            ):
+                try:
+                    payload = self.connector.fetch_events(
+                        event_type, sub_type, from_ms, to_ms, 2000, True
                     )
-                )
-            except ZeppAuthError as exc:
-                if "Unavailable" in str(exc) or "unavailable" in str(exc).lower():
-                    continue
-                raise
+                    records.append(FetchedRecord(raw=RawRecord(
+                        stream="daily_summary",
+                        source_key=f"events:{event_type}:{sub_type}:{from_ms}:{to_ms}",
+                        start_utc=chunk.start,
+                        end_utc=chunk.end,
+                        payload=payload,
+                    )))
+                except ZeppAuthError as exc:
+                    if "Unavailable" in str(exc) or "unavailable" in str(exc).lower():
+                        continue
+                    raise
         # WatchSportStatistics: SPORT_LOAD / VO2_MAX
         for statistic in ("SPORT_LOAD", "VO2_MAX"):
             try:
@@ -384,7 +380,7 @@ class DataFetcher:
         )
         records: list[FetchedRecord] = []
         for label, surface, event_type, sub_type, chunk_days in specs:
-            chunks = window.chunks(chunk_days) if chunk_days else [window]
+            chunks = window.chunks(chunk_days or CHUNK_DAYS)
             for chunk in chunks:
                 from_ms = int(chunk.start.timestamp() * 1000)
                 to_ms = int(chunk.end.timestamp() * 1000)
@@ -408,6 +404,48 @@ class DataFetcher:
                     payload=payload,
                     capability="unverified",
                 )))
+        for sub_type in ("odi", "osa_event"):
+            for chunk in window.chunks(CHUNK_DAYS):
+                try:
+                    payload = self.connector.fetch_user_events_date_string(
+                        "blood_oxygen",
+                        sub_type,
+                        chunk.start.isoformat().replace("+00:00", "Z"),
+                        chunk.end.isoformat().replace("+00:00", "Z"),
+                    )
+                except ZeppAuthError:
+                    continue
+                records.append(FetchedRecord(raw=RawRecord(
+                    stream="wellness",
+                    source_key=f"wellness:spo2:user_day:{chunk.start_day()}:{chunk.end_day()}:{sub_type}",
+                    start_utc=chunk.start,
+                    end_utc=chunk.end,
+                    payload=payload,
+                    capability="unverified",
+                )))
+        return records
+
+    # ---- dense measurement file indexes ----
+
+    def fetch_dense_file_records(self, window: FetchWindow) -> list[FetchedRecord]:
+        records: list[FetchedRecord] = []
+        for chunk in window.chunks(CHUNK_DAYS):
+            from_ms = int(chunk.start.timestamp() * 1000)
+            to_ms = int(chunk.end.timestamp() * 1000)
+            try:
+                payload = self.connector.fetch_file_info_events(
+                    "second_heart_rate", "real_data", from_ms, to_ms, 2000
+                )
+            except ZeppAuthError:
+                continue
+            records.append(FetchedRecord(raw=RawRecord(
+                stream="dense_files",
+                source_key=f"file_info:second_heart_rate:{chunk.start_day()}:{chunk.end_day()}",
+                start_utc=chunk.start,
+                end_utc=chunk.end,
+                payload=payload,
+                capability="indexed",
+            )))
         return records
 
     # ---- workout detail (pending) ----

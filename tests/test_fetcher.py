@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from vitalis.connectors.zepp.fetcher import (
+    DataFetcher,
     FetchWindow,
     _heart_rate_cursor,
     _heart_rate_items,
@@ -89,3 +90,64 @@ class TestPayloadItems:
 
     def test_empty(self):
         assert _payload_items({}) == []
+
+
+def test_daily_and_wellness_requests_are_chunked_for_long_history():
+    class RecordingConnector:
+        def __init__(self):
+            self.events = []
+            self.user_events = []
+            self.date_events = []
+
+        def fetch_events(self, event_type, sub_type, from_ms, to_ms, limit, reverse):
+            self.events.append((event_type, sub_type, from_ms, to_ms))
+            return {"items": []}
+
+        def fetch_user_events(self, event_type, sub_type, from_ms, to_ms, limit, reverse):
+            self.user_events.append((event_type, sub_type, from_ms, to_ms))
+            return {"items": []}
+
+        def fetch_user_events_date_string(self, event_type, sub_type, from_iso, to_iso):
+            self.date_events.append((event_type, sub_type, from_iso, to_iso))
+            return {"items": []}
+
+        def fetch_watch_statistics(self, *args, **kwargs):
+            return {"items": []}
+
+    connector = RecordingConnector()
+    fetcher = DataFetcher(connector)
+    end = datetime(2026, 8, 28, tzinfo=timezone.utc)
+    window = FetchWindow(start=end - timedelta(days=15), end=end)
+
+    fetcher.fetch_daily_statistics_records(window)
+    fetcher.fetch_wellness_records(window)
+
+    daily_health_calls = [x for x in connector.events if x[:2] == ("DailyHealth", "summary")]
+    readiness_calls = [x for x in connector.events if x[:2] == ("readiness", "watch_score")]
+    rmssd_calls = [x for x in connector.events if x[:2] == ("HRVRMSSD", "real_data")]
+    assert len(daily_health_calls) == 3
+    assert len(readiness_calls) == 3
+    assert len(rmssd_calls) == 3
+    assert len(connector.date_events) == 6
+
+
+def test_dense_file_index_requests_are_chunked():
+    class RecordingConnector:
+        def __init__(self):
+            self.calls = []
+
+        def fetch_file_info_events(self, event_type, sub_type, from_ms, to_ms, limit):
+            self.calls.append((event_type, sub_type, from_ms, to_ms, limit))
+            return {"items": []}
+
+    connector = RecordingConnector()
+    end = datetime(2026, 8, 28, tzinfo=timezone.utc)
+    records = DataFetcher(connector).fetch_dense_file_records(
+        FetchWindow(start=end - timedelta(days=15), end=end)
+    )
+
+    assert len(records) == 3
+    assert len(connector.calls) == 3
+    assert {call[:2] for call in connector.calls} == {
+        ("second_heart_rate", "real_data")
+    }

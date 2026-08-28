@@ -5,7 +5,15 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
-from vitalis.models import AuthToken, DailyHealth, DailyMetric, MetricSample, Workout, WorkoutSample
+from vitalis.models import (
+    AuthToken,
+    DailyHealth,
+    DailyMetric,
+    DenseDataFile,
+    MetricSample,
+    Workout,
+    WorkoutSample,
+)
 
 from . import models as orm
 
@@ -127,24 +135,63 @@ class HealthRepository:
 
     def save_metric_samples(self, samples: list[MetricSample]) -> int:
         """Idempotently upsert timestamped measurements."""
-        deduplicated: dict[tuple[str, str, str, datetime], MetricSample] = {}
+        deduplicated: dict[tuple[str, str, str, datetime, str], MetricSample] = {}
         for sample in samples:
             key = (
                 sample.user_id,
                 sample.source,
                 sample.metric,
                 _naive_utc(sample.timestamp),
+                sample.device_id or "",
             )
             deduplicated[key] = sample
 
+        if not deduplicated:
+            return 0
+
+        dialect = self.db.get_bind().dialect.name
+        if dialect in ("sqlite", "postgresql"):
+            if dialect == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert as dialect_insert
+            else:
+                from sqlalchemy.dialects.postgresql import insert as dialect_insert
+
+            rows = [
+                {
+                    "user_id": user_id,
+                    "source": source,
+                    "metric": metric,
+                    "timestamp": timestamp,
+                    "device_id": device_id,
+                    "value": sample.value,
+                    "unit": sample.unit,
+                    "source_scope": sample.source_scope,
+                }
+                for (user_id, source, metric, timestamp, device_id), sample in deduplicated.items()
+            ]
+            for offset in range(0, len(rows), 500):
+                statement = dialect_insert(orm.MetricSample).values(rows[offset:offset + 500])
+                statement = statement.on_conflict_do_update(
+                    index_elements=["user_id", "source", "metric", "timestamp", "device_id"],
+                    set_={
+                        "value": statement.excluded.value,
+                        "unit": statement.excluded.unit,
+                        "source_scope": statement.excluded.source_scope,
+                    },
+                )
+                self.db.execute(statement)
+            self.db.flush()
+            return len(rows)
+
         written = 0
-        for (user_id, source, metric, timestamp), sample in deduplicated.items():
+        for (user_id, source, metric, timestamp, device_id), sample in deduplicated.items():
             row = self.db.execute(
                 select(orm.MetricSample).where(
                     orm.MetricSample.user_id == user_id,
                     orm.MetricSample.source == source,
                     orm.MetricSample.metric == metric,
                     orm.MetricSample.timestamp == timestamp,
+                    orm.MetricSample.device_id == device_id,
                 )
             ).scalar_one_or_none()
             if row is None:
@@ -153,12 +200,13 @@ class HealthRepository:
                     source=source,
                     metric=metric,
                     timestamp=timestamp,
+                    device_id=device_id,
                 )
                 self.db.add(row)
             row.value = sample.value
             row.unit = sample.unit
             row.source_scope = sample.source_scope
-            row.device_id = sample.device_id
+            row.device_id = device_id
             written += 1
         self.db.flush()
         return written
@@ -215,6 +263,98 @@ class HealthRepository:
         if metric:
             stmt = stmt.where(orm.DailyMetric.metric == metric)
         return list(self.db.execute(stmt.order_by(orm.DailyMetric.date, orm.DailyMetric.metric)).scalars().all())
+
+    # ---- 密集数据文件索引 ----
+
+    def save_dense_data_files(self, files: list[DenseDataFile]) -> int:
+        """Idempotently persist opaque file indexes without treating them as samples."""
+        deduplicated = {
+            (
+                item.user_id,
+                item.source,
+                item.stream,
+                item.file_id,
+                _naive_utc(item.start_utc) if item.start_utc else None,
+                item.device_id or "",
+            ): item
+            for item in files
+            if item.file_id
+        }
+        if not deduplicated:
+            return 0
+
+        dialect = self.db.get_bind().dialect.name
+        rows = [
+            {
+                "user_id": user_id,
+                "source": source,
+                "stream": stream,
+                "file_id": file_id,
+                "file_type": item.file_type,
+                "date": item.date,
+                "start_utc": _naive_utc(item.start_utc) if item.start_utc else None,
+                "end_utc": _naive_utc(item.end_utc) if item.end_utc else None,
+                "source_scope": item.source_scope,
+                "device_id": item.device_id or "",
+                "parse_status": item.parse_status,
+                "sample_count": item.sample_count,
+            }
+            for (user_id, source, stream, file_id, start_utc, device_id), item in deduplicated.items()
+        ]
+        if dialect in ("sqlite", "postgresql"):
+            if dialect == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert as dialect_insert
+            else:
+                from sqlalchemy.dialects.postgresql import insert as dialect_insert
+            for offset in range(0, len(rows), 500):
+                statement = dialect_insert(orm.DenseDataFile).values(rows[offset:offset + 500])
+                statement = statement.on_conflict_do_update(
+                    index_elements=[
+                        "user_id", "source", "stream", "file_id", "start_utc", "device_id"
+                    ],
+                    set_={
+                        "file_type": statement.excluded.file_type,
+                        "date": statement.excluded.date,
+                        "start_utc": statement.excluded.start_utc,
+                        "end_utc": statement.excluded.end_utc,
+                        "source_scope": statement.excluded.source_scope,
+                        "device_id": statement.excluded.device_id,
+                        "parse_status": statement.excluded.parse_status,
+                        "sample_count": statement.excluded.sample_count,
+                    },
+                )
+                self.db.execute(statement)
+            self.db.flush()
+            return len(rows)
+
+        for values in rows:
+            row = self.db.execute(select(orm.DenseDataFile).where(
+                orm.DenseDataFile.user_id == values["user_id"],
+                orm.DenseDataFile.source == values["source"],
+                orm.DenseDataFile.stream == values["stream"],
+                orm.DenseDataFile.file_id == values["file_id"],
+                orm.DenseDataFile.start_utc == values["start_utc"],
+                orm.DenseDataFile.device_id == values["device_id"],
+            )).scalar_one_or_none()
+            if row is None:
+                row = orm.DenseDataFile(**values)
+                self.db.add(row)
+            else:
+                for key, value in values.items():
+                    setattr(row, key, value)
+        self.db.flush()
+        return len(rows)
+
+    def dense_data_files(
+        self, user_id: str, stream: str, start: date, end: date, limit: int = 5000
+    ) -> list[orm.DenseDataFile]:
+        return list(self.db.execute(
+            select(orm.DenseDataFile).where(
+                orm.DenseDataFile.user_id == user_id,
+                orm.DenseDataFile.stream == stream,
+                orm.DenseDataFile.date.between(start, end),
+            ).order_by(orm.DenseDataFile.start_utc, orm.DenseDataFile.id).limit(limit)
+        ).scalars().all())
 
     # ---- 单次运动 ----
 
@@ -495,10 +635,35 @@ class HealthRepository:
             row.message = message[:512]
             self.db.flush()
 
+    # ---- Balance 2 Zepp OS device upload links ----
+
+    def create_device_link(
+        self, token_digest: str, user_id: str, device_label: str = "balance2_zepp_os"
+    ) -> orm.ZeppDeviceLink:
+        self.upsert_user(user_id)
+        row = orm.ZeppDeviceLink(
+            token_digest=token_digest,
+            user_id=user_id,
+            device_label=device_label,
+        )
+        self.db.add(row)
+        self.db.flush()
+        return row
+
+    def device_link(self, token_digest: str) -> orm.ZeppDeviceLink | None:
+        return self.db.get(orm.ZeppDeviceLink, token_digest)
+
+    def mark_device_link_seen(self, token_digest: str) -> None:
+        row = self.device_link(token_digest)
+        if row and row.revoked_at is None:
+            row.last_seen_at = datetime.utcnow()
+            self.db.flush()
+
     def delete_for_user(self, user_id: str) -> None:
         for model in (
             orm.SleepRecord, orm.ActivityRecord, orm.TrainingRecord, orm.HealthDaily,
-            orm.MetricSample, orm.DailyMetric, orm.Workout,
+            orm.MetricSample, orm.DailyMetric, orm.DenseDataFile, orm.Workout,
+            orm.ZeppDeviceLink,
         ):
             self.db.execute(delete(model).where(model.user_id == user_id))
 

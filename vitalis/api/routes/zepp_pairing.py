@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -18,7 +18,7 @@ from vitalis.config import settings
 from vitalis.connectors import get_connector
 from vitalis.connectors.zepp import ZeppAuthError, ZeppConnector
 from vitalis.connectors.zepp.auth_parser import extract_from_login_info
-from vitalis.models import User
+from vitalis.models import MetricSample, User
 from vitalis.storage import HealthRepository, session_scope
 
 router = APIRouter(prefix="/connect/zepp", tags=["connect"])
@@ -30,6 +30,15 @@ class PairingCredentials(BaseModel):
 
 class DisconnectNotice(BaseModel):
     reason: str = Field(default="Zepp 网页登录已失效，请重新登录", max_length=512)
+
+
+class DeviceHeartRateSample(BaseModel):
+    timestamp: int = Field(ge=1_500_000_000_000, le=4_102_444_800_000)
+    heart_rate: int = Field(ge=20, le=240)
+
+
+class DeviceHeartRateBatch(BaseModel):
+    samples: list[DeviceHeartRateSample] = Field(min_length=1, max_length=1000)
 
 
 def create_pairing(user_id: str, sync_days: int = 30) -> dict:
@@ -227,10 +236,8 @@ def update_linked_credentials(
                 link_digest,
                 "登录凭据已更新" if changed else "登录状态有效",
             )
-    except (ZeppAuthError, RuntimeError) as exc:
-        with session_scope() as db:
-            HealthRepository(db).mark_browser_link_reauth(link_digest, str(exc))
-        raise HTTPException(status_code=400, detail="Zepp 登录已失效，请重新登录") from exc
+    except RuntimeError as exc:
+        _raise_link_validation_error(link_digest, exc)
 
     if changed:
         background_tasks.add_task(_linked_incremental_sync, user_id, link_digest)
@@ -252,8 +259,86 @@ def report_link_disconnected(
     return {"status": "needs_login", "message": body.reason}
 
 
+@router.post("/link/validate", summary="验证云端已保存的 Zepp 凭据")
+def validate_linked_credentials(
+    authorization: str = Header(default="", alias="Authorization"),
+) -> dict:
+    """Use Zepp's server response, not browser cookie visibility, as expiry evidence."""
+    link_digest, user_id = _linked_user(authorization)
+    connector: ZeppConnector = get_connector("zepp")  # type: ignore[assignment]
+    try:
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            if repo.get_token(user_id, "zepp") is None:
+                raise ZeppAuthError("Zepp 凭据不存在", needs_reauth=True)
+            connector._client_for(repo, User(id=user_id)).verify()
+            repo.mark_browser_link_verified(link_digest, "云端登录凭据仍然有效")
+    except RuntimeError as exc:
+        _raise_link_validation_error(link_digest, exc)
+    return {"status": "connected", "message": "云端登录凭据仍然有效"}
+
+
+@router.post("/device-link", summary="创建 Balance 2 Zepp OS 上传链接")
+def create_zepp_device_link(user_id: str = Depends(require_user_id)) -> dict:
+    token = secrets.token_urlsafe(32)
+    digest = _token_digest(token)
+    with session_scope() as db:
+        HealthRepository(db).create_device_link(digest, user_id)
+    return {
+        "status": "created",
+        "device": "Balance 2",
+        "upload_path": "/api/v1/connect/zepp/device-link/heart-rate",
+        "device_link_token": token,
+        "message": "上传令牌只显示一次，请配置到 Zepp App 中的 Vitalis Bridge 设置",
+    }
+
+
+@router.post("/device-link/heart-rate", summary="接收 Balance 2 心率回调批次")
+def upload_zepp_device_heart_rate(
+    body: DeviceHeartRateBatch,
+    authorization: str = Header(default="", alias="Authorization"),
+) -> dict:
+    digest, user_id, device_label = _device_linked_user(authorization)
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    minimum_ms = now_ms - 31 * 24 * 60 * 60 * 1000
+    normalized = [
+        MetricSample(
+            user_id=user_id,
+            source="zepp_os",
+            metric="heart_rate",
+            timestamp=datetime.fromtimestamp(sample.timestamp / 1000, tz=timezone.utc),
+            value=sample.heart_rate,
+            unit="bpm",
+            source_scope="device_callback",
+            device_id=device_label,
+        )
+        for sample in body.samples
+        if minimum_ms <= sample.timestamp <= now_ms + 5 * 60 * 1000
+    ]
+    if not normalized:
+        raise HTTPException(status_code=400, detail="批次中没有可接受时间范围内的样本")
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        written = repo.save_metric_samples(normalized)
+        repo.mark_device_link_seen(digest)
+    return {"status": "accepted", "accepted": written}
+
+
 def _token_digest(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _raise_link_validation_error(link_digest: str, error: RuntimeError) -> None:
+    if isinstance(error, ZeppAuthError) and error.needs_reauth:
+        with session_scope() as db:
+            HealthRepository(db).mark_browser_link_reauth(
+                link_digest, "Zepp 云端凭据已失效，请重新登录"
+            )
+        raise HTTPException(status_code=400, detail="Zepp 登录已失效，请重新登录") from error
+    raise HTTPException(
+        status_code=503,
+        detail="Zepp 服务暂时不可用，已保留当前连接，请稍后重试",
+    ) from error
 
 
 def _linked_user(authorization: str) -> tuple[str, str]:
@@ -266,6 +351,18 @@ def _linked_user(authorization: str) -> tuple[str, str]:
         if row is None or row.revoked_at is not None:
             raise HTTPException(status_code=401, detail="浏览器链接令牌无效或已撤销")
         return digest, row.user_id
+
+
+def _device_linked_user(authorization: str) -> tuple[str, str, str]:
+    scheme, separator, token = authorization.partition(" ")
+    if not separator or scheme.lower() != "bearer" or len(token) < 32:
+        raise HTTPException(status_code=401, detail="设备上传令牌无效")
+    digest = _token_digest(token)
+    with session_scope() as db:
+        row = HealthRepository(db).device_link(digest)
+        if row is None or row.revoked_at is not None:
+            raise HTTPException(status_code=401, detail="设备上传令牌无效或已撤销")
+        return digest, row.user_id, row.device_label
 
 
 def _initial_pairing_sync(

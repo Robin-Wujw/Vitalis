@@ -22,7 +22,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 chrome.cookies.onChanged.addListener((change) => {
   if (!isLoginCookie(change.cookie)) return;
   if (change.removed) {
-    void reportDisconnected("Zepp 网页登录已退出，请重新登录");
+    void refreshCredential();
   } else {
     void submitCredential(change.cookie.value);
   }
@@ -90,7 +90,29 @@ async function refreshCredential() {
     await submitCredential(cookie.value);
   } else if (state.browserLinkToken) {
     await collectCookieDiagnostics();
-    await reportDisconnected("未检测到 Zepp 网页登录，请重新登录以继续自动更新");
+    await validateSavedCredential();
+  }
+}
+
+async function validateSavedCredential() {
+  const state = await chrome.storage.local.get(["vitalisBase", "browserLinkToken"]);
+  if (!state.vitalisBase || !state.browserLinkToken) return { status: "idle" };
+  try {
+    const response = await fetch(`${state.vitalisBase}/api/v1/connect/zepp/link/validate`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${state.browserLinkToken}` }
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 400) {
+        await setPairingStatus("needs_login", result.detail || "Zepp 登录已失效，请重新登录");
+      }
+      return { status: "error", message: result.detail || `验证失败（HTTP ${response.status}）` };
+    }
+    await setPairingStatus("connected", result.message || "云端登录凭据仍然有效");
+    return { status: "connected" };
+  } catch (error) {
+    return { status: "error", message: error.message || String(error) };
   }
 }
 

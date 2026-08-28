@@ -33,6 +33,8 @@ API_SPORT_DETAIL = "/v1/sport/run/detail.json"     # 单次运动明细
 API_WATCH_STATS = "/v2/watch/users/{user_id}/WatchSportStatistics/SPORT_LOAD"  # 训练负荷
 API_EVENTS = "/v2/users/me/events"                 # HRV / 每日健康摘要
 API_USER_EVENTS = "/users/{user_id}/events"        # SpO2 / PAI / all-day stress
+API_USER_EVENTS_DATE = "/users/{user_id}/events/dateString"  # ODI / OSA nightly events
+API_FILE_INFO_EVENTS = "/users/me/fileInfo/events"  # Dense measurement file index
 
 # 官方客户端请求头（ZeppBridge 实测有效）
 APP_HEADERS = {
@@ -96,7 +98,11 @@ SPORTS = [
 
 
 class ZeppAuthError(RuntimeError):
-    """鉴权/授权类错误（token 失效、需要重新登录等）。"""
+    """Zepp request failure with an explicit credential-rejection signal."""
+
+    def __init__(self, message: str, *, needs_reauth: bool = False):
+        super().__init__(message)
+        self.needs_reauth = needs_reauth
 
 
 class MockOAuthToken:
@@ -151,7 +157,10 @@ class ZeppAPIClient:
                 raise ZeppAuthError(f"网络错误: {exc}")
 
             if resp.status_code in (401, 403):
-                raise ZeppAuthError(f"token 失效（HTTP {resp.status_code}），请重新导入")
+                raise ZeppAuthError(
+                    f"token 失效（HTTP {resp.status_code}），请重新导入",
+                    needs_reauth=True,
+                )
             if resp.status_code in (429, 500, 502, 503, 504):
                 if attempt < 2:
                     time_mod.sleep(0.1)
@@ -252,6 +261,44 @@ class ZeppAPIClient:
         if sub_type:
             params["subType"] = sub_type
         return self._get(API_USER_EVENTS.format(user_id=self.user_id), params)
+
+    def fetch_user_events_date_string(
+        self,
+        event_type: str,
+        sub_type: str,
+        from_iso: str,
+        to_iso: str,
+        time_zone: str = "Asia/Shanghai",
+        limit: int = 1000,
+    ) -> dict:
+        return self._get(
+            API_USER_EVENTS_DATE.format(user_id=self.user_id),
+            {
+                "eventType": event_type,
+                "subType": sub_type,
+                "from": from_iso,
+                "to": to_iso,
+                "timeZone": time_zone,
+                "limit": str(limit),
+                "reverse": "0",
+                "userId": self.user_id,
+            },
+        )
+
+    def fetch_file_info_events(
+        self, event_type: str, sub_type: str, from_ms: int, to_ms: int, limit: int = 2000
+    ) -> dict:
+        """Fetch file index metadata; this does not download measurement payloads."""
+        return self._get(
+            API_FILE_INFO_EVENTS,
+            {
+                "eventType": event_type,
+                "subType": sub_type,
+                "from": str(from_ms),
+                "to": str(to_ms),
+                "limit": str(limit),
+            },
+        )
 
     def fetch_hrv(self, start_date: str, end_date: str) -> dict:
         """HRV 数据：日期格式 YYYY-MM-DD，内部转为毫秒时间戳。"""

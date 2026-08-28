@@ -46,7 +46,7 @@ def test_extension_cookie_search_is_not_limited_by_cookie_path():
 
 def test_extension_cookie_diagnostics_are_local_and_value_free():
     manifest = json.loads((EXTENSION / "manifest.json").read_text())
-    assert manifest["version"] == "0.2.6"
+    assert manifest["version"] == "0.2.7"
 
     background = (EXTENSION / "background.js").read_text()
     diagnostics_body = background.split("async function collectCookieDiagnostics()", 1)[1]
@@ -116,3 +116,15 @@ def test_extension_uses_official_watchface_login_handoff():
         assert "project_redirect_uri=" in script
         assert "platform_app=com.huami.webapp" in script
         assert "encodeURIComponent" in script
+
+
+def test_missing_cookie_validates_saved_cloud_credential_before_reauth():
+    background = (EXTENSION / "background.js").read_text()
+    refresh = background.split("async function refreshCredential()", 1)[1]
+    refresh = refresh.split("async function submitCredential", 1)[0]
+    assert "validateSavedCredential()" in refresh
+    assert "reportDisconnected(" not in refresh
+    validator = background.split("async function validateSavedCredential()", 1)[1]
+    validator = validator.split("async function submitCredential", 1)[0]
+    assert "/api/v1/connect/zepp/link/validate" in validator
+    assert 'response.status === 400' in validator

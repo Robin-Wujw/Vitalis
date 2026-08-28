@@ -2,8 +2,10 @@
 __pycache__/
 *.pyc
 *.db
+*.db-*
 .env
 .pytest_cache/
+node_modules/
 dist/
 build/
 *.egg-info/

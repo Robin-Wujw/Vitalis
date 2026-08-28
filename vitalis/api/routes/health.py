@@ -313,6 +313,45 @@ def health_daily_metrics(
     }
 
 
+@router.get("/dense-files/{stream}")
+def health_dense_file_coverage(
+    stream: str,
+    from_date: date = Query(..., alias="from"),
+    to_date: date = Query(..., alias="to"),
+    limit: int = Query(5000, ge=1, le=20_000),
+    user_id: str = Depends(require_user_id),
+) -> dict:
+    """Return indexed dense-file coverage while deliberately withholding file IDs."""
+    if from_date > to_date:
+        from_date, to_date = to_date, from_date
+    if (to_date - from_date).days > 730:
+        raise HTTPException(status_code=400, detail="查询跨度不能超过 730 天")
+    with session_scope() as db:
+        rows = HealthRepository(db).dense_data_files(
+            user_id, stream, from_date, to_date, limit
+        )
+    return {
+        "user_id": user_id,
+        "stream": stream,
+        "from": from_date.isoformat(),
+        "to": to_date.isoformat(),
+        "files": [
+            {
+                "file_type": row.file_type,
+                "date": row.date.isoformat() if row.date else None,
+                "start": _iso_utc(row.start_utc) if row.start_utc else None,
+                "end": _iso_utc(row.end_utc) if row.end_utc else None,
+                "source_scope": row.source_scope,
+                "device_id": row.device_id or None,
+                "parse_status": row.parse_status,
+                "sample_count": row.sample_count,
+            }
+            for row in rows
+        ],
+        "payload_decoded": any(row.parse_status == "decoded" for row in rows),
+    }
+
+
 @router.get("/workouts")
 def health_workouts(
     from_date: date = Query(..., alias="from"),

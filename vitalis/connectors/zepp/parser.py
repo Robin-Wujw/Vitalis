@@ -10,6 +10,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from vitalis.models import (
     ActivityRecord,
     DailyMetric,
+    DenseDataFile,
     Device,
     MetricSample,
     SleepRecord,
@@ -142,6 +143,40 @@ class ZeppParser:
                     resting_hr=int(sleep.get("rhr", 0) or 0) if sleep.get("rhr") else 0,
                 )
         return sleeps, activities
+
+    @staticmethod
+    def parse_band_heart_rate(raw: dict) -> list[MetricSample]:
+        """Decode ``band_data.data_hr`` into timestamped minute samples."""
+        import base64
+        import binascii
+
+        samples: list[MetricSample] = []
+        for item in ZeppParser._band_items(raw):
+            encoded = item.get("data_hr")
+            day = ZeppParser._item_date(item)
+            if not isinstance(encoded, str) or not encoded.strip() or day is None:
+                continue
+            try:
+                readings = base64.b64decode(encoded, validate=True)
+            except (binascii.Error, ValueError, TypeError):
+                continue
+            summary = ZeppParser._base64_summary(item) or {}
+            offset = ZeppParser._first_number(summary, ("tz",)) or 0
+            offset = max(min(int(offset), 18 * 60 * 60), -18 * 60 * 60)
+            midnight = datetime.combine(day, time.min, tzinfo=timezone.utc) - timedelta(seconds=offset)
+            device_id = ZeppParser._device_id(item)
+            for minute, reading in enumerate(readings[:1440]):
+                if not 20 <= reading <= 240:
+                    continue
+                samples.append(MetricSample(
+                    metric="heart_rate",
+                    timestamp=midnight + timedelta(minutes=minute),
+                    value=float(reading),
+                    unit="bpm",
+                    source_scope="device" if device_id else "unknown",
+                    device_id=device_id,
+                ))
+        return samples
 
     # ================= 真实 sport history（运动） =================
 
@@ -338,17 +373,50 @@ class ZeppParser:
             ("mental_readiness", ("mentScore",), "score"),
             ("hrv_readiness", ("hrvScore",), "score"),
             ("rhr_readiness", ("rhrScore",), "score"),
+            ("skin_temp_readiness", ("skinTempScore",), "score"),
+            ("ahi_readiness", ("ahiScore",), "score"),
             ("bio_charge", ("bio_charge", "bioCharge", "bodyBattery", "chargeScore"), "score"),
+            ("hybrid_charge", ("hybrid_charge", "hybridCharge", "hybridChargeScore"), "score"),
             ("training_load", ("training_load", "trainingLoad", "wtlSum", "currnetDayTrainLoad", "load"), "load"),
-            ("vo2max", ("vo2max", "vo2Max", "VO2_MAX", "VO2_max"), "ml/kg/min"),
+            ("vo2max", ("vo2max", "vo2Max", "VO2_MAX", "VO2_max", "vo2_max_run", "vo2_max_walking"), "ml/kg/min"),
             ("stress", ("stress", "stressScore", "avgStress", "averageStress"), "score"),
             ("spo2", ("spo2", "bloodOxygen", "blood_oxygen"), "%"),
+            ("running_distance", ("totalRunningDistance",), "m"),
+            ("cycling_distance", ("totalCyclingDistance",), "m"),
         )
         output: dict[tuple[date, str], DailyMetric] = {}
         for item in ZeppParser._items(raw):
             if not isinstance(item, dict):
                 continue
             event_value = item.get("value") if isinstance(item.get("value"), dict) else None
+            if item.get("eventType") == "Charge" and event_value:
+                raw_samples = event_value.get("samples") or []
+                valid = []
+                for sample in raw_samples:
+                    if not isinstance(sample, dict):
+                        continue
+                    total = ZeppParser._first_number(sample, ("total",))
+                    if total is not None and 0 <= total <= 100:
+                        valid.append(sample)
+                latest = max(
+                    valid,
+                    key=lambda sample: ZeppParser._first_number(sample, ("s", "offset")) or 0,
+                    default=None,
+                )
+                day = ZeppParser._metric_date(item, event_value)
+                if latest and day:
+                    for metric, key in (
+                        ("hybrid_charge", "total"),
+                        ("physical_charge", "physical"),
+                        ("mental_charge", "mental"),
+                    ):
+                        reading = ZeppParser._first_number(latest, (key,))
+                        if reading is not None and 0 <= reading <= 100:
+                            output[(day, metric)] = DailyMetric(
+                                date=day, metric=metric, value=reading, unit="score",
+                                source_scope="user_fused",
+                            )
+                continue
             objects: list[tuple[dict, dict | None]] = []
             nested_samples = event_value.get("samples") if event_value else None
             if isinstance(nested_samples, list):
@@ -370,7 +438,200 @@ class ZeppParser:
                         date=day, metric=metric, value=value, unit=unit,
                         source_scope="device" if device else "user_fused", device_id=device,
                     )
+                if nested and item.get("eventType") == "readiness":
+                    supplemental = (
+                        ("skin_temp_delta", "skinTempCalibrated", "C", 0.01, -2.0, 2.0),
+                        ("skin_temp_baseline_delta", "skinTempBaseLine", "C", 0.01, -2.0, 2.0),
+                        ("sleep_hrv", "sleepHRV", "ms", 1.0, 1.0, 400.0),
+                        ("sleep_rhr", "sleepRHR", "bpm", 1.0, 20.0, 250.0),
+                        ("hrv_baseline", "hrvBaseline", "ms", 1.0, 1.0, 400.0),
+                        ("rhr_baseline", "rhrBaseline", "bpm", 1.0, 20.0, 250.0),
+                    )
+                    for metric, key, unit, scale, minimum, maximum in supplemental:
+                        reading = ZeppParser._first_number(nested, (key,))
+                        if reading is None:
+                            continue
+                        reading *= scale
+                        if minimum <= reading <= maximum:
+                            output[(day, metric)] = DailyMetric(
+                                date=day, metric=metric, value=reading, unit=unit,
+                                source_scope="device" if device else "unknown",
+                                device_id=device,
+                            )
         return list(output.values())
+
+    @staticmethod
+    def parse_charge_samples(raw: dict) -> list[MetricSample]:
+        """Normalize verified Charge samples without decoding opaque stress blobs."""
+        output: list[MetricSample] = []
+        for item in ZeppParser._items(raw):
+            if not isinstance(item, dict) or item.get("eventType") != "Charge":
+                continue
+            value = item.get("value") if isinstance(item.get("value"), dict) else None
+            if not value:
+                continue
+            start = ZeppParser._parse_datetime_value(value.get("startTime"))
+            raw_samples = value.get("samples") or []
+            if start is None or not isinstance(raw_samples, list):
+                continue
+            device_ids = ZeppParser._expand_sample_device_ids(value.get("deviceId"), len(raw_samples))
+            for index, sample in enumerate(raw_samples):
+                if not isinstance(sample, dict):
+                    continue
+                offset = ZeppParser._first_number(sample, ("s", "offset")) or 0
+                timestamp = start + timedelta(milliseconds=offset)
+                for metric, key in (
+                    ("hybrid_charge", "total"),
+                    ("physical_charge", "physical"),
+                    ("mental_charge", "mental"),
+                ):
+                    reading = ZeppParser._first_number(sample, (key,))
+                    if reading is None or not 0 <= reading <= 100:
+                        continue
+                    device_id = device_ids[index]
+                    output.append(MetricSample(
+                        metric=metric, timestamp=timestamp, value=reading, unit="score",
+                        source_scope="device" if device_id else "user_fused",
+                        device_id=device_id,
+                    ))
+        return output
+
+    @staticmethod
+    def parse_readiness_samples(raw: dict) -> list[MetricSample]:
+        """Preserve each device-scoped readiness event as a timestamped series."""
+        fields = (
+            ("readiness", "rdnsScore", "score", 1.0, 0.0, 100.0),
+            ("physical_readiness", "phyScore", "score", 1.0, 0.0, 100.0),
+            ("mental_readiness", "mentScore", "score", 1.0, 0.0, 100.0),
+            ("hrv_readiness", "hrvScore", "score", 1.0, 0.0, 100.0),
+            ("rhr_readiness", "rhrScore", "score", 1.0, 0.0, 100.0),
+            ("skin_temp_readiness", "skinTempScore", "score", 1.0, 0.0, 100.0),
+            ("ahi_readiness", "ahiScore", "score", 1.0, 0.0, 100.0),
+            ("afib_readiness", "afibScore", "score", 1.0, 0.0, 100.0),
+            ("skin_temp_delta", "skinTempCalibrated", "C", 0.01, -2.0, 2.0),
+            ("skin_temp_baseline_delta", "skinTempBaseLine", "C", 0.01, -2.0, 2.0),
+            ("sleep_hrv", "sleepHRV", "ms", 1.0, 1.0, 400.0),
+            ("sleep_rhr", "sleepRHR", "bpm", 1.0, 20.0, 250.0),
+            ("hrv_baseline", "hrvBaseline", "ms", 1.0, 1.0, 400.0),
+            ("rhr_baseline", "rhrBaseline", "bpm", 1.0, 20.0, 250.0),
+        )
+        output: list[MetricSample] = []
+        for item in ZeppParser._items(raw):
+            if not isinstance(item, dict) or item.get("eventType") != "readiness":
+                continue
+            value = item.get("value") if isinstance(item.get("value"), dict) else None
+            if not value:
+                continue
+            timestamp = ZeppParser._parse_datetime_value(
+                value.get("timestamp") or item.get("timestamp")
+            )
+            if timestamp is None:
+                continue
+            device_id = ZeppParser._device_id(value) or ZeppParser._device_id(item)
+            for metric, key, unit, scale, minimum, maximum in fields:
+                reading = ZeppParser._first_number(value, (key,))
+                if reading is None:
+                    continue
+                reading *= scale
+                if minimum <= reading <= maximum:
+                    output.append(MetricSample(
+                        metric=metric, timestamp=timestamp, value=reading, unit=unit,
+                        source_scope="device" if device_id else "unknown",
+                        device_id=device_id,
+                    ))
+        return output
+
+    @staticmethod
+    def parse_hrv_samples(raw: dict, metric: str = "hrv_sdnn") -> list[MetricSample]:
+        """Normalize SDNN/RMSSD event samples with per-sample device attribution."""
+        key = "hrv" if metric == "hrv_rmssd" else "sdnn"
+        output: list[MetricSample] = []
+        for item in ZeppParser._items(raw):
+            value = item.get("value") if isinstance(item, dict) and isinstance(item.get("value"), dict) else None
+            if not value:
+                continue
+            start = ZeppParser._parse_datetime_value(value.get("startTime"))
+            raw_samples = value.get("samples") or []
+            if start is None or not isinstance(raw_samples, list):
+                continue
+            device_ids = ZeppParser._expand_sample_device_ids(value.get("deviceId"), len(raw_samples))
+            for index, sample in enumerate(raw_samples):
+                if not isinstance(sample, dict):
+                    continue
+                reading = ZeppParser._first_number(sample, (key, "rmssd" if key == "hrv" else key))
+                if reading is None or not 1 <= reading <= 400:
+                    continue
+                offset = ZeppParser._first_number(sample, ("s", "offset")) or 0
+                device_id = device_ids[index]
+                output.append(MetricSample(
+                    metric=metric,
+                    timestamp=start + timedelta(milliseconds=offset),
+                    value=reading,
+                    unit="ms",
+                    source_scope="device" if device_id else "unknown",
+                    device_id=device_id,
+                ))
+        return output
+
+    @staticmethod
+    def parse_dense_file_index(
+        raw: dict, stream: str = "second_heart_rate"
+    ) -> list[DenseDataFile]:
+        """Normalize opaque file metadata without claiming the payload is decoded."""
+        output: list[DenseDataFile] = []
+        for event in ZeppParser._items(raw):
+            if not isinstance(event, dict):
+                continue
+            value = event.get("value") if isinstance(event.get("value"), dict) else {}
+            samples = value.get("samples") or []
+            if not isinstance(samples, list):
+                continue
+            base = ZeppParser._parse_datetime_value(value.get("startTime"))
+            device_ids = ZeppParser._expand_sample_device_ids(
+                value.get("deviceId"), len(samples)
+            )
+            for index, sample in enumerate(samples):
+                if not isinstance(sample, dict):
+                    continue
+                file_id = str(sample.get("fileId") or "").strip()
+                if not file_id:
+                    continue
+                day = None
+                date_text = sample.get("dateString")
+                if isinstance(date_text, str):
+                    try:
+                        day = date.fromisoformat(date_text[:10])
+                    except ValueError:
+                        pass
+                start_offset = ZeppParser._first_number(sample, ("s",))
+                end_offset = ZeppParser._first_number(sample, ("e",))
+                start_utc = (
+                    base + timedelta(milliseconds=start_offset)
+                    if base is not None and start_offset is not None and start_offset >= 0
+                    else None
+                )
+                end_utc = (
+                    base + timedelta(milliseconds=end_offset)
+                    if base is not None
+                    and end_offset is not None
+                    and start_offset is not None
+                    and end_offset > start_offset
+                    else None
+                )
+                device_id = device_ids[index]
+                output.append(DenseDataFile(
+                    stream=stream,
+                    file_id=file_id,
+                    file_type=str(sample.get("fileType") or ""),
+                    date=day or (start_utc.date() if start_utc else None),
+                    start_utc=start_utc,
+                    end_utc=end_utc,
+                    source_scope="device" if device_id else "unknown",
+                    device_id=device_id,
+                    parse_status="indexed",
+                    sample_count=0,
+                ))
+        return output
 
     @staticmethod
     def parse_wellness(raw: dict, source_key: str) -> tuple[list[DailyMetric], list[MetricSample]]:
@@ -400,29 +661,26 @@ class ZeppParser:
                     ):
                         daily.append(DailyMetric(date=day, metric=metric, value=reading, unit="brpm", source_scope="device"))
         elif label == "hrv_rmssd":
+            samples.extend(ZeppParser.parse_hrv_samples(raw, "hrv_rmssd"))
+        elif label == "lactate_threshold":
             for item in items:
-                if not isinstance(item, dict) or not isinstance(item.get("value"), dict):
-                    continue
-                value = item["value"]
-                start = ZeppParser._parse_datetime_value(value.get("startTime"))
-                if not start:
-                    continue
-                raw_samples = value.get("samples") or []
-                device_ids = ZeppParser._expand_sample_device_ids(
-                    value.get("deviceId") or value.get("device_id"), len(raw_samples)
-                )
-                for index, sample in enumerate(raw_samples):
+                value = item.get("value") if isinstance(item, dict) and isinstance(item.get("value"), dict) else None
+                for sample in (value or {}).get("samples") or []:
                     if not isinstance(sample, dict):
                         continue
-                    reading = ZeppParser._first_number(sample, ("hrv", "rmssd"))
-                    if reading is None or not 1 <= reading <= 400:
+                    day = ZeppParser._metric_date(sample, None)
+                    if day is None:
                         continue
-                    offset = ZeppParser._first_number(sample, ("s", "offset")) or 0
-                    samples.append(MetricSample(
-                        metric="hrv_rmssd", timestamp=start + timedelta(milliseconds=offset),
-                        value=reading, unit="ms", source_scope="device",
-                        device_id=device_ids[index],
-                    ))
+                    for metric, key, unit, minimum, maximum in (
+                        ("lactate_threshold_hr", "lactateThresholdHr", "bpm", 60, 230),
+                        ("lactate_threshold_pace", "lactateThresholdPace", "s/km", 100, 1800),
+                    ):
+                        reading = ZeppParser._first_number(sample, (key,))
+                        if reading is not None and minimum <= reading <= maximum:
+                            daily.append(DailyMetric(
+                                date=day, metric=metric, value=reading, unit=unit,
+                                source_scope="user_fused",
+                            ))
         elif label == "spo2":
             import json
             for item in items:
@@ -438,7 +696,17 @@ class ZeppParser:
                     ):
                         reading = ZeppParser._first_number(item, keys)
                         if reading is not None:
-                            daily.append(DailyMetric(date=day, metric=metric, value=reading, unit=unit, source_scope="device"))
+                            daily.append(DailyMetric(
+                                date=day, metric=metric, value=reading, unit=unit,
+                                source_scope="device", device_id=ZeppParser._device_id(item),
+                            ))
+                    seconds = ZeppParser._first_number(item, ("cost",))
+                    if seconds is not None and 60 <= seconds <= 86_400:
+                        daily.append(DailyMetric(
+                            date=day, metric="spo2_measured_minutes",
+                            value=round(seconds / 60), unit="min", source_scope="device",
+                            device_id=ZeppParser._device_id(item),
+                        ))
                     continue
                 try:
                     extra = json.loads(item.get("extra", "{}"))
@@ -447,7 +715,18 @@ class ZeppParser:
                 reading = ZeppParser._first_number(extra, ("spo2", "value"))
                 timestamp = ZeppParser._parse_datetime_value(extra.get("timestamp") or item.get("timestamp"))
                 if reading is not None and 50 <= reading <= 100 and timestamp:
-                    samples.append(MetricSample(metric="spo2", timestamp=timestamp, value=reading, unit="%", source_scope="device"))
+                    device_id = ZeppParser._device_id(extra) or ZeppParser._device_id(item)
+                    samples.append(MetricSample(
+                        metric="spo2", timestamp=timestamp, value=reading, unit="%",
+                        source_scope="device" if device_id else "unknown", device_id=device_id,
+                    ))
+                apnea = ZeppParser._first_number(extra, ("spo2_decrease", "spo2Decrease"))
+                if subtype == "osa_event" and apnea is not None and 50 <= apnea <= 100 and timestamp:
+                    device_id = ZeppParser._device_id(extra) or ZeppParser._device_id(item)
+                    samples.append(MetricSample(
+                        metric="spo2_apnea_low", timestamp=timestamp, value=apnea, unit="%",
+                        source_scope="device" if device_id else "unknown", device_id=device_id,
+                    ))
         elif label == "pai":
             for item in items:
                 if not isinstance(item, dict):
@@ -465,7 +744,37 @@ class ZeppParser:
                 ):
                     reading = ZeppParser._first_number(item, keys)
                     if reading is not None:
-                        daily.append(DailyMetric(date=day, metric=metric, value=reading, unit=unit, source_scope="device"))
+                        device_id = ZeppParser._device_id(item)
+                        daily.append(DailyMetric(
+                            date=day, metric=metric, value=reading, unit=unit,
+                            source_scope="device" if device_id else "unknown", device_id=device_id,
+                        ))
+        elif label == "all_day_stress":
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                value = item.get("value") if isinstance(item.get("value"), dict) else None
+                day = ZeppParser._metric_date(item, value)
+                if day is None:
+                    continue
+                device_id = ZeppParser._device_id(value or {}) or ZeppParser._device_id(item)
+                for metric, keys, unit in (
+                    ("stress", ("avgStress", "averageStress", "stress"), "score"),
+                    ("stress_min", ("minStress",), "score"),
+                    ("stress_max", ("maxStress",), "score"),
+                    ("stress_relaxed_pct", ("relaxPct", "relaxProportion"), "%"),
+                    ("stress_normal_pct", ("normalPct", "normalProportion"), "%"),
+                    ("stress_medium_pct", ("mediumPct", "mediumProportion"), "%"),
+                    ("stress_high_pct", ("highPct", "highProportion"), "%"),
+                ):
+                    reading = ZeppParser._first_number(item, keys)
+                    if reading is None and value:
+                        reading = ZeppParser._first_number(value, keys)
+                    if reading is not None and 0 <= reading <= 100:
+                        daily.append(DailyMetric(
+                            date=day, metric=metric, value=reading, unit=unit,
+                            source_scope="device" if device_id else "unknown", device_id=device_id,
+                        ))
         else:
             daily.extend(ZeppParser.parse_daily_metrics(raw))
         return daily, samples
@@ -480,9 +789,10 @@ class ZeppParser:
 
         text = encoded.strip().strip(";")
         if "," not in text:
-            return [text] * sample_count
+            device_id = ZeppParser._device_id({"deviceId": text})
+            return [device_id] * sample_count
 
-        expanded: list[str] = []
+        expanded: list[str | None] = []
         for segment in text.split(";"):
             count_text, separator, device_id = segment.partition(",")
             if not separator or not device_id.strip():
@@ -493,7 +803,8 @@ class ZeppParser:
                 return [None] * sample_count
             if count < 0 or len(expanded) + count > sample_count:
                 return [None] * sample_count
-            expanded.extend([device_id.strip()] * count)
+            normalized = ZeppParser._device_id({"deviceId": device_id})
+            expanded.extend([normalized] * count)
 
         if len(expanded) != sample_count:
             return [None] * sample_count
@@ -666,6 +977,17 @@ class ZeppParser:
 
     # ---- 真实 band_data 解析工具 ----
     @staticmethod
+    def _band_items(raw: dict) -> list[dict]:
+        if not isinstance(raw, dict):
+            return []
+        data = raw.get("data")
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict)]
+        if isinstance(data, dict) and isinstance(data.get("items"), list):
+            return [item for item in data["items"] if isinstance(item, dict)]
+        return []
+
+    @staticmethod
     def _item_date(item: dict) -> date | None:
         v = item.get("date_time") or item.get("date") or item.get("dayId")
         if not v:
@@ -767,8 +1089,15 @@ class ZeppParser:
     def _device_id(obj: dict) -> str | None:
         for key in ("deviceId", "device_id", "did", "mac"):
             value = obj.get(key)
-            if value is not None and str(value).strip():
-                return str(value).strip()
+            if value is None:
+                continue
+            candidates = [
+                segment.strip()
+                for segment in str(value).split(",")
+                if len(segment.strip()) >= 8 and segment.strip().isalnum()
+            ]
+            if candidates:
+                return max(candidates, key=len)
         return None
 
     @staticmethod

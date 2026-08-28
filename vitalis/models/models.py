@@ -123,6 +123,23 @@ class MetricSample(BaseModel):
     device_id: str | None = None
 
 
+class DenseDataFile(BaseModel):
+    """One indexed vendor file that may contain a dense sensor series."""
+
+    user_id: str = ""
+    source: str = "zepp"
+    stream: str
+    file_id: str
+    file_type: str = ""
+    date: DateType | None = None
+    start_utc: datetime | None = None
+    end_utc: datetime | None = None
+    source_scope: str = "unknown"
+    device_id: str | None = None
+    parse_status: str = "indexed"
+    sample_count: int = 0
+
+
 class DailyMetric(BaseModel):
     """A sparse daily metric, kept separate from computed Vitalis scores."""
 

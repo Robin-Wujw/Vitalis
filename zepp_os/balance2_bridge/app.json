@@ -1,0 +1,35 @@
+{
+  "configVersion": "v3",
+  "app": {
+    "appId": 9999999,
+    "appName": "Vitalis Bridge",
+    "appType": "app",
+    "version": {"code": 1, "name": "0.1.0"},
+    "icon": "icon.png",
+    "vender": "Vitalis",
+    "description": "Balance 2 heart-rate callback bridge for Vitalis"
+  },
+  "permissions": [
+    "data:user.hd.heart_rate",
+    "device:os.bg_service",
+    "device:os.local_storage",
+    "device:os.ble"
+  ],
+  "runtime": {
+    "apiVersion": {"compatible": "4.2", "target": "4.2", "minVersion": "4.0"}
+  },
+  "targets": {
+    "common": {
+      "module": {
+        "page": {"pages": ["page/index"]},
+        "app-side": {"path": "app-side/index"},
+        "setting": {"path": "setting/index"},
+        "app-service": {"services": ["app-service/heart_rate_service"]}
+      },
+      "platforms": [{"st": "r", "dw": 480}],
+      "designWidth": 480
+    }
+  },
+  "defaultLanguage": "zh-CN",
+  "debug": false
+}

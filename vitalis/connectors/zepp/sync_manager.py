@@ -1,6 +1,6 @@
 """Zepp 同步管理器：对齐 ZeppBridge sync/mod.rs。
 
-负责按顺序拉取 7 条数据流、逐流报告、超时控制、可取消。
+负责按顺序拉取 8 条数据流、逐流报告、超时控制、可取消。
 """
 from __future__ import annotations
 
@@ -94,7 +94,7 @@ class SyncManager:
                     raise ZeppAuthError("同步超时，已停止后续请求")
 
             # 1. heart_rate (core)
-            emit("heart_rate", 1, 7, "正在同步心率")
+            emit("heart_rate", 1, 8, "正在同步心率")
             check()
             try:
                 records = self.fetcher.fetch_heart_rate_records(window)
@@ -105,7 +105,7 @@ class SyncManager:
                 streams.append(self._failure_report("heart_rate", exc))
 
             # 2. daily_summary (core)
-            emit("daily_summary", 2, 7, "正在同步每日概览")
+            emit("daily_summary", 2, 8, "正在同步每日概览")
             check()
             try:
                 records = self.fetcher.fetch_daily_statistics_records(window)
@@ -116,7 +116,7 @@ class SyncManager:
                 streams.append(self._failure_report("daily_summary", exc))
 
             # 3. workouts (core)
-            emit("workouts", 3, 7, "正在同步运动")
+            emit("workouts", 3, 8, "正在同步运动")
             check()
             try:
                 records = self.fetcher.fetch_workout_records(window)
@@ -130,7 +130,7 @@ class SyncManager:
                     streams.append(self._failure_report("workouts", exc))
 
             # 4. workout_detail (从 workouts 中提取 pending)
-            emit("workout_detail", 4, 7, "正在同步运动明细")
+            emit("workout_detail", 4, 8, "正在同步运动明细")
             check()
             try:
                 records = self._fetch_pending_workout_details(window, repo, user)
@@ -155,7 +155,7 @@ class SyncManager:
                     streams.append(self._failure_report("workout_detail", exc))
 
             # 5. sleep (optional)
-            emit("sleep", 5, 7, "正在同步睡眠")
+            emit("sleep", 5, 8, "正在同步睡眠")
             check()
             try:
                 records = self.fetcher.fetch_sleep_records(window)
@@ -169,7 +169,7 @@ class SyncManager:
                     streams.append(self._failure_report("sleep", exc))
 
             # 6. hrv (optional)
-            emit("hrv", 6, 7, "正在同步心率变异性")
+            emit("hrv", 6, 8, "正在同步心率变异性")
             check()
             try:
                 records = self.fetcher.fetch_hrv_records(window)
@@ -183,7 +183,7 @@ class SyncManager:
                     streams.append(self._failure_report("hrv", exc))
 
             # 7. wellness (optional: stress, SpO2, respiration, PAI, RMSSD)
-            emit("wellness", 7, 7, "正在同步压力、血氧等指标")
+            emit("wellness", 7, 8, "正在同步压力、血氧等指标")
             check()
             try:
                 records = self.fetcher.fetch_wellness_records(window)
@@ -198,6 +198,23 @@ class SyncManager:
                 if "取消" in str(exc) or "超时" in str(exc):
                     raise
                 streams.append(self._unavailable_report("wellness", exc))
+
+            # 8. dense_files (metadata only until a file payload is verified)
+            emit("dense_files", 8, 8, "正在同步高频心率文件索引")
+            check()
+            try:
+                records = self.fetcher.fetch_dense_file_records(window)
+                if records:
+                    streams.append(self._persist_records("dense_files", records, repo, user))
+                else:
+                    streams.append(StreamReport(
+                        stream="dense_files", status="unavailable", capability="unavailable",
+                        message="当前账号没有返回高频心率文件索引",
+                    ))
+            except ZeppAuthError as exc:
+                if "取消" in str(exc) or "超时" in str(exc):
+                    raise
+                streams.append(self._unavailable_report("dense_files", exc))
 
             core_failed = any(
                 s.stream in ("heart_rate", "daily_summary", "workouts") and s.status == "failed"
@@ -310,6 +327,10 @@ class SyncManager:
                 else:
                     repo.save_daily(DailyHealth(user_id=user.id, date=day, activity=act))
                 written += 1
+            heart_rate = parser.parse_band_heart_rate(payload)
+            for sample in heart_rate:
+                sample.user_id = user.id
+            written += repo.save_metric_samples(heart_rate)
 
         elif stream == "workouts":
             parts = record.raw.source_key.split(":", 2)
@@ -363,6 +384,14 @@ class SyncManager:
             for metric in metrics:
                 metric.user_id = user.id
             written += repo.save_daily_metrics(metrics)
+            charge_samples = parser.parse_charge_samples(payload)
+            for sample in charge_samples:
+                sample.user_id = user.id
+            written += repo.save_metric_samples(charge_samples)
+            readiness_samples = parser.parse_readiness_samples(payload)
+            for sample in readiness_samples:
+                sample.user_id = user.id
+            written += repo.save_metric_samples(readiness_samples)
             hrv_map = parser.parse_hrv_events(payload)
             for day in hrv_map:
                 existing = repo.health_daily(user.id, day)
@@ -376,6 +405,10 @@ class SyncManager:
                 written += 1
 
         elif stream == "hrv":
+            hrv_samples = parser.parse_hrv_samples(payload, "hrv_sdnn")
+            for sample in hrv_samples:
+                sample.user_id = user.id
+            written += repo.save_metric_samples(hrv_samples)
             hrv_map = parser.parse_hrv_events(payload)
             for day, val in hrv_map.items():
                 existing = repo.health_daily(user.id, day)
@@ -393,11 +426,17 @@ class SyncManager:
                 sample.user_id = user.id
             written = repo.save_daily_metrics(metrics) + repo.save_metric_samples(samples)
 
+        elif stream == "dense_files":
+            files = parser.parse_dense_file_index(payload, "second_heart_rate")
+            for item in files:
+                item.user_id = user.id
+            written = repo.save_dense_data_files(files)
+
         return written
 
     def _failure_report(self, stream: str, error: Exception) -> StreamReport:
         msg = str(error)
-        needs_reauth = "token" in msg.lower() or "auth" in msg.lower() or "reauth" in msg.lower()
+        needs_reauth = isinstance(error, ZeppAuthError) and error.needs_reauth
         return StreamReport(
             stream=stream,
             status="failed",

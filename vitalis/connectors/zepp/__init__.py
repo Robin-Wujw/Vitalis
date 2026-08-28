@@ -69,7 +69,10 @@ class ZeppConnector(HealthConnector):
         try:
             client.verify()
         except ZeppAuthError as exc:
-            raise ZeppAuthError(f"token 验证失败：{exc}。请确认 apptoken/user_id 与区域正确")
+            raise ZeppAuthError(
+                f"token 验证失败：{exc}。请确认 apptoken/user_id 与区域正确",
+                needs_reauth=exc.needs_reauth,
+            )
 
         auth = AuthToken(
             user_id=vitalis_user_id,

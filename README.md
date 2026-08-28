@@ -17,7 +17,7 @@
    Data Connector   Data Model      Analysis Engine
    (zepp/garmin/…)  (Vitalis Schema) (rule/stat/llm)
         └───────────┬───────────┘
-              Sync Manager (6 streams)
+              Sync Manager (8 streams)
         └───────────┴───────────┘
                  Storage Layer
             SQLite → PostgreSQL (+ TimescaleDB)
@@ -31,9 +31,9 @@ vitalis/
 │   └── zepp/
 │       ├── client.py        # Zepp 区域云客户端（apptoken 模式）+ Mock
 │       ├── fetcher.py       # 数据获取器（7天分块、心率分页、运动翻页）
-│       ├── sync_manager.py  # 同步管理器（6条流、逐流报告、超时控制）
+│       ├── sync_manager.py  # 同步管理器（8条流、逐流报告、超时控制）
 │       ├── auth_parser.py   # Cookie 解析器（自动提取 userid/apptoken/region）
-│       └── parser.py        # 厂商格式 → Vitalis Schema + 运动心率增量解码
+│       └── parser.py        # 厂商格式 → Vitalis Schema + 心率/健康指标解码
 ├── models/                  # 统一健康数据模型（Vitalis Schema）
 ├── storage/                 # SQLAlchemy + SQLite/PostgreSQL
 ├── analysis/                # 三层分析引擎：rule / statistical / ai
@@ -51,6 +51,7 @@ vitalis/
 └── main.py                  # 入口
 skills/vitalis/              # Hermes Skill
 tests/                       # 单元 + API 端到端测试
+zepp_os/balance2_bridge/     # Balance 2 设备侧心率回退通道
 ```
 
 ## 快速开始
@@ -95,10 +96,17 @@ Vitalis 通过用户浏览器中的官方登录会话连接 Zepp，不要求打�
 - **自动探测区域**：同时探测 15 个 Zepp 区域主机，找可用的那个
 - **自动保活**：登录 Cookie 变化时立即更新，并每 30 分钟检查一次浏览器登录状态
 - **同步串行化**：同一用户的首次、续期、手动和调度同步共用一把进程内锁，避免 SQLite 并发写冲突
-- **断联提示**：浏览器退出登录或云端验证失败后，状态 API 返回 `needs_login=true`
+- **可靠断联提示**：只有云端明确拒绝凭据时才返回 `needs_login=true`；Cookie 暂时不可见或网络故障不会误断联
 - **安全链接**：长期浏览器链接使用高熵 Bearer 令牌，服务端只保存 SHA-256 摘要
 - **最长 730 天（2 年）**：按 7 天窗口分块，避免单次请求过大
-- **6 条数据流逐流报告**：heart_rate → daily_summary → workouts → workout_detail → sleep → hrv
+- **8 条数据流逐流报告**：heart_rate → daily_summary → workouts → workout_detail → sleep → hrv → wellness → dense_files
+
+### 已实现的数据覆盖
+
+- `band_data.data_hr` 解码为带 UTC 时间戳的分钟心率，最多每天 1,440 个槽位；响应提供设备标识时保留 Balance 2 / Helio Strap 的来源边界。
+- SDNN、RMSSD、Charge/身体电量、Readiness（含皮温、睡眠 HRV/RHR、AHI/AFib）、压力、SpO2/ODI、PAI、呼吸率和乳酸阈值进入独立的时序或每日指标表。
+- `second_heart_rate/real_data` 当前只保存 `SEC_HR` 文件覆盖元数据。文件 ID 不通过健康查询 API 返回，`sample_count=0`、`parse_status=indexed` 明确表示载荷尚未解码。
+- 各事件面按 7 天窗口拉取；API 和同步入口最多接受 730 天。实际覆盖取决于账号创建时间、佩戴情况和厂商保留窗口，空白日期不会被补造。
 
 ### 运动期间高频心率
 
@@ -112,6 +120,12 @@ Vitalis 通过用户浏览器中的官方登录会话连接 Zepp，不要求打�
 身份，因此 API 返回 `source_scope=unknown`、`device_id=null`；即使运动摘要来自
 Balance 2，也不能据此把心率样本标记为 Balance 2 或 Helio Strap。当前
 `band_data.data_hr` 仍是每天 1,440 个槽位的分钟级数据。
+
+### Balance 2 设备侧回退
+
+`zepp_os/balance2_bridge/` 提供 API_LEVEL 4.2 的 Balance 2 Zepp OS 应用骨架。后台服务只监听系统允许的心率回调，使用最多 3,600 条的本地队列，并由手机侧通过 HTTPS + 一次性显示的设备 Bearer 令牌上传。回调频率由 Zepp OS 决定，因此不能宣称固定 1 Hz；高功耗加速度计没有在后台采集。
+
+Helio Strap 不能运行 Zepp OS 应用，所以这条通道仅适用于 Balance 2。云同步仍是历史数据的主来源。设备端配置和构建步骤见 `zepp_os/balance2_bridge/README.md`。
 
 ## 自动调度策略
 
@@ -134,7 +148,10 @@ Balance 2，也不能据此把心率样本标记为 Balance 2 或 Helio Strap。
 | GET | `/connect/zepp/scan?user=xxx` | 自动登录配对页 |
 | POST | `/connect/zepp/pair` | 创建一次性浏览器配对会话 |
 | POST | `/connect/zepp/link/credentials` | 扩展自动更新登录凭据（Bearer） |
+| POST | `/connect/zepp/link/validate` | Cookie 不可见时验证服务端已保存凭据 |
 | POST | `/connect/zepp/link/disconnected` | 扩展报告浏览器已退出登录 |
+| POST | `/connect/zepp/device-link` | 创建 Balance 2 Zepp OS 上传令牌 |
+| POST | `/connect/zepp/device-link/heart-rate` | 接收设备侧心率回调批次（Bearer） |
 | GET | `/connect/zepp/token` | 查询连接、续期和断联状态 |
 | POST | `/connect/zepp` | 通用连接入口（最长 730 天） |
 
@@ -148,6 +165,9 @@ Balance 2，也不能据此把心率样本标记为 Balance 2 或 Helio Strap。
 | GET | `/health/range?from=&to=&granularity=` | 多级聚合：180d/90d/30d/7d/1d |
 | GET | `/health/workouts?from=&to=` | 运动摘要列表及详情可用状态 |
 | GET | `/health/workouts/{workout_id}` | 运动详情和按时间排序的秒级心率样本 |
+| GET | `/health/metrics/{metric}?from=&to=` | 查询通用时序指标和设备来源 |
+| GET | `/health/daily-metrics?metric=&from=&to=` | 查询稀疏每日指标 |
+| GET | `/health/dense-files/second_heart_rate?from=&to=` | 查询高频文件覆盖，不返回文件 ID |
 | POST | `/analyze` | 完整 AI 分析 |
 
 **示例：**
@@ -171,23 +191,24 @@ curl 'localhost:8000/api/v1/health/range?from=2026-01-01&to=2026-08-25&granulari
 | `ttl` | 31536000 秒 | 登录会话 1 年 |
 | `app_ttl` | 3456000 秒 | **apptoken 40 天** |
 
-**实际失效可能更早**：修改密码、其他设备退出登录、服务端风控。
+`ttl` 和 `app_ttl` 是响应信息，不是 Vitalis 可使用的官方刷新凭据。扩展只能在官方浏览器会话仍有效且 Cookie 可读取时更新 apptoken；退出登录、Cookie/会话过期、修改密码和厂商风控都可能要求用户重新登录，Vitalis 不会绕过这些边界。
 
-**失效处理**：调用 `/health/token-status` 发现 `needs_login=true` 后，在扩展打开的官方页面重新登录；扩展会自动更新凭据并恢复连接。
+Cookie 暂时不可见时，扩展会调用 `/connect/zepp/link/validate` 验证服务端已保存凭据。临时网络或 Zepp 服务故障返回 503 并保留当前连接；只有云端明确拒绝凭据后才进入 `needs_login`。此时在扩展打开的官方页面重新登录，扩展会自动更新凭据并恢复连接。
 
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest -q        # 89 个测试，全部通过
+.venv/bin/python -m pytest -q        # 107 个测试，全部通过
 ```
 
 覆盖范围：
-- `test_api.py` — 29 个 API 端到端（连接、同步、查询、启动、HTTPS、配对、续期、断联、用户隔离）
+- `test_api.py` — API 端到端（连接、同步、查询、配对、续期、设备上传、断联和用户隔离）
 - `test_browser_extension.py` — 扩展后台监听、页面一方 Cookie 桥接、周期检查和无密码输入约束
 - `test_fetcher.py` — FetchWindow、心率分页、payload 解析
 - `test_health_data_api.py` — 时序指标、每日指标、运动详情和秒级样本隔离
 - `test_sync_manager.py` — 同步报告、取消、失败报告和运动详情持久化
-- `test_parser.py` — band_data、`data.summary` 运动摘要和心率增量解码
+- `test_parser.py` — band_data、健康指标、文件索引、运动摘要和心率增量解码
+- `test_zepp_os_bridge.py` — Balance 2 权限、后台传感器、队列和 HTTPS 上传静态契约
 - `test_rule_engine.py` — 规则引擎
 - `test_statistical_engine.py` — 统计引擎
 

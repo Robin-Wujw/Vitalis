@@ -93,6 +93,10 @@ class MockDataFetcher:
         self.calls.append("wellness")
         return []
 
+    def fetch_dense_file_records(self, window: FetchWindow) -> list[FetchedRecord]:
+        self.calls.append("dense_files")
+        return []
+
 
 @pytest.fixture(scope="function")
 def setup_db():
@@ -122,6 +126,7 @@ class TestSyncManager:
         assert "sleep" in stream_names
         assert "hrv" in stream_names
         assert "wellness" in stream_names
+        assert "dense_files" in stream_names
         assert report.records_written >= 0
 
     def test_sync_report_cancel(self, mock_fetcher, setup_db):
@@ -193,6 +198,44 @@ class TestSyncManager:
             "heart_rate_source": "unknown",
         }
         assert [sample.heart_rate for sample in samples] == [80, 80, 82, 81]
+
+    def test_dense_file_index_is_persisted_without_fake_samples(self, mock_fetcher, setup_db):
+        manager = SyncManager(mock_fetcher)
+        user = User(id="dense-sync-user")
+        start = datetime(2026, 8, 26, 6, 0, tzinfo=timezone.utc)
+        record = FetchedRecord(raw=RawRecord(
+            stream="dense_files",
+            source_key="file_info:second_heart_rate:2026-08-26:2026-08-27",
+            start_utc=start,
+            end_utc=start + timedelta(days=1),
+            payload={"items": [{"value": {
+                "startTime": int(start.timestamp() * 1000),
+                "deviceId": "1,A1B2C3D4E5F60708",
+                "samples": [{
+                    "s": 0,
+                    "e": 60_000,
+                    "fileId": "opaque-index-only",
+                    "fileType": "SEC_HR",
+                    "dateString": "2026-08-26",
+                }],
+            }}]},
+        ))
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            written = manager._write_stream(record, repo, user)
+            files = repo.dense_data_files(
+                user.id, "second_heart_rate", start.date(), start.date()
+            )
+            samples = repo.metric_samples(
+                user.id, "heart_rate", start, start + timedelta(days=1)
+            )
+
+        assert written == 1
+        assert len(files) == 1
+        assert files[0].parse_status == "indexed"
+        assert files[0].sample_count == 0
+        assert samples == []
 
     def test_sync_report_serializes_same_user_across_managers(self):
         first_entered = threading.Event()

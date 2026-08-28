@@ -1159,7 +1159,7 @@ results without performing health calculations or merging device streams.
     identity responses for the configured user.
   - Confirm missing signals remain missing and Balance 2 / Helio-derived streams are
     not averaged or relabeled by Hermes.
-- [ ] Part 4 - Document, test, and deliver the integration contract.
+- [x] Part 4 - Document, test, and deliver the integration contract.
   - Add only reusable Hermes runtime setup details to technical documentation; keep
     machine-local IDs and credentials out of the repository.
   - Add focused coverage for repo-to-Hermes discovery or runtime configuration where
@@ -1199,3 +1199,5 @@ results without performing health calculations or merging device streams.
   5 tests; the complete suite passed all 167 tests in 2.47 seconds with 184 existing
   Python 3.14 `datetime.utcnow()` deprecation warnings. Repository and Skill tool
   compilation plus `git diff --check` passed.
+- Part 4 (delivery): commit `ef263bb` (`docs: integrate Hermes runtime`) was pushed
+  from local `main` to `origin/main` successfully.

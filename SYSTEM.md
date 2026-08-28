@@ -1352,7 +1352,7 @@ with interpreted recovery and training context.
   - Change the morning Hermes Cron job to hourly retries and add one no-agent 22:30
     evening job without exposing the private token or local identity.
   - Verify deferred, sent, and already-sent behavior plus service and cron health.
-- [ ] Part 4 - Clean, document, test, and deliver.
+- [x] Part 4 - Clean, document, test, and deliver.
   - Update workflow and operator documentation to match actual runtime behavior.
   - Run focused and complete tests, compilation, formatting, and secret checks.
   - Commit and push the implementation, then record anonymized delivery evidence.
@@ -1382,3 +1382,10 @@ with interpreted recovery and training context.
   Python 3.14 `datetime.utcnow()` deprecation warnings. Repository and Skill tool
   compilation, line-length review, `git diff --check`, and private-value diff scans
   passed.
+- Part 4 (delivery): implementation commit `8c49d87`
+  (`feat: add sleep-aware daily reports`) was pushed from local `main` to `origin/main`.
+  A final repeat
+  of the complete suite passed all 180 tests in 2.22 seconds. `hermes status` reported
+  the gateway running with both jobs active, `hermes gateway status` reported the
+  boot-enabled system service active, the latest Morning execution was completed, and
+  `hermes doctor` finished with all required checks passed.

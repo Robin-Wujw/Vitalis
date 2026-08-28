@@ -780,3 +780,5 @@ actionable running and strength prescriptions instead of generic activity names.
   DailyProfile schema validation, skill validation, and `git diff --check` passed.
 - Part 4 (delivery): commit `c94ddd9` (`feat: add Chinese workout prescriptions`) was
   pushed from local `main` to `origin/main` successfully.
+- Final no-fallback audit: commit `38d29f1` (`fix: require authoritative workout type
+  ids`) removed endpoint/text inference and was pushed to `origin/main`.

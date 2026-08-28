@@ -85,6 +85,7 @@ SPORT_TYPE_MAP = {
     16: "activity",
     22: "hiking",
     23: "rowing",
+    52: "strength",
     92: "badminton",
     192: "running",
     223: "activity",

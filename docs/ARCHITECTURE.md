@@ -37,6 +37,10 @@ Raw measurements and vendor scores remain separate from Vitalis-derived states.
 `ahi_readiness` and `afib_readiness` are vendor readiness component scores, not AHI or
 AFib diagnoses.
 
+Workout summaries retain the original numeric vendor type ID. Verified Zepp OS type
+`52` (`0x34`) maps to strength training; unknown IDs remain auditable even when their
+normalized category is `other`.
+
 ## 3. Intelligence Layer
 
 The implementation lives in `vitalis/intelligence`:

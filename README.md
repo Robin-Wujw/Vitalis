@@ -101,6 +101,7 @@ Vitalis 通过用户浏览器中的官方登录会话连接 Zepp，不要求打�
 - `band_data.data_hr` 解码为带 UTC 时间戳的分钟心率，最多每天 1,440 个槽位；响应提供设备标识时保留 Balance 2 / Helio Strap 的来源边界。
 - SDNN、RMSSD、Charge/身体电量、Readiness（含皮温、睡眠 HRV/RHR、AHI/AFib）、压力、SpO2/ODI、PAI、呼吸率和乳酸阈值进入独立的时序或每日指标表。
 - `second_heart_rate/real_data` 当前只保存 `SEC_HR` 文件覆盖元数据。文件 ID 不通过健康查询 API 返回，`sample_count=0`、`parse_status=indexed` 明确表示载荷尚未解码。
+- 运动摘要保留厂商数字类型 ID；已验证的 Zepp OS `52` (`0x34`) 归一化为力量训练，未知类型仍保留原始 ID 供后续映射审计。
 - 各事件面按 7 天窗口拉取；API 和同步入口最多接受 730 天。实际覆盖取决于账号创建时间、佩戴情况和厂商保留窗口，空白日期不会被补造。
 
 ### 运动期间高频心率
@@ -195,7 +196,7 @@ Cookie 暂时不可见时，扩展会调用 `/connect/zepp/link/validate` 验证
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest -q        # 110 个测试，全部通过
+.venv/bin/python -m pytest -q        # 111 个测试，全部通过
 ```
 
 覆盖范围：

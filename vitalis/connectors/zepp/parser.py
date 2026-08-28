@@ -237,6 +237,7 @@ class ZeppParser:
                     else None
                 ),
                 vendor_source=str(it.get("source")) if it.get("source") else None,
+                vendor_type_id=numeric_type,
             ))
         return workouts
 

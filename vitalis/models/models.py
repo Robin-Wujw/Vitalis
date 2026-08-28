@@ -95,6 +95,10 @@ class Workout(BaseModel):
     calories: int = Field(default=0, ge=0)
     distance_km: float | None = Field(default=None, ge=0)
     vendor_source: str | None = Field(default=None, description="Zepp workout detail source")
+    vendor_type_id: int | None = Field(
+        default=None,
+        description="Original numeric vendor workout type retained for mapping audits",
+    )
 
 
 class WorkoutSample(BaseModel):

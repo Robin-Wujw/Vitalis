@@ -117,7 +117,7 @@ def test_parse_real_sport_history_summary():
     assert rows[0].vendor_source == "opaque-detail-source"
 
 
-def test_unknown_numeric_sport_type_does_not_inherit_run_endpoint():
+def test_verified_zepp_strength_type_is_preserved_and_normalized():
     rows = ZeppParser().parse_sport_history({
         "data": {
             "summary": [{
@@ -128,7 +128,23 @@ def test_unknown_numeric_sport_type_does_not_inherit_run_endpoint():
         }
     }, sport_hint="run")
 
+    assert rows[0].type == WorkoutType.STRENGTH
+    assert rows[0].vendor_type_id == 52
+
+
+def test_unknown_numeric_sport_type_does_not_inherit_run_endpoint():
+    rows = ZeppParser().parse_sport_history({
+        "data": {
+            "summary": [{
+                "trackid": 1_777_334_400,
+                "end_time": 1_777_334_700,
+                "type": 999,
+            }]
+        }
+    }, sport_hint="run")
+
     assert rows[0].type == WorkoutType.OTHER
+    assert rows[0].vendor_type_id == 999
 
 
 def test_sport_history_normalizes_vendor_negative_sentinels():

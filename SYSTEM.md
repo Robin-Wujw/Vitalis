@@ -643,3 +643,37 @@ fallback when browser credentials cannot be renewed indefinitely.
   deprecation warnings; `git diff --check` and the added-content secret scan passed.
 - Part 8 (delivery): commit `09f2102` (`feat: expand Zepp health coverage`) was pushed
   from local `main` to `origin/main` successfully.
+
+## 8. Workout Type Fidelity Session
+
+Date: 2026-08-28
+
+Goal: correct the real Zepp strength workouts that Vitalis currently normalizes as
+`other`, retain raw vendor type provenance for future mapping audits, and regenerate
+the current weekly training interpretation.
+
+### Detailed TODO
+
+- [x] Part 1 - Preserve and map verified workout types.
+  - Record real-account evidence without identifiers or raw payloads.
+  - Map verified Zepp OS type `52` (`0x34`) to strength training.
+  - Preserve the numeric vendor type ID in normalized workout records so unknown types
+    remain auditable instead of becoming irreversible `other` values.
+- [x] Part 2 - Verify analysis and deliver.
+  - Add parser/storage regressions and run focused plus complete tests.
+  - Re-sync the current week and verify running/strength counts and today’s decision.
+  - Update affected documentation and test totals, commit, and push `main`.
+
+### Verification Log
+
+- The real weekly workout summaries contained three type `52` records and two type `1`
+  records. Public Zepp OS definitions independently identify `0x34` (`52`) as strength
+  training; no personal identifiers or raw payloads were persisted in Git.
+- The parser now maps `52` to strength and retains every numeric vendor type ID,
+  including unknown values. Focused parser/storage/intelligence tests passed 31 tests.
+- A seven-day real sync completed all streams and rewrote the week as three strength
+  sessions plus two runs. The regenerated profile reports 230 total minutes, 65 known
+  aerobic minutes, three strength sessions, and a moderate 45-60 minute Zone 2
+  recommendation for the current day.
+- The complete suite passed 111 tests with 151 existing Python 3.14 deprecation
+  warnings; `git diff --check` passed.

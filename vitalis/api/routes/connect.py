@@ -564,8 +564,8 @@ def import_zepp_token(req: ImportTokenRequest, vitalis_user: str = Depends(requi
                 "records_written": report.records_written,
                 "message": report.message,
             }
-            from vitalis.services import SummaryService
-            response["profile"] = SummaryService().today(vitalis_user)
+            from vitalis.services import IntelligenceService
+            response["profile"] = IntelligenceService().daily_profile(vitalis_user).model_dump(mode="json")
         except Exception as exc:
             response["sync_error"] = str(exc)
     return response
@@ -686,9 +686,9 @@ def connect_zepp(req: ConnectRequest, user_id: str = Depends(require_user_id)) -
                         "message": report.message,
                     }
             # 查询汇总（session 已提交）
-            from vitalis.services import SummaryService
+            from vitalis.services import IntelligenceService
             try:
-                response["profile"] = SummaryService().today(user_id)
+                response["profile"] = IntelligenceService().daily_profile(user_id).model_dump(mode="json")
             except Exception as exc:
                 response["profile"] = {"error": str(exc)}
         except AuthRequired as exc:

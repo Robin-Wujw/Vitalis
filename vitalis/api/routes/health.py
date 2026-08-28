@@ -1,4 +1,4 @@
-"""GET /api/v1/health/today —— 获取今日健康状态。"""
+"""Raw health queries and synchronization endpoints."""
 
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
@@ -10,41 +10,10 @@ from vitalis.api.deps import require_user_id
 from vitalis.connectors import get_connector
 from vitalis.connectors.zepp import ZeppAuthError, ZeppConnector
 from vitalis.models import User
-from vitalis.services import SummaryService
 from vitalis.services.aggregation_service import AggregationService, Granularity
 from vitalis.storage import HealthRepository, session_scope
 
 router = APIRouter(prefix="/health", tags=["health"])
-
-
-@router.get("/today")
-def health_today(day: date | None = None, user_id: str = Depends(require_user_id)) -> dict:
-    """获取指定日（缺省今天）的健康状态摘要。
-
-    对应架构文档的返回形态：
-    {"score": 86, "sleep": "good", "training": "ready", "stress": "medium"}
-    """
-    payload = SummaryService().today(user_id, day=day)
-    if not payload.get("found"):
-        return {
-            "user_id": user_id,
-            "date": (day or date.today()).isoformat(),
-            "score": None,
-            "sleep": "no_data",
-            "training": "no_data",
-            "stress": "no_data",
-            "detail": "该日暂无数据，请先 POST /connect/zepp 同步",
-        }
-    return {
-        "user_id": payload["user_id"],
-        "date": payload["date"],
-        "score": payload["overall_score"],
-        "sleep": str(payload.get("recovery_level") or "unknown"),
-        "training": str(payload.get("training_readiness") or "unknown"),
-        "stress": str(payload.get("stress_level") or "unknown"),
-        "explanation": payload.get("explanation", ""),
-        "matched_rules": payload.get("matched_rules", []),
-    }
 
 
 @router.post("/sync")

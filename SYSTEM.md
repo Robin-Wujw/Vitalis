@@ -228,6 +228,80 @@ data, and reports a disconnected state when re-login is required.
   requires a stable domain, managed TLS certificate renewal, and a persistent reverse
   proxy or named tunnel; `VITALIS_PUBLIC_URL` is the authoritative public origin.
 
+## 7. Health Intelligence Implementation Session
+
+Date: 2026-08-28
+
+Goal: replace the prototype prompt-oriented analysis path with the first executable
+Vitalis Health Intelligence vertical slice. The system must turn normalized wearable
+data into versioned facts, robust personal baselines, deterministic state decisions,
+and renderer-ready recommendations. This installation is pre-production, so obsolete
+analysis behavior does not require fallback paths or compatibility adapters.
+
+### Detailed TODO
+
+- [x] Part 1 - Define the intelligence contracts and explicit data-quality semantics.
+  - Add versioned DailyProfile, baseline, feature, state, decision, and provenance
+    models.
+  - Distinguish deterministic data quality, device validity metadata, and inference
+    confidence; never invent measurement-quality values.
+  - Represent insufficient history or missing required signals explicitly instead of
+    awarding or subtracting placeholder score points.
+- [x] Part 2 - Build the profile loader and robust personal-baseline engine.
+  - Load sleep, activity, training, workout, MetricSample, and DailyMetric records for
+    one local identity and one requested day.
+  - Keep metric and device streams separate, select a preferred stream by usable
+    coverage, and report identity/history limitations without silently merging users.
+  - Compute versioned 7-day and 28-day median, MAD, percentiles, trend, coverage, and
+    robust deviation; use ln(RMSSD) only for positive RMSSD values.
+- [x] Part 3 - Implement deterministic sleep, HRV, recovery, and training analyzers.
+  - Derive features only from supported normalized fields and attach provenance and
+    limitations.
+  - Preserve vendor readiness and Charge values as vendor facts rather than treating
+    them as the Vitalis recovery result.
+  - Keep sleep staging trend-oriented and avoid diagnostic interpretations.
+- [x] Part 4 - Implement the decision engine.
+  - Produce TRAIN_HARD, TRAIN_NORMAL, TRAIN_LIGHT, RECOVERY, REST, or
+    INSUFFICIENT_DATA from explicit multi-signal rules.
+  - Return drivers, limitations, rule identifiers, and calibrated confidence bands so
+    every result is explainable and reproducible.
+  - Keep medical diagnosis out of the engine and surface persistent deviations as
+    observation or escalation guidance only.
+- [x] Part 5 - Replace the prototype analysis API and make Hermes a thin renderer.
+  - Expose a versioned daily-profile API as the sole computed-analysis contract and
+    remove obsolete prompt-era analysis routes and tools.
+  - Update the Hermes Skill to call the structured endpoint and render morning,
+    evening, weekly, and on-demand views without recomputing health decisions.
+  - Add schemas, workflows, and evidence notes needed by the renderer while keeping
+    calculation rules in Python.
+- [ ] Part 6 - Complete tests, documentation, and delivery.
+  - Add focused unit and API coverage for baseline isolation, insufficient-data
+    abstention, analyzer behavior, decision explanations, and the Hermes boundary.
+  - Update `README.md` and `docs/ARCHITECTURE.md` for the implemented data flow, API,
+    assumptions, and evidence limits.
+  - Run focused tests, the complete suite, application/OpenAPI checks, and
+    `git diff --check`; record results, commit, and push `main`.
+
+### Verification Log
+
+- Parts 1-4: 11 focused contract, profile, baseline, analyzer, and decision tests
+  passed. Coverage includes device/metric isolation, daily reduction of high-frequency
+  samples, lnRMSSD deviation, explicit abstention, multi-signal suppression, and
+  explainable training decisions.
+- Part 5: 47 focused Intelligence/API/Hermes tests passed. The obsolete analysis
+  endpoints return 404, the new endpoint completes a storage-to-HTTP multi-signal
+  decision, and the Skill contains no local analysis tool.
+- Real-data smoke check: an incomplete current date returned `INSUFFICIENT_DATA`; the
+  most recent complete date selected one device-specific RMSSD stream with an available
+  28-day baseline and produced a structured decision. No health values or device/user
+  identifiers were printed. Identity inspection found and surfaced the known split
+  vendor identity without merging records.
+- Part 6 verification: `.venv/bin/python -m pytest -q` passed all 110 tests with 151
+  existing Python 3.14 `datetime.utcnow()` deprecation warnings. Python compilation,
+  OpenAPI generation (24 paths), Hermes JSON Schema parsing, both browser-extension
+  JavaScript syntax checks, and `git diff --check` passed. OpenAPI contains the new
+  daily-profile endpoint and excludes both removed prototype analysis paths.
+
 ## 6. Next Session Handoff
 
 Paused at the user's request on 2026-08-26 after extension 0.2.2 was published. Parts

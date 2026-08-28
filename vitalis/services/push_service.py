@@ -58,27 +58,39 @@ class PushService:
                 log.warning("push handler failed: %s", exc)
         return results
 
-    def push_daily_summary(self, user_id: str, summary: dict) -> dict:
-        """推送每日健康摘要。"""
-        score = summary.get("overall_score", "N/A")
-        sleep = summary.get("recovery_level", "unknown")
-        training = summary.get("training_readiness", "unknown")
-        stress = summary.get("stress_level", "unknown")
-        explanation = summary.get("explanation", "")
-
-        title = f"🏃 今日健康报告 · 恢复分 {score}"
-        body_lines = [
-            f"睡眠：{sleep}",
-            f"训练就绪：{training}",
-            f"压力：{stress}",
-            "",
-            explanation[:200] + "..." if len(explanation) > 200 else explanation,
-        ]
+    def push_daily_profile(self, user_id: str, profile, period: str = "morning") -> dict:
+        """Render an already-computed profile; this layer never makes decisions."""
+        payload = profile.model_dump(mode="json") if hasattr(profile, "model_dump") else profile
+        decision = payload["decision"]
+        features = payload["features"]
+        if period == "evening":
+            training = features["training"]
+            title = f"Vitalis Evening · {decision['action']}"
+            body_lines = [
+                f"今日运动：{training.get('today_duration_minutes')} min",
+                f"今日负荷：{training.get('today_load')}",
+                f"7日负荷：{training.get('load_7d')}",
+                f"恢复状态：{features['recovery']['state']}",
+            ]
+        else:
+            sleep = features["sleep"]
+            hrv = features["hrv"]
+            title = f"Vitalis Morning · {decision['action']}"
+            body_lines = [
+                f"恢复状态：{features['recovery']['state']}",
+                f"睡眠：{sleep.get('duration_minutes')} min",
+                f"HRV：{hrv.get('value_ms')} ms",
+                f"训练建议：{decision['action']} / {decision['intensity']}",
+            ]
+        if decision.get("drivers"):
+            body_lines.append("依据：" + ", ".join(decision["drivers"]))
+        if decision.get("limitations"):
+            body_lines.append("限制：" + ", ".join(decision["limitations"]))
         msg = PushMessage(
             title=title,
             body="\n".join(body_lines),
             user_id=user_id,
-            extras=summary,
+            extras=payload,
         )
         return self.push(msg)
 

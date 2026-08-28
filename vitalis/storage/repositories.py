@@ -36,6 +36,34 @@ class HealthRepository:
             u.source_user_id = source_user_id or u.source_user_id
         return u
 
+    def identity_context(self, user_id: str) -> dict:
+        """Describe local/vendor identity mapping without merging any records."""
+        user = self.db.get(orm.User, user_id)
+        source_user_id = user.source_user_id if user else None
+        source = user.source if user else "zepp"
+        if source_user_id is None:
+            token = self.db.execute(select(orm.AuthToken).where(
+                orm.AuthToken.user_id == user_id,
+                orm.AuthToken.source == source,
+            )).scalar_one_or_none()
+            source_user_id = token.source_user_id if token else None
+        local_user_ids = {user_id}
+        if source_user_id:
+            local_user_ids.update(self.db.execute(select(orm.User.id).where(
+                orm.User.source == source,
+                orm.User.source_user_id == source_user_id,
+            )).scalars().all())
+            local_user_ids.update(self.db.execute(select(orm.AuthToken.user_id).where(
+                orm.AuthToken.source == source,
+                orm.AuthToken.source_user_id == source_user_id,
+            )).scalars().all())
+        return {
+            "local_user_id": user_id,
+            "source": source,
+            "source_user_id_present": source_user_id is not None,
+            "shared_local_user_count": len(local_user_ids),
+        }
+
     # ---- 每日健康 ----
     def save_daily(self, daily: DailyHealth) -> None:
         """把 DailyHealth（含 sleep/activity/training）写入对应表（按 user+date upsert）。"""

@@ -1,141 +1,179 @@
-# Vitalis Health Agent — Architecture v1.0
+# Vitalis Health Intelligence Architecture v1.0
 
-## 1. 总体架构
+## 1. System Boundary
 
-```
-                    User
-                     |
-        -------------+-------------
-        |                           |
- Official Login + Extension   Hermes Agent + Skill
-        |                           |
-        -------------+-------------
-                     |
-        ------------------------
-        |                      |
-  Health Intelligence      API Gateway
-        |                      |
-        ------------------------
-                     |
-             Vitalis Core
-                     |
-     --------------------------------
-     |              |               |
- Data Connector  Data Model   Analysis Engine
-     |              |               |
-     |              |               |
-  Zepp          HealthSchema     Rule Engine
-  Garmin                         Statistical
-  Apple                          AI (LLM解释)
-  Huawei
-                     |
-                Storage Layer
+Vitalis has three layers. Only the Intelligence layer computes health state or training
+decisions.
 
-          PostgreSQL + TimescaleDB
+```text
+Assistant
+  Hermes Skill: Morning / Evening / Weekly / On-demand rendering
+                              |
+Intelligence                  v
+  DailyProfile -> Quality -> Baseline -> Features -> States -> Decision
+                              |
+Data                          v
+  Zepp connector -> normalized records -> SQLite/PostgreSQL
 ```
 
-## 2. 核心模块
+Hermes is not an analysis engine. It may select and phrase fields from `DailyProfile`,
+but cannot calculate trends, scores, thresholds, confidence, or replacement advice.
 
-### 2.1 Data Connector Layer（vitalis/connectors）
+## 2. Data Layer
 
-统一接口（`base.py`）：
+`vitalis/connectors` authenticates, synchronizes, and normalizes vendor payloads. The
+analysis layer reads only normalized records:
 
-```python
-class HealthConnector(ABC):
-    source: str                     # "zepp" / "garmin" ...
-    def authenticate(self) -> ConnectorAuth
-    def sync(self, user, start, end) -> ConnectorSyncResult   # 拉取->转换->入库
-    def fetch(self, user, start, end) -> list[DailyHealth]    # 只拉取+转换（预览）
+- Daily records: sleep, activity, and training.
+- `metric_samples`: timestamped HR, RMSSD, SDNN, sleep HRV/RHR, readiness components,
+  Charge, SpO2, and other supported measurements.
+- `daily_metrics`: sparse vendor facts such as readiness, stress, respiratory rate,
+  PAI, ODI, and lactate-threshold fields.
+- `workouts` and `workout_samples`: normalized workout summaries and detail HR.
+- `dense_data_files`: metadata for opaque `SEC_HR` payloads; indexed files are not
+  represented as decoded measurements.
+
+Raw measurements and vendor scores remain separate from Vitalis-derived states.
+`ahi_readiness` and `afib_readiness` are vendor readiness component scores, not AHI or
+AFib diagnoses.
+
+## 3. Intelligence Layer
+
+The implementation lives in `vitalis/intelligence`:
+
+| Module | Responsibility |
+| --- | --- |
+| `contracts.py` | Versioned Pydantic contracts for facts, quality, baselines, features, states, and decisions |
+| `profile.py` | One-local-user loader, provenance, target-day facts, and deterministic quality flags |
+| `baseline.py` | Device/metric-specific 7-day and 28-day robust statistics |
+| `analyzers.py` | Sleep, HRV/RHR, recovery, and training feature extraction |
+| `decision.py` | Explainable training action policy with abstention |
+| `service.py` | Assemble the complete `DailyProfile` |
+
+### 3.1 DailyProfile
+
+The wire contract is `schema_version=1.0`, `model_version=vitalis-intelligence-1`:
+
+```text
+DailyProfile
+|- data_quality: status, missing signals, coverage, flags, device validity
+|- facts: target-day normalized observations and provenance
+|- baselines: 7d/28d robust statistics per metric and device stream
+|- features: sleep, HRV/RHR, recovery, training
+|- states: sleep, recovery, training load
+|- decision: action, confidence, drivers, limitations, rule IDs
+|- evidence_refs
+`- metadata: identity and product-policy versions
 ```
 
-- 厂商格式隔离：`connectors/zepp/parser.py` 把 Zepp 字段（`sleepScore`/`stages`…）转换为统一 Schema。
-- 插件注册：`@register_connector`（见 `registry.py`），业务层只依赖抽象。
+There is no uncalibrated Vitalis 0-100 recovery score. Vendor readiness, Charge, and
+sleep scores are labeled as vendor context and do not become the Vitalis result.
 
-### 2.2 Health Data Model（vitalis/models）
+### 3.2 Data Quality
 
-**原则：不保存厂商格式。** 所有数据进入系统前一律转换为 Vitalis Schema。
-单位统一：时长=分钟、心率=bpm、负荷=0~100。
+Three concepts are intentionally separate:
 
-核心类型：`User / Device / SleepRecord / ActivityRecord / TrainingRecord / MetricSample / DailyMetric / DenseDataFile / Workout / DailyHealth / AnalysisRecord / Decision`（见 `models/models.py`）。
+- `data_quality`: deterministic completeness, coverage, provenance, query-limit, and
+  identity flags.
+- `device_validity`: evidence metadata, `UNKNOWN` unless device-specific validation is
+  attached.
+- `decision.confidence`: a rule-based inference-completeness band, not a device
+  measurement probability.
 
-### 2.3 Storage（vitalis/storage）
+Missing target-day sleep or HRV is explicit. The engine never assigns default score
+points or reuses an old analysis result.
 
-- 初期 PostgreSQL（psycopg），开发/测试可切 SQLite（`DATABASE_URL`）。
-- 表：`users`、`devices`、`health_daily`、`sleep_records`、`activity_records`、`training_records`、`metric_samples`、`daily_metrics`、`dense_data_files`、`workouts`、`workout_samples`、`analysis_records`、`auth_tokens`、`zepp_pairing_sessions`、`zepp_browser_links`、`zepp_device_links`。
-- 健康数据以 JSON 列存统一 Schema，同时保留结构化列；ORM 已为 TimescaleDB 超表迁移预留（`__table_args__`）。
-- Zepp 运动摘要从真实 `data.summary` 响应归一化；详情中的累积心率增量被展开为 UTC 秒级 `workout_samples`。同一运动重新同步时整组替换，避免重复或残留样本。
-- 运动详情没有提供逐样本设备身份时，样本来源必须保持 `unknown`，不得根据运动摘要设备推断为 Balance 2、Helio Strap 或融合数据。
-- `band_data.data_hr` 只归一化为分钟心率；SDNN/RMSSD、Charge、Readiness、压力、SpO2/ODI、PAI、呼吸率和乳酸阈值按已验证响应形状进入 `metric_samples` 或 `daily_metrics`，设备标识存在时参与时序样本唯一键。
-- `dense_data_files` 只表示 `SEC_HR` 文件索引和覆盖范围，不保存签名 URL，也不把元数据表示成测量样本。载荷格式在可靠来源验证前保持 `parse_status=indexed`。
-- Zepp 访问凭据加密存储；长期浏览器链接只保存 Bearer 令牌的 SHA-256 摘要及连接状态，不保存原始链接令牌。
+One vendor identity may map to multiple local Vitalis users. The loader reports
+`SOURCE_IDENTITY_SHARED` and continues using only the requested local user; it never
+merges history automatically.
 
-### 2.4 Analysis Engine（vitalis/analysis）
+### 3.3 Baselines
 
-三层，严格分层、可独立测试：
+Baseline keys include local user, metric, source, source scope, device ID, window, and
+model version. RMSSD, SDNN, sleep HRV, and RHR never share numerical baselines; device
+streams are never averaged together.
 
-| 层 | 模块 | 职责 | 特性 |
-| --- | --- | --- | --- |
-| Rule | `rule_engine.py` | 确定性规则：睡眠<6h→恢复下降、负荷过高→不建议高强度 | 可复现、可解释 |
-| Statistical | `statistical_engine.py` | 7 天 HRV 趋势、30 天训练负荷、7 天平均睡眠 | 纯函数 |
-| AI | `ai_engine.py` | 只解释/总结/建议，**绝不计算** | LLM 或确定性模板回退 |
+Within each stream, high-frequency samples are reduced to one daily median before
+history eligibility is counted. The engine computes:
 
-编排入口 `AnalysisPipeline.run(target, history)`。
+- median and median absolute deviation (MAD);
+- 25th and 75th percentiles;
+- least-squares trend per day;
+- sample count, distinct-day count, and coverage;
+- percent deviation and robust z-score for the target day.
 
-### 2.5 Agent Interface（skills/vitalis）
+RMSSD uses natural-log values for robust statistics and retains an original-ms
+`reference_value`. Seven-day baselines require 3 distinct days and 28-day baselines
+require 14. These minimums are versioned product policy, not medical truth.
 
-Hermes Skill：`SKILL.md` 声明能力（查询/分析/建议）与规则（不医疗诊断、基于趋势、LLM 不计算），`tools/` 提供 CLI（走 HTTP API）。
+### 3.4 Feature and Decision Policy
 
-## 3. API 设计（/api/v1）
+The preferred HRV stream must have a target-day observation. Selection ranks usable
+28-day coverage first, then metric preference (`RMSSD`, sleep HRV, SDNN). RHR is paired
+conservatively and is not substituted into an HRV baseline.
 
-- `POST /connect/zepp` — 连接数据源、同步历史、生成健康档案
-- `POST /connect/zepp/pair` — 创建绑定 Vitalis 用户的短期一次性配对码
-- `POST /connect/zepp/pair/{code}/credentials` — 扩展提交官方网页登录结果，签发长期浏览器链接并开始同步
-- `POST /connect/zepp/link/credentials` — Cookie 变化、页面一方 Cookie 桥接或周期检查时验证并更新访问凭据
-- `POST /connect/zepp/link/validate` — Cookie 不可见时向 Zepp 验证已保存凭据；临时服务故障不改变连接状态
-- `POST /connect/zepp/link/disconnected` — 记录浏览器退出登录，向用户暴露重登提示
-- `POST /connect/zepp/device-link` — 创建仅显示一次、服务端只保存摘要的 Balance 2 上传令牌
-- `POST /connect/zepp/device-link/heart-rate` — 幂等接收设备心率回调批次
-- `GET /connect/zepp/token` — 查询凭据、最近验证/同步时间和 `needs_login` 状态
-- `GET /health/today` — 今日状态摘要 `{score, sleep, training, stress}`
-- `GET /health/workouts` — 按日期查询运动摘要和详情可用状态
-- `GET /health/workouts/{workout_id}` — 查询归一化详情及秒级运动心率样本
-- `GET /health/metrics/{metric}`、`GET /health/daily-metrics?metric=` — 查询通用时序和每日指标
-- `GET /health/dense-files/{stream}` — 查询文件覆盖和解码状态，不返回文件 ID
-- `POST /analyze` — 完整分析（规则+统计+LLM 解释）
-- 多用户：`X-User-Id` 请求头
+Recovery requires at least two baseline-interpretable signals from HRV, RHR, sleep,
+and recent training load. Multi-signal suppression can produce `RECOVERY` or `REST`;
+good recovery plus low load can produce `TRAIN_HARD`. Every decision returns rule IDs,
+drivers, limitations, and one action:
 
-## 4. 用户数据流程
-
-```
-公网：浏览器 → 受信任 HTTPS 反向代理 / 隧道 → 回环地址上的 FastAPI
-首次：用户 → Vitalis 配对页 → 扩展打开 Zepp 官方登录页
-      → 手机号/账号登录 → 扩展检测 Cookie API / 页面一方 Cookie → 一次性配对码提交
-      → 保存 auth_tokens + 签发浏览器链接 → 同步历史 → 生成健康档案
-续期：Cookie 变化事件或 30 分钟检查 → Bearer 浏览器链接验证
-      → 凭据变化时换存并增量同步；Cookie 不可见时验证服务端已保存凭据
-      → 仅 401/403 等明确凭据拒绝标记 needs_login，临时网络故障保留连接
-并发：同一用户的各同步入口 → 进程内用户锁串行执行 → 独立事务提交/回滚
-每日：定时 sync job（用已保存 token）→ 更新数据/连接状态 → Hermes 可调用
-运动：`run/history.json` 的 `data.summary` → 运动摘要
-      → `run/detail.json` 的压缩增量 → UTC 秒级 `workout_samples`
-健康：band_data + events/user-events/dateString → 时序/每日指标 + 设备来源
-高频：fileInfo/events → `dense_data_files(indexed)`，不下载未验证的 SEC_HR 载荷
-回退：Balance 2 后台心率回调 → 有界本地队列 → 手机侧 HTTPS → metric_samples
+```text
+TRAIN_HARD | TRAIN_NORMAL | TRAIN_LIGHT | RECOVERY | REST | INSUFFICIENT_DATA
 ```
 
-浏览器链接不是 Zepp 官方刷新令牌。退出登录、会话/Cookie 过期、修改密码和厂商风控可能要求重新登录。Balance 2 的 Zepp OS 回退只补充设备回调，Helio Strap 不能运行该应用，云同步仍是历史数据的主来源。
+The engine detects deviations and guides training; it does not diagnose disease.
+Sleep stages remain trend-only. The v1 training load is vendor-derived and lacks RPE,
+sets/reps/weight, and reliable aerobic-intensity classification.
 
-## 5. 与任务书的对应
+## 4. API and Assistant
 
-1. 数据源插件化 ✅ Connector 抽象 + 注册表
-2. 分析逻辑与采集解耦 ✅ 只通过 Schema/仓储交互
-3. 多用户 ✅ X-User-Id + 调度循环 + 每用户独立 token
-4. 支持未来第三方调用 ✅ 独立 FastAPI + TimescaleDB 迁移预留
-5. LLM 只负责解释不负责计算 ✅ AIEngine 只消费结构化事实
+The sole computed-analysis endpoint is:
 
-## 6. 后续路线
+```text
+GET /api/v1/intelligence/daily-profile?day=YYYY-MM-DD
+X-User-Id: <local user>
+```
 
-- Garmin / Apple / Huawei 连接器（各自实现 parser 即可）
-- PostgreSQL + TimescaleDB 生产配置与迁移
-- 分析规则可配置化（阈值可通过配置/表注入）
-- 多租户与访问令牌体系
+`/api/v1/health/*` remains the raw/summarized data and synchronization surface. The
+prototype `/api/v1/health/today` and `/api/v1/analyze` paths were removed because the
+application is pre-production and no compatibility contract is required.
+
+`skills/vitalis` contains one HTTP tool, a JSON Schema, evidence limits, and four
+renderer workflows. Weekly v1 may render only the engine-computed seven-day training
+fields; weekly sleep/recovery aggregation is not implemented and Hermes may not derive
+it from seven daily calls.
+
+## 5. Scheduled Flow
+
+```text
+02:00  sync 7 days
+09:30  sync 2 days -> DailyProfile -> Morning renderer -> push
+21:30  sync 1 day  -> DailyProfile -> Evening renderer -> push
+```
+
+The scheduler pushes an explicit insufficient-data profile when analysis requirements
+are not met. It does not delay and then substitute stale health results.
+
+## 6. Evidence Boundaries
+
+- WHO activity guidance supplies population-level weekly context, not readiness rules.
+- HRV measurement standards support metric separation and lnRMSSD handling, not a
+  proprietary recovery score.
+- World Sleep Society recommendations bound consumer sleep-stage interpretation.
+- AASM/SRS provides a general adult sleep-duration reference.
+- IOC consensus supports integrated load/recovery/health monitoring, not a universal
+  acute-to-chronic ratio threshold.
+
+Device-specific validity evidence for Balance 2 and Helio is not currently attached,
+so `device_validity.status` remains `UNKNOWN`.
+
+## 7. Current Scope
+
+Implemented: versioned DailyProfile, deterministic quality/provenance, device-isolated
+7/28-day baselines, sleep/HRV/recovery/training features, explainable decisions,
+Morning/Evening pushes, and thin Hermes workflows.
+
+Not implemented: 60/90-day personal correlations, health anomaly persistence,
+minute-level stress load, Energy Dynamics, weekly sleep/recovery review, training RPE,
+body composition/BP integration, forecasts, or medical alerts. These require explicit
+new data contracts and validation rather than LLM inference.

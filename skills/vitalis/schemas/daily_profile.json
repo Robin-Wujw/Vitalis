@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vitalis.local/schemas/daily-profile-1.0.json",
+  "title": "Vitalis DailyProfile 1.0",
+  "type": "object",
+  "required": ["schema_version", "model_version", "user_id", "date", "generated_at", "data_quality", "facts", "baselines", "features", "states", "decision", "evidence_refs", "metadata"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "model_version": {"const": "vitalis-intelligence-1"},
+    "user_id": {"type": "string"},
+    "date": {"type": "string", "format": "date"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "data_quality": {
+      "type": "object",
+      "required": ["status", "required_signals", "missing_required_signals", "coverage", "flags", "device_validity"],
+      "properties": {
+        "status": {"enum": ["SUFFICIENT", "PARTIAL", "INSUFFICIENT"]},
+        "required_signals": {"type": "array", "items": {"type": "string"}},
+        "missing_required_signals": {"type": "array", "items": {"type": "string"}},
+        "coverage": {"type": "array", "items": {"type": "object"}},
+        "flags": {"type": "array", "items": {"type": "object"}},
+        "device_validity": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "facts": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "object"}}},
+    "baselines": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "object"}}},
+    "features": {
+      "type": "object",
+      "required": ["sleep", "hrv", "recovery", "training"],
+      "properties": {
+        "sleep": {"type": "object"},
+        "hrv": {"type": "object"},
+        "recovery": {"type": "object"},
+        "training": {"type": "object"}
+      }
+    },
+    "states": {"type": "object"},
+    "decision": {
+      "type": "object",
+      "required": ["action", "confidence", "drivers", "limitations", "rule_ids"],
+      "properties": {
+        "action": {"enum": ["TRAIN_HARD", "TRAIN_NORMAL", "TRAIN_LIGHT", "RECOVERY", "REST", "INSUFFICIENT_DATA"]},
+        "confidence": {"enum": ["NONE", "LOW", "MODERATE", "HIGH"]},
+        "drivers": {"type": "array", "items": {"type": "string"}},
+        "limitations": {"type": "array", "items": {"type": "string"}},
+        "rule_ids": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "evidence_refs": {"type": "array", "items": {"type": "object"}},
+    "metadata": {"type": "object"}
+  }
+}

@@ -1,12 +1,13 @@
 """API 端到端测试：mock Zepp 下完整走通 连接 -> 同步 -> 查询 -> 分析。"""
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import importlib
 
 from starlette.requests import Request
 
 from vitalis.config import settings
+from vitalis.models import ActivityRecord, DailyHealth, MetricSample, SleepRecord, TrainingRecord
 from vitalis.storage import HealthRepository, session_scope
 
 
@@ -20,38 +21,86 @@ def test_connect_and_sync(client):
     assert "profile" in body
 
 
-def test_health_today(client):
+def test_daily_profile_after_sync(client):
     client.post("/api/v1/connect/zepp", json={"sync_history": True})
-    resp = client.get("/api/v1/health/today", headers={"X-User-Id": "001"})
+    resp = client.get("/api/v1/intelligence/daily-profile", headers={"X-User-Id": "001"})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["score"] is not None
-    assert body["training"] in {"full", "moderate", "easy", "not_ready"}
-    assert body["stress"] in {"low", "medium", "high"}
+    assert body["schema_version"] == "1.0"
+    assert body["model_version"] == "vitalis-intelligence-1"
+    assert body["decision"]["action"] in {
+        "TRAIN_HARD", "TRAIN_NORMAL", "TRAIN_LIGHT", "RECOVERY", "REST", "INSUFFICIENT_DATA"
+    }
+    assert "score" not in body["decision"]
 
 
-def test_health_today_second_user(client):
-    """多用户隔离：新用户无数据时返回 no_data。"""
-    resp = client.get("/api/v1/health/today", headers={"X-User-Id": "999"})
+def test_daily_profile_second_user_abstains(client):
+    """A user without data gets an explicit abstention, not a fallback score."""
+    resp = client.get("/api/v1/intelligence/daily-profile", headers={"X-User-Id": "999"})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["score"] is None
-    assert body["training"] == "no_data"
+    assert body["data_quality"]["status"] == "INSUFFICIENT"
+    assert body["decision"]["action"] == "INSUFFICIENT_DATA"
+    assert body["decision"]["confidence"] == "NONE"
 
 
-def test_analyze(client):
-    client.post("/api/v1/connect/zepp", json={"sync_history": True})
-    resp = client.post(
-        "/api/v1/analyze",
-        json={"agent_query": "我今天适合跑步吗？"},
-        headers={"X-User-Id": "001"},
+def test_obsolete_analysis_routes_are_removed(client):
+    assert client.get("/api/v1/health/today").status_code == 404
+    assert client.post("/api/v1/analyze", json={}).status_code == 404
+
+
+def test_daily_profile_api_runs_device_baseline_to_decision(client):
+    user_id = "intelligence-api"
+    target = date(2026, 8, 27)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+        for offset in range(21, -1, -1):
+            day = target - timedelta(days=offset)
+            current = offset == 0
+            repo.save_daily(DailyHealth(
+                user_id=user_id,
+                date=day,
+                sleep=SleepRecord(
+                    user_id=user_id,
+                    date=day,
+                    sleep_duration=360 if current else 450 + offset % 3,
+                ),
+                activity=ActivityRecord(
+                    user_id=user_id,
+                    date=day,
+                    resting_hr=64 if current else 56 + offset % 2,
+                ),
+                training=TrainingRecord(
+                    user_id=user_id,
+                    date=day,
+                    workout_count=1,
+                    total_duration=30,
+                    total_load=30 + offset % 3,
+                ),
+            ))
+            repo.save_metric_samples([MetricSample(
+                user_id=user_id,
+                metric="hrv_rmssd",
+                timestamp=datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc),
+                value=40 if current else 50 + offset % 3,
+                unit="ms",
+                source_scope="device",
+                device_id="helio-test",
+            )])
+
+    response = client.get(
+        f"/api/v1/intelligence/daily-profile?day={target.isoformat()}",
+        headers={"X-User-Id": user_id},
     )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert "explanation" in body
-    assert body["engine"].startswith("rule+statistical")
-    # LLM 未配置时应为模板回退，不允许出现空解释
-    assert body["explanation"]
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data_quality"]["status"] == "SUFFICIENT"
+    assert payload["features"]["hrv"]["preferred_device_id"] == "helio-test"
+    assert payload["features"]["hrv"]["deviation"]["direction"] == "below"
+    assert payload["decision"]["action"] == "REST"
+    assert payload["decision"]["rule_ids"] == ["DECISION.MULTISIGNAL_SUPPRESSION_REST"]
 
 
 def test_unknown_source(client):

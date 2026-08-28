@@ -2,24 +2,21 @@
 
 可扩展的个人健康数据平台。
 
-**核心思路：** 数据源插件化采集（Zepp 起步）→ 统一 Vitalis Schema → SQLite/PostgreSQL 存储 → 三层分析引擎（规则 / 统计 / LLM 只解释不计算）→ FastAPI + 多级聚合查询 + 定时推送。
+**核心思路：** 数据源插件化采集（Zepp 起步）→ 统一 Vitalis Schema → 数据质量与来源 → 设备隔离的个人基线 → 睡眠/HRV/恢复/训练特征 → 确定性训练决策 → FastAPI + Hermes 薄渲染。
 
 ```
                     User / 浏览器 / Agent
                           │
                   FastAPI / Vitalis API
                           │
-              ┌───────────┴───────────┐
-        Health Intelligence      API Gateway
-              └───────────┬───────────┘
-                    Vitalis Core
-        ┌───────────────┬───────────────┐
-   Data Connector   Data Model      Analysis Engine
-   (zepp/garmin/…)  (Vitalis Schema) (rule/stat/llm)
-        └───────────┬───────────┘
-              Sync Manager (8 streams)
-        └───────────┴───────────┘
-                 Storage Layer
+                          │
+             DailyProfile API (v1.0)
+                          │
+        Quality → Baseline → Features → Decision
+                          │
+             Normalized Health Storage
+                          │
+               Zepp Sync (8 streams)
             SQLite → PostgreSQL (+ TimescaleDB)
 ```
 
@@ -36,22 +33,20 @@ vitalis/
 │       └── parser.py        # 厂商格式 → Vitalis Schema + 心率/健康指标解码
 ├── models/                  # 统一健康数据模型（Vitalis Schema）
 ├── storage/                 # SQLAlchemy + SQLite/PostgreSQL
-├── analysis/                # 三层分析引擎：rule / statistical / ai
+├── intelligence/            # DailyProfile、质量、基线、分析器、决策引擎
 ├── services/                # 业务服务层
-│   ├── sync_service.py      # 旧版同步服务（向后兼容）
-│   ├── summary_service.py   # 每日汇总 + 分析
+│   ├── sync_service.py      # 同步服务
 │   ├── aggregation_service.py  # 多级聚合（180d/90d/30d/7d/1d）
-│   ├── completeness_service.py # 数据完整性检查
-│   └── push_service.py      # 推送服务（日志/Webhook）
+│   └── push_service.py      # DailyProfile 渲染与推送（日志/Webhook）
 ├── api/                     # FastAPI 路由（/api/v1）
 │   ├── routes/connect.py    # 连接/导入/扫码
 │   ├── routes/health.py     # 查询/同步/聚合
-│   └── routes/analyze.py    # 分析
-├── scheduler/               # 多时段调度（02:00/09:30/14:00）
+│   └── routes/intelligence.py # 唯一计算分析接口
+├── scheduler/               # 同步 + Morning/Evening Profile 推送
 └── main.py                  # 入口
-skills/vitalis/              # Hermes Skill
+skills/vitalis/              # Hermes 薄调度/渲染 Skill
 tests/                       # 单元 + API 端到端测试
-zepp_os/balance2_bridge/     # Balance 2 设备侧心率回退通道
+zepp_os/balance2_bridge/     # Balance 2 设备侧心率补充通道
 ```
 
 ## 快速开始
@@ -121,7 +116,7 @@ Vitalis 通过用户浏览器中的官方登录会话连接 Zepp，不要求打�
 Balance 2，也不能据此把心率样本标记为 Balance 2 或 Helio Strap。当前
 `band_data.data_hr` 仍是每天 1,440 个槽位的分钟级数据。
 
-### Balance 2 设备侧回退
+### Balance 2 设备侧补充通道
 
 `zepp_os/balance2_bridge/` 提供 API_LEVEL 4.2 的 Balance 2 Zepp OS 应用骨架。后台服务只监听系统允许的心率回调，使用最多 3,600 条的本地队列，并由手机侧通过 HTTPS + 一次性显示的设备 Bearer 令牌上传。回调频率由 Zepp OS 决定，因此不能宣称固定 1 Hz；高功耗加速度计没有在后台采集。
 
@@ -129,15 +124,14 @@ Helio Strap 不能运行 Zepp OS 应用，所以这条通道仅适用于 Balance
 
 ## 自动调度策略
 
-解决「早上 9:30 用户还没起床，数据不完整」的问题：
-
 | 时间 | 动作 | 逻辑 |
 |------|------|------|
-| **02:00** | 🌙 全量同步 | 补齐最近 7 天历史数据 |
-| **09:30** | 🌅 增量同步 + 完整性检查 + 推送 | 检查睡眠是否结束，没醒→推迟 |
-| **14:00** | ☀️ 重试推送 | 早上没推送的用户，用已有数据推送 |
+| **02:00** | 夜间同步 | 补齐最近 7 天历史数据 |
+| **09:30** | Morning | 增量同步 2 天，生成并推送 DailyProfile |
+| **21:30** | Evening | 增量同步 1 天，按晚间视图渲染同一计算结果 |
 
-每个用户每天只推送一次。
+数据不足不会改用旧分数或模板建议；Profile 和推送都返回
+`INSUFFICIENT_DATA` 及缺失信号。
 
 ## API（/api/v1）
 
@@ -159,7 +153,7 @@ Helio Strap 不能运行 Zepp OS 应用，所以这条通道仅适用于 Balance
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/health/today?day=YYYY-MM-DD` | 今日健康状态 |
+| GET | `/intelligence/daily-profile?day=YYYY-MM-DD` | v1.0 DailyProfile：质量、事实、基线、特征、状态、决策 |
 | POST | `/health/sync?days=7` | **手动触发增量同步** |
 | GET | `/health/token-status` | 凭据有效性 + 下次同步时间 |
 | GET | `/health/range?from=&to=&granularity=` | 多级聚合：180d/90d/30d/7d/1d |
@@ -168,7 +162,6 @@ Helio Strap 不能运行 Zepp OS 应用，所以这条通道仅适用于 Balance
 | GET | `/health/metrics/{metric}?from=&to=` | 查询通用时序指标和设备来源 |
 | GET | `/health/daily-metrics?metric=&from=&to=` | 查询稀疏每日指标 |
 | GET | `/health/dense-files/second_heart_rate?from=&to=` | 查询高频文件覆盖，不返回文件 ID |
-| POST | `/analyze` | 完整 AI 分析 |
 
 **示例：**
 
@@ -178,6 +171,10 @@ curl -X POST 'localhost:8000/api/v1/health/sync?days=7' -H 'X-User-Id: 001'
 
 # 检查凭据是否还有效
 curl localhost:8000/api/v1/health/token-status -H 'X-User-Id: 001'
+
+# 获取确定性的每日状态与训练决策
+curl 'localhost:8000/api/v1/intelligence/daily-profile?day=2026-08-27' \
+  -H 'X-User-Id: 001'
 
 # 查看最近 30 天月度聚合
 curl 'localhost:8000/api/v1/health/range?from=2026-01-01&to=2026-08-25&granularity=30d' \
@@ -198,7 +195,7 @@ Cookie 暂时不可见时，扩展会调用 `/connect/zepp/link/validate` 验证
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest -q        # 107 个测试，全部通过
+.venv/bin/python -m pytest -q        # 110 个测试，全部通过
 ```
 
 覆盖范围：
@@ -209,8 +206,11 @@ Cookie 暂时不可见时，扩展会调用 `/connect/zepp/link/validate` 验证
 - `test_sync_manager.py` — 同步报告、取消、失败报告和运动详情持久化
 - `test_parser.py` — band_data、健康指标、文件索引、运动摘要和心率增量解码
 - `test_zepp_os_bridge.py` — Balance 2 权限、后台传感器、队列和 HTTPS 上传静态契约
-- `test_rule_engine.py` — 规则引擎
-- `test_statistical_engine.py` — 统计引擎
+- `test_baseline_engine.py` — 设备/指标隔离、日聚合、7/28 天 robust baseline
+- `test_profile_loader.py` — 数据质量、身份隔离和 provenance
+- `test_intelligence_analyzers.py` — 睡眠/HRV/恢复/训练与确定性决策
+- `test_intelligence_contracts.py` — DailyProfile 版本化契约和无分数兜底语义
+- `test_vitalis_skill.py` — Hermes 薄渲染边界、工作流和 Schema
 
 ## 设计要点
 
@@ -218,5 +218,7 @@ Cookie 暂时不可见时，扩展会调用 `/connect/zepp/link/validate` 验证
 2. **厂商格式隔离**：`connectors/zepp/parser.py` 把 Zepp JSON 转成 Vitalis Schema，上层永远看不到厂商字段
 3. **分析逻辑与采集解耦**：连接器只产出 Schema，分析引擎只消费 Schema + 存储
 4. **多用户**：`X-User-Id` 请求头 + 表按 user_id 索引 + 调度器按用户逐一同步
-5. **LLM 只解释不计算**：rule/statistical 引擎算数字，AIEngine 只打包给 LLM
+5. **LLM 只渲染不计算**：Hermes 只消费 DailyProfile，不生成分数、趋势、阈值或替代建议
 6. **密码不经过云端**：登录在官方页面完成，Vitalis 只接收登录后的临时访问凭据
+7. **缺失即 abstain**：缺关键目标日信号或可解释基线时输出 `INSUFFICIENT_DATA`
+8. **设备流不混合**：RMSSD、SDNN、RHR 及不同设备分别建基线，按可用覆盖选择首选流

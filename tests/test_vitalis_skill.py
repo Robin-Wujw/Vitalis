@@ -62,6 +62,7 @@ def test_skill_exposes_read_analyze_and_act_tools():
         "sync.py", "analyze.py", "feedback.py", "acknowledge_event.py",
         "training_responses.py", "personal_model.py", "personal_associations.py", "timeline.py",
         "complete_recommendation.py",
+        "daily_push.py",
     }
     assert expected <= {path.name for path in (SKILL / "tools").glob("*.py")}
 

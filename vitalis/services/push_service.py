@@ -1,14 +1,8 @@
-"""推送服务：支持 Webhook、Server 酱等渠道推送每日健康分析。
-
-当前阶段先实现本地日志推送，后续可接入：
-  - 企业微信机器人
-  - Server 酱 / PushPlus
-  - Webhook 回调
-"""
+"""Push already-rendered daily health messages to configured transports."""
 from __future__ import annotations
 
-import json
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
@@ -16,6 +10,7 @@ from typing import Callable
 import httpx
 
 log = logging.getLogger("vitalis.push")
+PUSHPLUS_URL = "https://www.pushplus.plus/send"
 
 
 @dataclass
@@ -32,8 +27,13 @@ class PushMessage:
 class PushService:
     """推送服务。"""
 
-    def __init__(self, webhook_url: str = ""):
+    def __init__(self, webhook_url: str = "", pushplus_token: str | None = None):
         self.webhook_url = webhook_url
+        self.pushplus_token = (
+            os.getenv("PUSHPLUS_TOKEN", "")
+            if pushplus_token is None
+            else pushplus_token
+        )
         self._handlers: list[Callable[[PushMessage], None]] = []
         self._register_default_handlers()
 
@@ -42,6 +42,8 @@ class PushService:
         self._handlers.append(self._log_handler)
         if self.webhook_url:
             self._handlers.append(self._webhook_handler)
+        if self.pushplus_token:
+            self._handlers.append(self._pushplus_handler)
 
     def add_handler(self, handler: Callable[[PushMessage], None]) -> None:
         self._handlers.append(handler)
@@ -133,6 +135,28 @@ class PushService:
                 )
         except Exception:
             log.warning("webhook push failed")
+
+    def _pushplus_handler(self, msg: PushMessage) -> None:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.post(
+                PUSHPLUS_URL,
+                json={
+                    "token": self.pushplus_token,
+                    "title": msg.title,
+                    "content": msg.body,
+                    "template": "markdown",
+                },
+            )
+            response.raise_for_status()
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise RuntimeError("PushPlus returned an invalid response") from exc
+            if not isinstance(payload, dict):
+                raise RuntimeError("PushPlus returned an invalid response")
+            code = payload.get("code")
+            if code != 200:
+                raise RuntimeError(f"PushPlus rejected delivery with code {code}")
 
 
 def _display(value) -> str:

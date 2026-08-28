@@ -70,6 +70,42 @@ must resolve `vitalis` from the linked path. `VITALIS_USER` has no fallback: eve
 passes that exact identity as `X-User-Id`. Hermes remains a Read / Analyze / Act
 orchestrator and must not calculate, merge, or fill health observations.
 
+### Daily PushPlus Report
+
+The local production setup uses Hermes Cron as the only daily dispatcher. Vitalis runs
+as a loopback system service with its embedded scheduler disabled, so the report cannot
+be sent twice by overlapping schedulers. The active job runs at 09:30
+`Asia/Shanghai`, synchronizes two days for the explicit `VITALIS_USER`, performs a fresh
+deterministic analysis, and sends one Morning report.
+
+Add the PushPlus token to Hermes' private `~/.hermes/.env`:
+
+```dotenv
+PUSHPLUS_TOKEN=<private-pushplus-token>
+```
+
+The cron tool reads that private file at execution time, so adding or rotating the token
+does not require a Gateway restart. Verify the persistent runtime and inspect delivery
+history with:
+
+```bash
+systemctl status vitalis.service hermes-gateway.service
+hermes cron status
+hermes cron list
+hermes cron runs <job-id>
+```
+
+To send a manual acceptance report after configuring the token, get the job ID from
+`hermes cron list` and run:
+
+```bash
+hermes cron run <job-id>
+```
+
+The tool exits before synchronization when either `VITALIS_USER` or `PUSHPLUS_TOKEN` is
+missing. The token is never passed to the model, included in a URL, or written to
+repository files and logs.
+
 ## Public Deployment
 
 Keep the application listener on a private or loopback interface and put a
@@ -127,7 +163,7 @@ Run the complete suite:
 .venv/bin/python -m pytest -q
 ```
 
-Current verified result: 167 tests passed. The suite covers connector parsing and
+Current verified result: 173 tests passed. The suite covers connector parsing and
 synchronization, browser pairing, health-data APIs, device isolation, baselines,
 Daily/Weekly/Monthly intelligence, health-event lifecycle, training response,
 personal associations, immutable snapshots, bounded Context, Timeline, push rendering,

@@ -1201,3 +1201,66 @@ results without performing health calculations or merging device streams.
   compilation plus `git diff --check` passed.
 - Part 4 (delivery): commit `ef263bb` (`docs: integrate Hermes runtime`) was pushed
   from local `main` to `origin/main` successfully.
+
+## 17. Hermes Daily PushPlus Automation Session
+
+Date: 2026-08-29
+
+Goal: run one explicit-user Vitalis morning pipeline every day under Hermes Cron and
+deliver the already-computed Chinese DailyProfile through PushPlus, while keeping the
+PushPlus token private and keeping health calculations inside Vitalis.
+
+### Detailed TODO
+
+- [x] Part 1 - Add the PushPlus delivery boundary.
+  - Read `PUSHPLUS_TOKEN` only from the private runtime environment and never place it
+    in a URL, repository file, log, exception, or model prompt.
+  - Send only the rendered title and body to the documented PushPlus HTTPS endpoint.
+  - Treat transport and PushPlus application errors as failed delivery and add focused
+    unit coverage without live network access.
+- [x] Part 2 - Add the deterministic daily Act tool.
+  - Require the explicit `VITALIS_USER` and configured PushPlus token before doing work.
+  - Synchronize the current user, run one fresh deterministic analysis, render the
+    returned DailyProfile, and send exactly one morning report.
+  - Keep Hermes as the scheduler/orchestrator; do not ask an LLM to calculate health
+    values, handle the token, or assemble shell-escaped report content.
+- [x] Part 3 - Make the local runtime persistent.
+  - Run the Vitalis loopback API as a restartable boot service with its embedded
+    scheduler disabled to prevent duplicate pushes.
+  - Run Hermes Gateway as a boot service and register one daily 09:30 Asia/Shanghai
+    cron job linked to the checked-in Act tool.
+  - Verify service health, job discovery, explicit identity, and missing-token behavior
+    without sending a live notification before the user supplies the token.
+- [ ] Part 4 - Document, verify, and deliver.
+  - Document the one private token variable, daily schedule, service operations, manual
+    verification, and failure visibility without committing local identifiers.
+  - Run focused and complete tests, compilation, format and secret checks.
+  - Commit and push the implementation, then record exact delivery evidence here.
+
+### Verification Log
+
+- Part 1: `PushService` now enables PushPlus only when `PUSHPLUS_TOKEN` is present,
+  sends the token in an HTTPS JSON body, and validates both HTTP and PushPlus application
+  status. Error results contain only the application status code, not the token,
+  response body, or health message. Five focused push-service tests passed with all
+  network access mocked.
+- Part 2: `tools/daily_push.py` requires the explicit runtime user and token before it
+  creates a network client. Its service path performs exactly one two-day sync, one
+  deterministic analysis, and one PushPlus morning delivery. Failed synchronization
+  stops before analysis and push. The combined daily-tool, PushPlus, and Skill suite
+  passed all 13 tests; missing-user and missing-token CLI preflights exited before any
+  live request.
+- Part 3: `vitalis.service` and `hermes-gateway.service` are enabled and active under
+  systemd. Vitalis listens only on `127.0.0.1:8000`, passes `/healthz`, and has its
+  embedded scheduler disabled. Hermes Cron has one active no-agent job named
+  `vitalis-morning-pushplus`, scheduled for `30 9 * * *`; the system timezone is
+  synchronized `Asia/Shanghai` and Hermes reports the next run at `09:30 +08:00`.
+  A manual missing-token cron run failed at preflight with exit code 2, while the
+  Vitalis service received no synchronization or analysis request.
+- Part 4 (pre-delivery verification): reusable documentation now covers the private
+  token, one 09:30 dispatcher, service status, cron history, and manual acceptance
+  commands without a local user ID or job ID. Focused automation tests passed all 13
+  tests. The complete suite passed all 173 tests in 4.28 seconds with 184 existing
+  Python 3.14 `datetime.utcnow()` deprecation warnings. Repository and Skill tool
+  compilation, Skill validation, and `git diff --check` passed. A live PushPlus message
+  remains intentionally untested until the user supplies the private token.

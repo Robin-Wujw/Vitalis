@@ -67,6 +67,9 @@ codes exist only for program control and must never appear in the answer.
 - List feedback: call `tools/feedback.py list`.
 - Acknowledge an event only after the user asks: call `tools/acknowledge_event.py`.
 - Synchronize source data only after the user asks: call `tools/sync.py`.
+- Configure automated PushPlus morning delivery only after the user asks: schedule
+  `tools/daily_push.py`. It requires private `VITALIS_USER` and `PUSHPLUS_TOKEN`
+  environment variables and keeps the model out of token handling and report assembly.
 
 Wire contracts are documented in `schemas/`. Evidence scope and interpretation limits
 are summarized in `knowledge/evidence.md`.
@@ -77,3 +80,4 @@ are summarized in `knowledge/evidence.md`.
 | --- | --- | --- |
 | `VITALIS_API` | `http://localhost:8000` | Vitalis API origin |
 | `VITALIS_USER` | required | Local Vitalis user ID; there is no implicit user fallback |
+| `PUSHPLUS_TOKEN` | daily push only | Private PushPlus delivery token |

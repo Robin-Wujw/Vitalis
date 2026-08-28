@@ -1,9 +1,8 @@
-# Weekly
+# 每周回顾
 
-Version 1 supports only engine-computed seven-day training fields from the profile:
+全程使用中文。当前版本只展示引擎已经计算的 7 日训练字段：
 `duration_7d`, `load_7d`, `aerobic_minutes_7d`, `strength_sessions_7d`,
-`workout_type_counts_7d`, and `recent_workouts`.
+`sport_mode_counts_7d` 和 `recent_workouts`。
 
-Render those values, the current load state, and the current decision. Explicitly say
-that weekly sleep and recovery aggregates are unavailable in this model version. Do
-not fetch seven daily profiles and calculate aggregates in the model.
+按具体中文运动模式统计次数，再展示当前中文负荷状态和中文训练建议。明确说明本版本
+尚无每周睡眠和恢复聚合；不得拉取七份日报后由模型自行计算。

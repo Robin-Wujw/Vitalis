@@ -39,6 +39,9 @@ def test_daily_profile_after_sync(client):
     assert body["decision"]["action"] in {
         "TRAIN_HARD", "TRAIN_NORMAL", "TRAIN_LIGHT", "RECOVERY", "REST", "INSUFFICIENT_DATA"
     }
+    assert body["decision"]["action_label"]
+    assert body["decision"]["confidence_label"]
+    assert body["decision"]["intensity_label"]
     assert "score" not in body["decision"]
 
 
@@ -48,8 +51,11 @@ def test_daily_profile_second_user_abstains(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["data_quality"]["status"] == "INSUFFICIENT"
+    assert body["data_quality"]["status_label"] == "数据不足"
+    assert body["data_quality"]["missing_required_signal_labels"] == ["睡眠时长", "心率变异性"]
     assert body["decision"]["action"] == "INSUFFICIENT_DATA"
     assert body["decision"]["confidence"] == "NONE"
+    assert body["decision"]["action_label"] == "数据不足，暂不建议"
 
 
 def test_obsolete_analysis_routes_are_removed(client):
@@ -108,6 +114,9 @@ def test_daily_profile_api_runs_device_baseline_to_decision(client):
     assert payload["features"]["hrv"]["preferred_device_id"] == "helio-test"
     assert payload["features"]["hrv"]["deviation"]["direction"] == "below"
     assert payload["decision"]["action"] == "REST"
+    assert payload["decision"]["action_label"] == "休息"
+    assert payload["decision"]["confidence_label"] in {"中等", "较高"}
+    assert payload["decision"]["prescriptions"][0]["title"] == "完全休息"
     assert payload["decision"]["rule_ids"] == ["DECISION.MULTISIGNAL_SUPPRESSION_REST"]
 
 

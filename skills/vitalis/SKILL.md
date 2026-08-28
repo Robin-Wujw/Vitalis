@@ -1,7 +1,6 @@
 ---
 name: vitalis
-description: Render deterministic Vitalis DailyProfile results for morning, evening, weekly, and on-demand health coaching.
-version: 1.0.0
+description: Render deterministic Vitalis DailyProfile results in Chinese for morning, evening, weekly, and on-demand health coaching.
 ---
 
 # Vitalis Health Intelligence
@@ -18,11 +17,17 @@ training decisions. Never reproduce those calculations in the model.
 4. Render only facts, comparisons, drivers, limitations, and recommendations already
    present in the profile.
 
+All user-visible content must be Chinese. Render `*_label`, `*_labels`, workout
+`sport_mode_label`, recognition labels, and structured `prescriptions`. Internal enum
+codes exist only for program control and must never appear in the answer.
+
 ## Hard Boundaries
 
 - Do not create, average, transform, score, threshold, or trend health measurements.
 - Do not change `decision.action`, `decision.confidence`, intensity, duration, drivers,
   limitations, or rule IDs.
+- Do not invent a workout, exercise, set, repetition, heart-rate zone, or progression.
+  Training content must come from `decision.prescriptions`.
 - Do not treat vendor readiness, Charge, sleep score, or sleep stages as Vitalis truth.
 - If action is `INSUFFICIENT_DATA`, name the missing signals and stop. Do not infer a
   training decision from general advice or prior days.

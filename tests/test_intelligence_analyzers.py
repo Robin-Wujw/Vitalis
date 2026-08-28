@@ -90,6 +90,13 @@ def test_training_preserves_recent_workout_types_and_details():
             "detail_available": True,
             "data": {
                 "type": "strength",
+                "sport_mode": "strength_training",
+                "sport_mode_label": "力量训练",
+                "training_family": "strength",
+                "recognition_confidence": "HIGH",
+                "recognition_confidence_label": "较高",
+                "recognition_source": "public_zepp_enum",
+                "recognition_source_label": "公开 Zepp/Huami 运动枚举",
                 "vendor_type_id": 52,
                 "duration": 47,
                 "load": 9,
@@ -102,6 +109,13 @@ def test_training_preserves_recent_workout_types_and_details():
             "detail_available": True,
             "data": {
                 "type": "running",
+                "sport_mode": "outdoor_running",
+                "sport_mode_label": "户外跑",
+                "training_family": "aerobic",
+                "recognition_confidence": "HIGH",
+                "recognition_confidence_label": "较高",
+                "recognition_source": "public_zepp_enum",
+                "recognition_source_label": "公开 Zepp/Huami 运动枚举",
                 "vendor_type_id": 1,
                 "duration": 33,
                 "load": 92,
@@ -118,7 +132,44 @@ def test_training_preserves_recent_workout_types_and_details():
     assert training.aerobic_minutes_7d == 33
     assert [item.type for item in training.recent_workouts] == ["strength", "running"]
     assert training.recent_workouts[0].vendor_type_id == 52
+    assert training.recent_workouts[0].sport_mode_label == "力量训练"
+    assert training.recent_workouts[0].recognition_confidence_label == "较高"
     assert training.recent_workouts[1].heart_rate_max_bpm == 173
+
+
+def test_decision_returns_structured_chinese_zone2_and_strength_prescriptions():
+    raw = _profile(hrv_today=62, rhr_today=50, sleep_today=510, load_today=0)
+    raw.workouts = []
+    *_, decision = _analyze(raw)
+
+    assert decision.action_label == "高负荷训练"
+    assert decision.confidence_label in {"中等", "较高"}
+    assert decision.intensity_label == "较高强度"
+    assert decision.prescription_guidance.startswith("以下方案二选一")
+    prescriptions = {item.code: item for item in decision.prescriptions}
+    assert prescriptions["zone2"].title == "二区有氧跑"
+    assert [step.name for step in prescriptions["zone2"].steps] == ["热身", "二区主训练", "冷身"]
+    strength_steps = [step.name for step in prescriptions["resistance"].steps]
+    assert {"深蹲模式", "水平推", "水平或垂直拉", "髋伸模式", "核心稳定"} <= set(strength_steps)
+
+
+def test_strength_is_not_recommended_within_two_days_of_last_session():
+    raw = _profile(hrv_today=62, rhr_today=50, sleep_today=510, load_today=0)
+    raw.workouts = [{
+        "local_day": TARGET - timedelta(days=1),
+        "data": {
+            "type": "strength",
+            "sport_mode": "strength_training",
+            "sport_mode_label": "力量训练",
+            "training_family": "strength",
+            "duration": 40,
+            "load": 20,
+        },
+    }]
+    *_, decision = _analyze(raw)
+
+    assert "resistance" not in decision.suggested_types
+    assert decision.suggested_types == ["zone2"]
 
 
 def test_hrv_exposes_all_device_streams_without_merging_them():

@@ -20,6 +20,16 @@ from .contracts import (
     WorkoutFeature,
 )
 from .profile import RawDailyProfile, SeriesPoint
+from vitalis.connectors.zepp.sport_types import CATEGORY_LABELS, FAMILY_LABELS
+from .localization import (
+    AVAILABILITY_LABELS,
+    DRIVER_LABELS,
+    LIMITATION_LABELS,
+    LOAD_LABELS,
+    RECOVERY_LABELS,
+    SLEEP_LABELS,
+    labels,
+)
 
 
 class SleepAnalyzer:
@@ -31,7 +41,12 @@ class SleepAnalyzer:
         record = raw.sleep_by_day.get(raw.day)
         if not record:
             return (
-                SleepFeatures(status=Availability.INSUFFICIENT_DATA, limitations=["target_day_sleep_missing"]),
+                SleepFeatures(
+                    status=Availability.INSUFFICIENT_DATA,
+                    status_label=AVAILABILITY_LABELS[Availability.INSUFFICIENT_DATA.value],
+                    limitations=["target_day_sleep_missing"],
+                    limitation_labels=[LIMITATION_LABELS["target_day_sleep_missing"]],
+                ),
                 SleepState.INSUFFICIENT_DATA,
             )
         duration = int(record["sleep_duration"])
@@ -60,6 +75,7 @@ class SleepAnalyzer:
             limitations.append("sleep_regularity_history_insufficient")
         return SleepFeatures(
             status=Availability.AVAILABLE,
+            status_label=AVAILABILITY_LABELS[Availability.AVAILABLE.value],
             duration_minutes=duration,
             bedtime=str(record["bedtime"]) if record.get("bedtime") else None,
             wake_time=str(record["wake_time"]) if record.get("wake_time") else None,
@@ -70,6 +86,7 @@ class SleepAnalyzer:
             duration_deviation=deviation,
             regularity_minutes=round(float(regularity), 1) if regularity is not None else None,
             limitations=limitations,
+            limitation_labels=labels(limitations, LIMITATION_LABELS),
         ), state
 
 
@@ -100,7 +117,9 @@ class HrvAnalyzer:
         if not candidates:
             return HrvFeatures(
                 status=Availability.INSUFFICIENT_DATA,
+                status_label=AVAILABILITY_LABELS[Availability.INSUFFICIENT_DATA.value],
                 limitations=["target_day_hrv_missing"],
+                limitation_labels=[LIMITATION_LABELS["target_day_hrv_missing"]],
             )
         selected = max(
             candidates,
@@ -152,6 +171,7 @@ class HrvAnalyzer:
             limitations.append("rhr_28d_baseline_insufficient")
         return HrvFeatures(
             status=Availability.AVAILABLE,
+            status_label=AVAILABILITY_LABELS[Availability.AVAILABLE.value],
             preferred_metric=metric,
             preferred_device_id=device_id,
             value_ms=round(value, 2),
@@ -161,11 +181,11 @@ class HrvAnalyzer:
             rhr_deviation=rhr_deviation,
             streams=streams,
             limitations=limitations,
+            limitation_labels=labels(limitations, LIMITATION_LABELS),
         )
 
 
 class TrainingAnalyzer:
-    AEROBIC_TYPES = {"run", "running", "walk", "walking", "cycling", "swim", "swimming", "hiking"}
     STRENGTH_TYPES = {"strength", "strength_training", "weight_training", "functional_strength"}
 
     def analyze(
@@ -176,7 +196,9 @@ class TrainingAnalyzer:
         if not raw.training_by_day and not raw.workouts:
             return TrainingFeatures(
                 status=Availability.INSUFFICIENT_DATA,
+                status_label=AVAILABILITY_LABELS[Availability.INSUFFICIENT_DATA.value],
                 limitations=["training_history_missing"],
+                limitation_labels=[LIMITATION_LABELS["training_history_missing"]],
             )
         today = raw.training_by_day.get(raw.day)
         recent_7 = [
@@ -203,7 +225,10 @@ class TrainingAnalyzer:
 
         aerobic_minutes = 0
         strength_sessions = 0
+        strength_days: list[date] = []
         type_counts: dict[str, int] = {}
+        type_labels: dict[str, str] = {}
+        mode_counts: dict[str, int] = {}
         recent_workouts: list[WorkoutFeature] = []
         for workout in raw.workouts:
             workout_day = workout.get("local_day")
@@ -211,14 +236,37 @@ class TrainingAnalyzer:
                 continue
             data = workout.get("data", {})
             workout_type = str(data.get("type", "")).lower()
+            sport_mode = str(data.get("sport_mode", workout_type or "unknown"))
+            sport_mode_label = str(data.get("sport_mode_label", CATEGORY_LABELS.get(workout_type, "未知运动")))
+            family = str(data.get("training_family") or {
+                "running": "aerobic",
+                "walking": "aerobic",
+                "cycling": "aerobic",
+                "swimming": "aerobic",
+                "strength": "strength",
+                "hiit": "mixed",
+                "yoga": "mobility",
+            }.get(workout_type, "skill"))
             type_counts[workout_type] = type_counts.get(workout_type, 0) + 1
-            if workout_type in self.AEROBIC_TYPES:
+            type_labels[workout_type] = CATEGORY_LABELS.get(workout_type, "其他运动")
+            mode_counts[sport_mode_label] = mode_counts.get(sport_mode_label, 0) + 1
+            if family == "aerobic":
                 aerobic_minutes += int(data.get("duration", 0) or 0)
             if workout_type in self.STRENGTH_TYPES:
                 strength_sessions += 1
+                strength_days.append(workout_day)
             recent_workouts.append(WorkoutFeature(
                 date=workout_day,
                 type=workout_type,
+                type_label=CATEGORY_LABELS.get(workout_type, "其他运动"),
+                sport_mode=sport_mode,
+                sport_mode_label=sport_mode_label,
+                training_family=family,
+                training_family_label=FAMILY_LABELS.get(family, "未知"),
+                recognition_confidence=str(data.get("recognition_confidence", "NONE")),
+                recognition_confidence_label=str(data.get("recognition_confidence_label", "无法识别")),
+                recognition_source=str(data.get("recognition_source", "missing_vendor_type")),
+                recognition_source_label=str(data.get("recognition_source_label", "缺少厂商运动类型")),
                 vendor_type_id=data.get("vendor_type_id"),
                 duration_minutes=int(data.get("duration", 0) or 0),
                 vendor_load=float(data.get("load", 0) or 0),
@@ -233,6 +281,7 @@ class TrainingAnalyzer:
         limitations.append("aerobic_intensity_classification_unavailable")
         return TrainingFeatures(
             status=Availability.AVAILABLE,
+            status_label=AVAILABILITY_LABELS[Availability.AVAILABLE.value],
             today_duration_minutes=int(today.get("total_duration", 0)) if today else 0,
             today_load=today_load,
             today_workouts=int(today.get("workout_count", 0)) if today else 0,
@@ -241,11 +290,16 @@ class TrainingAnalyzer:
             load_28d=round(sum(float(item.get("total_load", 0)) for item in recent_28), 1),
             aerobic_minutes_7d=aerobic_minutes,
             strength_sessions_7d=strength_sessions,
+            days_since_last_strength=(raw.day - max(strength_days)).days if strength_days else None,
             workout_type_counts_7d=dict(sorted(type_counts.items())),
+            workout_type_labels_7d=dict(sorted(type_labels.items())),
+            sport_mode_counts_7d=dict(sorted(mode_counts.items())),
             recent_workouts=sorted(recent_workouts, key=lambda item: item.date, reverse=True),
             load_deviation=deviation,
             load_state=load_state,
+            load_state_label=LOAD_LABELS[load_state.value],
             limitations=limitations,
+            limitation_labels=labels(limitations, LIMITATION_LABELS),
         )
 
 
@@ -302,17 +356,29 @@ class RecoveryAnalyzer:
             limitations.append("vendor_charge_is_context_only")
         return RecoveryFeatures(
             status=status,
+            status_label=AVAILABILITY_LABELS[status.value],
             state=state,
+            state_label=RECOVERY_LABELS[state.value],
             positive_signals=positive,
+            positive_signal_labels=labels(positive, DRIVER_LABELS),
             negative_signals=negative,
+            negative_signal_labels=labels(negative, DRIVER_LABELS),
             vendor_readiness=readiness,
             vendor_charge=charge,
             limitations=limitations,
+            limitation_labels=labels(limitations, LIMITATION_LABELS),
         )
 
 
 def build_states(sleep: SleepState, recovery: RecoveryFeatures, training: TrainingFeatures) -> ProfileStates:
-    return ProfileStates(sleep=sleep, recovery=recovery.state, training_load=training.load_state)
+    return ProfileStates(
+        sleep=sleep,
+        recovery=recovery.state,
+        training_load=training.load_state,
+        sleep_label=SLEEP_LABELS[sleep.value],
+        recovery_label=RECOVERY_LABELS[recovery.state.value],
+        training_load_label=LOAD_LABELS[training.load_state.value],
+    )
 
 
 def _baseline_for(

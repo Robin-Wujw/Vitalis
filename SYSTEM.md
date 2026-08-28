@@ -720,3 +720,60 @@ correct any remaining loss of target-day HRV, local time, workout detail, or ide
   is unavailable; the suggestion is not a claim that prior running minutes were Zone 2.
 - The complete suite passed 117 tests with 153 existing Python 3.14 deprecation
   warnings; schema JSON parsing and `git diff --check` passed.
+
+## 10. Chinese Workout Intelligence Session
+
+Date: 2026-08-28
+
+Goal: preserve every publicly defined Zepp workout mode, expose explicit recognition
+confidence, render all user-facing analysis in Chinese, and return deterministic,
+actionable running and strength prescriptions instead of generic activity names.
+
+### Detailed TODO
+
+- [x] Part 1 - Complete and verify workout-mode normalization.
+  - Map the public Zepp OS workout enum to stable codes, Chinese labels, broad types,
+    and training families without guessing unknown future IDs.
+  - Add explicit recognition confidence/source fields and retain unknown numeric IDs.
+  - Lock representative decimal IDs and unknown behavior with parser tests.
+- [x] Part 2 - Complete deterministic training prescriptions and Chinese output.
+  - Return Chinese action, confidence, intensity, evidence, limitation, recovery,
+    sleep, and load labels while retaining internal codes for programmatic consumers.
+  - Return structured running, strength, recovery, and rest prescriptions from the
+    decision engine; do not let Hermes invent exercise content.
+  - Render specific workout modes and prescription steps in morning/evening pushes.
+- [x] Part 3 - Synchronize the Hermes Skill and wire schema.
+  - Teach every workflow to consume Chinese label and prescription fields only.
+  - Extend the DailyProfile JSON Schema for workout-mode, recognition, state-label,
+    localization, and prescription contracts.
+  - Validate the Skill with the skill-creator validator.
+- [ ] Part 4 - Verify real data, document, and deliver.
+  - Re-sync the current seven-day window and regenerate the connected user's profile.
+  - Verify workout types, target-day HRV, Chinese decision output, and executable
+    training content end to end.
+  - Run focused and complete tests, compilation, JSON checks, and `git diff --check`;
+    update documentation, commit, and push `main`.
+
+### Verification Log
+
+- Part 1: the workout catalog matches all 120 entries in the current public Zepp OS
+  enum and adds the two distinct public legacy Huami cloud-history IDs. Decimal IDs
+  `1`, `6`, `8`, `9`, `10`, `18`, `52`, `92`, `146`, and `191` are locked by tests;
+  unknown `999` remains explicit and carries no recognition confidence.
+- Part 2: the decision engine returns Chinese presentation fields and structured Zone
+  2 running, full-body strength, recovery, and rest prescriptions. Push rendering uses
+  only Chinese labels and includes exact workout mode and recognition confidence.
+  Focused parser/analyzer/push coverage passed 40 tests.
+- Part 3: all four Hermes workflows consume Chinese label and prescription fields, and
+  the JSON Schema now covers mode recognition and training steps. The skill-creator
+  validator passed; its validation also removed the unsupported legacy `version`
+  frontmatter key while preserving wire-contract versioning.
+- Part 4 (real acceptance): a seven-day real sync completed all eight streams and wrote
+  41,242 normalized records. The current profile contains two separate target-day HRV
+  streams, 447 minutes of sleep, RHR 47 bpm, three strength sessions and two outdoor
+  runs over 230 minutes. All five recent workout types have high recognition
+  confidence. The engine returns normal training, moderate confidence/intensity, and a
+  45-60 minute Zone 2 running prescription in Chinese.
+- Part 4 (verification): all 130 tests passed with 153 existing Python 3.14
+  `datetime.utcnow()` deprecation warnings. Python compilation, JSON parsing, live
+  DailyProfile schema validation, skill validation, and `git diff --check` passed.

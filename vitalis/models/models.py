@@ -88,6 +88,13 @@ class Workout(BaseModel):
     ended_at: datetime | None = None
 
     type: WorkoutType = WorkoutType.OTHER
+    sport_mode: str = Field(default="unknown", description="具体 Zepp 运动模式")
+    sport_mode_label: str = Field(default="未知运动", description="运动模式中文名称")
+    training_family: str = Field(default="skill", description="训练家族：有氧/力量/灵活性/混合/技巧")
+    recognition_confidence: str = Field(default="NONE", description="运动类型识别置信等级")
+    recognition_confidence_label: str = Field(default="无法识别", description="运动类型识别置信度中文名称")
+    recognition_source: str = Field(default="missing_vendor_type", description="运动类型映射来源")
+    recognition_source_label: str = Field(default="缺少厂商运动类型", description="运动类型映射来源中文名称")
     duration: int = Field(ge=0, description="时长（分钟）")
     heart_rate_avg: int = Field(default=0, ge=0, description="平均心率 bpm")
     heart_rate_max: int = Field(default=0, ge=0)

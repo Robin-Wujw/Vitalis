@@ -15,6 +15,7 @@ from vitalis.intelligence.contracts import (
 )
 from vitalis.storage import HealthRepository
 from vitalis.time import local_day, local_day_utc_bounds
+from .localization import QUALITY_LABELS, SIGNAL_LABELS, labels
 
 
 SAMPLE_METRICS = (
@@ -199,7 +200,7 @@ class ProfileLoader:
             QualityFlag(
                 code="MISSING_REQUIRED_SIGNAL",
                 severity="error",
-                detail=f"No target-day {metric} observation is available.",
+                detail=f"缺少当天{SIGNAL_LABELS.get(metric, metric)}观测值。",
             )
             for metric in missing
         ]
@@ -209,8 +210,8 @@ class ProfileLoader:
                 code="SOURCE_IDENTITY_SHARED",
                 severity="warning",
                 detail=(
-                    "The vendor identity is linked to multiple local users. This profile "
-                    "uses only the requested local user and does not merge history."
+                    "同一厂商身份关联了多个本地用户；本档案仅使用当前指定用户，"
+                    "未合并其他历史。"
                 ),
             ))
         if any(
@@ -221,7 +222,7 @@ class ProfileLoader:
             flags.append(QualityFlag(
                 code="UNKNOWN_DEVICE_ATTRIBUTION",
                 severity="warning",
-                detail="Some device-scoped observations have no device identifier.",
+                detail="部分设备级观测值缺少设备标识。",
             ))
         for metric, points in raw.series.items():
             sample_points = [point for point in points if isinstance(point.observed_at, datetime)]
@@ -229,7 +230,7 @@ class ProfileLoader:
                 flags.append(QualityFlag(
                     code="SAMPLE_LIMIT_REACHED",
                     severity="error",
-                    detail=f"The {metric} query reached its {MAX_SAMPLES_PER_METRIC} sample limit.",
+                    detail=f"指标 {metric} 的查询已达到 {MAX_SAMPLES_PER_METRIC} 条样本上限。",
                 ))
         device_ids = sorted({
             point.device_id
@@ -239,8 +240,11 @@ class ProfileLoader:
         })
         return DataQuality(
             status=status,
+            status_label=QUALITY_LABELS[status.value],
             required_signals=required,
+            required_signal_labels=labels(required, SIGNAL_LABELS),
             missing_required_signals=missing,
+            missing_required_signal_labels=labels(missing, SIGNAL_LABELS),
             coverage=coverage,
             flags=flags,
             device_validity=[DeviceValidity(device_id=device_id) for device_id in device_ids],

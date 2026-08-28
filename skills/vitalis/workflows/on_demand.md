@@ -1,10 +1,9 @@
-# On Demand
+# 按需解释
 
-For "why" questions, answer from this trace only:
+全程使用中文。回答“为什么”时，只能沿以下链路解释：
 
 `facts -> baselines -> feature deviations -> states -> decision.rule_ids`
 
-Quote the relevant percent deviation and robust z-score only when present. Explain
-that a decision is multi-signal when multiple drivers are listed. Include limitations
-that could materially change interpretation. Never introduce a causal claim from a
-correlation or a diagnosis from a deviation.
+仅在字段存在时引用百分比偏差和稳健 z 分数。多个依据同时存在时，说明这是多信号综合
+判断。展示可能改变解释的中文限制。不得把相关性说成因果，也不得根据偏差诊断疾病。
+回答训练内容时只能复述 `prescriptions`，并使用所有中文标签，不得输出内部英文代码。

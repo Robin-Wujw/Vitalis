@@ -65,27 +65,43 @@ class PushService:
         features = payload["features"]
         if period == "evening":
             training = features["training"]
-            title = f"Vitalis Evening · {decision['action']}"
+            title = f"Vitalis 晚间总结 · {decision['action_label']}"
             body_lines = [
-                f"今日运动：{training.get('today_duration_minutes')} min",
-                f"今日负荷：{training.get('today_load')}",
-                f"7日负荷：{training.get('load_7d')}",
-                f"恢复状态：{features['recovery']['state']}",
+                f"今日运动：{_display(training.get('today_duration_minutes'))} 分钟",
+                f"今日负荷：{_display(training.get('today_load'))}",
+                f"近 7 日负荷：{_display(training.get('load_7d'))}",
+                f"负荷状态：{training.get('load_state_label', '数据不足')}",
+                f"恢复状态：{features['recovery'].get('state_label', '数据不足')}",
             ]
+            today = [
+                workout for workout in training.get("recent_workouts", [])
+                if workout.get("date") == payload.get("date")
+            ]
+            for workout in today:
+                body_lines.append(
+                    f"训练记录：{workout['sport_mode_label']}，"
+                    f"{workout['duration_minutes']} 分钟，"
+                    f"类型识别置信度{workout['recognition_confidence_label']}"
+                )
         else:
             sleep = features["sleep"]
             hrv = features["hrv"]
-            title = f"Vitalis Morning · {decision['action']}"
+            title = f"Vitalis 晨间建议 · {decision['action_label']}"
             body_lines = [
-                f"恢复状态：{features['recovery']['state']}",
-                f"睡眠：{sleep.get('duration_minutes')} min",
-                f"HRV：{hrv.get('value_ms')} ms",
-                f"训练建议：{decision['action']} / {decision['intensity']}",
+                f"恢复状态：{features['recovery'].get('state_label', '数据不足')}",
+                f"睡眠：{_display(sleep.get('duration_minutes'))} 分钟",
+                f"心率变异性（HRV）：{_display(hrv.get('value_ms'))} 毫秒",
+                f"静息心率（RHR）：{_display(hrv.get('rhr_bpm'))} 次/分钟",
+                f"训练建议：{decision['action_label']}，{decision['intensity_label']}",
+                f"建议置信度：{decision['confidence_label']}",
             ]
-        if decision.get("drivers"):
-            body_lines.append("依据：" + ", ".join(decision["drivers"]))
-        if decision.get("limitations"):
-            body_lines.append("限制：" + ", ".join(decision["limitations"]))
+        if decision.get("driver_labels"):
+            body_lines.append("判断依据：" + "；".join(decision["driver_labels"]))
+        if decision.get("limitation_labels"):
+            body_lines.append("数据限制：" + "；".join(decision["limitation_labels"]))
+        if decision.get("prescriptions"):
+            body_lines.append(decision.get("prescription_guidance") or "训练方案：")
+            body_lines.extend(_render_prescriptions(decision["prescriptions"]))
         msg = PushMessage(
             title=title,
             body="\n".join(body_lines),
@@ -117,3 +133,36 @@ class PushService:
                 )
         except Exception:
             log.warning("webhook push failed")
+
+
+def _display(value) -> str:
+    return "暂无" if value is None else str(value)
+
+
+def _render_prescriptions(prescriptions: list[dict]) -> list[str]:
+    lines: list[str] = []
+    for prescription in prescriptions:
+        duration = prescription.get("total_duration_minutes")
+        duration_text = f"（{duration[0]}–{duration[1]} 分钟）" if duration else ""
+        lines.append(f"训练方案：{prescription['title']}{duration_text}")
+        lines.append(f"训练目标：{prescription['goal']}")
+        for step in prescription.get("steps", []):
+            details = []
+            if step.get("duration_minutes"):
+                low, high = step["duration_minutes"]
+                details.append(f"{low}–{high} 分钟")
+            if step.get("sets"):
+                details.append(f"{step['sets']} 组")
+            if step.get("repetitions"):
+                details.append(step["repetitions"])
+            if step.get("rest_seconds"):
+                low, high = step["rest_seconds"]
+                details.append(f"组间休息 {low}–{high} 秒")
+            if step.get("intensity"):
+                details.append(step["intensity"])
+            suffix = "，".join(details)
+            lines.append(f"{step['order']}. {step['name']}：{suffix}".rstrip("："))
+            lines.extend(f"   {instruction}" for instruction in step.get("instructions", []))
+        lines.extend(f"进阶：{item}" for item in prescription.get("progression", []))
+        lines.extend(f"注意：{item}" for item in prescription.get("cautions", []))
+    return lines

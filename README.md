@@ -102,8 +102,10 @@ Vitalis 通过用户浏览器中的官方登录会话连接 Zepp，不要求打�
 - SDNN、RMSSD、Charge/身体电量、Readiness（含皮温、睡眠 HRV/RHR、AHI/AFib）、压力、SpO2/ODI、PAI、呼吸率和乳酸阈值进入独立的时序或每日指标表。
 - UTC 时间戳按 `VITALIS_TIMEZONE`（默认 `Asia/Shanghai`）切分个人自然日；睡眠时钟使用 Zepp 返回的本地时区偏移，不把 UTC 时钟直接展示给用户。
 - `second_heart_rate/real_data` 当前只保存 `SEC_HR` 文件覆盖元数据。文件 ID 不通过健康查询 API 返回，`sample_count=0`、`parse_status=indexed` 明确表示载荷尚未解码。
-- 运动摘要保留厂商数字类型 ID；已验证的 Zepp OS `52` (`0x34`) 归一化为力量训练，未知类型仍保留原始 ID 供后续映射审计。
-- DailyProfile 保留最近 7 天每次训练的类型、厂商类型 ID、时长、负荷、平均/最大心率和详情可用状态，并提供按类型计数。
+- 运动摘要按公开 Zepp OS 的 120 个模式和云端历史接口的 2 个旧 Huami 模式识别，保留厂商数字 ID、稳定代码、中文具体名称、训练家族、识别置信度和映射来源。未知新编号明确显示为“未知运动（编号 X）”，不会猜测。
+- DailyProfile 保留最近 7 天每次训练的具体模式、厂商类型 ID、时长、负荷、平均/最大心率、详情状态和识别置信度，并按中文具体运动模式计数。
+- 决策引擎返回中文动作、状态、强度、依据、限制和置信度标签；内部英文枚举只供程序判断，Hermes 和推送不得展示。
+- 训练建议包含确定性的结构化处方。二区跑给出热身、30–40 分钟谈话测试主训练、冷身、进阶和停止条件；全身力量给出蹲、推、拉、髋伸、核心的动作选择、组次、休息、余力和加重规则。两种建议同时出现时明确要求二选一。
 - 各事件面按 7 天窗口拉取；API 和同步入口最多接受 730 天。实际覆盖取决于账号创建时间、佩戴情况和厂商保留窗口，空白日期不会被补造。
 
 ### 运动期间高频心率
@@ -198,7 +200,7 @@ Cookie 暂时不可见时，扩展会调用 `/connect/zepp/link/validate` 验证
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest -q        # 117 个测试，全部通过
+.venv/bin/python -m pytest -q        # 130 个测试，全部通过
 ```
 
 覆盖范围：
@@ -214,6 +216,7 @@ Cookie 暂时不可见时，扩展会调用 `/connect/zepp/link/validate` 验证
 - `test_intelligence_analyzers.py` — 睡眠/HRV/恢复/训练与确定性决策
 - `test_intelligence_contracts.py` — DailyProfile 版本化契约和无分数兜底语义
 - `test_vitalis_skill.py` — Hermes 薄渲染边界、工作流和 Schema
+- `test_push_service.py` — 中文状态/置信度渲染、具体运动模式和结构化训练处方
 
 ## 设计要点
 

@@ -12,11 +12,14 @@
     "generated_at": {"type": "string", "format": "date-time"},
     "data_quality": {
       "type": "object",
-      "required": ["status", "required_signals", "missing_required_signals", "coverage", "flags", "device_validity"],
+      "required": ["status", "status_label", "required_signals", "required_signal_labels", "missing_required_signals", "missing_required_signal_labels", "coverage", "flags", "device_validity"],
       "properties": {
         "status": {"enum": ["SUFFICIENT", "PARTIAL", "INSUFFICIENT"]},
+        "status_label": {"type": "string"},
         "required_signals": {"type": "array", "items": {"type": "string"}},
+        "required_signal_labels": {"type": "array", "items": {"type": "string"}},
         "missing_required_signals": {"type": "array", "items": {"type": "string"}},
+        "missing_required_signal_labels": {"type": "array", "items": {"type": "string"}},
         "coverage": {"type": "array", "items": {"type": "object"}},
         "flags": {"type": "array", "items": {"type": "object"}},
         "device_validity": {"type": "array", "items": {"type": "object"}}
@@ -28,10 +31,24 @@
       "type": "object",
       "required": ["sleep", "hrv", "recovery", "training"],
       "properties": {
-        "sleep": {"type": "object"},
+        "sleep": {
+          "type": "object",
+          "required": ["status", "status_label", "limitations", "limitation_labels"],
+          "properties": {
+            "status": {"enum": ["AVAILABLE", "INSUFFICIENT_DATA"]},
+            "status_label": {"type": "string"},
+            "limitations": {"type": "array", "items": {"type": "string"}},
+            "limitation_labels": {"type": "array", "items": {"type": "string"}}
+          }
+        },
         "hrv": {
           "type": "object",
+          "required": ["status", "status_label", "streams", "limitations", "limitation_labels"],
           "properties": {
+            "status": {"enum": ["AVAILABLE", "INSUFFICIENT_DATA"]},
+            "status_label": {"type": "string"},
+            "limitations": {"type": "array", "items": {"type": "string"}},
+            "limitation_labels": {"type": "array", "items": {"type": "string"}},
             "streams": {
               "type": "array",
               "items": {
@@ -41,35 +58,127 @@
             }
           }
         },
-        "recovery": {"type": "object"},
+        "recovery": {
+          "type": "object",
+          "required": ["status", "status_label", "state", "state_label", "positive_signal_labels", "negative_signal_labels", "limitation_labels"],
+          "properties": {
+            "status": {"enum": ["AVAILABLE", "INSUFFICIENT_DATA"]},
+            "status_label": {"type": "string"},
+            "state": {"enum": ["GOOD", "NORMAL", "SUPPRESSED", "INSUFFICIENT_DATA"]},
+            "state_label": {"type": "string"},
+            "positive_signal_labels": {"type": "array", "items": {"type": "string"}},
+            "negative_signal_labels": {"type": "array", "items": {"type": "string"}},
+            "limitation_labels": {"type": "array", "items": {"type": "string"}}
+          }
+        },
         "training": {
           "type": "object",
+          "required": ["status", "status_label", "load_state", "load_state_label", "sport_mode_counts_7d", "recent_workouts", "limitation_labels"],
           "properties": {
+            "status": {"enum": ["AVAILABLE", "INSUFFICIENT_DATA"]},
+            "status_label": {"type": "string"},
+            "load_state": {"enum": ["LOW", "NORMAL", "ELEVATED", "INSUFFICIENT_DATA"]},
+            "load_state_label": {"type": "string"},
             "workout_type_counts_7d": {
               "type": "object",
               "additionalProperties": {"type": "integer", "minimum": 0}
             },
+            "sport_mode_counts_7d": {
+              "type": "object",
+              "additionalProperties": {"type": "integer", "minimum": 0}
+            },
+            "limitation_labels": {"type": "array", "items": {"type": "string"}},
             "recent_workouts": {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["date", "type", "duration_minutes", "vendor_load", "detail_available"]
+                "required": ["date", "type", "type_label", "sport_mode", "sport_mode_label", "training_family", "training_family_label", "recognition_confidence", "recognition_confidence_label", "recognition_source", "recognition_source_label", "duration_minutes", "vendor_load", "detail_available"],
+                "properties": {
+                  "date": {"type": "string", "format": "date"},
+                  "type": {"type": "string"},
+                  "type_label": {"type": "string"},
+                  "sport_mode": {"type": "string"},
+                  "sport_mode_label": {"type": "string"},
+                  "training_family": {"type": "string"},
+                  "training_family_label": {"type": "string"},
+                  "recognition_confidence": {"enum": ["NONE", "MODERATE", "HIGH"]},
+                  "recognition_confidence_label": {"type": "string"},
+                  "recognition_source": {"type": "string"},
+                  "recognition_source_label": {"type": "string"},
+                  "duration_minutes": {"type": "integer", "minimum": 0},
+                  "vendor_load": {"type": "number", "minimum": 0},
+                  "detail_available": {"type": "boolean"}
+                }
               }
             }
           }
         }
       }
     },
-    "states": {"type": "object"},
+    "states": {
+      "type": "object",
+      "required": ["sleep", "recovery", "training_load", "sleep_label", "recovery_label", "training_load_label"],
+      "properties": {
+        "sleep_label": {"type": "string"},
+        "recovery_label": {"type": "string"},
+        "training_load_label": {"type": "string"}
+      }
+    },
     "decision": {
       "type": "object",
-      "required": ["action", "confidence", "drivers", "limitations", "rule_ids"],
+      "required": ["action", "action_label", "confidence", "confidence_label", "drivers", "driver_labels", "limitations", "limitation_labels", "rule_ids", "suggested_types", "suggested_type_labels", "intensity", "intensity_label", "prescription_guidance", "prescriptions"],
       "properties": {
         "action": {"enum": ["TRAIN_HARD", "TRAIN_NORMAL", "TRAIN_LIGHT", "RECOVERY", "REST", "INSUFFICIENT_DATA"]},
+        "action_label": {"type": "string"},
         "confidence": {"enum": ["NONE", "LOW", "MODERATE", "HIGH"]},
+        "confidence_label": {"type": "string"},
         "drivers": {"type": "array", "items": {"type": "string"}},
+        "driver_labels": {"type": "array", "items": {"type": "string"}},
         "limitations": {"type": "array", "items": {"type": "string"}},
-        "rule_ids": {"type": "array", "items": {"type": "string"}}
+        "limitation_labels": {"type": "array", "items": {"type": "string"}},
+        "rule_ids": {"type": "array", "items": {"type": "string"}},
+        "suggested_types": {"type": "array", "items": {"type": "string"}},
+        "suggested_type_labels": {"type": "array", "items": {"type": "string"}},
+        "intensity": {"enum": ["high", "moderate", "low", "none", "undetermined"]},
+        "intensity_label": {"type": "string"},
+        "prescription_guidance": {"type": "string"},
+        "prescriptions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["code", "title", "goal", "steps", "progression", "cautions"],
+            "properties": {
+              "code": {"type": "string"},
+              "title": {"type": "string"},
+              "goal": {"type": "string"},
+              "total_duration_minutes": {
+                "type": ["array", "null"],
+                "prefixItems": [{"type": "integer"}, {"type": "integer"}],
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["order", "name", "instructions"],
+                  "properties": {
+                    "order": {"type": "integer", "minimum": 1},
+                    "name": {"type": "string"},
+                    "duration_minutes": {"type": ["array", "null"]},
+                    "sets": {"type": ["integer", "null"], "minimum": 1},
+                    "repetitions": {"type": ["string", "null"]},
+                    "rest_seconds": {"type": ["array", "null"]},
+                    "intensity": {"type": ["string", "null"]},
+                    "instructions": {"type": "array", "items": {"type": "string"}}
+                  }
+                }
+              },
+              "progression": {"type": "array", "items": {"type": "string"}},
+              "cautions": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        }
       }
     },
     "evidence_refs": {"type": "array", "items": {"type": "object"}},

@@ -1,11 +1,12 @@
-# Evening
+# 晚间总结
 
-Do not repeat the morning narrative. Lead with what occurred today:
+全程使用中文，不重复晨间叙述，先说明今天实际发生的内容：
 
-1. Today's workout count, type, duration, and vendor-derived load from `recent_workouts`.
-2. Seven-day duration/load and the current training-load state.
-3. Recovery state and the decision that currently applies to further activity.
-4. Drivers and limitations that matter for tonight or tomorrow.
+1. 从 `recent_workouts` 使用 `sport_mode_label` 展示当天每次运动、时长、厂商负荷
+   和 `recognition_confidence_label`；不得只展示宽泛 `type`。
+2. 展示 7 日时长、负荷和 `load_state_label`。
+3. 使用中文状态和动作标签说明恢复状态及今晚是否继续活动。
+4. 使用中文依据和限制标签说明今晚需要关注的事项。
+5. 如有进一步活动处方，完整渲染引擎返回的 `prescriptions`，不得自行增加动作。
 
-Do not predict tomorrow's recovery in model version `vitalis-intelligence-1`; no
-forecast model exists yet.
+当前模型没有恢复预测能力，不得预测明日恢复。

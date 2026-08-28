@@ -37,9 +37,12 @@ Raw measurements and vendor scores remain separate from Vitalis-derived states.
 `ahi_readiness` and `afib_readiness` are vendor readiness component scores, not AHI or
 AFib diagnoses.
 
-Workout summaries retain the original numeric vendor type ID. Verified Zepp OS type
-`52` (`0x34`) maps to strength training; unknown IDs remain auditable even when their
-normalized category is `other`.
+Workout summaries retain the original numeric vendor type ID. `sport_types.py` maps
+all 120 currently public Zepp OS modes plus the two additional public legacy Huami
+cloud-history modes to a stable code, exact Chinese label, broad category, and training
+family. Known numeric definitions carry high recognition confidence; text-only
+fallbacks carry moderate confidence. Unknown IDs remain explicit and auditable rather
+than being guessed into a known activity.
 
 Timestamped measurements remain stored in UTC. Daily intelligence groups them by the
 configured application timezone (`VITALIS_TIMEZONE`, currently `Asia/Shanghai`). Sleep
@@ -68,9 +71,9 @@ DailyProfile
 |- data_quality: status, missing signals, coverage, flags, device validity
 |- facts: target-day normalized observations and provenance
 |- baselines: 7d/28d robust statistics per metric and device stream
-|- features: sleep, HRV/RHR, recovery, training
-|- states: sleep, recovery, training load
-|- decision: action, confidence, drivers, limitations, rule IDs
+|- features: sleep, HRV/RHR, recovery, exact workout modes, training
+|- states: sleep, recovery, training load, Chinese labels
+|- decision: action, confidence, drivers, limitations, prescriptions, Chinese labels
 |- evidence_refs
 `- metadata: identity and product-policy versions
 ```
@@ -133,8 +136,23 @@ TRAIN_HARD | TRAIN_NORMAL | TRAIN_LIGHT | RECOVERY | REST | INSUFFICIENT_DATA
 ```
 
 The engine detects deviations and guides training; it does not diagnose disease.
-Sleep stages remain trend-only. The v1 training load is vendor-derived and lacks RPE,
-sets/reps/weight, and reliable aerobic-intensity classification.
+Sleep stages remain trend-only. The v1 training load is vendor-derived and lacks
+recorded RPE, completed sets/reps/weight, and reliable individualized aerobic-intensity
+classification.
+
+Training content is deterministic engine output, not model-generated advice. The
+current prescription library includes:
+
+- Zone 2 running: warm-up, talk-test-controlled main work, cool-down, progression, and
+  stop conditions. Until an individual heart-rate zone is validated, no numeric Zone 2
+  range is invented.
+- Full-body resistance: squat, push, pull, hip extension, and core patterns with sets,
+  repetitions, rest, repetitions-in-reserve, substitutions, and load progression.
+- Recovery activity and full rest with explicit intensity constraints.
+
+When both aerobic and strength targets are due, the decision marks the returned
+prescriptions as alternatives rather than a combined session. Strength is not selected
+when a recorded strength workout occurred within the previous two local days.
 
 ## 4. API and Assistant
 
@@ -150,9 +168,10 @@ prototype `/api/v1/health/today` and `/api/v1/analyze` paths were removed becaus
 application is pre-production and no compatibility contract is required.
 
 `skills/vitalis` contains one HTTP tool, a JSON Schema, evidence limits, and four
-renderer workflows. Weekly v1 may render only the engine-computed seven-day training
-fields; weekly sleep/recovery aggregation is not implemented and Hermes may not derive
-it from seven daily calls.
+renderer workflows. Every user-facing value comes from Chinese label or prescription
+fields; internal enum codes remain available only for program control. Weekly v1 may
+render only the engine-computed seven-day training fields; weekly sleep/recovery
+aggregation is not implemented and Hermes may not derive it from seven daily calls.
 
 ## 5. Scheduled Flow
 
@@ -182,8 +201,10 @@ so `device_validity.status` remains `UNKNOWN`.
 
 Implemented: versioned DailyProfile, deterministic quality/provenance, device-isolated
 7/28-day baselines, sleep/HRV/recovery/training features, explainable decisions,
-local-day handling, explicit recent workout types/details, Morning/Evening pushes, and
-thin Hermes workflows. User-scoped APIs and Hermes tools require an explicit identity.
+local-day handling, 122 public workout IDs with explicit unknown handling, Chinese
+presentation contracts, structured running/strength prescriptions, Morning/Evening
+pushes, and thin Hermes workflows. User-scoped APIs and Hermes tools require an
+explicit identity.
 
 Not implemented: 60/90-day personal correlations, health anomaly persistence,
 minute-level stress load, Energy Dynamics, weekly sleep/recovery review, training RPE,

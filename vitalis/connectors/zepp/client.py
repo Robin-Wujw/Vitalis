@@ -24,6 +24,8 @@ from typing import Callable
 
 import httpx
 
+from .sport_types import ZEPP_SPORT_MODES
+
 # ---- 真实 Zepp 区域云端点（实测有效路径） ----
 API_DEVICES = "/users/{user_id}/devices"
 API_HEART_RATE = "/users/{user_id}/heartRate"
@@ -73,23 +75,8 @@ def validate_region_host(host: str) -> str:
         raise ZeppAuthError(f"region_host 不合法，仅允许 api-mifit*.zepp.com 或 api-mifit*.huami.com")
     return host
 
-# 运动类型 id -> 名称（ZeppBridge 实测映射）
-SPORT_TYPE_MAP = {
-    1: "running",
-    6: "walking",
-    8: "treadmill",
-    9: "cycling",
-    10: "indoor_cycling",
-    13: "walking",
-    14: "swimming",
-    16: "activity",
-    22: "hiking",
-    23: "rowing",
-    52: "strength",
-    92: "badminton",
-    192: "running",
-    223: "activity",
-}
+# Full public Zepp OS workout code -> canonical mode name.
+SPORT_TYPE_MAP = {code: mode.code for code, mode in ZEPP_SPORT_MODES.items()}
 
 # 全运动查询列表（对齐 ZeppBridge）
 SPORTS = [

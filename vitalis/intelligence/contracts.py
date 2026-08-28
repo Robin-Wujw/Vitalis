@@ -99,8 +99,11 @@ class DeviceValidity(BaseModel):
 
 class DataQuality(BaseModel):
     status: QualityStatus
+    status_label: str = ""
     required_signals: list[str] = Field(default_factory=list)
+    required_signal_labels: list[str] = Field(default_factory=list)
     missing_required_signals: list[str] = Field(default_factory=list)
+    missing_required_signal_labels: list[str] = Field(default_factory=list)
     coverage: list[Coverage] = Field(default_factory=list)
     flags: list[QualityFlag] = Field(default_factory=list)
     device_validity: list[DeviceValidity] = Field(default_factory=list)
@@ -140,6 +143,7 @@ class Deviation(BaseModel):
 
 class SleepFeatures(BaseModel):
     status: Availability
+    status_label: str = ""
     duration_minutes: int | None = None
     bedtime: str | None = None
     wake_time: str | None = None
@@ -150,6 +154,7 @@ class SleepFeatures(BaseModel):
     duration_deviation: Deviation | None = None
     regularity_minutes: float | None = None
     limitations: list[str] = Field(default_factory=list)
+    limitation_labels: list[str] = Field(default_factory=list)
 
 
 class HrvStreamFeature(BaseModel):
@@ -163,6 +168,7 @@ class HrvStreamFeature(BaseModel):
 
 class HrvFeatures(BaseModel):
     status: Availability
+    status_label: str = ""
     preferred_metric: Literal["hrv_rmssd", "hrv_sdnn", "sleep_hrv"] | None = None
     preferred_device_id: str | None = None
     value_ms: float | None = None
@@ -172,21 +178,36 @@ class HrvFeatures(BaseModel):
     rhr_deviation: Deviation | None = None
     streams: list[HrvStreamFeature] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
+    limitation_labels: list[str] = Field(default_factory=list)
 
 
 class RecoveryFeatures(BaseModel):
     status: Availability
+    status_label: str = ""
     state: RecoveryState
+    state_label: str = ""
     positive_signals: list[str] = Field(default_factory=list)
+    positive_signal_labels: list[str] = Field(default_factory=list)
     negative_signals: list[str] = Field(default_factory=list)
+    negative_signal_labels: list[str] = Field(default_factory=list)
     vendor_readiness: float | None = None
     vendor_charge: float | None = None
     limitations: list[str] = Field(default_factory=list)
+    limitation_labels: list[str] = Field(default_factory=list)
 
 
 class WorkoutFeature(BaseModel):
     date: date
     type: str
+    type_label: str
+    sport_mode: str
+    sport_mode_label: str
+    training_family: str
+    training_family_label: str
+    recognition_confidence: str
+    recognition_confidence_label: str
+    recognition_source: str
+    recognition_source_label: str
     vendor_type_id: int | None = None
     duration_minutes: int = Field(ge=0)
     vendor_load: float = Field(ge=0)
@@ -197,6 +218,7 @@ class WorkoutFeature(BaseModel):
 
 class TrainingFeatures(BaseModel):
     status: Availability
+    status_label: str = ""
     today_duration_minutes: int | None = None
     today_load: float | None = None
     today_workouts: int | None = None
@@ -205,11 +227,16 @@ class TrainingFeatures(BaseModel):
     load_28d: float | None = None
     aerobic_minutes_7d: int | None = None
     strength_sessions_7d: int | None = None
+    days_since_last_strength: int | None = Field(default=None, ge=0)
     workout_type_counts_7d: dict[str, int] = Field(default_factory=dict)
+    workout_type_labels_7d: dict[str, str] = Field(default_factory=dict)
+    sport_mode_counts_7d: dict[str, int] = Field(default_factory=dict)
     recent_workouts: list[WorkoutFeature] = Field(default_factory=list)
     load_deviation: Deviation | None = None
     load_state: LoadState = LoadState.INSUFFICIENT_DATA
+    load_state_label: str = ""
     limitations: list[str] = Field(default_factory=list)
+    limitation_labels: list[str] = Field(default_factory=list)
 
 
 class ProfileFeatures(BaseModel):
@@ -223,17 +250,49 @@ class ProfileStates(BaseModel):
     sleep: SleepState = SleepState.INSUFFICIENT_DATA
     recovery: RecoveryState = RecoveryState.INSUFFICIENT_DATA
     training_load: LoadState = LoadState.INSUFFICIENT_DATA
+    sleep_label: str = ""
+    recovery_label: str = ""
+    training_load_label: str = ""
+
+
+class TrainingStep(BaseModel):
+    order: int = Field(ge=1)
+    name: str
+    duration_minutes: tuple[int, int] | None = None
+    sets: int | None = Field(default=None, ge=1)
+    repetitions: str | None = None
+    rest_seconds: tuple[int, int] | None = None
+    intensity: str | None = None
+    instructions: list[str] = Field(default_factory=list)
+
+
+class TrainingPrescription(BaseModel):
+    code: str
+    title: str
+    goal: str
+    total_duration_minutes: tuple[int, int] | None = None
+    steps: list[TrainingStep] = Field(default_factory=list)
+    progression: list[str] = Field(default_factory=list)
+    cautions: list[str] = Field(default_factory=list)
 
 
 class TrainingDecision(BaseModel):
     action: DecisionAction
+    action_label: str = ""
     confidence: ConfidenceBand
+    confidence_label: str = ""
     drivers: list[str] = Field(default_factory=list)
+    driver_labels: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
+    limitation_labels: list[str] = Field(default_factory=list)
     rule_ids: list[str] = Field(default_factory=list)
     suggested_types: list[str] = Field(default_factory=list)
+    suggested_type_labels: list[str] = Field(default_factory=list)
     intensity: Literal["high", "moderate", "low", "none", "undetermined"] = "undetermined"
+    intensity_label: str = ""
     duration_minutes: tuple[int, int] | None = None
+    prescription_guidance: str = ""
+    prescriptions: list[TrainingPrescription] = Field(default_factory=list)
 
 
 class EvidenceRef(BaseModel):

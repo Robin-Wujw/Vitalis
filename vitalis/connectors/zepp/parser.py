@@ -19,6 +19,7 @@ from vitalis.models import (
     WorkoutSample,
     WorkoutType,
 )
+from .sport_types import resolve_sport_mode
 
 MAX_WORKOUT_SECONDS = 12 * 60 * 60
 
@@ -31,30 +32,6 @@ _TYPE_MAP = {
     "hiit": WorkoutType.HIIT,
     "yoga": WorkoutType.YOGA,
 }
-
-# 解析 helper 使用（真实 sport history 的类型名 -> Vitalis WorkoutType）
-_WORKOUT_TYPE_MAP = {
-    "run": WorkoutType.RUNNING,
-    "running": WorkoutType.RUNNING,
-    "treadmill": WorkoutType.RUNNING,
-    "indoor_run": WorkoutType.RUNNING,
-    "walking": WorkoutType.WALKING,
-    "hiking": WorkoutType.WALKING,
-    "trail": WorkoutType.RUNNING,
-    "ride": WorkoutType.CYCLING,
-    "cycling": WorkoutType.CYCLING,
-    "indoor_cycling": WorkoutType.CYCLING,
-    "swimming": WorkoutType.SWIMMING,
-    "strength": WorkoutType.STRENGTH,
-    "elliptical": WorkoutType.OTHER,
-    "rowing": WorkoutType.OTHER,
-    "climb": WorkoutType.OTHER,
-    "yoga": WorkoutType.YOGA,
-    "badminton": WorkoutType.OTHER,
-    "activity": WorkoutType.OTHER,
-    "unknown": WorkoutType.OTHER,
-}
-
 
 class ZeppParser:
     """把 Zepp 原始响应解析为 Vitalis Schema 对象。
@@ -183,8 +160,6 @@ class ZeppParser:
 
     def parse_sport_history(self, raw: dict, sport_hint: str = "") -> list[Workout]:
         """运动历史 -> Workout 列表。type 为数字 id（1=run, 6=walking...）。"""
-        from .client import SPORT_TYPE_MAP
-
         items = self._items(raw)
         workouts: list[Workout] = []
         for it in items:
@@ -199,14 +174,12 @@ class ZeppParser:
                     numeric_type = int(type_id.strip())
                 except ValueError:
                     pass
-            wtype = SPORT_TYPE_MAP.get(numeric_type) if numeric_type is not None else None
-            wtype = wtype or it.get("sportType") or it.get("sport")
+            raw_mode = it.get("sportType") or it.get("sport")
             # /run/history.json is an aggregate endpoint in real accounts. Only use
             # its URL segment when the record itself has no numeric sport type.
-            if not wtype and numeric_type is None:
-                wtype = sport_hint
-            wtype = wtype or "unknown"
-            wtype = _WORKOUT_TYPE_MAP.get(wtype, WorkoutType.OTHER)
+            fallback = str(raw_mode or (sport_hint if numeric_type is None else ""))
+            mode = resolve_sport_mode(numeric_type, fallback)
+            wtype = WorkoutType(mode.category)
             started = self._parse_start(it)
             avg_hr = self._first_number(
                 it, ("avg_hr", "avgHr", "avg_heart_rate")
@@ -227,6 +200,13 @@ class ZeppParser:
                     it.get("end_time") or it.get("endTime") or it.get("finishTime")
                 ),
                 type=wtype,
+                sport_mode=mode.code,
+                sport_mode_label=mode.label_zh,
+                training_family=mode.family,
+                recognition_confidence=mode.recognition_confidence,
+                recognition_confidence_label=mode.recognition_confidence_label,
+                recognition_source=mode.recognition_source,
+                recognition_source_label=mode.recognition_source_label,
                 duration=max((self._duration_minutes(it)), 0),
                 heart_rate_avg=max(int(avg_hr), 0),
                 heart_rate_max=max(int(max_hr), 0),

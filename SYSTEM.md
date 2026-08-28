@@ -1231,7 +1231,7 @@ PushPlus token private and keeping health calculations inside Vitalis.
     cron job linked to the checked-in Act tool.
   - Verify service health, job discovery, explicit identity, and missing-token behavior
     without sending a live notification before the user supplies the token.
-- [ ] Part 4 - Document, verify, and deliver.
+- [x] Part 4 - Document, verify, and deliver.
   - Document the one private token variable, daily schedule, service operations, manual
     verification, and failure visibility without committing local identifiers.
   - Run focused and complete tests, compilation, format and secret checks.
@@ -1264,3 +1264,6 @@ PushPlus token private and keeping health calculations inside Vitalis.
   Python 3.14 `datetime.utcnow()` deprecation warnings. Repository and Skill tool
   compilation, Skill validation, and `git diff --check` passed. A live PushPlus message
   remains intentionally untested until the user supplies the private token.
+- Part 4 (delivery): commit `8081dda` (`feat: automate daily PushPlus report`) was
+  pushed from local `main` to `origin/main` successfully. The live runtime remains
+  enabled and will read the private token at execution time without a service restart.

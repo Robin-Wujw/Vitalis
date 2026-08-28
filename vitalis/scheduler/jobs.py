@@ -65,19 +65,19 @@ def nightly_sync_job() -> None:
 
 
 def _profile_push_job(period: str, sync_days: int) -> None:
-    from vitalis.intelligence.service import IntelligenceService
+    from vitalis.intelligence.service import IntelligencePipeline
     from vitalis.services.push_service import PushService
 
     user_ids = _get_authorized_users()
     if not user_ids:
         log.info("%s profile: no authorized users", period)
         return
-    service = IntelligenceService()
+    service = IntelligencePipeline()
     push = PushService()
     for user_id in user_ids:
         try:
             _sync_user(user_id, days=sync_days, label=f"{period}同步")
-            profile = service.daily_profile(user_id)
+            profile = service.build_daily_profile(user_id)
             push.push_daily_profile(user_id, profile, period=period)
             log.info(
                 "%s profile pushed: user=%s action=%s quality=%s",

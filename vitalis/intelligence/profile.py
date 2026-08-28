@@ -31,6 +31,7 @@ SAMPLE_METRICS = (
     "bio_charge",
 )
 MAX_SAMPLES_PER_METRIC = 1_000_000
+PROFILE_HISTORY_DAYS = 180
 
 
 @dataclass(frozen=True)
@@ -64,8 +65,13 @@ class ProfileLoader:
     def __init__(self, repo: HealthRepository):
         self.repo = repo
 
-    def load(self, user_id: str, day: date) -> RawDailyProfile:
-        start = day - timedelta(days=28)
+    def load(
+        self,
+        user_id: str,
+        day: date,
+        history_days: int = PROFILE_HISTORY_DAYS,
+    ) -> RawDailyProfile:
+        start = day - timedelta(days=history_days - 1)
         raw = RawDailyProfile(user_id=user_id, day=day)
         raw.sleep_by_day = _records_by_day(self.repo.sleep_range(user_id, start, day))
         raw.activity_by_day = _records_by_day(self.repo.activity_range(user_id, start, day))

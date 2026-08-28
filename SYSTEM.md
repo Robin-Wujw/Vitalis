@@ -782,3 +782,70 @@ actionable running and strength prescriptions instead of generic activity names.
   pushed from local `main` to `origin/main` successfully.
 - Final no-fallback audit: commit `38d29f1` (`fix: require authoritative workout type
   ids`) removed endpoint/text inference and was pushed to `origin/main`.
+
+## 11. Personal Health Intelligence 2.0 Session
+
+Date: 2026-08-28
+
+Goal: evolve the daily-only engine into a deterministic personal-health intelligence
+pipeline with trends, persistent health events, weekly analysis, analysis snapshots,
+subjective feedback, and Hermes Read/Analyze/Act tools. Hermes remains an interface;
+all statistics, classifications, and recommendations remain owned by Vitalis.
+
+### Detailed TODO
+
+- [x] Part 1 - Add the deterministic trend engine.
+  - Load 180 days of normalized history so current and previous 90-day windows remain
+    available while preserving metric/device streams.
+  - Compute current/previous period medians, percentage change, slope, variability,
+    coverage, direction, and confidence for 7/28/90-day windows.
+  - Never merge HRV devices or use missing observations as zero values.
+- [x] Part 2 - Add health-event detection and persistence.
+  - Detect only explicit, explainable persistence and period-change events for HRV,
+    RHR, sleep, training load/gaps, recovery, and activity.
+  - Return severity, duration, confidence, evidence, and Chinese presentation fields;
+    do not diagnose disease or claim causality.
+  - Persist stable event identities and support user acknowledgement.
+- [x] Part 3 - Add WeeklyProfile with fact/inference/action separation.
+  - Aggregate sleep, recovery signals, training, activity, trends, events, and feedback
+    for one local week with comparison to the preceding week.
+  - Produce deterministic weekly recommendations and explicit missing-data limits.
+  - Keep factual measurements, Vitalis inferences, and actions in separate contracts.
+- [x] Part 4 - Add snapshots and the subjective-feedback loop.
+  - Persist versioned DailyProfile and WeeklyProfile snapshots idempotently.
+  - Store session RPE, physical fatigue, mental state, muscle soreness, and optional
+    notes with bounded validation and user/workout isolation.
+  - Expose recent feedback to WeeklyProfile without inventing absent responses.
+- [x] Part 5 - Expand the Intelligence API and Hermes Skill v2.
+  - Add daily, weekly, trends, events, explanation/context, feedback, and event
+    acknowledgement endpoints with explicit user identity.
+  - Add Hermes Read/Analyze/Act tools and route workflows to structured contracts.
+  - Keep synchronization as an explicit action and prohibit model-side aggregation.
+- [x] Part 6 - Verify real data, document, and deliver.
+  - Add focused engine/storage/API/Skill tests and run the complete suite.
+  - Validate JSON Schemas, Skill structure, Python compilation, OpenAPI, and diffs.
+  - Generate real daily/weekly/trend/event results without exposing identifiers or raw
+    health payloads, then update docs, commit, and push `main`.
+
+### Verification Log
+
+- Parts 1-3: focused trend, event, weekly, analyzer, and profile tests passed. Coverage
+  includes source/device isolation, current-versus-previous 7/28/90-day periods,
+  explicit insufficient data, persistent event rules, stable event IDs, and weekly
+  fact/inference/action separation.
+- Parts 4-5: snapshot and feedback tests verify idempotent DailyProfile/WeeklyProfile
+  storage, bounded subjective values, workout/user isolation, weekly feedback use, and
+  persisted weekly event retrieval. API tests cover all eight v2 Intelligence paths,
+  user-scoped event acknowledgement, feedback isolation, and removal of the old
+  `/intelligence/daily-profile` compatibility route. The official Skill validator
+  accepts the Hermes Read/Analyze/Act package.
+- Real-data acceptance: the 2026-08-28 DailyProfile had complete sleep and two separate
+  HRV streams, and produced a normal-training Zone 2 recommendation. WeeklyProfile
+  recognized three strength sessions and two outdoor runs totaling 230 minutes; trend
+  and event responses were generated without merging device streams. One daily and one
+  weekly versioned snapshot were persisted. No identifiers or raw payloads were logged.
+- Part 6 verification: all 149 tests passed with 169 existing Python 3.14
+  `datetime.utcnow()` deprecation warnings. Python compilation, all Skill tool help
+  entrypoints, Skill validation, four real-response JSON Schema validations, OpenAPI
+  generation (31 paths, eight Intelligence paths), `git diff --check`, and the
+  added-content secret scan passed.

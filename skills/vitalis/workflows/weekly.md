@@ -1,8 +1,10 @@
 # 每周回顾
 
-全程使用中文。当前版本只展示引擎已经计算的 7 日训练字段：
-`duration_7d`, `load_7d`, `aerobic_minutes_7d`, `strength_sessions_7d`,
-`sport_mode_counts_7d` 和 `recent_workouts`。
+全程使用中文，只渲染 WeeklyProfile：
 
-按具体中文运动模式统计次数，再展示当前中文负荷状态和中文训练建议。明确说明本版本
-尚无每周睡眠和恢复聚合；不得拉取七份日报后由模型自行计算。
+1. 用 `data_quality.status_label` 和 `confidence_label` 说明分析可信度。
+2. 从 `facts.sleep`、`facts.recovery`、`facts.training`、`facts.activity` 和
+   `facts.feedback` 分别展示可用事实；缺失值不写成零。
+3. 用 `inferences.key_changes` 和 `inferences.events` 说明本周变化与持续事件。
+4. 按 `actions.recommendations.priority` 顺序完整展示建议、行动和依据。
+5. 展示 `inferences.limitations`，不得根据七份日报自行计算周汇总。

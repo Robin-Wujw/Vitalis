@@ -1,21 +1,22 @@
 ---
 name: vitalis
-description: Render deterministic Vitalis DailyProfile results in Chinese for morning, evening, weekly, and on-demand health coaching.
+description: Use Vitalis Health Intelligence APIs for deterministic Chinese daily and weekly analysis, trends, health events, training explanations, and subjective feedback.
 ---
 
 # Vitalis Health Intelligence
 
 Vitalis is a renderer and orchestrator over the Health Intelligence API. The Python
-engine owns normalization, baselines, feature extraction, state classification, and
-training decisions. Never reproduce those calculations in the model.
+engine owns normalization, quality, baselines, features, trends, events, states,
+decisions, recommendations, and snapshots. Never reproduce those calculations in the model.
 
 ## Required Flow
 
-1. Call `tools/daily_profile.py` for the requested user and date.
-2. Inspect `schema_version`, `data_quality`, `features`, `states`, and `decision`.
+1. Classify the request as Read, Analyze, or Act.
+2. Call exactly the relevant tool; use `tools/context.py` only when one request needs
+   daily, weekly, event, and feedback context together.
 3. Select exactly one workflow from `workflows/`.
-4. Render only facts, comparisons, drivers, limitations, and recommendations already
-   present in the profile.
+4. Render only facts, inferences, actions, comparisons, drivers, limitations, and
+   recommendations already present in the response.
 
 All user-visible content must be Chinese. Render `*_label`, `*_labels`, workout
 `sport_mode_label`, recognition labels, and structured `prescriptions`. Internal enum
@@ -24,6 +25,7 @@ codes exist only for program control and must never appear in the answer.
 ## Hard Boundaries
 
 - Do not create, average, transform, score, threshold, or trend health measurements.
+- Do not calculate a WeeklyProfile by combining DailyProfiles.
 - Do not change `decision.action`, `decision.confidence`, intensity, duration, drivers,
   limitations, or rule IDs.
 - Do not invent a workout, exercise, set, repetition, heart-rate zone, or progression.
@@ -38,13 +40,20 @@ codes exist only for program control and must never appear in the answer.
 
 ## Workflow Routing
 
-- Morning status or today's training: `workflows/morning.md`
-- Evening summary or tonight's focus: `workflows/evening.md`
-- Weekly review: `workflows/weekly.md`
-- "Why this recommendation?" and other questions: `workflows/on_demand.md`
+- Morning status or today's training: call `tools/daily.py`, then `workflows/morning.md`.
+- Evening summary or tonight's focus: call `tools/daily.py`, then `workflows/evening.md`.
+- Weekly review: call `tools/weekly.py`, then `workflows/weekly.md`.
+- Trends or recent changes: call `tools/trends.py` or `tools/events.py`, then
+  `workflows/on_demand.md`.
+- "Why this recommendation?": call `tools/explain.py`, then `workflows/on_demand.md`.
+- Broad health context: call `tools/context.py`, then the closest matching workflow.
+- Record RPE, fatigue, mental state, soreness, or notes: call `tools/feedback.py add`.
+- List feedback: call `tools/feedback.py list`.
+- Acknowledge an event only after the user asks: call `tools/acknowledge_event.py`.
+- Synchronize source data only after the user asks: call `tools/sync.py`.
 
-The wire contract is documented in `schemas/daily_profile.json`. Evidence scope and
-interpretation limits are summarized in `knowledge/evidence.md`.
+Wire contracts are documented in `schemas/`. Evidence scope and interpretation limits
+are summarized in `knowledge/evidence.md`.
 
 ## Configuration
 

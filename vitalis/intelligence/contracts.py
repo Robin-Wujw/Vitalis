@@ -4,11 +4,16 @@ from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
-SCHEMA_VERSION = "1.0"
-MODEL_VERSION = "vitalis-intelligence-1"
+DateValue = date
+
+
+DAILY_SCHEMA_VERSION = "2.0"
+WEEKLY_SCHEMA_VERSION = "1.0"
+MODEL_VERSION = "vitalis-intelligence-2"
+WEEKLY_MODEL_VERSION = "vitalis-weekly-1"
 
 
 class Availability(str, Enum):
@@ -57,6 +62,19 @@ class LoadState(str, Enum):
     NORMAL = "NORMAL"
     ELEVATED = "ELEVATED"
     INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
+
+
+class TrendDirection(str, Enum):
+    RISING = "RISING"
+    STABLE = "STABLE"
+    FALLING = "FALLING"
+    INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
+
+
+class EventSeverity(str, Enum):
+    INFO = "INFO"
+    MODERATE = "MODERATE"
+    HIGH = "HIGH"
 
 
 class Provenance(BaseModel):
@@ -139,6 +157,58 @@ class Deviation(BaseModel):
     percent: float | None = None
     robust_z: float | None = None
     direction: Literal["above", "near", "below", "unknown"] = "unknown"
+
+
+class TrendFeature(BaseModel):
+    metric: str
+    metric_label: str
+    window_days: Literal[7, 28, 90]
+    source: str
+    source_scope: str
+    device_id: str | None = None
+    unit: str
+    status: Availability
+    status_label: str
+    current_distinct_days: int = Field(ge=0)
+    previous_distinct_days: int = Field(ge=0)
+    minimum_days: int = Field(ge=1)
+    coverage_ratio: float = Field(ge=0, le=1)
+    current_median: float | None = None
+    previous_median: float | None = None
+    change_percent: float | None = None
+    slope_per_day: float | None = None
+    variability_mad: float | None = None
+    direction: TrendDirection
+    direction_label: str
+    confidence: ConfidenceBand
+    confidence_label: str
+
+
+class HealthEventEvidence(BaseModel):
+    fact: str
+    fact_label: str
+    value: float | str | None = None
+    unit: str | None = None
+
+
+class HealthEvent(BaseModel):
+    id: str
+    type: str
+    type_label: str
+    severity: EventSeverity
+    severity_label: str
+    metric: str | None = None
+    metric_label: str | None = None
+    start_date: date
+    end_date: date
+    duration_days: int = Field(ge=1)
+    deviation_percent: float | None = None
+    baseline_window_days: int | None = None
+    confidence: ConfidenceBand
+    confidence_label: str
+    summary: str
+    evidence: list[HealthEventEvidence] = Field(default_factory=list)
+    acknowledged: bool = False
 
 
 class SleepFeatures(BaseModel):
@@ -302,17 +372,209 @@ class EvidenceRef(BaseModel):
     applies_to: list[str] = Field(default_factory=list)
 
 
+class WeeklyDataQuality(BaseModel):
+    status: QualityStatus
+    status_label: str
+    sleep_days: int = Field(ge=0, le=7)
+    hrv_days: int = Field(ge=0, le=7)
+    activity_days: int = Field(ge=0, le=7)
+    training_days: int = Field(ge=0, le=7)
+    confidence: ConfidenceBand
+    confidence_label: str
+    limitations: list[str] = Field(default_factory=list)
+
+
+class WeeklySleepFacts(BaseModel):
+    available_days: int = Field(ge=0, le=7)
+    average_minutes: float | None = None
+    median_minutes: float | None = None
+    previous_average_minutes: float | None = None
+    change_percent: float | None = None
+    bedtime_regularity_minutes: float | None = None
+
+
+class WeeklyRecoveryFacts(BaseModel):
+    hrv_available_days: int = Field(ge=0, le=7)
+    hrv_metric: str | None = None
+    hrv_metric_label: str | None = None
+    hrv_device_id: str | None = None
+    hrv_median_ms: float | None = None
+    hrv_previous_median_ms: float | None = None
+    hrv_change_percent: float | None = None
+    rhr_available_days: int = Field(ge=0, le=7)
+    rhr_metric: str | None = None
+    rhr_median_bpm: float | None = None
+    rhr_previous_median_bpm: float | None = None
+    rhr_change_percent: float | None = None
+
+
+class WeeklyTrainingFacts(BaseModel):
+    workout_count: int = Field(ge=0)
+    training_days: int = Field(ge=0, le=7)
+    rest_days: int = Field(ge=0, le=7)
+    duration_minutes: int = Field(ge=0)
+    vendor_load: float = Field(ge=0)
+    previous_vendor_load: float | None = Field(default=None, ge=0)
+    load_change_percent: float | None = None
+    aerobic_minutes: int = Field(ge=0)
+    strength_sessions: int = Field(ge=0)
+    sport_mode_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class WeeklyActivityFacts(BaseModel):
+    available_days: int = Field(ge=0, le=7)
+    total_steps: int | None = Field(default=None, ge=0)
+    average_steps: float | None = Field(default=None, ge=0)
+    previous_average_steps: float | None = Field(default=None, ge=0)
+    steps_change_percent: float | None = None
+    active_minutes: int | None = Field(default=None, ge=0)
+
+
+class WeeklyFeedbackFacts(BaseModel):
+    response_count: int = Field(ge=0)
+    average_session_rpe: float | None = Field(default=None, ge=1, le=10)
+    average_physical_fatigue: float | None = Field(default=None, ge=1, le=5)
+    average_mental_state: float | None = Field(default=None, ge=1, le=5)
+    average_muscle_soreness: float | None = Field(default=None, ge=1, le=5)
+
+
+class WeeklyFacts(BaseModel):
+    sleep: WeeklySleepFacts
+    recovery: WeeklyRecoveryFacts
+    training: WeeklyTrainingFacts
+    activity: WeeklyActivityFacts
+    feedback: WeeklyFeedbackFacts
+
+
+class WeeklyInferences(BaseModel):
+    trends: list[TrendFeature] = Field(default_factory=list)
+    events: list[HealthEvent] = Field(default_factory=list)
+    key_changes: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class WeeklyRecommendation(BaseModel):
+    priority: int = Field(ge=1)
+    code: str
+    title: str
+    action: str
+    reasons: list[str] = Field(default_factory=list)
+
+
+class WeeklyActions(BaseModel):
+    recommendations: list[WeeklyRecommendation] = Field(default_factory=list)
+
+
+class WeeklyProfile(BaseModel):
+    schema_version: str = WEEKLY_SCHEMA_VERSION
+    model_version: str = WEEKLY_MODEL_VERSION
+    user_id: str
+    period_start: date
+    period_end: date
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    data_quality: WeeklyDataQuality
+    facts: WeeklyFacts
+    inferences: WeeklyInferences
+    actions: WeeklyActions
+    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+
+
+class SubjectiveFeedbackInput(BaseModel):
+    date: DateValue | None = None
+    workout_id: str | None = Field(default=None, max_length=128)
+    session_rpe: float | None = Field(default=None, ge=1, le=10)
+    physical_fatigue: int | None = Field(default=None, ge=1, le=5)
+    mental_state: int | None = Field(default=None, ge=1, le=5)
+    muscle_soreness: int | None = Field(default=None, ge=1, le=5)
+    notes: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def require_observation(self):
+        if not any((
+            self.session_rpe is not None,
+            self.physical_fatigue is not None,
+            self.mental_state is not None,
+            self.muscle_soreness is not None,
+            bool(self.notes and self.notes.strip()),
+        )):
+            raise ValueError("至少填写一项主观反馈")
+        if self.notes is not None:
+            self.notes = self.notes.strip() or None
+        return self
+
+
+class SubjectiveFeedback(BaseModel):
+    id: str
+    user_id: str
+    date: DateValue
+    workout_id: str | None = None
+    session_rpe: float | None = Field(default=None, ge=1, le=10)
+    physical_fatigue: int | None = Field(default=None, ge=1, le=5)
+    mental_state: int | None = Field(default=None, ge=1, le=5)
+    muscle_soreness: int | None = Field(default=None, ge=1, le=5)
+    notes: str | None = Field(default=None, max_length=500)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class DailyProfile(BaseModel):
-    schema_version: str = SCHEMA_VERSION
+    schema_version: str = DAILY_SCHEMA_VERSION
     model_version: str = MODEL_VERSION
     user_id: str
-    date: date
+    date: DateValue
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     data_quality: DataQuality
     facts: dict[str, list[MeasurementFact]] = Field(default_factory=dict)
     baselines: dict[str, list[BaselineStats]] = Field(default_factory=dict)
     features: ProfileFeatures
+    trends: list[TrendFeature] = Field(default_factory=list)
+    events: list[HealthEvent] = Field(default_factory=list)
     states: ProfileStates
     decision: TrainingDecision
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class TrendResponse(BaseModel):
+    user_id: str
+    date: DateValue
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    trends: list[TrendFeature] = Field(default_factory=list)
+
+
+class HealthEventResponse(BaseModel):
+    user_id: str
+    period_start: DateValue
+    period_end: DateValue
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    events: list[HealthEvent] = Field(default_factory=list)
+
+
+class ExplanationFact(BaseModel):
+    code: str
+    label: str
+    value: float | int | str | None = None
+    unit: str | None = None
+
+
+class DecisionExplanation(BaseModel):
+    user_id: str
+    date: DateValue
+    facts: list[ExplanationFact] = Field(default_factory=list)
+    inferences: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    action: TrainingDecision
+    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+
+
+class AgentContext(BaseModel):
+    user_id: str
+    date: DateValue
+    daily: DailyProfile
+    weekly: WeeklyProfile
+    unacknowledged_events: list[HealthEvent] = Field(default_factory=list)
+    recent_feedback: list[SubjectiveFeedback] = Field(default_factory=list)
+
+
+class EventAcknowledgement(BaseModel):
+    status: Literal["acknowledged"] = "acknowledged"
+    event: HealthEvent

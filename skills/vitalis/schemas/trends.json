@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vitalis.local/schemas/trends-1.0.json",
+  "title": "Vitalis TrendResponse 1.0",
+  "type": "object",
+  "required": ["user_id", "date", "generated_at", "trends"],
+  "properties": {
+    "user_id": {"type": "string"},
+    "date": {"type": "string", "format": "date"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "trends": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["metric", "metric_label", "window_days", "source", "source_scope", "unit", "status", "status_label", "direction", "direction_label", "confidence", "confidence_label"]
+      }
+    }
+  }
+}

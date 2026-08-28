@@ -1,6 +1,7 @@
 """仓储层：封装对 ORM 的读写，业务层只依赖仓储接口。"""
 
 from datetime import date, datetime, timedelta, timezone
+from hashlib import sha256
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
@@ -14,6 +15,7 @@ from vitalis.models import (
     Workout,
     WorkoutSample,
 )
+from vitalis.intelligence.contracts import HealthEvent, SubjectiveFeedback
 
 from . import models as orm
 
@@ -487,6 +489,143 @@ class HealthRepository:
         """按主键 upsert 分析记录（重复调用不冲突）。"""
         self.db.merge(record)
 
+    # ---- 健康智能事件 ----
+
+    def save_health_events(self, user_id: str, events: list[HealthEvent]) -> int:
+        for event in events:
+            row = self.db.get(orm.HealthEventRecord, event.id)
+            payload = event.model_dump(mode="json")
+            if row is None:
+                row = orm.HealthEventRecord(
+                    id=event.id,
+                    user_id=user_id,
+                    event_type=event.type,
+                    metric=event.metric,
+                    start_date=event.start_date,
+                    end_date=event.end_date,
+                )
+                self.db.add(row)
+            elif row.user_id != user_id:
+                raise ValueError("健康事件 ID 与用户不匹配")
+            row.event_type = event.type
+            row.metric = event.metric
+            row.start_date = event.start_date
+            row.end_date = event.end_date
+            payload["acknowledged"] = row.acknowledged_at is not None
+            row.payload = payload
+        self.db.flush()
+        return len(events)
+
+    def health_events(
+        self,
+        user_id: str,
+        start: date,
+        end: date,
+        event_type: str | None = None,
+    ) -> list[HealthEvent]:
+        statement = select(orm.HealthEventRecord).where(
+            orm.HealthEventRecord.user_id == user_id,
+            orm.HealthEventRecord.end_date >= start,
+            orm.HealthEventRecord.start_date <= end,
+        )
+        if event_type:
+            statement = statement.where(orm.HealthEventRecord.event_type == event_type)
+        rows = self.db.execute(
+            statement.order_by(orm.HealthEventRecord.end_date.desc(), orm.HealthEventRecord.id)
+        ).scalars().all()
+        output = []
+        for row in rows:
+            payload = dict(row.payload or {})
+            payload["acknowledged"] = row.acknowledged_at is not None
+            output.append(HealthEvent.model_validate(payload))
+        return output
+
+    def acknowledge_health_event(self, user_id: str, event_id: str) -> HealthEvent | None:
+        row = self.db.get(orm.HealthEventRecord, event_id)
+        if row is None or row.user_id != user_id:
+            return None
+        if row.acknowledged_at is None:
+            row.acknowledged_at = datetime.utcnow()
+        payload = dict(row.payload or {})
+        payload["acknowledged"] = True
+        row.payload = payload
+        self.db.flush()
+        return HealthEvent.model_validate(payload)
+
+    # ---- 分析快照与主观反馈 ----
+
+    def save_analysis_snapshot(
+        self,
+        user_id: str,
+        profile_type: str,
+        period_start: date,
+        period_end: date,
+        schema_version: str,
+        model_version: str,
+        payload: dict,
+    ) -> orm.AnalysisSnapshot:
+        identity = sha256(
+            (
+                f"{user_id}|{profile_type}|{period_start.isoformat()}|"
+                f"{period_end.isoformat()}|{model_version}"
+            ).encode("utf-8")
+        ).hexdigest()[:32]
+        row = self.db.get(orm.AnalysisSnapshot, identity)
+        if row is None:
+            row = orm.AnalysisSnapshot(
+                id=identity,
+                user_id=user_id,
+                profile_type=profile_type,
+                period_start=period_start,
+                period_end=period_end,
+                model_version=model_version,
+                schema_version=schema_version,
+            )
+            self.db.add(row)
+        row.payload = payload
+        generated_at = payload.get("generated_at")
+        if isinstance(generated_at, str):
+            parsed = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+            row.generated_at = _naive_utc(parsed)
+        self.db.flush()
+        return row
+
+    def analysis_snapshots(
+        self,
+        user_id: str,
+        profile_type: str,
+        start: date,
+        end: date,
+    ) -> list[orm.AnalysisSnapshot]:
+        return list(self.db.execute(
+            select(orm.AnalysisSnapshot).where(
+                orm.AnalysisSnapshot.user_id == user_id,
+                orm.AnalysisSnapshot.profile_type == profile_type,
+                orm.AnalysisSnapshot.period_end.between(start, end),
+            ).order_by(orm.AnalysisSnapshot.period_end, orm.AnalysisSnapshot.generated_at)
+        ).scalars().all())
+
+    def save_subjective_feedback(self, feedback: SubjectiveFeedback) -> SubjectiveFeedback:
+        row = orm.SubjectiveFeedback(**feedback.model_dump(mode="python"))
+        row.created_at = _naive_utc(feedback.created_at)
+        self.db.add(row)
+        self.db.flush()
+        return feedback
+
+    def subjective_feedback(
+        self,
+        user_id: str,
+        start: date,
+        end: date,
+    ) -> list[SubjectiveFeedback]:
+        rows = self.db.execute(
+            select(orm.SubjectiveFeedback).where(
+                orm.SubjectiveFeedback.user_id == user_id,
+                orm.SubjectiveFeedback.date.between(start, end),
+            ).order_by(orm.SubjectiveFeedback.date, orm.SubjectiveFeedback.created_at)
+        ).scalars().all()
+        return [SubjectiveFeedback.model_validate(row, from_attributes=True) for row in rows]
+
     # ---- OAuth 令牌 ----
 
     def save_token(self, token: AuthToken) -> None:
@@ -691,6 +830,7 @@ class HealthRepository:
         for model in (
             orm.SleepRecord, orm.ActivityRecord, orm.TrainingRecord, orm.HealthDaily,
             orm.MetricSample, orm.DailyMetric, orm.DenseDataFile, orm.Workout,
+            orm.HealthEventRecord, orm.AnalysisSnapshot, orm.SubjectiveFeedback,
             orm.ZeppDeviceLink,
         ):
             self.db.execute(delete(model).where(model.user_id == user_id))

@@ -1,52 +1,28 @@
 #!/usr/bin/env python3
-"""Vitalis Skill 工具：同步数据（连接 Zepp）。
-
-用法:
-    python sync.py --user <local-user-id> [--start 2026-08-01] [--end 2026-08-25]
-"""
+"""Synchronize recent source data without performing analysis locally."""
 
 import argparse
+import json
 import os
-import sys
-
 import httpx
 
-API = os.getenv("VITALIS_API", "http://localhost:8000")
-
-
-def sync(user: str, start: str | None = None, end: str | None = None) -> dict:
-    body: dict = {"source": "zepp", "sync_history": True}
-    if start:
-        body["start"] = start
-    if end:
-        body["end"] = end
-    resp = httpx.post(
-        f"{API}/api/v1/connect/zepp",
-        json=body,
-        headers={"X-User-Id": user},
-        timeout=60.0,
-    )
-    resp.raise_for_status()
-    return resp.json()
+API = os.getenv("VITALIS_API", "http://localhost:8000").rstrip("/")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="同步 Zepp 数据到 Vitalis")
+    parser = argparse.ArgumentParser(description="同步 Vitalis 健康数据")
     configured_user = os.getenv("VITALIS_USER")
     parser.add_argument("--user", default=configured_user, required=not configured_user)
-    parser.add_argument("--start")
-    parser.add_argument("--end")
+    parser.add_argument("--days", type=int, choices=range(1, 731), default=7)
     args = parser.parse_args()
-
-    try:
-        result = sync(args.user, args.start, args.end)
-        print(f"[ok] 用户 {args.user} 连接 Zepp：{result.get('auth_mode')}")
-        if "sync" in result:
-            s = result["sync"]
-            print(f"[ok] 同步 {s['days_synced']} 天数据（{s['start']} ~ {s['end']}）")
-    except Exception as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+    response = httpx.post(
+        f"{API}/api/v1/health/sync",
+        params={"days": args.days},
+        headers={"X-User-Id": args.user},
+        timeout=120.0,
+    )
+    response.raise_for_status()
+    print(json.dumps(response.json(), ensure_ascii=False, indent=2))
     return 0
 
 

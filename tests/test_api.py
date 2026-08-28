@@ -7,6 +7,7 @@ import importlib
 from starlette.requests import Request
 
 from vitalis.config import settings
+from vitalis.intelligence.contracts import ConfidenceBand, EventSeverity, HealthEvent
 from vitalis.models import ActivityRecord, DailyHealth, MetricSample, SleepRecord, TrainingRecord
 from vitalis.storage import HealthRepository, session_scope
 
@@ -31,11 +32,11 @@ def test_daily_profile_after_sync(client):
         json={"sync_history": True},
         headers={"X-User-Id": "001"},
     )
-    resp = client.get("/api/v1/intelligence/daily-profile", headers={"X-User-Id": "001"})
+    resp = client.get("/api/v1/intelligence/daily", headers={"X-User-Id": "001"})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["schema_version"] == "1.0"
-    assert body["model_version"] == "vitalis-intelligence-1"
+    assert body["schema_version"] == "2.0"
+    assert body["model_version"] == "vitalis-intelligence-2"
     assert body["decision"]["action"] in {
         "TRAIN_HARD", "TRAIN_NORMAL", "TRAIN_LIGHT", "RECOVERY", "REST", "INSUFFICIENT_DATA"
     }
@@ -47,7 +48,7 @@ def test_daily_profile_after_sync(client):
 
 def test_daily_profile_second_user_abstains(client):
     """A user without data gets an explicit abstention, not a fallback score."""
-    resp = client.get("/api/v1/intelligence/daily-profile", headers={"X-User-Id": "999"})
+    resp = client.get("/api/v1/intelligence/daily", headers={"X-User-Id": "999"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["data_quality"]["status"] == "INSUFFICIENT"
@@ -105,7 +106,7 @@ def test_daily_profile_api_runs_device_baseline_to_decision(client):
             )])
 
     response = client.get(
-        f"/api/v1/intelligence/daily-profile?day={target.isoformat()}",
+        f"/api/v1/intelligence/daily?day={target.isoformat()}",
         headers={"X-User-Id": user_id},
     )
     assert response.status_code == 200
@@ -137,8 +138,108 @@ def test_root_lists_sources(client):
 
 
 def test_user_scoped_endpoint_requires_explicit_identity(client):
-    response = client.get("/api/v1/intelligence/daily-profile")
+    response = client.get("/api/v1/intelligence/daily")
     assert response.status_code == 422
+
+
+def test_intelligence_v2_routes_and_fact_inference_action_contract(client):
+    user_id = "intelligence-v2"
+    client.post(
+        "/api/v1/connect/zepp",
+        json={"sync_history": True},
+        headers={"X-User-Id": user_id},
+    )
+    headers = {"X-User-Id": user_id}
+
+    weekly = client.get("/api/v1/intelligence/weekly", headers=headers)
+    assert weekly.status_code == 200
+    assert set(weekly.json()) >= {"facts", "inferences", "actions"}
+
+    trends = client.get("/api/v1/intelligence/trends", headers=headers)
+    assert trends.status_code == 200
+    assert set(trends.json()) >= {"user_id", "date", "trends"}
+
+    events = client.get("/api/v1/intelligence/events", headers=headers)
+    assert events.status_code == 200
+    assert set(events.json()) >= {"period_start", "period_end", "events"}
+
+    explanation = client.get("/api/v1/intelligence/explain", headers=headers)
+    assert explanation.status_code == 200
+    assert set(explanation.json()) >= {"facts", "inferences", "action"}
+
+    context = client.get("/api/v1/intelligence/context", headers=headers)
+    assert context.status_code == 200
+    assert set(context.json()) >= {"daily", "weekly", "unacknowledged_events", "recent_feedback"}
+
+
+def test_feedback_api_is_scoped_and_validated(client):
+    headers = {"X-User-Id": "feedback-api"}
+    response = client.post(
+        "/api/v1/intelligence/feedback",
+        headers=headers,
+        json={
+            "date": "2026-08-28",
+            "session_rpe": 7,
+            "physical_fatigue": 3,
+            "notes": "训练按计划完成",
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["session_rpe"] == 7
+
+    listing = client.get(
+        "/api/v1/intelligence/feedback?start=2026-08-28&end=2026-08-28",
+        headers=headers,
+    )
+    assert listing.status_code == 200
+    assert len(listing.json()) == 1
+    assert client.get(
+        "/api/v1/intelligence/feedback?start=2026-08-28&end=2026-08-28",
+        headers={"X-User-Id": "other-feedback-api"},
+    ).json() == []
+
+    invalid = client.post(
+        "/api/v1/intelligence/feedback", headers=headers, json={"notes": "   "}
+    )
+    assert invalid.status_code == 422
+
+
+def test_removed_daily_profile_route_is_not_kept_as_compatibility_alias(client):
+    assert client.get(
+        "/api/v1/intelligence/daily-profile", headers={"X-User-Id": "001"}
+    ).status_code == 404
+
+
+def test_health_event_acknowledgement_api_is_user_scoped(client):
+    event = HealthEvent(
+        id="api-event-ack",
+        type="TRAINING_GAP",
+        type_label="训练连续中断",
+        severity=EventSeverity.INFO,
+        severity_label="提示",
+        start_date=date(2026, 8, 22),
+        end_date=date(2026, 8, 28),
+        duration_days=7,
+        confidence=ConfidenceBand.HIGH,
+        confidence_label="较高",
+        summary="测试事件",
+    )
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user("event-api-owner")
+        repo.save_health_events("event-api-owner", [event])
+
+    denied = client.post(
+        "/api/v1/intelligence/events/api-event-ack/acknowledge",
+        headers={"X-User-Id": "event-api-other"},
+    )
+    assert denied.status_code == 404
+    accepted = client.post(
+        "/api/v1/intelligence/events/api-event-ack/acknowledge",
+        headers={"X-User-Id": "event-api-owner"},
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["event"]["acknowledged"] is True
 
 
 def test_browser_get_connect_zepp_opens_pairing_page(client):

@@ -213,6 +213,63 @@ class AnalysisRecord(Base):
     score: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
+class HealthEventRecord(Base):
+    """A deterministic, explainable event emitted by the intelligence engine."""
+
+    __tablename__ = "health_events"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    metric: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    start_date: Mapped[date] = mapped_column(Date, index=True)
+    end_date: Mapped[date] = mapped_column(Date, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class AnalysisSnapshot(Base):
+    """Versioned structured output from a deterministic intelligence pipeline."""
+
+    __tablename__ = "analysis_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "profile_type", "period_start", "period_end", "model_version",
+            name="uq_analysis_snapshot",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    profile_type: Mapped[str] = mapped_column(String(16), index=True)
+    period_start: Mapped[date] = mapped_column(Date, index=True)
+    period_end: Mapped[date] = mapped_column(Date, index=True)
+    schema_version: Mapped[str] = mapped_column(String(16))
+    model_version: Mapped[str] = mapped_column(String(64))
+    payload: Mapped[dict] = mapped_column(JSON)
+    generated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class SubjectiveFeedback(Base):
+    """User-entered perception data kept separate from wearable facts."""
+
+    __tablename__ = "subjective_feedback"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    workout_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    session_rpe: Mapped[float | None] = mapped_column(Float, nullable=True)
+    physical_fatigue: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    mental_state: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    muscle_soreness: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class AuthToken(Base):
     """厂商 OAuth2 令牌（扫码授权后保存）。"""
 

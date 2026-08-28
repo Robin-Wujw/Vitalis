@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/daily-profile-1.0.json",
-  "title": "Vitalis DailyProfile 1.0",
+  "$id": "https://vitalis.local/schemas/daily-profile-2.0.json",
+  "title": "Vitalis DailyProfile 2.0",
   "type": "object",
-  "required": ["schema_version", "model_version", "user_id", "date", "generated_at", "data_quality", "facts", "baselines", "features", "states", "decision", "evidence_refs", "metadata"],
+  "required": ["schema_version", "model_version", "user_id", "date", "generated_at", "data_quality", "facts", "baselines", "features", "trends", "events", "states", "decision", "evidence_refs", "metadata"],
   "properties": {
-    "schema_version": {"const": "1.0"},
-    "model_version": {"const": "vitalis-intelligence-1"},
+    "schema_version": {"const": "2.0"},
+    "model_version": {"const": "vitalis-intelligence-2"},
     "user_id": {"type": "string"},
     "date": {"type": "string", "format": "date"},
     "generated_at": {"type": "string", "format": "date-time"},
@@ -27,6 +27,8 @@
     },
     "facts": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "object"}}},
     "baselines": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "object"}}},
+    "trends": {"type": "array", "items": {"type": "object"}},
+    "events": {"type": "array", "items": {"type": "object"}},
     "features": {
       "type": "object",
       "required": ["sleep", "hrv", "recovery", "training"],

@@ -1,8 +1,15 @@
-"""Run one explicit-user morning pipeline through the public Vitalis API."""
+"""Run deterministic daily PushPlus reports through the public Vitalis API."""
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from contextlib import contextmanager
+from datetime import date
+import fcntl
+import hashlib
+import os
+from pathlib import Path
+from typing import Iterator, Literal
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -10,50 +17,77 @@ from vitalis.services.push_service import PushService
 from vitalis.time import local_today
 
 
-def run_morning_push(
+ReportPeriod = Literal["morning", "evening"]
+DEFAULT_STATE_DIR = Path.home() / ".hermes" / "vitalis_push"
+
+
+def run_daily_push(
     user_id: str,
     pushplus_token: str,
     *,
+    period: ReportPeriod,
     api: str = "http://localhost:8000",
-    sync_days: int = 2,
+    sync_days: int | None = None,
     target_date: date | None = None,
+    state_dir: Path | str = DEFAULT_STATE_DIR,
 ) -> dict:
+    """Synchronize, analyze, and deliver one idempotent report for a local day."""
     if not user_id:
         raise ValueError("VITALIS_USER is required")
     if not pushplus_token:
         raise ValueError("PUSHPLUS_TOKEN is required")
+    if period not in ("morning", "evening"):
+        raise ValueError("period must be morning or evening")
 
-    headers = {"X-User-Id": user_id}
-    with httpx.Client(base_url=api.rstrip("/"), headers=headers, timeout=180.0) as client:
-        sync_response = client.post("/api/v1/health/sync", params={"days": sync_days})
-        sync_response.raise_for_status()
-        sync = sync_response.json()
-        if sync.get("status") != "synced" or sync.get("success") is not True:
-            raise RuntimeError(
-                f"Vitalis sync did not complete: {sync.get('status', 'unknown')}"
-            )
+    current_date = target_date or local_today()
+    days = sync_days if sync_days is not None else (2 if period == "morning" else 1)
+    marker = _delivery_marker(Path(state_dir), user_id, current_date, period)
 
-        current_date = target_date or local_today()
-        daily = _analyze(client, current_date)
-        current_missing = _missing_required_count(daily)
-        used_previous_day = False
-        if current_missing:
-            previous = _analyze(client, current_date - timedelta(days=1))
-            if _missing_required_count(previous) < current_missing:
-                daily = previous
-                used_previous_day = True
+    with _delivery_lock(marker):
+        if marker.exists():
+            return {
+                "status": "already_sent",
+                "period": period,
+                "date": current_date.isoformat(),
+            }
 
-    results = PushService(pushplus_token=pushplus_token).push_daily_profile(
-        user_id, daily, period="morning"
-    )
-    if results.get("_pushplus_handler") != "ok":
-        raise RuntimeError("PushPlus delivery failed")
-    return {
-        "status": "sent",
-        "date": daily["date"],
-        "quality": daily["data_quality"]["status"],
-        "used_previous_day": used_previous_day,
-    }
+        headers = {"X-User-Id": user_id}
+        with httpx.Client(
+            base_url=api.rstrip("/"),
+            headers=headers,
+            timeout=180.0,
+            trust_env=not _is_loopback(api),
+        ) as client:
+            sync_response = client.post("/api/v1/health/sync", params={"days": days})
+            sync_response.raise_for_status()
+            sync = sync_response.json()
+            if sync.get("status") != "synced" or sync.get("success") is not True:
+                raise RuntimeError(
+                    f"Vitalis sync did not complete: {sync.get('status', 'unknown')}"
+                )
+
+            daily = _analyze(client, current_date)
+
+        if period == "morning" and not _sleep_is_complete(daily):
+            return {
+                "status": "deferred",
+                "period": period,
+                "date": current_date.isoformat(),
+                "reason": "sleep_incomplete",
+            }
+
+        results = PushService(pushplus_token=pushplus_token).push_daily_profile(
+            user_id, daily, period=period
+        )
+        if results.get("_pushplus_handler") != "ok":
+            raise RuntimeError("PushPlus delivery failed")
+        _mark_delivered(marker)
+        return {
+            "status": "sent",
+            "period": period,
+            "date": daily["date"],
+            "quality": daily["data_quality"]["status"],
+        }
 
 
 def _analyze(client: httpx.Client, day: date) -> dict:
@@ -64,5 +98,36 @@ def _analyze(client: httpx.Client, day: date) -> dict:
     return response.json()["daily"]
 
 
-def _missing_required_count(daily: dict) -> int:
-    return len(daily["data_quality"].get("missing_required_signals", []))
+def _sleep_is_complete(daily: dict) -> bool:
+    sleep = daily.get("features", {}).get("sleep", {})
+    return sleep.get("status") == "AVAILABLE" and bool(sleep.get("wake_time"))
+
+
+def _is_loopback(api: str) -> bool:
+    return urlsplit(api).hostname in {"localhost", "127.0.0.1", "::1"}
+
+
+def _delivery_marker(
+    state_dir: Path, user_id: str, day: date, period: ReportPeriod
+) -> Path:
+    user_key = hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:16]
+    return state_dir / f"{day.isoformat()}-{period}-{user_key}.sent"
+
+
+@contextmanager
+def _delivery_lock(marker: Path) -> Iterator[None]:
+    marker.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(marker.parent, 0o700)
+    lock_path = marker.with_suffix(".lock")
+    with lock_path.open("a", encoding="utf-8") as lock_file:
+        os.chmod(lock_path, 0o600)
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        yield
+
+
+def _mark_delivered(marker: Path) -> None:
+    descriptor = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as marker_file:
+        marker_file.write("sent\n")
+        marker_file.flush()
+        os.fsync(marker_file.fileno())

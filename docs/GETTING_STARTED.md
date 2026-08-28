@@ -73,14 +73,18 @@ orchestrator and must not calculate, merge, or fill health observations.
 ### Daily PushPlus Report
 
 The local production setup uses Hermes Cron as the only daily dispatcher. Vitalis runs
-as a loopback system service with its embedded scheduler disabled, so the report cannot
-be sent twice by overlapping schedulers. The active job runs at 09:30
-`Asia/Shanghai`, synchronizes two days for the explicit `VITALIS_USER`, performs a fresh
-deterministic analysis, and sends one Morning report. It analyzes the current local day
-first. When required signals are missing, it independently analyzes the previous day
-and selects that whole profile only when it has better required-signal coverage. The
-selected data date is always visible in the PushPlus title and body; observations are
-never merged across dates.
+as a loopback system service with its embedded scheduler disabled. The morning job runs
+hourly from 09:30 through 21:30 `Asia/Shanghai`, synchronizes two days for the explicit
+`VITALIS_USER`, and analyzes only the current local day. It sends nothing while today's
+sleep status is unavailable or `wake_time` is absent. The next hourly run synchronizes
+and checks again; once sleep is complete it sends exactly one Morning report and later
+runs skip the date using private atomic state under `~/.hermes/vitalis_push/`. It never
+substitutes yesterday's profile.
+
+A separate job runs at 22:30, synchronizes one day, and sends one Evening report for the
+current date. The Morning report interprets recovery and presents the training plan.
+The Evening report instead reviews actual workouts, current and seven-day load,
+recovery signals, trends, and active events. Both put data limitations last.
 
 Add the PushPlus token to Hermes' private `~/.hermes/.env`:
 
@@ -99,7 +103,7 @@ hermes cron list
 hermes cron runs <job-id>
 ```
 
-To send a manual acceptance report after configuring the token, get the job ID from
+To run either dispatcher manually after configuring the token, get its job ID from
 `hermes cron list` and run:
 
 ```bash
@@ -136,8 +140,8 @@ Synchronization, analysis, and push rendering are separate stages:
 | Local time | Job | Behavior |
 | --- | --- | --- |
 | 02:00 | Nightly sync | Synchronize 7 days and persist a fresh analysis run |
-| 09:30 | Morning | Synchronize 2 days, analyze, and render the Morning profile |
-| 21:30 | Evening | Synchronize 1 day, analyze, and render the Evening profile |
+| 09:30-21:30 hourly | Morning retry | Send once after today's sleep has a wake time |
+| 22:30 | Evening | Synchronize 1 day and send the distinct Evening profile once |
 
 An insufficient profile remains insufficient. The scheduler does not replace it with
 an older result, a default score, or a generic training template.
@@ -167,7 +171,7 @@ Run the complete suite:
 .venv/bin/python -m pytest -q
 ```
 
-Current verified result: 176 tests passed. The suite covers connector parsing and
+Current verified result: 180 tests passed. The suite covers connector parsing and
 synchronization, browser pairing, health-data APIs, device isolation, baselines,
 Daily/Weekly/Monthly intelligence, health-event lifecycle, training response,
 personal associations, immutable snapshots, bounded Context, Timeline, push rendering,

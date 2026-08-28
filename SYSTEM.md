@@ -1300,7 +1300,7 @@ DailyProfile as readable WeChat Markdown.
     report date, Markdown structure, and missing-value unit handling.
   - Run focused and complete verification, restart no services unless required, and
     trigger the existing Hermes cron job for one corrected PushPlus acceptance report.
-- [ ] Part 4 - Commit, push, and record delivery.
+- [x] Part 4 - Commit, push, and record delivery.
   - Review for health-data, identifier, and token leakage.
   - Push the implementation and exact anonymized live acceptance evidence.
 
@@ -1323,3 +1323,62 @@ DailyProfile as readable WeChat Markdown.
   previous local dates both returned HTTP 201, and the persisted non-health result was
   `status=sent`, `quality=SUFFICIENT`, and `used_previous_day=true`. The selected report
   date was the previous complete day, and the next automatic 09:30 run remained active.
+- Part 4 (delivery): commit `26a1166` (`fix: select complete daily report`) was pushed
+  from local `main` to `origin/main` successfully. The corrected PushPlus message was
+  accepted before delivery, so the live cron path and the pushed implementation match.
+
+## 19. Sleep-Aware Morning Retry and Distinct Evening Report
+
+Date: 2026-08-29
+
+Goal: defer the morning PushPlus report until today's sleep record is complete, retry
+hourly without duplicate delivery, and add a materially distinct 22:30 evening report
+with interpreted recovery and training context.
+
+### Detailed TODO
+
+- [x] Part 1 - Make morning delivery sleep-aware and idempotent.
+  - Analyze only the current local date and defer without sending while sleep is
+    unavailable or has no wake time; never substitute the previous day.
+  - Retry hourly from 09:30 until the evening window and send exactly once after sleep
+    completes, using private atomic delivery state to prevent duplicate sends.
+- [x] Part 2 - Separate morning and evening report contracts.
+  - Keep the morning report focused on interpreted recovery and the training plan.
+  - Make the evening report summarize actual workouts, today's and seven-day load,
+    recovery signals, trends, events, and the engine's evening action.
+  - Keep deterministic interpretations ahead of measurements and place data
+    limitations at the end of both reports.
+- [x] Part 3 - Configure and verify the live runtime.
+  - Change the morning Hermes Cron job to hourly retries and add one no-agent 22:30
+    evening job without exposing the private token or local identity.
+  - Verify deferred, sent, and already-sent behavior plus service and cron health.
+- [ ] Part 4 - Clean, document, test, and deliver.
+  - Update workflow and operator documentation to match actual runtime behavior.
+  - Run focused and complete tests, compilation, formatting, and secret checks.
+  - Commit and push the implementation, then record anonymized delivery evidence.
+
+### Verification Log
+
+- Part 1: the daily pipeline now analyzes only the current local date. Morning delivery
+  requires both an available sleep feature and a wake time; otherwise it returns
+  `status=deferred` without constructing the PushPlus service or writing a success
+  marker. Per-user, per-date, per-period file locks serialize overlapping runs, private
+  atomic markers skip later successful retries, and failed delivery remains retryable.
+- Part 2: the Morning renderer leads with recovery, sleep, action, confidence, positive
+  and negative recovery signals, and 28-day deviation interpretation before supporting
+  measurements and the structured training plan. The Evening renderer instead leads
+  with completed workouts and tonight's action, then renders exact workout modes,
+  vendor load, seven-day context, recovery signals, available trends, and active event
+  summaries. Real current-profile render checks passed for both periods without sending;
+  in both messages `数据限制` was the final heading.
+- Part 3: Hermes Gateway now has two active no-agent jobs. Morning runs at
+  `30 9-21 * * *` and Evening runs at `30 22 * * *`; both persistent services remain
+  enabled and active. A live current-day sync showed unavailable sleep and no wake time,
+  and the actual Morning script returned `status=deferred` without a PushPlus send or
+  success marker. Loopback API calls now explicitly bypass environment proxies after a
+  manual run exposed an inherited-proxy 502; the retried live path completed normally.
+- Part 4 (pre-delivery verification): 20 focused automation, renderer, and Skill tests
+  passed. The complete suite passed all 180 tests in 2.38 seconds with 184 existing
+  Python 3.14 `datetime.utcnow()` deprecation warnings. Repository and Skill tool
+  compilation, line-length review, `git diff --check`, and private-value diff scans
+  passed.

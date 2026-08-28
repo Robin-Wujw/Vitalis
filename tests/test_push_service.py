@@ -6,24 +6,64 @@ from vitalis.services.push_service import PUSHPLUS_URL, PushMessage, PushService
 def _profile_payload():
     return {
         "date": "2026-08-28",
-        "data_quality": {"status": "SUFFICIENT", "status_label": "数据完整"},
+        "data_quality": {
+            "status": "SUFFICIENT",
+            "status_label": "数据完整",
+            "missing_required_signal_labels": [],
+        },
         "features": {
-            "sleep": {"duration_minutes": 447},
-            "hrv": {"value_ms": 71, "rhr_bpm": 47},
-            "recovery": {"state_label": "恢复良好"},
+            "sleep": {
+                "status": "AVAILABLE",
+                "status_label": "可用",
+                "duration_minutes": 447,
+                "duration_deviation": {"direction": "above", "percent": 6.5},
+            },
+            "hrv": {
+                "value_ms": 71,
+                "deviation": {"direction": "above", "percent": 8.2},
+                "rhr_bpm": 47,
+                "rhr_deviation": {"direction": "near", "percent": -1.0},
+            },
+            "recovery": {
+                "state_label": "恢复良好",
+                "positive_signal_labels": ["HRV 高于个人基线"],
+                "negative_signal_labels": [],
+            },
             "training": {
                 "today_duration_minutes": 35,
                 "today_load": 62,
+                "duration_7d": 180,
                 "load_7d": 260,
                 "load_state_label": "近期负荷正常",
                 "recent_workouts": [{
                     "date": "2026-08-28",
                     "sport_mode_label": "户外跑",
                     "duration_minutes": 35,
+                    "vendor_load": 62,
+                    "heart_rate_avg_bpm": 148,
                     "recognition_confidence_label": "较高",
                 }],
             },
         },
+        "states": {
+            "sleep_label": "睡眠充足",
+            "recovery_label": "恢复良好",
+            "training_load_label": "近期负荷正常",
+        },
+        "trends": [{
+            "metric_label": "训练负荷",
+            "window_days": 7,
+            "status": "AVAILABLE",
+            "direction_label": "上升",
+            "confidence_label": "中等",
+        }],
+        "events": [{
+            "type_label": "训练负荷上升",
+            "summary": "近 7 日训练负荷持续上升。",
+            "severity_label": "提醒",
+            "lifecycle": "PERSISTING",
+            "lifecycle_label": "持续中",
+        }],
         "decision": {
             "action": "TRAIN_NORMAL",
             "action_label": "正常训练",
@@ -31,6 +71,8 @@ def _profile_payload():
             "confidence_label": "中等",
             "intensity": "moderate",
             "intensity_label": "中等强度",
+            "suggested_type_labels": ["有氧训练"],
+            "duration_minutes": [45, 60],
             "drivers": ["RECOVERY_NORMAL"],
             "driver_labels": ["恢复状态一般"],
             "limitations": ["session_rpe_unavailable"],
@@ -59,19 +101,26 @@ def test_morning_push_uses_chinese_labels_and_renders_prescription():
     service = PushService(pushplus_token="")
     service.add_handler(received.append)
 
-    service.push_daily_profile("001", _profile_payload(), period="morning")
+    service.push_daily_profile("test-user", _profile_payload(), period="morning")
 
     message = received[0]
     assert message.title == "Vitalis 晨报 · 2026-08-28 · 正常训练"
     assert message.body.startswith("> **数据日期：2026-08-28** · 数据完整")
-    assert "\n## 今日状态\n" in message.body
-    assert "\n## 训练建议\n" in message.body
-    assert "- **建议置信度**：中等" in message.body
+    assert "\n## 晨间结论\n" in message.body
+    assert "- **恢复判断**：恢复良好" in message.body
+    assert "- **积极信号**：HRV 高于个人基线" in message.body
+    assert "个人基线：高于 28 天基线（+6.5%）" in message.body
+    assert "HRV 个人基线：高于 28 天基线（+8.2%）" in message.body
+    assert "RHR 个人基线：接近 28 天基线（-1%）" in message.body
+    assert "\n## 训练安排\n" in message.body
+    assert "- **结论把握**：中等" in message.body
     assert "\n## 判断依据\n" in message.body
     assert "\n## 数据限制\n" in message.body
-    assert "\n## 训练方案\n" in message.body
+    assert "\n## 具体方案\n" in message.body
     assert "### 二区有氧跑 · 45–60 分钟" in message.body
     assert "1. **热身** · 8–10 分钟 · 轻松" in message.body
+    assert message.body.rfind("## 数据限制") > message.body.rfind("## 判断依据")
+    assert message.body.rstrip().endswith("- 尚未记录主观用力程度")
     for internal_code in ("TRAIN_NORMAL", "MODERATE", "RECOVERY_NORMAL", "session_rpe_unavailable"):
         assert internal_code not in message.title + message.body
 
@@ -81,12 +130,22 @@ def test_evening_push_names_exact_workout_mode_in_chinese():
     service = PushService(pushplus_token="")
     service.add_handler(received.append)
 
-    service.push_daily_profile("001", _profile_payload(), period="evening")
+    service.push_daily_profile("test-user", _profile_payload(), period="evening")
 
     message = received[0]
-    assert message.title == "Vitalis 晚间总结 · 2026-08-28 · 正常训练"
-    assert "## 今日回顾" in message.body
-    assert "- **户外跑** · 35 分钟 · 识别置信度较高" in message.body
+    assert message.title == "Vitalis 晚报 · 2026-08-28 · 正常训练"
+    assert "## 晚间结论" in message.body
+    assert "## 今日训练" in message.body
+    assert (
+        "- **户外跑** · 35 分钟 · 厂商负荷 62 · 平均心率 148 次/分钟 · "
+        "识别置信度较高"
+    ) in message.body
+    assert "- **近 7 日训练**：180 分钟 · 负荷 260" in message.body
+    assert "- **积极信号**：HRV 高于个人基线" in message.body
+    assert "- **训练负荷（7 日）**：上升 · 中等置信度" in message.body
+    assert "- **训练负荷上升**：近 7 日训练负荷持续上升。（提醒，持续中）" in message.body
+    assert message.body.rfind("## 数据限制") > message.body.rfind("## 趋势与事件")
+    assert message.body.rstrip().endswith("- 尚未记录主观用力程度")
 
 
 def test_missing_values_do_not_render_dangling_units():
@@ -98,12 +157,12 @@ def test_missing_values_do_not_render_dangling_units():
     service = PushService(pushplus_token="")
     service.add_handler(received.append)
 
-    service.push_daily_profile("001", payload, period="morning")
+    service.push_daily_profile("test-user", payload, period="morning")
 
     body = received[0].body
     assert "- **睡眠**：暂无" in body
     assert "- **心率变异性（HRV）**：暂无" in body
-    assert "- **静息心率（RHR）**：暂无" in body
+    assert "静息心率（RHR）" not in body
     for dangling in ("暂无 分钟", "暂无 毫秒", "暂无 次/分钟"):
         assert dangling not in body
 

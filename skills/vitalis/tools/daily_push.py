@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synchronize, analyze, and send one deterministic morning report via PushPlus."""
+"""Synchronize, analyze, and send one deterministic daily report via PushPlus."""
 
 import argparse
 import json
@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from vitalis.services.daily_push import run_morning_push  # noqa: E402
+from vitalis.services.daily_push import run_daily_push  # noqa: E402
 
 
 def _runtime_value(name: str, private_env: dict, default: str | None = None) -> str | None:
@@ -22,18 +22,20 @@ def _runtime_value(name: str, private_env: dict, default: str | None = None) -> 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="同步、分析并推送 Vitalis 晨报")
+    parser = argparse.ArgumentParser(description="同步、分析并推送 Vitalis 日报")
     private_env = dotenv_values(Path.home() / ".hermes" / ".env")
     configured_user = _runtime_value("VITALIS_USER", private_env)
     parser.add_argument("--user", default=configured_user, required=not configured_user)
-    parser.add_argument("--days", type=int, choices=range(1, 8), default=2)
+    parser.add_argument("--period", choices=("morning", "evening"), default="morning")
+    parser.add_argument("--days", type=int, choices=range(1, 8))
     args = parser.parse_args()
     token = _runtime_value("PUSHPLUS_TOKEN", private_env)
     if not token:
         parser.error("PUSHPLUS_TOKEN is required")
-    result = run_morning_push(
+    result = run_daily_push(
         args.user,
         token,
+        period=args.period,
         api=_runtime_value("VITALIS_API", private_env, "http://localhost:8000"),
         sync_days=args.days,
     )

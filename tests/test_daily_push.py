@@ -1,4 +1,5 @@
 from datetime import date
+import stat
 
 import pytest
 
@@ -16,7 +17,19 @@ class Response:
         return self.payload
 
 
-def test_daily_push_requires_identity_and_token_before_network(monkeypatch):
+def _daily(*, wake_time="08:15:00", sleep_status="AVAILABLE"):
+    return {
+        "date": "2026-08-29",
+        "data_quality": {"status": "SUFFICIENT"},
+        "features": {
+            "sleep": {"status": sleep_status, "wake_time": wake_time},
+        },
+    }
+
+
+def test_daily_push_requires_identity_token_and_valid_period_before_network(
+    monkeypatch, tmp_path
+):
     monkeypatch.setattr(
         daily_push.httpx,
         "Client",
@@ -24,20 +37,19 @@ def test_daily_push_requires_identity_and_token_before_network(monkeypatch):
     )
 
     with pytest.raises(ValueError, match="VITALIS_USER"):
-        daily_push.run_morning_push("", "token")
+        daily_push.run_daily_push("", "token", period="morning", state_dir=tmp_path)
     with pytest.raises(ValueError, match="PUSHPLUS_TOKEN"):
-        daily_push.run_morning_push("user", "")
+        daily_push.run_daily_push("user", "", period="morning", state_dir=tmp_path)
+    with pytest.raises(ValueError, match="period"):
+        daily_push.run_daily_push(
+            "user", "token", period="midday", state_dir=tmp_path
+        )
 
 
-def test_daily_push_syncs_analyzes_and_sends_exactly_once(monkeypatch):
+def test_morning_push_syncs_current_day_and_sends_exactly_once(monkeypatch, tmp_path):
     requests = []
     sent = []
-    daily = {
-        "date": "2026-08-29",
-        "data_quality": {"status": "SUFFICIENT", "missing_required_signals": []},
-        "decision": {},
-        "features": {},
-    }
+    profile = _daily()
 
     class Client:
         def __init__(self, **kwargs):
@@ -45,6 +57,7 @@ def test_daily_push_syncs_analyzes_and_sends_exactly_once(monkeypatch):
                 "base_url": "http://127.0.0.1:8000",
                 "headers": {"X-User-Id": "explicit-user"},
                 "timeout": 180.0,
+                "trust_env": False,
             }
 
         def __enter__(self):
@@ -57,55 +70,54 @@ def test_daily_push_syncs_analyzes_and_sends_exactly_once(monkeypatch):
             requests.append((path, kwargs))
             if path.endswith("/sync"):
                 return Response({"status": "synced", "success": True})
-            return Response({"daily": daily})
+            return Response({"daily": profile})
 
     class Service:
         def __init__(self, pushplus_token):
             assert pushplus_token == "private-token"
 
-        def push_daily_profile(self, user_id, profile, period):
-            sent.append((user_id, profile, period))
-            return {"_log_handler": "ok", "_pushplus_handler": "ok"}
+        def push_daily_profile(self, user_id, daily, period):
+            sent.append((user_id, daily, period))
+            return {"_pushplus_handler": "ok"}
 
     monkeypatch.setattr(daily_push.httpx, "Client", Client)
     monkeypatch.setattr(daily_push, "PushService", Service)
-    result = daily_push.run_morning_push(
+    result = daily_push.run_daily_push(
         "explicit-user",
         "private-token",
+        period="morning",
         api="http://127.0.0.1:8000/",
-        sync_days=2,
         target_date=date(2026, 8, 29),
+        state_dir=tmp_path,
     )
 
     assert requests == [
         ("/api/v1/health/sync", {"params": {"days": 2}}),
         ("/api/v1/intelligence/analyze", {"params": {"day": "2026-08-29"}}),
     ]
-    assert sent == [("explicit-user", daily, "morning")]
+    assert sent == [("explicit-user", profile, "morning")]
     assert result == {
         "status": "sent",
+        "period": "morning",
         "date": "2026-08-29",
         "quality": "SUFFICIENT",
-        "used_previous_day": False,
     }
+    marker = next(tmp_path.glob("*.sent"))
+    assert "explicit-user" not in marker.name
+    assert stat.S_IMODE(marker.stat().st_mode) == 0o600
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
 
 
-def test_daily_push_uses_independent_previous_day_when_current_required_data_is_missing(
-    monkeypatch,
+@pytest.mark.parametrize(
+    ("sleep_status", "wake_time"),
+    [("INSUFFICIENT_DATA", None), ("AVAILABLE", None)],
+)
+def test_morning_push_defers_without_complete_sleep(
+    monkeypatch, tmp_path, sleep_status, wake_time
 ):
     requests = []
     sent = []
-    current = {
-        "date": "2026-08-29",
-        "data_quality": {
-            "status": "INSUFFICIENT",
-            "missing_required_signals": ["sleep_duration", "hrv"],
-        },
-    }
-    previous = {
-        "date": "2026-08-28",
-        "data_quality": {"status": "SUFFICIENT", "missing_required_signals": []},
-    }
+    profile = _daily(sleep_status=sleep_status, wake_time=wake_time)
 
     class Client:
         def __init__(self, **kwargs):
@@ -121,55 +133,140 @@ def test_daily_push_uses_independent_previous_day_when_current_required_data_is_
             requests.append((path, kwargs))
             if path.endswith("/sync"):
                 return Response({"status": "synced", "success": True})
-            day = kwargs["params"]["day"]
-            return Response({"daily": current if day == "2026-08-29" else previous})
+            return Response({"daily": profile})
+
+    monkeypatch.setattr(daily_push.httpx, "Client", Client)
+    monkeypatch.setattr(
+        daily_push,
+        "PushService",
+        lambda **kwargs: sent.append(kwargs),
+    )
+
+    result = daily_push.run_daily_push(
+        "explicit-user",
+        "private-token",
+        period="morning",
+        target_date=date(2026, 8, 29),
+        state_dir=tmp_path,
+    )
+
+    assert requests == [
+        ("/api/v1/health/sync", {"params": {"days": 2}}),
+        ("/api/v1/intelligence/analyze", {"params": {"day": "2026-08-29"}}),
+    ]
+    assert sent == []
+    assert result == {
+        "status": "deferred",
+        "period": "morning",
+        "date": "2026-08-29",
+        "reason": "sleep_incomplete",
+    }
+    assert not list(tmp_path.glob("*.sent"))
+
+
+def test_hourly_retry_sends_after_wake_then_skips_later_runs(monkeypatch, tmp_path):
+    analyses = [_daily(wake_time=None), _daily(wake_time="10:05:00")]
+    sent = []
+    client_count = 0
+
+    class Client:
+        def __init__(self, **kwargs):
+            nonlocal client_count
+            client_count += 1
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def post(self, path, **kwargs):
+            if path.endswith("/sync"):
+                return Response({"status": "synced", "success": True})
+            return Response({"daily": analyses.pop(0)})
 
     class Service:
         def __init__(self, pushplus_token):
             pass
 
         def push_daily_profile(self, user_id, profile, period):
-            sent.append(profile)
+            sent.append((profile, period))
             return {"_pushplus_handler": "ok"}
 
     monkeypatch.setattr(daily_push.httpx, "Client", Client)
     monkeypatch.setattr(daily_push, "PushService", Service)
-    result = daily_push.run_morning_push(
+    arguments = {
+        "period": "morning",
+        "target_date": date(2026, 8, 29),
+        "state_dir": tmp_path,
+    }
+
+    first = daily_push.run_daily_push("explicit-user", "private-token", **arguments)
+    second = daily_push.run_daily_push("explicit-user", "private-token", **arguments)
+    third = daily_push.run_daily_push("explicit-user", "private-token", **arguments)
+
+    assert first["status"] == "deferred"
+    assert second["status"] == "sent"
+    assert third == {
+        "status": "already_sent",
+        "period": "morning",
+        "date": "2026-08-29",
+    }
+    assert len(sent) == 1
+    assert client_count == 2
+    assert len(list(tmp_path.glob("*.sent"))) == 1
+
+
+def test_evening_push_uses_one_day_and_ignores_morning_sleep_gate(
+    monkeypatch, tmp_path
+):
+    requests = []
+    sent = []
+    profile = _daily(sleep_status="INSUFFICIENT_DATA", wake_time=None)
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def post(self, path, **kwargs):
+            requests.append((path, kwargs))
+            if path.endswith("/sync"):
+                return Response({"status": "synced", "success": True})
+            return Response({"daily": profile})
+
+    class Service:
+        def __init__(self, pushplus_token):
+            pass
+
+        def push_daily_profile(self, user_id, daily, period):
+            sent.append(period)
+            return {"_pushplus_handler": "ok"}
+
+    monkeypatch.setattr(daily_push.httpx, "Client", Client)
+    monkeypatch.setattr(daily_push, "PushService", Service)
+    result = daily_push.run_daily_push(
         "explicit-user",
         "private-token",
+        period="evening",
         target_date=date(2026, 8, 29),
+        state_dir=tmp_path,
     )
 
-    assert requests[1:] == [
-        ("/api/v1/intelligence/analyze", {"params": {"day": "2026-08-29"}}),
-        ("/api/v1/intelligence/analyze", {"params": {"day": "2026-08-28"}}),
-    ]
-    assert sent == [previous]
-    assert sent[0] is previous
-    assert result == {
-        "status": "sent",
-        "date": "2026-08-28",
-        "quality": "SUFFICIENT",
-        "used_previous_day": True,
-    }
+    assert requests[0] == ("/api/v1/health/sync", {"params": {"days": 1}})
+    assert sent == ["evening"]
+    assert result["status"] == "sent"
+    assert result["period"] == "evening"
 
 
-def test_daily_push_keeps_current_day_when_previous_day_is_not_better(monkeypatch):
-    sent = []
-    current = {
-        "date": "2026-08-29",
-        "data_quality": {
-            "status": "INSUFFICIENT",
-            "missing_required_signals": ["hrv"],
-        },
-    }
-    previous = {
-        "date": "2026-08-28",
-        "data_quality": {
-            "status": "INSUFFICIENT",
-            "missing_required_signals": ["sleep_duration", "hrv"],
-        },
-    }
+def test_failed_delivery_is_not_marked_and_can_retry(monkeypatch, tmp_path):
+    outcomes = ["error: unavailable", "ok"]
+    sends = []
 
     class Client:
         def __init__(self, **kwargs):
@@ -184,32 +281,67 @@ def test_daily_push_keeps_current_day_when_previous_day_is_not_better(monkeypatc
         def post(self, path, **kwargs):
             if path.endswith("/sync"):
                 return Response({"status": "synced", "success": True})
-            return Response({
-                "daily": current if kwargs["params"]["day"] == "2026-08-29" else previous
-            })
+            return Response({"daily": _daily()})
 
     class Service:
         def __init__(self, pushplus_token):
             pass
 
         def push_daily_profile(self, user_id, profile, period):
-            sent.append(profile)
-            return {"_pushplus_handler": "ok"}
+            sends.append(period)
+            return {"_pushplus_handler": outcomes.pop(0)}
 
     monkeypatch.setattr(daily_push.httpx, "Client", Client)
     monkeypatch.setattr(daily_push, "PushService", Service)
-    result = daily_push.run_morning_push(
-        "explicit-user",
-        "private-token",
-        target_date=date(2026, 8, 29),
+    arguments = {
+        "period": "morning",
+        "target_date": date(2026, 8, 29),
+        "state_dir": tmp_path,
+    }
+
+    with pytest.raises(RuntimeError, match="PushPlus delivery failed"):
+        daily_push.run_daily_push("explicit-user", "private-token", **arguments)
+    assert not list(tmp_path.glob("*.sent"))
+
+    result = daily_push.run_daily_push(
+        "explicit-user", "private-token", **arguments
     )
+    assert result["status"] == "sent"
+    assert sends == ["morning", "morning"]
+    assert len(list(tmp_path.glob("*.sent"))) == 1
 
-    assert sent == [current]
-    assert result["date"] == "2026-08-29"
-    assert result["used_previous_day"] is False
+
+def test_remote_api_keeps_environment_proxy_support(monkeypatch, tmp_path):
+    client_kwargs = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            client_kwargs.append(kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def post(self, path, **kwargs):
+            return Response({"status": "needs_reauth"})
+
+    monkeypatch.setattr(daily_push.httpx, "Client", Client)
+
+    with pytest.raises(RuntimeError, match="needs_reauth"):
+        daily_push.run_daily_push(
+            "explicit-user",
+            "private-token",
+            period="evening",
+            api="https://vitalis.example.test",
+            state_dir=tmp_path,
+        )
+
+    assert client_kwargs[0]["trust_env"] is True
 
 
-def test_daily_push_does_not_analyze_or_send_after_failed_sync(monkeypatch):
+def test_daily_push_does_not_analyze_or_send_after_failed_sync(monkeypatch, tmp_path):
     requests = []
 
     class Client:
@@ -234,5 +366,10 @@ def test_daily_push_does_not_analyze_or_send_after_failed_sync(monkeypatch):
     )
 
     with pytest.raises(RuntimeError, match="needs_reauth"):
-        daily_push.run_morning_push("explicit-user", "private-token")
+        daily_push.run_daily_push(
+            "explicit-user",
+            "private-token",
+            period="morning",
+            state_dir=tmp_path,
+        )
     assert requests == ["/api/v1/health/sync"]

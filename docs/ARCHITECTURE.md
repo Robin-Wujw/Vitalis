@@ -290,12 +290,17 @@ engine fields. Hermes never derives one intelligence contract from another.
 
 ```text
 02:00  sync 7 days -> analyze -> immutable snapshots
-09:30  sync 2 days -> analyze -> read returned DailyProfile -> Morning renderer -> push
-21:30  sync 1 day  -> analyze -> read returned DailyProfile -> Evening renderer -> push
+09:30-21:30 hourly  sync 2 days -> analyze today's DailyProfile
+                     -> incomplete sleep: defer
+                     -> complete sleep and unsent: Morning renderer -> PushPlus -> mark sent
+22:30                sync 1 day -> analyze today's DailyProfile
+                     -> Evening renderer -> PushPlus -> mark sent
 ```
 
-The scheduler pushes an explicit insufficient-data profile when analysis requirements
-are not met. It does not delay and then substitute stale health results.
+The morning scheduler defers while today's sleep record has no wake time and never
+substitutes stale health results. Morning and evening use separate per-user, per-date
+delivery markers, so retries and overlapping invocations do not duplicate a successful
+PushPlus delivery. The evening report is not blocked by the morning sleep gate.
 
 ## 6. Evidence Boundaries
 

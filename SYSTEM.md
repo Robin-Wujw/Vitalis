@@ -1262,8 +1262,14 @@ PushPlus token private and keeping health calculations inside Vitalis.
   commands without a local user ID or job ID. Focused automation tests passed all 13
   tests. The complete suite passed all 173 tests in 4.28 seconds with 184 existing
   Python 3.14 `datetime.utcnow()` deprecation warnings. Repository and Skill tool
-  compilation, Skill validation, and `git diff --check` passed. A live PushPlus message
-  remains intentionally untested until the user supplies the private token.
+  compilation, Skill validation, and `git diff --check` passed. Live PushPlus acceptance
+  was intentionally deferred until the user supplied the private token.
 - Part 4 (delivery): commit `8081dda` (`feat: automate daily PushPlus report`) was
   pushed from local `main` to `origin/main` successfully. The live runtime remains
   enabled and will read the private token at execution time without a service restart.
+- Part 4 (live acceptance): after the user added the token to the private Hermes
+  environment, the existing cron job discovered it without a restart and completed a
+  manual run successfully. Vitalis recorded one two-day synchronization with HTTP 200
+  followed by one deterministic analysis with HTTP 201; PushPlus accepted the rendered
+  report, and the next automatic run remained scheduled for 09:30 Asia/Shanghai. No
+  token, local user ID, device ID, or health measurement was recorded in the repository.

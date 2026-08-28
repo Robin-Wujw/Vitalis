@@ -1043,7 +1043,7 @@ structured inputs for Hermes rather than model-side calculations.
   - Route monthly, personal-pattern, and explanation requests to Vitalis outputs; Hermes
     must not recompute correlations, aggregate periods, or infer causal relationships.
   - Update README and architecture documentation with current contracts and boundaries.
-- [ ] Part 6 - Verify, deliver, and record the result.
+- [x] Part 6 - Verify, deliver, and record the result.
   - Run focused and full tests, Python compilation, Skill validation, OpenAPI checks,
     live JSON Schema validation, context-size validation, diff checks, and secret scan.
   - Commit and push the implementation to `origin/main`, then record the exact delivery
@@ -1074,4 +1074,6 @@ structured inputs for Hermes rather than model-side calculations.
   added-content secret scanning passed. A fresh current-schema database produced five
   live responses that passed JSON Schema validation; OpenAPI contains 39 paths, the
   MonthlyProfile spans exactly 28 days, and serialized Context is 5,837 bytes against
-  the 20 KB limit. Delivery is pending commit and push.
+  the 20 KB limit.
+- Part 6 delivery: implementation commit `7a844dd` (`feat: add longitudinal health
+  intelligence`) was pushed from local `main` to `origin/main` successfully.

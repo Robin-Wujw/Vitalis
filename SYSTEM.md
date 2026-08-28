@@ -1273,3 +1273,53 @@ PushPlus token private and keeping health calculations inside Vitalis.
   followed by one deterministic analysis with HTTP 201; PushPlus accepted the rendered
   report, and the next automatic run remained scheduled for 09:30 Asia/Shanghai. No
   token, local user ID, device ID, or health measurement was recorded in the repository.
+
+## 18. Daily Report Date and PushPlus Formatting Fix
+
+Date: 2026-08-29
+
+Goal: prevent an early-day PushPlus report from choosing an empty current-day profile
+when the previous day has a complete independent profile, and render the selected
+DailyProfile as readable WeChat Markdown.
+
+### Detailed TODO
+
+- [x] Part 1 - Select one honest report date.
+  - Analyze the current local day first; use it when all required signals are present.
+  - If required signals are missing, analyze the previous local day independently and
+    select it only when its required-signal coverage is better.
+  - Never merge observations across dates, silently relabel yesterday as today, or hide
+    remaining missing data; include the selected data date in the title and body.
+- [x] Part 2 - Redesign the PushPlus report renderer.
+  - Use Markdown sections, bullets, emphasis, and spacing that survive WeChat rendering.
+  - Never render dangling units such as `暂无 分钟`; absent values render as `暂无`.
+  - Separate status, recommendation, drivers, limitations, workout review, and
+    structured prescription content instead of collapsing them into one paragraph.
+- [x] Part 3 - Add regression coverage and deliver a corrected live report.
+  - Cover current-day selection, previous-day selection, no cross-day merging, explicit
+    report date, Markdown structure, and missing-value unit handling.
+  - Run focused and complete verification, restart no services unless required, and
+    trigger the existing Hermes cron job for one corrected PushPlus acceptance report.
+- [ ] Part 4 - Commit, push, and record delivery.
+  - Review for health-data, identifier, and token leakage.
+  - Push the implementation and exact anonymized live acceptance evidence.
+
+### Verification Log
+
+- Part 1: the morning job now sends explicit `day` parameters. It analyzes the current
+  local day first and analyzes the previous day only when current required signals are
+  missing. The previous DailyProfile is selected only when it has fewer missing required
+  signals; the selected response object is passed intact without cross-day merging.
+  Five focused date-selection and pipeline tests passed.
+- Part 2: the report title and body now identify the selected ISO data date. Markdown
+  headings, blockquote metadata, bullets, emphasis, and blank lines separate status,
+  recommendation, drivers, limitations, workout review, and prescription content.
+  Missing values render as `暂无` without a dangling unit. The combined date-selection
+  and renderer suite passed all 11 tests.
+- Part 3: the complete suite passed all 176 tests in 3.34 seconds with 184 existing
+  Python 3.14 `datetime.utcnow()` deprecation warnings; compilation and
+  `git diff --check` passed. The existing Hermes cron job completed a corrected live
+  run: synchronization returned HTTP 200, independent analyses for the current and
+  previous local dates both returned HTTP 201, and the persisted non-health result was
+  `status=sent`, `quality=SUFFICIENT`, and `used_previous_day=true`. The selected report
+  date was the previous complete day, and the next automatic 09:30 run remained active.

@@ -76,7 +76,11 @@ The local production setup uses Hermes Cron as the only daily dispatcher. Vitali
 as a loopback system service with its embedded scheduler disabled, so the report cannot
 be sent twice by overlapping schedulers. The active job runs at 09:30
 `Asia/Shanghai`, synchronizes two days for the explicit `VITALIS_USER`, performs a fresh
-deterministic analysis, and sends one Morning report.
+deterministic analysis, and sends one Morning report. It analyzes the current local day
+first. When required signals are missing, it independently analyzes the previous day
+and selects that whole profile only when it has better required-signal coverage. The
+selected data date is always visible in the PushPlus title and body; observations are
+never merged across dates.
 
 Add the PushPlus token to Hermes' private `~/.hermes/.env`:
 
@@ -163,7 +167,7 @@ Run the complete suite:
 .venv/bin/python -m pytest -q
 ```
 
-Current verified result: 173 tests passed. The suite covers connector parsing and
+Current verified result: 176 tests passed. The suite covers connector parsing and
 synchronization, browser pairing, health-data APIs, device isolation, baselines,
 Daily/Weekly/Monthly intelligence, health-event lifecycle, training response,
 personal associations, immutable snapshots, bounded Context, Timeline, push rendering,

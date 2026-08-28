@@ -1,9 +1,12 @@
+from copy import deepcopy
+
 from vitalis.services.push_service import PUSHPLUS_URL, PushMessage, PushService
 
 
 def _profile_payload():
     return {
         "date": "2026-08-28",
+        "data_quality": {"status": "SUFFICIENT", "status_label": "数据完整"},
         "features": {
             "sleep": {"duration_minutes": 447},
             "hrv": {"value_ms": 71, "rhr_bpm": 47},
@@ -59,10 +62,16 @@ def test_morning_push_uses_chinese_labels_and_renders_prescription():
     service.push_daily_profile("001", _profile_payload(), period="morning")
 
     message = received[0]
-    assert message.title == "Vitalis 晨间建议 · 正常训练"
-    assert "建议置信度：中等" in message.body
-    assert "训练方案：二区有氧跑" in message.body
-    assert "1. 热身：8–10 分钟，轻松" in message.body
+    assert message.title == "Vitalis 晨报 · 2026-08-28 · 正常训练"
+    assert message.body.startswith("> **数据日期：2026-08-28** · 数据完整")
+    assert "\n## 今日状态\n" in message.body
+    assert "\n## 训练建议\n" in message.body
+    assert "- **建议置信度**：中等" in message.body
+    assert "\n## 判断依据\n" in message.body
+    assert "\n## 数据限制\n" in message.body
+    assert "\n## 训练方案\n" in message.body
+    assert "### 二区有氧跑 · 45–60 分钟" in message.body
+    assert "1. **热身** · 8–10 分钟 · 轻松" in message.body
     for internal_code in ("TRAIN_NORMAL", "MODERATE", "RECOVERY_NORMAL", "session_rpe_unavailable"):
         assert internal_code not in message.title + message.body
 
@@ -74,7 +83,29 @@ def test_evening_push_names_exact_workout_mode_in_chinese():
 
     service.push_daily_profile("001", _profile_payload(), period="evening")
 
-    assert "训练记录：户外跑，35 分钟，类型识别置信度较高" in received[0].body
+    message = received[0]
+    assert message.title == "Vitalis 晚间总结 · 2026-08-28 · 正常训练"
+    assert "## 今日回顾" in message.body
+    assert "- **户外跑** · 35 分钟 · 识别置信度较高" in message.body
+
+
+def test_missing_values_do_not_render_dangling_units():
+    received = []
+    payload = deepcopy(_profile_payload())
+    payload["features"]["sleep"]["duration_minutes"] = None
+    payload["features"]["hrv"]["value_ms"] = None
+    payload["features"]["hrv"]["rhr_bpm"] = None
+    service = PushService(pushplus_token="")
+    service.add_handler(received.append)
+
+    service.push_daily_profile("001", payload, period="morning")
+
+    body = received[0].body
+    assert "- **睡眠**：暂无" in body
+    assert "- **心率变异性（HRV）**：暂无" in body
+    assert "- **静息心率（RHR）**：暂无" in body
+    for dangling in ("暂无 分钟", "暂无 毫秒", "暂无 次/分钟"):
+        assert dangling not in body
 
 
 def test_pushplus_delivery_keeps_token_in_json_body(monkeypatch):

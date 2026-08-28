@@ -1110,7 +1110,7 @@ details. Preserve all operational and integration information in focused files u
     conversational experiences without presenting fabricated live user measurements.
   - State the deterministic/LLM boundary, explicit missing-data behavior, device
     isolation, non-diagnostic scope, and current supported ecosystem in plain language.
-- [ ] Part 4 - Verify and deliver.
+- [x] Part 4 - Verify and deliver.
   - Check internal Markdown links, headings, formatting, moved-content coverage, and
     `git diff --check`.
   - Commit and push the documentation restructure to `origin/main`, then record the
@@ -1129,4 +1129,6 @@ details. Preserve all operational and integration information in focused files u
 - Part 4 verification: all local Markdown links resolve, heading structure and moved
   technical-content coverage were reviewed, `git diff --check` and the added-content
   secret scan passed, and the full suite passed all 165 tests with 184 existing Python
-  3.14 `datetime.utcnow()` deprecation warnings. Delivery is pending commit and push.
+  3.14 `datetime.utcnow()` deprecation warnings.
+- Part 4 delivery: commit `3708aeb` (`docs: turn README into product showcase`) was
+  pushed from local `main` to `origin/main` successfully.

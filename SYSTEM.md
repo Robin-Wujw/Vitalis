@@ -747,7 +747,7 @@ actionable running and strength prescriptions instead of generic activity names.
   - Extend the DailyProfile JSON Schema for workout-mode, recognition, state-label,
     localization, and prescription contracts.
   - Validate the Skill with the skill-creator validator.
-- [ ] Part 4 - Verify real data, document, and deliver.
+- [x] Part 4 - Verify real data, document, and deliver.
   - Re-sync the current seven-day window and regenerate the connected user's profile.
   - Verify workout types, target-day HRV, Chinese decision output, and executable
     training content end to end.
@@ -777,3 +777,5 @@ actionable running and strength prescriptions instead of generic activity names.
 - Part 4 (verification): all 130 tests passed with 153 existing Python 3.14
   `datetime.utcnow()` deprecation warnings. Python compilation, JSON parsing, live
   DailyProfile schema validation, skill validation, and `git diff --check` passed.
+- Part 4 (delivery): commit `c94ddd9` (`feat: add Chinese workout prescriptions`) was
+  pushed from local `main` to `origin/main` successfully.

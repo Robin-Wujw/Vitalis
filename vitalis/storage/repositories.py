@@ -1,21 +1,27 @@
 """仓储层：封装对 ORM 的读写，业务层只依赖仓储接口。"""
 
 from datetime import date, datetime, timedelta, timezone
-from hashlib import sha256
+from uuid import uuid4
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session
 
 from vitalis.models import (
     AuthToken,
-    DailyHealth,
+    NormalizedDaily,
     DailyMetric,
     DenseDataFile,
     MetricSample,
     Workout,
     WorkoutSample,
 )
-from vitalis.intelligence.contracts import HealthEvent, SubjectiveFeedback
+from vitalis.intelligence.contracts import (
+    HealthEvent,
+    HealthEventObservation,
+    RecommendationInstance,
+    RecommendationStatus,
+    SubjectiveFeedback,
+)
 
 from . import models as orm
 
@@ -67,8 +73,8 @@ class HealthRepository:
         }
 
     # ---- 每日健康 ----
-    def save_daily(self, daily: DailyHealth) -> None:
-        """把 DailyHealth（含 sleep/activity/training）写入对应表（按 user+date upsert）。"""
+    def save_daily(self, daily: NormalizedDaily) -> None:
+        """Persist normalized sleep/activity/training records for one local day."""
         if daily.sleep:
             self._upsert(orm.SleepRecord, daily.user_id, daily.date,
                          daily.sleep.model_dump(mode="json", exclude_none=True))
@@ -78,29 +84,11 @@ class HealthRepository:
         if daily.training:
             self._upsert(orm.TrainingRecord, daily.user_id, daily.date,
                          daily.training.model_dump(mode="json", exclude_none=True))
+        if daily.metric_samples:
+            for sample in daily.metric_samples:
+                sample.user_id = daily.user_id
+            self.save_metric_samples(daily.metric_samples)
 
-        # 更新 health_daily 快照（分析结果部分）
-        existing = self.db.execute(
-            select(orm.HealthDaily).where(
-                orm.HealthDaily.user_id == daily.user_id,
-                orm.HealthDaily.date == daily.date,
-            )
-        ).scalar_one_or_none()
-        if existing is None:
-            hd = orm.HealthDaily(
-                user_id=daily.user_id, date=daily.date,
-                hrv=daily.hrv, hrv_trend_pct=daily.hrv_trend_pct,
-                recovery_score=daily.recovery_score,
-                recovery_level=daily.recovery_level,
-                stress_level=daily.stress_level,
-                overall_score=daily.overall_score,
-                summary=daily.summary,
-            )
-            self.db.add(hd)
-        else:
-            for field in ("hrv", "hrv_trend_pct", "recovery_score", "recovery_level",
-                          "stress_level", "overall_score", "summary"):
-                setattr(existing, field, getattr(daily, field))
         self.db.flush()
 
     def _upsert(self, model, user_id: str, day, data: dict) -> None:
@@ -129,19 +117,6 @@ class HealthRepository:
         ).scalars().all()
         return [r.data for r in rows]
 
-    def health_daily(self, user_id: str, day: date) -> orm.HealthDaily | None:
-        return self.db.execute(
-            select(orm.HealthDaily).where(orm.HealthDaily.user_id == user_id, orm.HealthDaily.date == day)
-        ).scalar_one_or_none()
-
-    def health_daily_range(self, user_id: str, start: date, end: date) -> list[orm.HealthDaily]:
-        rows = self.db.execute(
-            select(orm.HealthDaily).where(
-                orm.HealthDaily.user_id == user_id,
-                orm.HealthDaily.date.between(start, end),
-            ).order_by(orm.HealthDaily.date)
-        ).scalars().all()
-        return list(rows)
 
     def activity_range(self, user_id: str, start: date, end: date) -> list[dict]:
         rows = self.db.execute(
@@ -485,36 +460,72 @@ class HealthRepository:
             )
         ).scalar_one_or_none()
 
-    def add_analysis(self, record: orm.AnalysisRecord) -> None:
-        """按主键 upsert 分析记录（重复调用不冲突）。"""
-        self.db.merge(record)
-
     # ---- 健康智能事件 ----
 
-    def save_health_events(self, user_id: str, events: list[HealthEvent]) -> int:
-        for event in events:
-            row = self.db.get(orm.HealthEventRecord, event.id)
-            payload = event.model_dump(mode="json")
-            if row is None:
-                row = orm.HealthEventRecord(
-                    id=event.id,
-                    user_id=user_id,
-                    event_type=event.type,
-                    metric=event.metric,
-                    start_date=event.start_date,
-                    end_date=event.end_date,
-                )
-                self.db.add(row)
-            elif row.user_id != user_id:
-                raise ValueError("健康事件 ID 与用户不匹配")
-            row.event_type = event.type
-            row.metric = event.metric
-            row.start_date = event.start_date
-            row.end_date = event.end_date
-            payload["acknowledged"] = row.acknowledged_at is not None
-            row.payload = payload
+    def active_health_events(self, user_id: str) -> list[HealthEvent]:
+        rows = self.db.execute(select(orm.HealthEventRecord).where(
+            orm.HealthEventRecord.user_id == user_id,
+            orm.HealthEventRecord.lifecycle != "RESOLVED",
+        )).scalars().all()
+        return [_event_from_row(row) for row in rows]
+
+    def save_health_event(self, user_id: str, event: HealthEvent) -> HealthEvent:
+        row = self.db.get(orm.HealthEventRecord, event.id)
+        if row is None:
+            row = orm.HealthEventRecord(id=event.id, user_id=user_id)
+            self.db.add(row)
+        if row.user_id != user_id:
+            raise ValueError("健康事件 ID 与用户不匹配")
+        payload = event.model_dump(mode="json")
+        row.event_type = event.type
+        row.metric = event.metric
+        row.start_date = event.start_date
+        row.end_date = event.end_date
+        row.lifecycle = event.lifecycle.value
+        row.last_observed_date = event.last_observed_date
+        row.last_evaluated_date = event.last_evaluated_date or event.end_date
+        row.resolved_at = event.resolved_at
+        payload["acknowledged"] = row.acknowledged_at is not None
+        payload["acknowledged_at"] = (
+            row.acknowledged_at.isoformat() if row.acknowledged_at else None
+        )
+        row.payload = payload
         self.db.flush()
-        return len(events)
+        return _event_from_row(row)
+
+    def save_event_observation(
+        self, observation: HealthEventObservation
+    ) -> HealthEventObservation:
+        row = orm.HealthEventObservation(
+            **observation.model_dump(mode="python")
+        )
+        row.previous_lifecycle = (
+            observation.previous_lifecycle.value
+            if observation.previous_lifecycle else None
+        )
+        row.lifecycle = observation.lifecycle.value
+        row.created_at = _naive_utc(observation.created_at)
+        self.db.add(row)
+        self.db.flush()
+        return observation
+
+    def event_observations(
+        self, user_id: str, event_id: str
+    ) -> list[HealthEventObservation]:
+        rows = self.db.execute(select(orm.HealthEventObservation).where(
+            orm.HealthEventObservation.user_id == user_id,
+            orm.HealthEventObservation.event_id == event_id,
+        ).order_by(orm.HealthEventObservation.date, orm.HealthEventObservation.created_at)).scalars().all()
+        return [HealthEventObservation.model_validate(row, from_attributes=True) for row in rows]
+
+    def event_observations_range(
+        self, user_id: str, start: date, end: date
+    ) -> list[HealthEventObservation]:
+        rows = self.db.execute(select(orm.HealthEventObservation).where(
+            orm.HealthEventObservation.user_id == user_id,
+            orm.HealthEventObservation.date.between(start, end),
+        ).order_by(orm.HealthEventObservation.date.desc(), orm.HealthEventObservation.created_at.desc())).scalars().all()
+        return [HealthEventObservation.model_validate(row, from_attributes=True) for row in rows]
 
     def health_events(
         self,
@@ -525,8 +536,13 @@ class HealthRepository:
     ) -> list[HealthEvent]:
         statement = select(orm.HealthEventRecord).where(
             orm.HealthEventRecord.user_id == user_id,
-            orm.HealthEventRecord.end_date >= start,
-            orm.HealthEventRecord.start_date <= end,
+            or_(
+                (
+                    (orm.HealthEventRecord.end_date >= start)
+                    & (orm.HealthEventRecord.start_date <= end)
+                ),
+                orm.HealthEventRecord.resolved_at.between(start, end),
+            ),
         )
         if event_type:
             statement = statement.where(orm.HealthEventRecord.event_type == event_type)
@@ -535,60 +551,208 @@ class HealthRepository:
         ).scalars().all()
         output = []
         for row in rows:
-            payload = dict(row.payload or {})
-            payload["acknowledged"] = row.acknowledged_at is not None
-            output.append(HealthEvent.model_validate(payload))
+            output.append(_event_from_row(row))
         return output
+
+    def health_event(self, user_id: str, event_id: str) -> HealthEvent | None:
+        row = self.db.get(orm.HealthEventRecord, event_id)
+        if row is None or row.user_id != user_id:
+            return None
+        return _event_from_row(row)
 
     def acknowledge_health_event(self, user_id: str, event_id: str) -> HealthEvent | None:
         row = self.db.get(orm.HealthEventRecord, event_id)
         if row is None or row.user_id != user_id:
             return None
         if row.acknowledged_at is None:
-            row.acknowledged_at = datetime.utcnow()
+            row.acknowledged_at = datetime.now(timezone.utc).replace(tzinfo=None)
         payload = dict(row.payload or {})
         payload["acknowledged"] = True
+        payload["acknowledged_at"] = row.acknowledged_at.isoformat()
         row.payload = payload
         self.db.flush()
-        return HealthEvent.model_validate(payload)
+        return _event_from_row(row)
 
-    # ---- 分析快照与主观反馈 ----
+    # ---- 分析运行、不可变快照与主观反馈 ----
+
+    def create_analysis_run(self, run) -> orm.AnalysisRun:
+        row = orm.AnalysisRun(
+            id=run.id,
+            user_id=run.user_id,
+            target_date=run.target_date,
+            status=run.status.value,
+            started_at=_naive_utc(run.started_at),
+            completed_at=_naive_utc(run.completed_at) if run.completed_at else None,
+            intelligence_version=run.intelligence_version,
+            decision_policy_version=run.decision_policy_version,
+            evidence_version=run.evidence_version,
+            error=run.error,
+        )
+        self.db.add(row)
+        self.db.flush()
+        return row
+
+    def complete_analysis_run(self, run_id: str, status: str, error: str | None = None):
+        row = self.db.get(orm.AnalysisRun, run_id)
+        if row is None:
+            raise ValueError("分析运行不存在")
+        row.status = status
+        row.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        row.error = error[:1024] if error else None
+        self.db.flush()
+        return row
+
+    def analysis_run(self, user_id: str, run_id: str):
+        row = self.db.get(orm.AnalysisRun, run_id)
+        return row if row is not None and row.user_id == user_id else None
+
+    def analysis_runs(self, user_id: str, start: date, end: date):
+        return list(self.db.execute(select(orm.AnalysisRun).where(
+            orm.AnalysisRun.user_id == user_id,
+            orm.AnalysisRun.target_date.between(start, end),
+        ).order_by(orm.AnalysisRun.target_date.desc(), orm.AnalysisRun.started_at.desc())).scalars().all())
 
     def save_analysis_snapshot(
         self,
+        analysis_run_id: str,
         user_id: str,
         profile_type: str,
         period_start: date,
         period_end: date,
         schema_version: str,
-        model_version: str,
+        intelligence_version: str,
+        decision_policy_version: str,
+        evidence_version: str,
         payload: dict,
     ) -> orm.AnalysisSnapshot:
-        identity = sha256(
-            (
-                f"{user_id}|{profile_type}|{period_start.isoformat()}|"
-                f"{period_end.isoformat()}|{model_version}"
-            ).encode("utf-8")
-        ).hexdigest()[:32]
-        row = self.db.get(orm.AnalysisSnapshot, identity)
-        if row is None:
-            row = orm.AnalysisSnapshot(
-                id=identity,
-                user_id=user_id,
-                profile_type=profile_type,
-                period_start=period_start,
-                period_end=period_end,
-                model_version=model_version,
-                schema_version=schema_version,
-            )
-            self.db.add(row)
-        row.payload = payload
+        row = orm.AnalysisSnapshot(
+            id=uuid4().hex,
+            analysis_run_id=analysis_run_id,
+            user_id=user_id,
+            profile_type=profile_type,
+            period_start=period_start,
+            period_end=period_end,
+            intelligence_version=intelligence_version,
+            decision_policy_version=decision_policy_version,
+            evidence_version=evidence_version,
+            schema_version=schema_version,
+            payload=payload,
+        )
+        self.db.add(row)
         generated_at = payload.get("generated_at")
         if isinstance(generated_at, str):
             parsed = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
             row.generated_at = _naive_utc(parsed)
         self.db.flush()
         return row
+
+    def latest_analysis_snapshot(
+        self,
+        user_id: str,
+        profile_type: str,
+        period_end: date,
+    ) -> orm.AnalysisSnapshot | None:
+        return self.db.execute(
+            select(orm.AnalysisSnapshot).where(
+                orm.AnalysisSnapshot.user_id == user_id,
+                orm.AnalysisSnapshot.profile_type == profile_type,
+                orm.AnalysisSnapshot.period_end == period_end,
+            ).order_by(orm.AnalysisSnapshot.generated_at.desc(), orm.AnalysisSnapshot.id.desc())
+        ).scalars().first()
+
+    def latest_analysis_snapshot_on_or_before(
+        self,
+        user_id: str,
+        profile_type: str,
+        period_end: date,
+    ) -> orm.AnalysisSnapshot | None:
+        return self.db.execute(
+            select(orm.AnalysisSnapshot).where(
+                orm.AnalysisSnapshot.user_id == user_id,
+                orm.AnalysisSnapshot.profile_type == profile_type,
+                orm.AnalysisSnapshot.period_end <= period_end,
+            ).order_by(
+                orm.AnalysisSnapshot.period_end.desc(),
+                orm.AnalysisSnapshot.generated_at.desc(),
+                orm.AnalysisSnapshot.id.desc(),
+            )
+        ).scalars().first()
+
+    def save_recommendation(
+        self, recommendation: RecommendationInstance
+    ) -> RecommendationInstance:
+        row = orm.RecommendationInstance(
+            id=recommendation.id,
+            analysis_run_id=recommendation.analysis_run_id,
+            user_id=recommendation.user_id,
+            date=recommendation.date,
+            decision=recommendation.decision.model_dump(mode="json"),
+            linked_workout_id=recommendation.linked_workout_id,
+            completion_status=recommendation.completion_status.value,
+            created_at=_naive_utc(recommendation.created_at),
+            completed_at=(
+                _naive_utc(recommendation.completed_at)
+                if recommendation.completed_at else None
+            ),
+        )
+        self.db.add(row)
+        self.db.flush()
+        return recommendation
+
+    def recommendation(
+        self, user_id: str, recommendation_id: str
+    ) -> RecommendationInstance | None:
+        row = self.db.get(orm.RecommendationInstance, recommendation_id)
+        if row is None or row.user_id != user_id:
+            return None
+        return _recommendation_from_row(row)
+
+    def recommendations(
+        self, user_id: str, start: date, end: date
+    ) -> list[RecommendationInstance]:
+        rows = self.db.execute(select(orm.RecommendationInstance).where(
+            orm.RecommendationInstance.user_id == user_id,
+            orm.RecommendationInstance.date.between(start, end),
+        ).order_by(orm.RecommendationInstance.date.desc(), orm.RecommendationInstance.created_at.desc())).scalars().all()
+        return [_recommendation_from_row(row) for row in rows]
+
+    def recommendations_for_workouts(
+        self, user_id: str, workout_ids: list[str]
+    ) -> dict[str, str]:
+        if not workout_ids:
+            return {}
+        rows = self.db.execute(select(orm.RecommendationInstance).where(
+            orm.RecommendationInstance.user_id == user_id,
+            orm.RecommendationInstance.linked_workout_id.in_(workout_ids),
+        )).scalars().all()
+        return {
+            row.linked_workout_id: row.id
+            for row in rows
+            if row.linked_workout_id is not None
+        }
+
+    def link_recommendation(
+        self, user_id: str, recommendation_id: str, workout_id: str
+    ) -> RecommendationInstance:
+        row = self.db.get(orm.RecommendationInstance, recommendation_id)
+        if row is None or row.user_id != user_id:
+            raise ValueError("训练建议不存在或不属于当前用户")
+        if self.workout(user_id, workout_id) is None:
+            raise ValueError("指定训练不存在或不属于当前用户")
+        existing = self.db.execute(select(orm.RecommendationInstance).where(
+            orm.RecommendationInstance.user_id == user_id,
+            orm.RecommendationInstance.linked_workout_id == workout_id,
+            orm.RecommendationInstance.id != recommendation_id,
+        )).scalar_one_or_none()
+        if existing is not None:
+            raise ValueError("该训练已关联其他训练建议")
+        if row.linked_workout_id and row.linked_workout_id != workout_id:
+            raise ValueError("训练建议已关联其他训练")
+        row.linked_workout_id = workout_id
+        row.completion_status = RecommendationStatus.COMPLETED.value
+        row.completed_at = row.completed_at or datetime.now(timezone.utc).replace(tzinfo=None)
+        self.db.flush()
+        return _recommendation_from_row(row)
 
     def analysis_snapshots(
         self,
@@ -828,9 +992,12 @@ class HealthRepository:
 
     def delete_for_user(self, user_id: str) -> None:
         for model in (
-            orm.SleepRecord, orm.ActivityRecord, orm.TrainingRecord, orm.HealthDaily,
+            orm.SleepRecord, orm.ActivityRecord, orm.TrainingRecord,
             orm.MetricSample, orm.DailyMetric, orm.DenseDataFile, orm.Workout,
-            orm.HealthEventRecord, orm.AnalysisSnapshot, orm.SubjectiveFeedback,
+            orm.HealthEventObservation, orm.HealthEventRecord, orm.AnalysisSnapshot,
+            orm.RecommendationInstance,
+            orm.AnalysisRun,
+            orm.SubjectiveFeedback,
             orm.ZeppDeviceLink,
         ):
             self.db.execute(delete(model).where(model.user_id == user_id))
@@ -840,3 +1007,35 @@ def _naive_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value
     return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _recommendation_from_row(row: orm.RecommendationInstance) -> RecommendationInstance:
+    return RecommendationInstance(
+        id=row.id,
+        analysis_run_id=row.analysis_run_id,
+        user_id=row.user_id,
+        date=row.date,
+        decision=row.decision,
+        linked_workout_id=row.linked_workout_id,
+        completion_status=RecommendationStatus(row.completion_status),
+        created_at=row.created_at.replace(tzinfo=timezone.utc),
+        completed_at=(
+            row.completed_at.replace(tzinfo=timezone.utc) if row.completed_at else None
+        ),
+    )
+
+
+def _event_from_row(row: orm.HealthEventRecord) -> HealthEvent:
+    payload = dict(row.payload or {})
+    payload.update({
+        "lifecycle": row.lifecycle,
+        "last_observed_date": row.last_observed_date,
+        "last_evaluated_date": row.last_evaluated_date,
+        "resolved_at": row.resolved_at,
+        "acknowledged": row.acknowledged_at is not None,
+        "acknowledged_at": (
+            row.acknowledged_at.replace(tzinfo=timezone.utc)
+            if row.acknowledged_at else None
+        ),
+    })
+    return HealthEvent.model_validate(payload)

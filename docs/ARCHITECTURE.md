@@ -1,4 +1,4 @@
-# Vitalis Health Intelligence Architecture v2.0
+# Vitalis Health Intelligence Architecture v3.0
 
 ## 1. System Boundary
 
@@ -10,9 +10,11 @@ Assistant
   Hermes Skill: Read / Analyze / Act + Chinese rendering
                               |
 Intelligence                  v
-  Daily/Weekly -> Quality -> Baseline -> Features -> Trends -> Events
-                              |                         |
-                              `----> States -> Decision -> Actions
+  Sync -> Analyze command -> immutable AnalysisRun / snapshots
+                              |
+  Quality -> Baseline -> Features -> Trends -> Event Lifecycle
+                              |
+  Decision -> Recommendation -> Workout -> Response -> Personal Model
                               |
 Data                          v
   Zepp connector -> normalized records -> SQLite/PostgreSQL
@@ -20,7 +22,7 @@ Data                          v
 
 Hermes is not an analysis engine. It may select and phrase fields from structured
 Vitalis responses, but cannot calculate trends, weekly aggregates, scores, thresholds,
-confidence, or replacement advice.
+training responses, recovery time, personal patterns, confidence, or replacement advice.
 
 ## 2. Data Layer
 
@@ -58,19 +60,25 @@ The implementation lives in `vitalis/intelligence`:
 
 | Module | Responsibility |
 | --- | --- |
-| `contracts.py` | Versioned Daily/Weekly, trend, event, feedback, explanation, and context contracts |
+| `contracts.py` | Versioned analysis, recommendation, response, personal-model, timeline, and context contracts |
 | `profile.py` | One-local-user loader, provenance, target-day facts, and deterministic quality flags |
 | `baseline.py` | Device/metric-specific 7-day and 28-day robust statistics |
 | `analyzers.py` | Sleep, HRV/RHR, recovery, and training feature extraction |
 | `decision.py` | Explainable training action policy with abstention |
 | `trend.py` | Device-isolated 7/28/90-day trends and variability |
 | `events.py` | Persistent deviations and period-change event detection |
+| `lifecycle.py` | Event observations and DETECTED/PERSISTING/IMPROVING/RESOLVED transitions |
 | `weekly.py` | Weekly facts, inferences, and deterministic actions |
-| `service.py` | Intelligence pipeline, snapshots, feedback, and query composition |
+| `training_response.py` | Device-isolated pre-workout baseline and T+1/T+2/T+3 response analysis |
+| `personal.py` | Robust per-family and per-mode personal response distributions |
+| `context.py` | Bounded Current/Recent/Trend/Personal agent context |
+| `timeline.py` | Typed summary timeline without raw samples |
+| `service.py` | Explicit commands, read-only queries, user actions, and immutable snapshots |
 
 ### 3.1 DailyProfile
 
-The wire contract is `schema_version=2.0`, `model_version=vitalis-intelligence-2`:
+The wire contract is `schema_version=3.0`. Every result carries `analysis_run_id`,
+`intelligence_version`, `decision_policy_version`, and `evidence_version` separately:
 
 ```text
 DailyProfile
@@ -137,7 +145,9 @@ the current and preceding 90-day periods can both be evaluated.
 Health events are deterministic observations, not diagnoses. HRV, RHR, and sleep
 deviation events require persistence; training-load and activity events require an
 explicit period change; recovery suppression requires the state engine's multi-signal
-result. Stable event IDs support idempotent persistence and user-scoped acknowledgement.
+result. Stable event identities advance through `DETECTED`, `PERSISTING`, `IMPROVING`,
+and `RESOLVED`. Every analysis writes an immutable EventObservation. Acknowledgement is
+an independent interaction timestamp and never changes physiological lifecycle state.
 
 ### 3.5 WeeklyProfile and Feedback
 
@@ -147,10 +157,38 @@ Vitalis `inferences`, and deterministic `actions`. Recovery events take priority
 generic volume targets. Subjective RPE, physical fatigue, mental state, soreness, and
 notes remain distinct from device facts and are never inferred when absent.
 
-Daily and weekly generation persist versioned JSON snapshots idempotently by user,
-profile type, period, and model version.
+An explicit analysis command persists one immutable AnalysisRun and one immutable
+Daily, Weekly, Training Response, and Personal Model snapshot. Repeated analysis creates
+new runs rather than overwriting prior output. GET requests only read the most recent
+persisted result for the requested date and return 404 when none exists.
 
-### 3.6 Feature and Decision Policy
+### 3.6 Recommendation, Training Response, and Personal Model
+
+Every Daily decision has a RecommendationInstance tied to its AnalysisRun. Completion
+requires an explicit user-scoped link to one stored workout; Vitalis never infers it
+from timestamps, text, or workout type. Session RPE requires a workout identity, and a
+recommendation-aware feedback record must match the completed link.
+
+Training Response v1 compares each eligible workout with device-isolated 28-day
+pre-workout baselines and T+1/T+2/T+3 HRV, RHR, sleep, and linked subjective facts.
+Future/missing windows stay explicit. Any other workout in the response window marks
+the result confounded. Recovery hours are emitted only when HRV has returned near/above
+baseline, RHR near/below baseline, available sleep is not below baseline, and the window
+is not confounded. This is deterministic product policy, not a medical recovery model.
+
+Personal Model v1 groups responses by training family and exact sport mode. It reports
+median, MAD, sample count, eligible count, coverage, and coverage-derived confidence for
+each device-specific response stream. It contains no ML, synthetic stress score, or
+causal claim.
+
+### 3.7 Timeline and Agent Context
+
+Health Timeline projects typed summaries for analysis, recommendation, workout,
+feedback, event transition, and training response. It never copies raw sensor or
+workout samples. Agent Context 3.0 contains only bounded Current, Recent, Trend, and
+Personal layers, with hard item caps and no embedded Daily/Weekly payloads.
+
+### 3.8 Feature and Decision Policy
 
 The preferred HRV stream must have a target-day observation. Selection ranks usable
 28-day coverage first, then metric preference (`RMSSD`, sleep HRV, SDNN). Every current
@@ -191,12 +229,18 @@ when a recorded strength workout occurred within the previous two local days.
 The Health Intelligence API is:
 
 ```text
+POST /api/v1/intelligence/analyze
 GET  /api/v1/intelligence/daily
 GET  /api/v1/intelligence/weekly
 GET  /api/v1/intelligence/trends
 GET  /api/v1/intelligence/events
 GET  /api/v1/intelligence/explain
 GET  /api/v1/intelligence/context
+GET  /api/v1/intelligence/training-responses
+GET  /api/v1/intelligence/personal-model
+GET  /api/v1/intelligence/timeline
+GET  /api/v1/intelligence/recommendations/{recommendation_id}
+POST /api/v1/intelligence/recommendations/{recommendation_id}/complete
 POST /api/v1/intelligence/feedback
 GET  /api/v1/intelligence/feedback
 POST /api/v1/intelligence/events/{event_id}/acknowledge
@@ -210,17 +254,18 @@ pre-production.
 prototype `/api/v1/health/today` and `/api/v1/analyze` paths were removed because the
 application is pre-production and no compatibility contract is required.
 
-`skills/vitalis` exposes Read tools for daily, weekly, trends, events, and context;
-Analyze uses the explanation endpoint; Act covers synchronization, subjective feedback,
-and event acknowledgement. Every user-facing value comes from Chinese labels or
-structured prescription fields. Hermes never derives weekly results from daily calls.
+`skills/vitalis` exposes Read tools for persisted Daily, Weekly, trends, events,
+training responses, Personal Model, timeline, and context. Analyze is an explicit POST
+tool. Act covers synchronization, recommendation completion, subjective feedback, and
+event acknowledgement. Every user-facing value comes from Chinese labels or structured
+engine fields. Hermes never derives one intelligence contract from another.
 
 ## 5. Scheduled Flow
 
 ```text
-02:00  sync 7 days
-09:30  sync 2 days -> DailyProfile -> Morning renderer -> push
-21:30  sync 1 day  -> DailyProfile -> Evening renderer -> push
+02:00  sync 7 days -> analyze -> immutable snapshots
+09:30  sync 2 days -> analyze -> read returned DailyProfile -> Morning renderer -> push
+21:30  sync 1 day  -> analyze -> read returned DailyProfile -> Evening renderer -> push
 ```
 
 The scheduler pushes an explicit insufficient-data profile when analysis requirements
@@ -241,15 +286,15 @@ so `device_validity.status` remains `UNKNOWN`.
 
 ## 7. Current Scope
 
-Implemented: versioned DailyProfile and WeeklyProfile, deterministic quality/provenance,
-device-isolated 7/28-day baselines, 7/28/90-day trends, persistent health events,
-analysis snapshots, subjective feedback, sleep/HRV/recovery/training features, explainable decisions,
-local-day handling, 122 public workout IDs with explicit unknown handling, Chinese
-presentation contracts, structured running/strength prescriptions, Morning/Evening
-pushes, and thin Hermes workflows. User-scoped APIs and Hermes tools require an
-explicit identity.
+Implemented: immutable AnalysisRun snapshots, command/query separation, versioned
+Daily/Weekly, recommendation/workout/feedback identity, device-isolated Training
+Response v1, Personal Model v1 robust distributions, event lifecycle observations,
+typed Timeline, bounded layered Context, deterministic quality/provenance, 7/28-day
+baselines, 7/28/90-day trends, explainable decisions, 122 public workout IDs, Chinese
+presentation contracts, structured running/strength prescriptions, scheduled analysis,
+and thin Hermes Read/Analyze/Act tools.
 
-Not implemented: 60/90-day personal correlations, training-response modeling,
+Not implemented: general cross-metric 60/90-day correlation discovery, monthly profile,
 minute-level stress load, Energy Dynamics, body composition/BP intelligence, forecasts,
-or medical alerts. These require explicit new data contracts and validation rather
-than LLM inference.
+or medical alerts. These require explicit new contracts and validation rather than LLM
+inference.

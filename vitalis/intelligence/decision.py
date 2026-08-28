@@ -27,6 +27,7 @@ from .localization import (
 class DecisionEngine:
     def decide(
         self,
+        recommendation_id: str,
         sleep_state: SleepState,
         hrv: HrvFeatures,
         recovery: RecoveryFeatures,
@@ -38,6 +39,7 @@ class DecisionEngine:
         signal_count = len(recovery.positive_signals) + len(recovery.negative_signals)
         if recovery.state == RecoveryState.INSUFFICIENT_DATA:
             return _localized(TrainingDecision(
+                recommendation_id=recommendation_id,
                 action=DecisionAction.INSUFFICIENT_DATA,
                 confidence=ConfidenceBand.NONE,
                 limitations=limitations,
@@ -58,6 +60,7 @@ class DecisionEngine:
             }.issubset(recovery.negative_signals)
             if severe:
                 return _localized(TrainingDecision(
+                    recommendation_id=recommendation_id,
                     action=DecisionAction.REST,
                     confidence=confidence,
                     drivers=recovery.negative_signals,
@@ -68,6 +71,7 @@ class DecisionEngine:
                     duration_minutes=None,
                 ))
             return _localized(TrainingDecision(
+                recommendation_id=recommendation_id,
                 action=DecisionAction.RECOVERY,
                 confidence=confidence,
                 drivers=recovery.negative_signals,
@@ -80,6 +84,7 @@ class DecisionEngine:
 
         if recovery.state == RecoveryState.NORMAL and training.load_state == LoadState.ELEVATED:
             return _localized(TrainingDecision(
+                recommendation_id=recommendation_id,
                 action=DecisionAction.TRAIN_LIGHT,
                 confidence=confidence,
                 drivers=["RECOVERY_NORMAL", "TRAINING_LOAD_ELEVATED"],
@@ -96,6 +101,7 @@ class DecisionEngine:
             and training.load_state == LoadState.LOW
         ):
             return _localized(TrainingDecision(
+                recommendation_id=recommendation_id,
                 action=DecisionAction.TRAIN_HARD,
                 confidence=confidence,
                 drivers=recovery.positive_signals + ["TRAINING_LOAD_LOW"],
@@ -107,6 +113,7 @@ class DecisionEngine:
             ))
 
         return _localized(TrainingDecision(
+            recommendation_id=recommendation_id,
             action=DecisionAction.TRAIN_NORMAL,
             confidence=confidence,
             drivers=recovery.positive_signals or ["RECOVERY_NORMAL"],

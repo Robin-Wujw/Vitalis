@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Literal
 
-from vitalis.models import ActivityRecord, DailyHealth, SleepRecord, TrainingRecord
+from vitalis.models import ActivityRecord, NormalizedDaily, SleepRecord, TrainingRecord
 from vitalis.storage import HealthRepository, session_scope
 
 Granularity = Literal["180d", "90d", "30d", "7d", "1d"]
@@ -48,12 +48,7 @@ class AggregatedBlock:
     training_duration_total: int = 0
     training_load_total: int = 0
 
-    # health aggregates
-    hrv_avg: float | None = None
-    recovery_score_avg: float | None = None
-    overall_score_avg: float | None = None
-
-    raw_days: list[DailyHealth] = field(default_factory=list, repr=False)
+    raw_days: list[NormalizedDaily] = field(default_factory=list, repr=False)
 
 
 class AggregationService:
@@ -96,30 +91,20 @@ class AggregationService:
 
         return blocks
 
-    def _load_dailies(self, repo: HealthRepository, user_id: str, start: date, end: date) -> list[DailyHealth]:
-        """从存储加载每日快照（重建 DailyHealth）。"""
+    def _load_dailies(self, repo: HealthRepository, user_id: str, start: date, end: date) -> list[NormalizedDaily]:
+        """Rebuild normalized daily source records for aggregation."""
         from vitalis.models import ActivityRecord, SleepRecord, TrainingRecord
 
         sleeps = {date.fromisoformat(r["date"]): r for r in repo.sleep_range(user_id, start, end)}
         acts = {date.fromisoformat(r["date"]): r for r in repo.activity_range(user_id, start, end)}
         trains = {date.fromisoformat(r["date"]): r for r in repo.training_range(user_id, start, end)}
-        hds = {hd.date: hd for hd in repo.health_daily_range(user_id, start, end)}
-
-        out: list[DailyHealth] = []
+        out: list[NormalizedDaily] = []
         day = start
         while day <= end:
             s = SleepRecord.model_validate(sleeps[day]) if day in sleeps else None
             a = ActivityRecord.model_validate(acts[day]) if day in acts else None
             t = TrainingRecord.model_validate(trains[day]) if day in trains else None
-            hd = hds.get(day)
-            daily = DailyHealth(user_id=user_id, date=day, sleep=s, activity=a, training=t)
-            if hd:
-                daily.hrv = hd.hrv
-                daily.recovery_score = hd.recovery_score
-                daily.recovery_level = hd.recovery_level
-                daily.stress_level = hd.stress_level
-                daily.overall_score = hd.overall_score
-            out.append(daily)
+            out.append(NormalizedDaily(user_id=user_id, date=day, sleep=s, activity=a, training=t))
             day += timedelta(days=1)
         return out
 
@@ -160,14 +145,3 @@ class AggregationService:
             block.workout_count_total = sum(t.workout_count for t in train_days)
             block.training_duration_total = sum(t.total_duration for t in train_days)
             block.training_load_total = sum(t.total_load for t in train_days)
-
-        # health scores
-        hrvs = [d.hrv for d in days if d.hrv is not None]
-        if hrvs:
-            block.hrv_avg = round(sum(hrvs) / len(hrvs), 1)
-        recs = [d.recovery_score for d in days if d.recovery_score]
-        if recs:
-            block.recovery_score_avg = round(sum(recs) / len(recs), 1)
-        ovs = [d.overall_score for d in days if d.overall_score]
-        if ovs:
-            block.overall_score_avg = round(sum(ovs) / len(ovs), 1)

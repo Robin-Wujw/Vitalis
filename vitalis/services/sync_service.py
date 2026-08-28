@@ -8,7 +8,7 @@
 from datetime import date, timedelta
 
 from vitalis.connectors import HealthConnector
-from vitalis.models import DailyHealth
+from vitalis.models import NormalizedDaily
 from vitalis.storage import HealthRepository, session_scope
 
 
@@ -42,7 +42,7 @@ class SyncService:
             repo.upsert_user(user_id, name=name, source=self.connector.source)
             user = User(id=user_id, name=name, source=self.connector.source)
 
-            dailies: list[DailyHealth] = self.connector.fetch(user, start, end, repo=repo)
+            dailies: list[NormalizedDaily] = self.connector.fetch(user, start, end, repo=repo)
             days = 0
             for d in dailies:
                 repo.save_daily(d)

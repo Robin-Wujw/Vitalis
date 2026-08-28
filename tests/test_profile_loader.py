@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from vitalis.intelligence.contracts import QualityStatus
 from vitalis.intelligence.profile import ProfileLoader
-from vitalis.models import DailyHealth, MetricSample, SleepRecord, User
+from vitalis.models import MetricSample, NormalizedDaily, SleepRecord, User
 from vitalis.storage import HealthRepository, session_scope
 
 
@@ -30,7 +30,7 @@ def test_profile_loader_keeps_device_streams_and_local_identities_separate():
         repo.delete_for_user(sibling_id)
         repo.upsert_user(user_id, source_user_id="vendor-shared")
         repo.upsert_user(sibling_id, source_user_id="vendor-shared")
-        repo.save_daily(DailyHealth(
+        repo.save_daily(NormalizedDaily(
             user_id=user_id,
             date=day,
             sleep=SleepRecord(user_id=user_id, date=day, sleep_duration=450),
@@ -79,7 +79,7 @@ def test_profile_loader_groups_utc_samples_by_shanghai_natural_day():
         repo = HealthRepository(db)
         repo.delete_for_user(user_id)
         repo.upsert_user(user_id)
-        repo.save_daily(DailyHealth(
+        repo.save_daily(NormalizedDaily(
             user_id=user_id,
             date=day,
             sleep=SleepRecord(user_id=user_id, date=day, sleep_duration=450),

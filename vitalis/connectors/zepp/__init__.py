@@ -18,10 +18,10 @@ mock 模式保留：模拟 apptoken 同构数据 + 扫码演示，离线可端�
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 from vitalis.config import settings
-from vitalis.models import AuthToken, DailyHealth, TrainingRecord, User
+from vitalis.models import AuthToken, MetricSample, NormalizedDaily, TrainingRecord, User
 
 from ..base import ConnectorAuth, ConnectorSyncResult, HealthConnector
 from ..registry import register_connector
@@ -156,7 +156,7 @@ class ZeppConnector(HealthConnector):
 
     def fetch(
         self, user: User, start: date | None = None, end: date | None = None, repo=None
-    ) -> list[DailyHealth]:
+    ) -> list[NormalizedDaily]:
         end = end or date.today()
         start = start or (end - timedelta(days=14))
         if start > end:
@@ -165,12 +165,12 @@ class ZeppConnector(HealthConnector):
             return self._mock_fetch(user, start, end)
         if repo is None:
             raise AuthRequired("fetch 真实数据需要提供 repo 会话")
-        # 真实模式：先同步到库，再从库重建 DailyHealth 列表
+        # Real mode synchronizes first, then rebuilds normalized daily source records.
         days = (end - start).days + 1
         self.sync_with_report(user, days=days, repo=repo)
         return self._rebuild_dailies(repo, user.id, start, end)
 
-    def _mock_fetch(self, user: User, start: date, end: date) -> list[DailyHealth]:
+    def _mock_fetch(self, user: User, start: date, end: date) -> list[NormalizedDaily]:
         """mock 模式保持原有逻辑（确定性模拟数据）。"""
         client = self._mock_client
         band = client.fetch_band_data(start.isoformat(), end.isoformat(), "detail", 8, 0)
@@ -181,7 +181,7 @@ class ZeppConnector(HealthConnector):
             workouts.extend(self.parser.parse_sport_history(payload, sport_hint=sport))
         hrv_raw = client.fetch_events("hrv_sdnn", "real_data", 0, 9999999999999, 2000, True)
         hrv = self.parser.parse_hrv_events(hrv_raw)
-        results: list[DailyHealth] = []
+        results: list[NormalizedDaily] = []
         day = start
         while day <= end:
             day_workouts = [w for w in workouts if w.started_at and w.started_at.date() == day]
@@ -193,20 +193,30 @@ class ZeppConnector(HealthConnector):
                     total_duration=sum(w.duration for w in day_workouts),
                     total_load=sum(w.load for w in day_workouts),
                 )
-            results.append(DailyHealth(
+            metric_samples = []
+            if day in hrv:
+                metric_samples.append(MetricSample(
+                    user_id=user.id,
+                    metric="hrv_sdnn",
+                    timestamp=datetime.combine(day, time.min, tzinfo=timezone.utc),
+                    value=hrv[day],
+                    unit="ms",
+                    source_scope="user_fused",
+                ))
+            results.append(NormalizedDaily(
                 user_id=user.id, date=day,
                 sleep=sleeps.get(day),
                 activity=activities.get(day),
                 training=training,
-                hrv=hrv.get(day),
+                metric_samples=metric_samples,
             ))
             day += timedelta(days=1)
         return results
 
-    def _rebuild_dailies(self, repo, user_id: str, start: date, end: date) -> list[DailyHealth]:
-        """从存储重建指定日期范围的 DailyHealth 列表。"""
+    def _rebuild_dailies(self, repo, user_id: str, start: date, end: date) -> list[NormalizedDaily]:
+        """Rebuild normalized daily source records from storage."""
         from vitalis.models import ActivityRecord, SleepRecord, TrainingRecord
-        out: list[DailyHealth] = []
+        out: list[NormalizedDaily] = []
         sleep_map = {date.fromisoformat(r["date"]): r for r in repo.sleep_range(user_id, start, end)}
         act_map = {date.fromisoformat(r["date"]): r for r in repo.activity_range(user_id, start, end)}
         train_map = {date.fromisoformat(r["date"]): r for r in repo.training_range(user_id, start, end)}
@@ -215,15 +225,7 @@ class ZeppConnector(HealthConnector):
             s = SleepRecord.model_validate(sleep_map[day]) if day in sleep_map else None
             a = ActivityRecord.model_validate(act_map[day]) if day in act_map else None
             t = TrainingRecord.model_validate(train_map[day]) if day in train_map else None
-            hd = repo.health_daily(user_id, day)
-            daily = DailyHealth(user_id=user_id, date=day, sleep=s, activity=a, training=t)
-            if hd:
-                daily.hrv = hd.hrv
-                daily.recovery_score = hd.recovery_score
-                daily.recovery_level = hd.recovery_level
-                daily.stress_level = hd.stress_level
-                daily.overall_score = hd.overall_score
-            out.append(daily)
+            out.append(NormalizedDaily(user_id=user_id, date=day, sleep=s, activity=a, training=t))
             day += timedelta(days=1)
         return out
 

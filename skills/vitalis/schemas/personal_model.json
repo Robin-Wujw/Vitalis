@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vitalis.local/schemas/personal-model-1.0.json",
+  "title": "Vitalis PersonalModel 1.0",
+  "type": "object",
+  "required": ["schema_version", "analysis_run_id", "intelligence_version", "user_id", "date", "baselines", "long_term_trends", "training_response_patterns", "limitations"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "analysis_run_id": {"type": "string"},
+    "intelligence_version": {"const": "3.0"},
+    "training_response_patterns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["group_type", "group_key", "group_label", "response_count", "metrics", "confidence", "confidence_label"]
+      }
+    }
+  }
+}

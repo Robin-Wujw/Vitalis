@@ -1,19 +1,20 @@
 ---
 name: vitalis
-description: Use Vitalis Health Intelligence APIs for deterministic Chinese daily and weekly analysis, trends, health events, training explanations, and subjective feedback.
+description: Use Vitalis Health Intelligence APIs for deterministic Chinese health analysis, training response, personal patterns, timelines, and explicit feedback actions.
 ---
 
 # Vitalis Health Intelligence
 
 Vitalis is a renderer and orchestrator over the Health Intelligence API. The Python
-engine owns normalization, quality, baselines, features, trends, events, states,
-decisions, recommendations, and snapshots. Never reproduce those calculations in the model.
+engine owns normalization, quality, baselines, features, trends, event lifecycles,
+decisions, recommendations, training responses, personal models, and snapshots. Never reproduce those calculations in the model.
 
 ## Required Flow
 
 1. Classify the request as Read, Analyze, or Act.
-2. Call exactly the relevant tool; use `tools/context.py` only when one request needs
-   daily, weekly, event, and feedback context together.
+2. Call exactly the relevant tool. Read tools never generate analysis. Use
+   `tools/analyze.py` only when the user requests a fresh analysis or after an explicit
+   synchronization; use `tools/context.py` only for broad, layered context.
 3. Select exactly one workflow from `workflows/`.
 4. Render only facts, inferences, actions, comparisons, drivers, limitations, and
    recommendations already present in the response.
@@ -26,6 +27,8 @@ codes exist only for program control and must never appear in the answer.
 
 - Do not create, average, transform, score, threshold, or trend health measurements.
 - Do not calculate a WeeklyProfile by combining DailyProfiles.
+- Do not calculate training response, recovery time, personal patterns, or timeline
+  relationships from DailyProfiles or raw fields.
 - Do not change `decision.action`, `decision.confidence`, intensity, duration, drivers,
   limitations, or rule IDs.
 - Do not invent a workout, exercise, set, repetition, heart-rate zone, or progression.
@@ -47,6 +50,13 @@ codes exist only for program control and must never appear in the answer.
   `workflows/on_demand.md`.
 - "Why this recommendation?": call `tools/explain.py`, then `workflows/on_demand.md`.
 - Broad health context: call `tools/context.py`, then the closest matching workflow.
+- Fresh deterministic analysis: call `tools/analyze.py`; subsequent reads may select
+  the returned Daily, Weekly, response, or personal result.
+- Training response: call `tools/training_responses.py`, then `workflows/on_demand.md`.
+- Personal patterns: call `tools/personal_model.py`, then `workflows/on_demand.md`.
+- Recent sequence of events: call `tools/timeline.py`, then `workflows/on_demand.md`.
+- Mark a recommendation completed only after the user identifies both the recommendation
+  and completed workout: call `tools/complete_recommendation.py`.
 - Record RPE, fatigue, mental state, soreness, or notes: call `tools/feedback.py add`.
 - List feedback: call `tools/feedback.py list`.
 - Acknowledge an event only after the user asks: call `tools/acknowledge_event.py`.

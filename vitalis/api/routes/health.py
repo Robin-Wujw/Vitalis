@@ -179,11 +179,6 @@ def health_range(
                     "duration_total": b.training_duration_total,
                     "load_total": b.training_load_total,
                 },
-                "health": {
-                    "hrv_avg": b.hrv_avg,
-                    "recovery_score_avg": b.recovery_score_avg,
-                    "overall_score_avg": b.overall_score_avg,
-                },
             }
             for b in blocks
         ],

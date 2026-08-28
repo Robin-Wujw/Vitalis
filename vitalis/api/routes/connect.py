@@ -564,8 +564,10 @@ def import_zepp_token(req: ImportTokenRequest, vitalis_user: str = Depends(requi
                 "records_written": report.records_written,
                 "message": report.message,
             }
-            from vitalis.services import IntelligencePipeline
-            response["profile"] = IntelligencePipeline().build_daily_profile(vitalis_user).model_dump(mode="json")
+            from vitalis.services import IntelligenceCommand
+            result = IntelligenceCommand().analyze(vitalis_user)
+            response["analysis_run_id"] = result.run.id
+            response["profile"] = result.daily.model_dump(mode="json")
         except Exception as exc:
             response["sync_error"] = str(exc)
     return response
@@ -614,7 +616,7 @@ async function doImport(){{
       body:JSON.stringify({{user_id:uid,app_token:tok,region_host:region,sync_history:true,sync_days:days}})}});
     const d=await r.json();
     if(!r.ok){{msg.textContent='失败：'+(d.detail||JSON.stringify(d));msg.style.color='#f87171';return;}}
-    msg.textContent='✅ 已连接，同步 '+(d.sync?d.sync.days_synced:'?')+' 天，恢复分 '+(d.profile?d.profile.overall_score:'?');
+    msg.textContent='已连接并完成同步';
     msg.style.color='#6ee7a0';
   }}catch(e){{msg.textContent='网络错误：'+e;msg.style.color='#f87171';}}
 }}
@@ -685,10 +687,12 @@ def connect_zepp(req: ConnectRequest, user_id: str = Depends(require_user_id)) -
                         "records_written": report.records_written,
                         "message": report.message,
                     }
-            # 查询汇总（session 已提交）
-            from vitalis.services import IntelligencePipeline
+            # 同步提交后显式运行分析命令。
+            from vitalis.services import IntelligenceCommand
             try:
-                response["profile"] = IntelligencePipeline().build_daily_profile(user_id).model_dump(mode="json")
+                result = IntelligenceCommand().analyze(user_id, req.end)
+                response["analysis_run_id"] = result.run.id
+                response["profile"] = result.daily.model_dump(mode="json")
             except Exception as exc:
                 response["profile"] = {"error": str(exc)}
         except AuthRequired as exc:

@@ -8,7 +8,7 @@ from starlette.requests import Request
 
 from vitalis.config import settings
 from vitalis.intelligence.contracts import ConfidenceBand, EventSeverity, HealthEvent
-from vitalis.models import ActivityRecord, DailyHealth, MetricSample, SleepRecord, TrainingRecord
+from vitalis.models import ActivityRecord, MetricSample, NormalizedDaily, SleepRecord, TrainingRecord
 from vitalis.storage import HealthRepository, session_scope
 
 
@@ -35,8 +35,11 @@ def test_daily_profile_after_sync(client):
     resp = client.get("/api/v1/intelligence/daily", headers={"X-User-Id": "001"})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["schema_version"] == "2.0"
-    assert body["model_version"] == "vitalis-intelligence-2"
+    assert body["schema_version"] == "3.0"
+    assert body["intelligence_version"] == "3.0"
+    assert body["decision_policy_version"] == "3.0"
+    assert body["evidence_version"] == "2026-08"
+    assert body["analysis_run_id"]
     assert body["decision"]["action"] in {
         "TRAIN_HARD", "TRAIN_NORMAL", "TRAIN_LIGHT", "RECOVERY", "REST", "INSUFFICIENT_DATA"
     }
@@ -48,6 +51,10 @@ def test_daily_profile_after_sync(client):
 
 def test_daily_profile_second_user_abstains(client):
     """A user without data gets an explicit abstention, not a fallback score."""
+    analyzed = client.post(
+        "/api/v1/intelligence/analyze", headers={"X-User-Id": "999"}
+    )
+    assert analyzed.status_code == 201
     resp = client.get("/api/v1/intelligence/daily", headers={"X-User-Id": "999"})
     assert resp.status_code == 200
     body = resp.json()
@@ -64,6 +71,18 @@ def test_obsolete_analysis_routes_are_removed(client):
     assert client.post("/api/v1/analyze", json={}).status_code == 404
 
 
+def test_get_intelligence_without_snapshot_is_read_only(client):
+    headers = {"X-User-Id": "no-analysis-snapshot"}
+    assert client.get("/api/v1/intelligence/daily", headers=headers).status_code == 404
+    assert client.get("/api/v1/intelligence/weekly", headers=headers).status_code == 404
+    assert client.get("/api/v1/intelligence/training-responses", headers=headers).status_code == 404
+    assert client.get("/api/v1/intelligence/personal-model", headers=headers).status_code == 404
+    with session_scope() as db:
+        from vitalis.storage.models import AnalysisRun
+
+        assert db.query(AnalysisRun).filter_by(user_id="no-analysis-snapshot").count() == 0
+
+
 def test_daily_profile_api_runs_device_baseline_to_decision(client):
     user_id = "intelligence-api"
     target = date(2026, 8, 27)
@@ -74,7 +93,7 @@ def test_daily_profile_api_runs_device_baseline_to_decision(client):
         for offset in range(21, -1, -1):
             day = target - timedelta(days=offset)
             current = offset == 0
-            repo.save_daily(DailyHealth(
+            repo.save_daily(NormalizedDaily(
                 user_id=user_id,
                 date=day,
                 sleep=SleepRecord(
@@ -105,6 +124,11 @@ def test_daily_profile_api_runs_device_baseline_to_decision(client):
                 device_id="helio-test",
             )])
 
+    analyzed = client.post(
+        f"/api/v1/intelligence/analyze?day={target.isoformat()}",
+        headers={"X-User-Id": user_id},
+    )
+    assert analyzed.status_code == 201
     response = client.get(
         f"/api/v1/intelligence/daily?day={target.isoformat()}",
         headers={"X-User-Id": user_id},
@@ -142,7 +166,7 @@ def test_user_scoped_endpoint_requires_explicit_identity(client):
     assert response.status_code == 422
 
 
-def test_intelligence_v2_routes_and_fact_inference_action_contract(client):
+def test_intelligence_v3_routes_and_fact_inference_action_contract(client):
     user_id = "intelligence-v2"
     client.post(
         "/api/v1/connect/zepp",
@@ -169,16 +193,42 @@ def test_intelligence_v2_routes_and_fact_inference_action_contract(client):
 
     context = client.get("/api/v1/intelligence/context", headers=headers)
     assert context.status_code == 200
-    assert set(context.json()) >= {"daily", "weekly", "unacknowledged_events", "recent_feedback"}
+    assert set(context.json()) >= {"current", "recent", "trend", "personal"}
+    assert "daily" not in context.json()
+    assert "weekly" not in context.json()
+
+    responses = client.get("/api/v1/intelligence/training-responses", headers=headers)
+    assert responses.status_code == 200
+    assert set(responses.json()) >= {"analysis_run_id", "responses"}
+
+    personal = client.get("/api/v1/intelligence/personal-model", headers=headers)
+    assert personal.status_code == 200
+    assert set(personal.json()) >= {"baselines", "long_term_trends", "training_response_patterns"}
+
+    timeline = client.get("/api/v1/intelligence/timeline", headers=headers)
+    assert timeline.status_code == 200
+    assert set(timeline.json()) == {"user_id", "period_start", "period_end", "items"}
 
 
 def test_feedback_api_is_scoped_and_validated(client):
     headers = {"X-User-Id": "feedback-api"}
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user("feedback-api")
+        from vitalis.models import Workout, WorkoutType
+
+        repo.save_workout(Workout(
+            user_id="feedback-api",
+            workout_id="feedback-api-workout",
+            type=WorkoutType.RUNNING,
+            duration=30,
+        ))
     response = client.post(
         "/api/v1/intelligence/feedback",
         headers=headers,
         json={
             "date": "2026-08-28",
+            "workout_id": "feedback-api-workout",
             "session_rpe": 7,
             "physical_fatigue": 3,
             "notes": "训练按计划完成",
@@ -204,6 +254,38 @@ def test_feedback_api_is_scoped_and_validated(client):
     assert invalid.status_code == 422
 
 
+def test_recommendation_completion_api_is_explicit_and_user_scoped(client):
+    user_id = "recommendation-api"
+    headers = {"X-User-Id": user_id}
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        from vitalis.models import Workout, WorkoutType
+
+        repo.save_workout(Workout(
+            user_id=user_id,
+            workout_id="recommendation-api-workout",
+            type=WorkoutType.STRENGTH,
+            duration=40,
+        ))
+    analyzed = client.post(
+        "/api/v1/intelligence/analyze?day=2026-08-28", headers=headers
+    )
+    recommendation_id = analyzed.json()["recommendation"]["id"]
+
+    linked = client.post(
+        f"/api/v1/intelligence/recommendations/{recommendation_id}/complete",
+        headers=headers,
+        json={"workout_id": "recommendation-api-workout"},
+    )
+    assert linked.status_code == 200
+    assert linked.json()["completion_status"] == "COMPLETED"
+    assert client.get(
+        f"/api/v1/intelligence/recommendations/{recommendation_id}",
+        headers={"X-User-Id": "recommendation-api-other"},
+    ).status_code == 404
+
+
 def test_removed_daily_profile_route_is_not_kept_as_compatibility_alias(client):
     assert client.get(
         "/api/v1/intelligence/daily-profile", headers={"X-User-Id": "001"}
@@ -227,7 +309,7 @@ def test_health_event_acknowledgement_api_is_user_scoped(client):
     with session_scope() as db:
         repo = HealthRepository(db)
         repo.upsert_user("event-api-owner")
-        repo.save_health_events("event-api-owner", [event])
+        repo.save_health_event("event-api-owner", event)
 
     denied = client.post(
         "/api/v1/intelligence/events/api-event-ack/acknowledge",

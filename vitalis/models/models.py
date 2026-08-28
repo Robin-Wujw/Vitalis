@@ -3,17 +3,11 @@
 import uuid
 from datetime import date as DateType, datetime, timedelta, time, timezone
 from enum import Enum
-from typing import Any, Optional
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .enums import (
-    RecoveryLevel,
-    SleepQuality,
-    StressLevel,
-    TrainingReadiness,
-    WorkoutType,
-)
+from .enums import SleepQuality, TrainingReadiness, WorkoutType
 
 
 class User(BaseModel):
@@ -192,8 +186,8 @@ class ActivityRecord(BaseModel):
     resting_hr: int = Field(default=0, ge=0, description="静息心率 bpm")
 
 
-class DailyHealth(BaseModel):
-    """某一日的健康汇总快照 —— API 与 Agent 的核心数据类型。"""
+class NormalizedDaily(BaseModel):
+    """One day's normalized source records without derived intelligence fields."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -203,21 +197,7 @@ class DailyHealth(BaseModel):
     sleep: SleepRecord | None = None
     activity: ActivityRecord | None = None
     training: TrainingRecord | None = None
-
-    # 由分析引擎生成
-    hrv: int | None = Field(default=None, description="今日 HRV（ms），或 7 天均值偏移")
-    hrv_trend_pct: float | None = Field(default=None, description="HRV 7 天趋势（相对均值 %）")
-
-    recovery_score: int = Field(default=0, ge=0, le=100, description="恢复分 0-100")
-    recovery_level: RecoveryLevel = RecoveryLevel.MODERATE
-    stress_level: StressLevel = StressLevel.MEDIUM
-
-    overall_score: int = Field(default=0, ge=0, le=100, description="综合健康分")
-    summary: str = Field(default="", description="给人看的自然语言小结（由 AI 生成可选）")
-
-
-class HealthSnapshot(DailyHealth):
-    """DailyHealth 别名：某一日的完整健康快照。"""
+    metric_samples: list[MetricSample] = Field(default_factory=list)
 
 
 class AuthToken(BaseModel):
@@ -241,30 +221,3 @@ class AuthToken(BaseModel):
         # 提前 60 秒视为过期，给刷新留缓冲
         now = datetime.now(timezone.utc).replace(tzinfo=None)  # 存储为 naive UTC
         return now >= self.expires_at - timedelta(seconds=60)
-
-
-class AnalysisRecord(BaseModel):
-    """分析引擎输出的持久化结果。"""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    user_id: str
-    date: datetime = Field(default_factory=datetime.utcnow)
-
-    engine: str = Field(description="rule / statistical / ai")
-    kind: str = Field(description="sleep / training / recovery / stress / summary")
-    inputs: dict[str, Any] = Field(default_factory=dict)
-    output: str = Field(default="", description="结果文本")
-    score: int | None = None
-
-
-class Decision(BaseModel):
-    """Rule Engine 的决策输出：结构化的、可解释的结论。"""
-
-    overall_score: int
-    recovery_level: RecoveryLevel
-    stress_level: StressLevel
-    training_readiness: TrainingReadiness
-    items: list[str] = Field(default_factory=list, description="命中规则列表（人类可读）")
-    reasons: dict[str, Any] = Field(default_factory=dict, description="结构化依据，供 LLM 解释用")

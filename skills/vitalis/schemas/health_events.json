@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/health-events-1.0.json",
-  "title": "Vitalis HealthEventResponse 1.0",
+  "$id": "https://vitalis.local/schemas/health-events-2.0.json",
+  "title": "Vitalis HealthEventResponse 2.0",
   "type": "object",
   "required": ["user_id", "period_start", "period_end", "generated_at", "events"],
   "properties": {
@@ -13,7 +13,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "type", "type_label", "severity", "severity_label", "start_date", "end_date", "duration_days", "confidence", "confidence_label", "summary", "evidence", "acknowledged"]
+        "required": ["id", "type", "type_label", "severity", "severity_label", "start_date", "end_date", "duration_days", "confidence", "confidence_label", "summary", "evidence", "lifecycle", "lifecycle_label", "last_evaluated_date", "acknowledged", "acknowledged_at"]
       }
     }
   }

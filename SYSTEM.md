@@ -902,3 +902,100 @@ data fallback work.
   session records, so it applies to every future repository change.
 - This is a documentation-only execution-policy change; application tests are not
   affected. `git diff --check` passed.
+
+## 13. Personal Health Intelligence 3.0 Session
+
+Date: 2026-08-28
+
+Goal: move Vitalis from period analysis into an auditable action-response-learning
+loop. This session uses only the new contracts defined here; obsolete score storage,
+old schemas, compatibility migrations, and fallback reads are removed rather than
+adapted.
+
+### Detailed TODO
+
+- [x] Part 1 - Remove obsolete score storage and compatibility behavior.
+  - Delete prototype recovery/overall scores, `HealthDaily`, score aggregation, and
+    obsolete response fields from the normalized data path.
+  - Remove lightweight schema migrations and assume a fresh database populated only by
+    current normalization contracts.
+  - Keep true missing observations explicit; never replace them with old scores or zero.
+- [x] Part 2 - Separate analysis commands from read-only queries.
+  - Add immutable AnalysisRun and snapshot records with intelligence, decision-policy,
+    and evidence versions.
+  - Make analysis an explicit command and make Daily, Weekly, Trends, Events, Explain,
+    and Context GET operations side-effect free.
+  - Split scheduler Sync, Analyze, and Push stages while preserving failure isolation.
+- [x] Part 3 - Establish the recommendation/action/feedback identity chain.
+  - Persist a RecommendationInstance for each daily decision.
+  - Support explicit user-scoped linking from one recommendation to one completed
+    workout; do not infer completion from time or text.
+  - Require workout identity for session RPE while retaining independent daily
+    fatigue, mental-state, soreness, and note observations.
+- [x] Part 4 - Implement Training Response and Personal Model v1.
+  - Compare each eligible workout with device-isolated pre-workout baselines and
+    T+1/T+2/T+3 HRV, RHR, sleep, and linked subjective observations.
+  - Flag overlapping workouts and missing windows instead of claiming clean recovery;
+    define return-to-baseline deterministically.
+  - Aggregate responses by training family and sport mode using median, MAD, sample
+    count, coverage, and explicit confidence without a synthetic stress score.
+- [x] Part 5 - Add event lifecycle management.
+  - Keep DETECTED, PERSISTING, IMPROVING, and RESOLVED separate from acknowledgement.
+  - Persist daily event observations and deterministic transitions.
+  - Expose active and resolved events without regenerating analysis in a read request.
+- [x] Part 6 - Add Health Timeline and bounded layered Context.
+  - Project recommendations, workouts, feedback, health events, and response summaries
+    into a chronological, typed timeline without copying raw samples.
+  - Replace embedded full profiles with Current, Recent, Trend, and Personal context
+    layers and enforce response-size/count limits.
+- [ ] Part 7 - Complete API, Hermes, documentation, verification, and delivery.
+  - Update current-only API and Skill contracts; remove obsolete tools and schemas.
+  - Add focused storage/engine/API tests and run the complete suite.
+  - Validate OpenAPI, JSON Schemas, Skill structure, Python compilation, context size,
+    diffs, and secrets; then commit and push `main`.
+
+### Verification Log
+
+- Part 1: obsolete daily score models, score aggregation, compatibility migrations,
+  and fallback HRV storage were removed. Focused profile, API, health-data, and sync
+  coverage passed 57 tests using only the current normalized contracts.
+- Part 2: `POST /api/v1/intelligence/analyze` now creates one auditable AnalysisRun and
+  immutable Daily/Weekly snapshots with separate intelligence, decision-policy, and
+  evidence versions. All Intelligence GET operations read persisted results only and
+  return 404 when a requested snapshot does not exist. Connect and scheduler paths use
+  the explicit command, while push remains renderer-only. Focused storage, weekly, API,
+  sync, and push coverage passed 58 tests.
+- Part 3: every daily decision now has a persisted RecommendationInstance linked to its
+  AnalysisRun. A user-scoped completion action explicitly links one recommendation to
+  one real workout; ownership, relinking, and duplicate-claim checks prevent inferred
+  or ambiguous completion. Session RPE requires a workout ID, and recommendation-aware
+  feedback must match the completed link. Focused contracts, analyzers, storage,
+  weekly, and API coverage passed 61 tests.
+- Part 4: Training Response v1 compares each eligible workout with its preceding
+  device-isolated 28-day baselines and explicit T+1/T+2/T+3 HRV, RHR, sleep, and linked
+  subjective observations. Missing/future windows remain missing, overlapping workouts
+  mark the result confounded, and return-to-baseline uses a documented deterministic
+  multi-signal rule. Personal Model v1 groups response distributions by training family
+  and sport mode using median, MAD, sample count, coverage, and coverage-derived
+  confidence. No combined stress score or causal claim is produced. Focused response,
+  personal-model, storage, analyzer, and API coverage passed 59 tests.
+- Part 5: Health events now transition independently through DETECTED, PERSISTING,
+  IMPROVING, and RESOLVED. Every analysis writes an immutable per-run event observation;
+  repeated analysis on the same date cannot advance an event through multiple absence
+  states. Acknowledgement remains a separate timestamp and survives every physiological
+  lifecycle transition. Focused event, storage, and API coverage passed 53 tests.
+- Part 6: Health Timeline projects only typed summaries for analysis runs,
+  recommendations, workouts, feedback, event transitions, and training responses; it
+  never embeds raw measurement or workout samples. Agent Context 3.0 now contains only
+  bounded Current, Recent, Trend, and Personal layers with explicit list caps instead
+  of full Daily/Weekly payloads. Focused timeline, context, storage, and event coverage
+  passed 14 tests, including a serialized response-size assertion below 20 KB.
+- Part 7: the current-only API exposes explicit Analyze plus read-only Daily, Weekly,
+  Trends, Events, Explain, Context, Training Responses, Personal Model, Timeline, and
+  Recommendation queries/actions. Hermes v3 has matching Read/Analyze/Act tools and
+  schemas, while remaining renderer/orchestrator-only. The full suite passed all 161
+  tests with 184 existing Python 3.14 `datetime.utcnow()` deprecation warnings. Python
+  compilation, all Skill tool help entrypoints, Skill validation, eight live-response
+  JSON Schema validations, OpenAPI generation (37 paths), and `git diff --check` passed.
+  Validation used a fresh current-schema database; no legacy database was migrated,
+  read, backfilled, or used as a fallback.

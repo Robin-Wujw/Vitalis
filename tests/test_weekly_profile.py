@@ -83,7 +83,7 @@ def _raw_week():
 
 def test_weekly_profile_separates_facts_inferences_and_actions():
     raw = _raw_week()
-    profile = WeeklyProfileEngine().build(raw, TrendEngine().calculate(raw), [])
+    profile = WeeklyProfileEngine().build("weekly-run", raw, TrendEngine().calculate(raw), [])
 
     assert profile.period_start == TARGET - timedelta(days=6)
     assert profile.facts.sleep.average_minutes == 450
@@ -115,6 +115,7 @@ def test_weekly_recovery_event_takes_action_priority():
     )
 
     profile = WeeklyProfileEngine().build(
+        "weekly-run",
         raw,
         TrendEngine().calculate(raw),
         [event],

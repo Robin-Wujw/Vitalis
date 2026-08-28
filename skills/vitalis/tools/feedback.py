@@ -14,6 +14,7 @@ def main() -> int:
     add = subparsers.add_parser("add", help="记录反馈")
     add.add_argument("--date")
     add.add_argument("--workout-id")
+    add.add_argument("--recommendation-id")
     add.add_argument("--rpe", type=float, choices=range(1, 11))
     add.add_argument("--physical-fatigue", type=int, choices=range(1, 6))
     add.add_argument("--mental-state", type=int, choices=range(1, 6))
@@ -28,6 +29,7 @@ def main() -> int:
         payload = {key: value for key, value in {
             "date": args.date,
             "workout_id": args.workout_id,
+            "recommendation_id": args.recommendation_id,
             "session_rpe": args.rpe,
             "physical_fatigue": args.physical_fatigue,
             "mental_state": args.mental_state,

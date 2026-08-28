@@ -2,8 +2,9 @@ from datetime import date, timedelta
 
 from vitalis.intelligence.analyzers import HrvAnalyzer, RecoveryAnalyzer, SleepAnalyzer, TrainingAnalyzer
 from vitalis.intelligence.baseline import BaselineEngine
-from vitalis.intelligence.contracts import RecoveryState
+from vitalis.intelligence.contracts import EventLifecycle, RecoveryState
 from vitalis.intelligence.events import HealthEventEngine
+from vitalis.intelligence.lifecycle import EventLifecycleEngine
 from vitalis.intelligence.profile import RawDailyProfile, SeriesPoint
 from vitalis.intelligence.trend import TrendEngine
 from vitalis.storage import HealthRepository, session_scope
@@ -102,7 +103,7 @@ def test_health_event_persistence_and_acknowledgement_are_user_scoped():
         repo = HealthRepository(db)
         repo.delete_for_user("event-storage")
         repo.upsert_user("event-storage")
-        assert repo.save_health_events("event-storage", [event]) == 1
+        repo.save_health_event("event-storage", event)
         assert repo.acknowledge_health_event("another-user", event.id) is None
         acknowledged = repo.acknowledge_health_event("event-storage", event.id)
         assert acknowledged is not None and acknowledged.acknowledged is True
@@ -110,3 +111,65 @@ def test_health_event_persistence_and_acknowledgement_are_user_scoped():
 
     assert stored[0].id == event.id
     assert stored[0].acknowledged is True
+
+
+def test_event_lifecycle_and_acknowledgement_progress_independently():
+    user_id = "event-lifecycle"
+    from vitalis.intelligence.contracts import ConfidenceBand, EventSeverity, HealthEvent
+
+    candidate = HealthEvent(
+        id="lifecycle-event",
+        type="SLEEP_DEFICIT",
+        type_label="持续睡眠不足",
+        severity=EventSeverity.MODERATE,
+        severity_label="中等",
+        metric="sleep_duration",
+        metric_label="睡眠时长",
+        start_date=TARGET - timedelta(days=2),
+        end_date=TARGET,
+        duration_days=3,
+        confidence=ConfidenceBand.HIGH,
+        confidence_label="较高",
+        summary="睡眠时长连续偏低。",
+    )
+    engine = EventLifecycleEngine()
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+        detected = engine.reconcile(repo, "run-1", user_id, TARGET, [candidate])[0]
+        acknowledged = repo.acknowledge_health_event(user_id, detected.id)
+        persisting = engine.reconcile(
+            repo,
+            "run-2",
+            user_id,
+            TARGET + timedelta(days=1),
+            [candidate.model_copy(update={"end_date": TARGET + timedelta(days=1)})],
+        )[0]
+        improving = engine.reconcile(
+            repo, "run-3", user_id, TARGET + timedelta(days=2), []
+        )[0]
+        resolved = engine.reconcile(
+            repo, "run-4", user_id, TARGET + timedelta(days=3), []
+        )[0]
+        observations = repo.event_observations(user_id, candidate.id)
+        resolved_query = repo.health_events(
+            user_id, TARGET + timedelta(days=3), TARGET + timedelta(days=3)
+        )
+
+    assert detected.lifecycle == EventLifecycle.DETECTED
+    assert acknowledged.acknowledged is True
+    assert persisting.lifecycle == EventLifecycle.PERSISTING
+    assert persisting.acknowledged is True
+    assert improving.lifecycle == EventLifecycle.IMPROVING
+    assert improving.acknowledged is True
+    assert resolved.lifecycle == EventLifecycle.RESOLVED
+    assert resolved.resolved_at == TARGET + timedelta(days=3)
+    assert resolved.acknowledged is True
+    assert [item.id for item in resolved_query] == [candidate.id]
+    assert [item.lifecycle for item in observations] == [
+        EventLifecycle.DETECTED,
+        EventLifecycle.PERSISTING,
+        EventLifecycle.IMPROVING,
+        EventLifecycle.RESOLVED,
+    ]

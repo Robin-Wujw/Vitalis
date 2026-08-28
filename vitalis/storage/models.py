@@ -3,11 +3,9 @@
 表（对应架构文档）：
 - users                用户
 - devices              设备
-- health_daily         每日健康快照
 - sleep_records        睡眠
 - activity_records     活动
 - training_records     训练
-- analysis_records     分析结果
 
 健康数据用 JSON 列存统一 Schema（Vitalis Schema）字段，保证跨厂商可扩展，
 同时保留结构化列便于按日期/用户查询。
@@ -181,38 +179,6 @@ class WorkoutSample(Base):
     device_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
-class HealthDaily(Base):
-    """每日健康快照（含分析引擎生成的分/趋势）。"""
-
-    __tablename__ = "health_daily"
-    __table_args__ = ({"info": {"timescale": True}},)
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[str] = mapped_column(String(64), index=True)
-    date: Mapped[date] = mapped_column(Date, index=True)
-
-    hrv: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    hrv_trend_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
-    recovery_score: Mapped[int] = mapped_column(Integer, default=0)
-    recovery_level: Mapped[str] = mapped_column(String(24), default="moderate")
-    stress_level: Mapped[str] = mapped_column(String(24), default="medium")
-    overall_score: Mapped[int] = mapped_column(Integer, default=0)
-    summary: Mapped[str] = mapped_column(Text, default="")
-
-
-class AnalysisRecord(Base):
-    __tablename__ = "analysis_records"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    user_id: Mapped[str] = mapped_column(String(64), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    engine: Mapped[str] = mapped_column(String(24))
-    kind: Mapped[str] = mapped_column(String(32))
-    inputs: Mapped[dict] = mapped_column(JSON, default=dict)
-    output: Mapped[str] = mapped_column(Text, default="")
-    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
-
 class HealthEventRecord(Base):
     """A deterministic, explainable event emitted by the intelligence engine."""
 
@@ -224,6 +190,10 @@ class HealthEventRecord(Base):
     metric: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     start_date: Mapped[date] = mapped_column(Date, index=True)
     end_date: Mapped[date] = mapped_column(Date, index=True)
+    lifecycle: Mapped[str] = mapped_column(String(16), index=True)
+    last_observed_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    last_evaluated_date: Mapped[date] = mapped_column(Date, index=True)
+    resolved_at: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
@@ -231,26 +201,77 @@ class HealthEventRecord(Base):
     )
 
 
+class HealthEventObservation(Base):
+    """Immutable per-analysis observation of one event lifecycle."""
+
+    __tablename__ = "health_event_observations"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    analysis_run_id: Mapped[str] = mapped_column(String(64), index=True)
+    event_id: Mapped[str] = mapped_column(String(64), index=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    detected: Mapped[bool] = mapped_column(Boolean)
+    previous_lifecycle: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    lifecycle: Mapped[str] = mapped_column(String(16), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class AnalysisRun(Base):
+    """One auditable execution of the deterministic intelligence pipeline."""
+
+    __tablename__ = "analysis_runs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    target_date: Mapped[date] = mapped_column(Date, index=True)
+    status: Mapped[str] = mapped_column(String(16), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    intelligence_version: Mapped[str] = mapped_column(String(32))
+    decision_policy_version: Mapped[str] = mapped_column(String(32))
+    evidence_version: Mapped[str] = mapped_column(String(32))
+    error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+
+
 class AnalysisSnapshot(Base):
-    """Versioned structured output from a deterministic intelligence pipeline."""
+    """Immutable structured output produced by exactly one analysis run."""
 
     __tablename__ = "analysis_snapshots"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    analysis_run_id: Mapped[str] = mapped_column(String(64), index=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    profile_type: Mapped[str] = mapped_column(String(32), index=True)
+    period_start: Mapped[date] = mapped_column(Date, index=True)
+    period_end: Mapped[date] = mapped_column(Date, index=True)
+    schema_version: Mapped[str] = mapped_column(String(16))
+    intelligence_version: Mapped[str] = mapped_column(String(32))
+    decision_policy_version: Mapped[str] = mapped_column(String(32))
+    evidence_version: Mapped[str] = mapped_column(String(32))
+    payload: Mapped[dict] = mapped_column(JSON)
+    generated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class RecommendationInstance(Base):
+    """A daily decision identity explicitly linked to at most one completed workout."""
+
+    __tablename__ = "recommendation_instances"
     __table_args__ = (
         UniqueConstraint(
-            "user_id", "profile_type", "period_start", "period_end", "model_version",
-            name="uq_analysis_snapshot",
+            "user_id", "linked_workout_id", name="uq_recommendation_completed_workout"
         ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    analysis_run_id: Mapped[str] = mapped_column(String(64), index=True)
     user_id: Mapped[str] = mapped_column(String(64), index=True)
-    profile_type: Mapped[str] = mapped_column(String(16), index=True)
-    period_start: Mapped[date] = mapped_column(Date, index=True)
-    period_end: Mapped[date] = mapped_column(Date, index=True)
-    schema_version: Mapped[str] = mapped_column(String(16))
-    model_version: Mapped[str] = mapped_column(String(64))
-    payload: Mapped[dict] = mapped_column(JSON)
-    generated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    decision: Mapped[dict] = mapped_column(JSON)
+    linked_workout_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    completion_status: Mapped[str] = mapped_column(String(16), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class SubjectiveFeedback(Base):
@@ -262,6 +283,7 @@ class SubjectiveFeedback(Base):
     user_id: Mapped[str] = mapped_column(String(64), index=True)
     date: Mapped[date] = mapped_column(Date, index=True)
     workout_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    recommendation_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     session_rpe: Mapped[float | None] = mapped_column(Float, nullable=True)
     physical_fatigue: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mental_state: Mapped[int | None] = mapped_column(Integer, nullable=True)

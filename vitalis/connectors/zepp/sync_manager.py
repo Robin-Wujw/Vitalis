@@ -15,7 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from vitalis.connectors.zepp.client import ZeppAuthError
 from vitalis.connectors.zepp.fetcher import DataFetcher, FetchWindow, FetchedRecord, _payload_items
 from vitalis.connectors.zepp.parser import ZeppParser
-from vitalis.models import ActivityRecord, DailyHealth, SleepRecord, TrainingRecord, User
+from vitalis.models import ActivityRecord, NormalizedDaily, SleepRecord, TrainingRecord, User
 from vitalis.storage import HealthRepository
 from vitalis.time import local_day
 
@@ -315,18 +315,13 @@ class SyncManager:
             sleeps, activities = parser.parse_band(payload)
             for day, sleep in sleeps.items():
                 sleep.user_id = user.id
-                daily = DailyHealth(user_id=user.id, date=day, sleep=sleep)
+                daily = NormalizedDaily(user_id=user.id, date=day, sleep=sleep)
                 repo.save_daily(daily)
                 written += 1
             # band_data 中同时也含 activity
             for day, act in activities.items():
                 act.user_id = user.id
-                existing = repo.health_daily(user.id, day)
-                if existing:
-                    # 更新已有记录的 activity
-                    repo.save_daily(DailyHealth(user_id=user.id, date=day, activity=act))
-                else:
-                    repo.save_daily(DailyHealth(user_id=user.id, date=day, activity=act))
+                repo.save_daily(NormalizedDaily(user_id=user.id, date=day, activity=act))
                 written += 1
             heart_rate = parser.parse_band_heart_rate(payload)
             for sample in heart_rate:
@@ -353,7 +348,7 @@ class SyncManager:
                     total_duration=sum(w.duration for w in ws),
                     total_load=sum(w.load for w in ws),
                 )
-                repo.save_daily(DailyHealth(user_id=user.id, date=day, training=training))
+                repo.save_daily(NormalizedDaily(user_id=user.id, date=day, training=training))
                 written += 1
 
         elif stream == "workout_detail":
@@ -393,31 +388,12 @@ class SyncManager:
             for sample in readiness_samples:
                 sample.user_id = user.id
             written += repo.save_metric_samples(readiness_samples)
-            hrv_map = parser.parse_hrv_events(payload)
-            for day in hrv_map:
-                existing = repo.health_daily(user.id, day)
-                daily = DailyHealth(user_id=user.id, date=day)
-                if existing:
-                    daily.hrv = existing.hrv
-                    daily.recovery_score = existing.recovery_score
-                if day in hrv_map:
-                    daily.hrv = hrv_map[day]
-                repo.save_daily(daily)
-                written += 1
 
         elif stream == "hrv":
             hrv_samples = parser.parse_hrv_samples(payload, "hrv_sdnn")
             for sample in hrv_samples:
                 sample.user_id = user.id
             written += repo.save_metric_samples(hrv_samples)
-            hrv_map = parser.parse_hrv_events(payload)
-            for day, val in hrv_map.items():
-                existing = repo.health_daily(user.id, day)
-                daily = DailyHealth(user_id=user.id, date=day, hrv=val)
-                if existing:
-                    daily.recovery_score = existing.recovery_score
-                repo.save_daily(daily)
-                written += 1
 
         elif stream == "wellness":
             metrics, samples = parser.parse_wellness(payload, record.raw.source_key)

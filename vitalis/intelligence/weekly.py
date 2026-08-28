@@ -30,6 +30,7 @@ from .profile import RawDailyProfile
 class WeeklyProfileEngine:
     def build(
         self,
+        analysis_run_id: str,
         raw: RawDailyProfile,
         trends: list[TrendFeature],
         events: list[HealthEvent],
@@ -70,6 +71,7 @@ class WeeklyProfileEngine:
             limitations=limitations,
         )
         return WeeklyProfile(
+            analysis_run_id=analysis_run_id,
             user_id=raw.user_id,
             period_start=period_start,
             period_end=raw.day,

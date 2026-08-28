@@ -44,7 +44,9 @@ def _analyze(raw):
     hrv = HrvAnalyzer().analyze(raw, baselines)
     training = TrainingAnalyzer().analyze(raw, baselines)
     recovery = RecoveryAnalyzer().analyze(raw, sleep, sleep_state, hrv, training)
-    decision = DecisionEngine().decide(sleep_state, hrv, recovery, training)
+    decision = DecisionEngine().decide(
+        "analyzer-recommendation", sleep_state, hrv, recovery, training
+    )
     return sleep, sleep_state, hrv, training, recovery, decision
 
 

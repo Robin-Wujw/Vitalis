@@ -48,10 +48,15 @@ def test_quality_contract_separates_device_validity_from_data_quality():
 
 def test_decision_contract_has_no_implicit_fallback_score():
     decision = TrainingDecision(
+        recommendation_id="contract-recommendation",
         action=DecisionAction.INSUFFICIENT_DATA,
         confidence=ConfidenceBand.NONE,
         limitations=["missing recovery signals"],
     )
     assert "score" not in decision.model_dump()
     with pytest.raises(ValidationError):
-        TrainingDecision(action="MAYBE", confidence=ConfidenceBand.LOW)
+        TrainingDecision(
+            recommendation_id="contract-recommendation",
+            action="MAYBE",
+            confidence=ConfidenceBand.LOW,
+        )

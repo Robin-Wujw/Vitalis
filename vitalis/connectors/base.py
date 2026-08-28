@@ -10,7 +10,7 @@ from datetime import date
 
 from vitalis.models import (
     ActivityRecord,
-    DailyHealth,
+    NormalizedDaily,
     Device,
     SleepRecord,
     TrainingRecord,
@@ -62,8 +62,8 @@ class HealthConnector(ABC):
     @abstractmethod
     def fetch(
         self, user: User, start: date | None = None, end: date | None = None, repo=None
-    ) -> list[DailyHealth]:
-        """只拉取并转换数据（不写存储），返回统一 DailyHealth 列表。
+    ) -> list[NormalizedDaily]:
+        """只拉取并转换数据（不写存储），返回统一 NormalizedDaily 列表。
 
         供测试与 API「预览」使用。repo 为可选的 data repository，
         连接器可据此读取/保存厂商 token（见 ZeppConnector）。

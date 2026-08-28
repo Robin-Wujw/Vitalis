@@ -52,32 +52,36 @@ def _sync_user(user_id: str, days: int, label: str) -> bool:
 
 
 def nightly_sync_job() -> None:
-    """02:00: refresh the recent seven-day data window."""
+    """02:00: synchronize and independently persist the latest analysis."""
+    from vitalis.intelligence.service import IntelligenceCommand
+
     user_ids = _get_authorized_users()
     if not user_ids:
         log.info("nightly sync: no authorized users")
         return
     for user_id in user_ids:
         try:
-            _sync_user(user_id, days=7, label="夜间同步")
+            if _sync_user(user_id, days=7, label="夜间同步"):
+                IntelligenceCommand().analyze(user_id)
         except Exception:
             log.exception("nightly sync failed: user=%s", user_id)
 
 
 def _profile_push_job(period: str, sync_days: int) -> None:
-    from vitalis.intelligence.service import IntelligencePipeline
+    from vitalis.intelligence.service import IntelligenceCommand
     from vitalis.services.push_service import PushService
 
     user_ids = _get_authorized_users()
     if not user_ids:
         log.info("%s profile: no authorized users", period)
         return
-    service = IntelligencePipeline()
+    command = IntelligenceCommand()
     push = PushService()
     for user_id in user_ids:
         try:
             _sync_user(user_id, days=sync_days, label=f"{period}同步")
-            profile = service.build_daily_profile(user_id)
+            result = command.analyze(user_id)
+            profile = result.daily
             push.push_daily_profile(user_id, profile, period=period)
             log.info(
                 "%s profile pushed: user=%s action=%s quality=%s",

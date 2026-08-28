@@ -2,7 +2,7 @@
 
 可扩展的个人健康数据平台。
 
-**核心思路：** 数据源插件化采集（Zepp 起步）→ 统一 Vitalis Schema → 数据质量与来源 → 设备隔离的个人基线 → 趋势/事件/状态 → 确定性训练决策 → Daily/Weekly Intelligence API → Hermes 薄调度与渲染。
+**核心思路：** 数据源插件化采集（Zepp 起步）→ 统一 Vitalis Schema → 数据质量与来源 → 设备隔离的个人基线 → 趋势/事件/状态 → 确定性训练决策 → 行动/响应/个人模型 → Hermes 薄调度与渲染。
 
 ```
                     User / 浏览器 / Agent
@@ -10,11 +10,13 @@
                   FastAPI / Vitalis API
                           │
                           │
-       Health Intelligence API (Daily / Weekly)
+        Health Intelligence Command / Query API
                           │
- Quality → Baseline → Features → Trends → Events
+ Quality → Baseline → Features → Trends → Event Lifecycle
                           │
-                States → Decision → Actions
+      Decision → Recommendation → Workout → Response
+                          │
+                    Personal Model
                           │
              Normalized Health Storage
                           │
@@ -35,7 +37,7 @@ vitalis/
 │       └── parser.py        # 厂商格式 → Vitalis Schema + 心率/健康指标解码
 ├── models/                  # 统一健康数据模型（Vitalis Schema）
 ├── storage/                 # SQLAlchemy + SQLite/PostgreSQL
-├── intelligence/            # Daily/Weekly、基线、趋势、事件、状态、决策
+├── intelligence/            # 分析运行、响应、个人模型、事件生命周期与时间线
 ├── services/                # 业务服务层
 │   ├── sync_service.py      # 同步服务
 │   ├── aggregation_service.py  # 多级聚合（180d/90d/30d/7d/1d）
@@ -109,9 +111,13 @@ Vitalis 通过用户浏览器中的官方登录会话连接 Zepp，不要求打�
 - 决策引擎返回中文动作、状态、强度、依据、限制和置信度标签；内部英文枚举只供程序判断，Hermes 和推送不得展示。
 - 训练建议包含确定性的结构化处方。二区跑给出热身、30–40 分钟谈话测试主训练、冷身、进阶和停止条件；全身力量给出蹲、推、拉、髋伸、核心的动作选择、组次、休息、余力和加重规则。两种建议同时出现时明确要求二选一。
 - Trend Engine 按指标、来源和设备分别计算 7/28/90 天中位数、前期对比、变化率、斜率、MAD 波动、覆盖率、方向与置信度；缺失值不补零，多设备 HRV 不合并。
-- HealthEvent 只在持续偏离或明确周期变化时生成，覆盖 HRV、静息心率、睡眠、训练负荷/中断、恢复和活动变化，并保留持续时间、证据、严重程度、置信度和用户确认状态。
+- HealthEvent 只在持续偏离或明确周期变化时生成，覆盖 HRV、静息心率、睡眠、训练负荷/中断、恢复和活动变化；事件按已发现、持续中、改善中、已恢复推进，用户确认时间与生理生命周期彼此独立。
 - WeeklyProfile 严格区分 `facts`、`inferences` 和 `actions`，汇总睡眠、恢复、训练、活动及主观反馈，并与前一周比较。
-- DailyProfile 与 WeeklyProfile 会幂等保存版本化分析快照；RPE、身体疲劳、精神状态、肌肉酸痛和备注作为用户主观事实独立存储。
+- `POST /intelligence/analyze` 创建不可变 AnalysisRun，并同时保存 Daily、Weekly、Training Response 和 Personal Model 快照；所有 GET 只读快照，缺少结果时返回 404。
+- 每个 Daily 决策都有 RecommendationInstance。完成状态只能由用户把建议显式关联到真实 workout，系统不按时间或文本猜测；session RPE 必须带 workout ID。
+- Training Response 使用训练前设备级 28 天基线和 T+1/T+2/T+3 HRV、RHR、睡眠与主观反馈；缺失窗口和重叠训练明确标记，不产生综合压力分。
+- Personal Model v1 按训练家族和具体运动模式汇总响应的中位数、MAD、样本量、覆盖率与置信度，只陈述个人关联模式。
+- Hermes Context 只提供有界的 Current、Recent、Trend、Personal 四层摘要；Health Timeline 只投影类型化事件，不携带原始样本。
 - 各事件面按 7 天窗口拉取；API 和同步入口最多接受 730 天。实际覆盖取决于账号创建时间、佩戴情况和厂商保留窗口，空白日期不会被补造。
 
 ### 运动期间高频心率
@@ -164,12 +170,18 @@ Helio Strap 不能运行 Zepp OS 应用，所以这条通道仅适用于 Balance
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
+| POST | `/intelligence/analyze?day=YYYY-MM-DD` | 显式运行一次分析并保存不可变结果 |
 | GET | `/intelligence/daily?day=YYYY-MM-DD` | DailyProfile：质量、事实、基线、趋势、事件、状态、决策 |
 | GET | `/intelligence/weekly?day=YYYY-MM-DD` | WeeklyProfile：事实、推断、行动与前周比较 |
 | GET | `/intelligence/trends?day=YYYY-MM-DD` | 按设备隔离的 7/28/90 天趋势 |
 | GET | `/intelligence/events?start=&end=&event_type=` | 持续健康事件 |
 | GET | `/intelligence/explain?day=YYYY-MM-DD` | 训练决策的事实 → 推断 → 行动解释 |
 | GET | `/intelligence/context?day=YYYY-MM-DD` | Hermes 所需的有界结构化上下文 |
+| GET | `/intelligence/training-responses?day=YYYY-MM-DD` | 训练后 T+1/T+2/T+3 响应 |
+| GET | `/intelligence/personal-model?day=YYYY-MM-DD` | 个人基线、长期趋势和训练响应模式 |
+| GET | `/intelligence/timeline?start=&end=&limit=` | 类型化健康时间线摘要 |
+| GET | `/intelligence/recommendations/{id}` | 查询一次具体训练建议 |
+| POST | `/intelligence/recommendations/{id}/complete` | 显式关联完成该建议的 workout |
 | POST | `/intelligence/feedback` | 记录 RPE、疲劳、精神状态、酸痛或备注 |
 | GET | `/intelligence/feedback?start=&end=` | 查询用户主观反馈 |
 | POST | `/intelligence/events/{id}/acknowledge` | 确认已查看一个用户范围内的事件 |
@@ -193,6 +205,10 @@ Helio Strap 不能运行 Zepp OS 应用，所以这条通道仅适用于 Balance
 # 手动同步（运动后/起床后随时调用）
 curl -X POST 'localhost:8000/api/v1/health/sync?days=7' -H 'X-User-Id: 001'
 
+# 同步与分析是两个独立阶段；显式生成当天不可变分析结果
+curl -X POST 'localhost:8000/api/v1/intelligence/analyze?day=2026-08-28' \
+  -H 'X-User-Id: <local-user-id>'
+
 # 检查凭据是否还有效
 curl localhost:8000/api/v1/health/token-status -H 'X-User-Id: 001'
 
@@ -204,10 +220,10 @@ curl 'localhost:8000/api/v1/intelligence/daily?day=2026-08-27' \
 curl 'localhost:8000/api/v1/intelligence/weekly?day=2026-08-28' \
   -H 'X-User-Id: <local-user-id>'
 
-# 记录训练后的主观用力程度和身体疲劳
+# 记录训练后的主观用力程度和身体疲劳（RPE 必须关联真实 workout）
 curl -X POST localhost:8000/api/v1/intelligence/feedback \
   -H 'Content-Type: application/json' -H 'X-User-Id: <local-user-id>' \
-  -d '{"date":"2026-08-28","session_rpe":7,"physical_fatigue":3}'
+  -d '{"date":"2026-08-28","workout_id":"<workout-id>","session_rpe":7,"physical_fatigue":3}'
 
 # 查看最近 30 天月度聚合
 curl 'localhost:8000/api/v1/health/range?from=2026-01-01&to=2026-08-25&granularity=30d' \
@@ -228,7 +244,7 @@ Cookie 暂时不可见时，扩展会调用 `/connect/zepp/link/validate` 验证
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest -q        # 149 个测试，全部通过
+.venv/bin/python -m pytest -q        # 161 个测试，全部通过
 ```
 
 覆盖范围：
@@ -247,6 +263,8 @@ Cookie 暂时不可见时，扩展会调用 `/connect/zepp/link/validate` 验证
 - `test_health_events.py` — 持续事件检测、稳定 ID、持久化和用户确认
 - `test_weekly_profile.py` — WeeklyProfile 事实/推断/行动与确定性建议
 - `test_intelligence_storage.py` — 分析快照与主观反馈闭环
+- `test_training_response.py` — T+1/T+2/T+3 训练响应与 Personal Model robust 统计
+- `test_context_timeline.py` — 有界四层 Context 与无原始样本的健康时间线
 - `test_vitalis_skill.py` — Hermes Read/Analyze/Act 边界、工作流和 Schema
 - `test_push_service.py` — 中文状态/置信度渲染、具体运动模式和结构化训练处方
 
@@ -256,7 +274,9 @@ Cookie 暂时不可见时，扩展会调用 `/connect/zepp/link/validate` 验证
 2. **厂商格式隔离**：`connectors/zepp/parser.py` 把 Zepp JSON 转成 Vitalis Schema，上层永远看不到厂商字段
 3. **分析逻辑与采集解耦**：连接器只产出 Schema，分析引擎只消费 Schema + 存储
 4. **多用户**：`X-User-Id` 是必填请求头，不存在隐式用户兜底；表按 user_id 索引，调度器按已授权用户逐一同步
-5. **LLM 只调度和渲染**：Hermes 只消费 Vitalis 的 Daily/Weekly/Trend/Event/Explain 合约，不生成分数、趋势、阈值、周汇总或替代建议
+5. **LLM 只调度和渲染**：Hermes 只消费 Vitalis 的结构化快照、响应、个人模式和时间线，不生成分数、趋势、阈值、周汇总、恢复时长或替代建议
 6. **密码不经过云端**：登录在官方页面完成，Vitalis 只接收登录后的临时访问凭据
 7. **缺失即 abstain**：缺关键目标日信号或可解释基线时输出 `INSUFFICIENT_DATA`
 8. **设备流不混合**：RMSSD、SDNN、RHR 及不同设备分别建基线，按可用覆盖选择首选流
+9. **命令/查询分离**：同步、分析、推送是独立阶段；GET 永远不触发计算或写入
+10. **只面向新数据**：当前为生产前开发，不保留旧 Schema、旧端点、迁移、回填或兼容读取

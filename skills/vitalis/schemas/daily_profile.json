@@ -1,12 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/daily-profile-2.0.json",
-  "title": "Vitalis DailyProfile 2.0",
+  "$id": "https://vitalis.local/schemas/daily-profile-3.0.json",
+  "title": "Vitalis DailyProfile 3.0",
   "type": "object",
-  "required": ["schema_version", "model_version", "user_id", "date", "generated_at", "data_quality", "facts", "baselines", "features", "trends", "events", "states", "decision", "evidence_refs", "metadata"],
+  "required": ["schema_version", "analysis_run_id", "intelligence_version", "decision_policy_version", "evidence_version", "user_id", "date", "generated_at", "data_quality", "facts", "baselines", "features", "trends", "events", "states", "decision", "evidence_refs", "metadata"],
   "properties": {
-    "schema_version": {"const": "2.0"},
-    "model_version": {"const": "vitalis-intelligence-2"},
+    "schema_version": {"const": "3.0"},
+    "analysis_run_id": {"type": "string"},
+    "intelligence_version": {"const": "3.0"},
+    "decision_policy_version": {"const": "3.0"},
+    "evidence_version": {"const": "2026-08"},
     "user_id": {"type": "string"},
     "date": {"type": "string", "format": "date"},
     "generated_at": {"type": "string", "format": "date-time"},
@@ -128,8 +131,9 @@
     },
     "decision": {
       "type": "object",
-      "required": ["action", "action_label", "confidence", "confidence_label", "drivers", "driver_labels", "limitations", "limitation_labels", "rule_ids", "suggested_types", "suggested_type_labels", "intensity", "intensity_label", "prescription_guidance", "prescriptions"],
+      "required": ["recommendation_id", "action", "action_label", "confidence", "confidence_label", "drivers", "driver_labels", "limitations", "limitation_labels", "rule_ids", "suggested_types", "suggested_type_labels", "intensity", "intensity_label", "prescription_guidance", "prescriptions"],
       "properties": {
+        "recommendation_id": {"type": "string"},
         "action": {"enum": ["TRAIN_HARD", "TRAIN_NORMAL", "TRAIN_LIGHT", "RECOVERY", "REST", "INSUFFICIENT_DATA"]},
         "action_label": {"type": "string"},
         "confidence": {"enum": ["NONE", "LOW", "MODERATE", "HIGH"]},

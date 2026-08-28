@@ -3,6 +3,8 @@
 from .contracts import (
     Availability,
     AgentContext,
+    AnalysisResult,
+    AnalysisRun,
     BaselineStats,
     ConfidenceBand,
     DailyProfile,
@@ -20,6 +22,8 @@ from .contracts import (
 __all__ = [
     "Availability",
     "AgentContext",
+    "AnalysisResult",
+    "AnalysisRun",
     "BaselineStats",
     "ConfidenceBand",
     "DailyProfile",

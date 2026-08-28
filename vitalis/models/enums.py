@@ -21,19 +21,6 @@ class SleepQuality(StrEnum):
     EXCELLENT = "excellent"
 
 
-class StressLevel(StrEnum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-
-
-class RecoveryLevel(StrEnum):
-    LOW = "low"          # 恢复不足，需要休息
-    MODERATE = "moderate"
-    READY = "ready"      # 恢复良好，适合训练
-    OVERREACH = "overreach"  # 过度训练
-
-
 class TrainingReadiness(StrEnum):
     NOT_READY = "not_ready"
     EASY = "easy"        # 只适合低强度

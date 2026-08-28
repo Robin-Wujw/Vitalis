@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vitalis.local/schemas/training-responses-1.0.json",
+  "title": "Vitalis TrainingResponseProfile 1.0",
+  "type": "object",
+  "required": ["schema_version", "analysis_run_id", "intelligence_version", "user_id", "date", "generated_at", "responses"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "analysis_run_id": {"type": "string"},
+    "intelligence_version": {"const": "3.0"},
+    "responses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["analysis_run_id", "exposure", "response_days", "missing_windows", "overlapping_workout_ids", "recovery_status", "recovery_status_label", "confidence", "confidence_label", "limitations"]
+      }
+    }
+  }
+}

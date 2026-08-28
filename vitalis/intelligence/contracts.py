@@ -10,10 +10,13 @@ from pydantic import BaseModel, Field, model_validator
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "2.0"
-WEEKLY_SCHEMA_VERSION = "1.0"
-MODEL_VERSION = "vitalis-intelligence-2"
-WEEKLY_MODEL_VERSION = "vitalis-weekly-1"
+DAILY_SCHEMA_VERSION = "3.0"
+WEEKLY_SCHEMA_VERSION = "2.0"
+INTELLIGENCE_VERSION = "3.0"
+DECISION_POLICY_VERSION = "3.0"
+EVIDENCE_VERSION = "2026-08"
+TRAINING_RESPONSE_SCHEMA_VERSION = "1.0"
+PERSONAL_MODEL_SCHEMA_VERSION = "1.0"
 
 
 class Availability(str, Enum):
@@ -75,6 +78,31 @@ class EventSeverity(str, Enum):
     INFO = "INFO"
     MODERATE = "MODERATE"
     HIGH = "HIGH"
+
+
+class AnalysisRunStatus(str, Enum):
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class RecommendationStatus(str, Enum):
+    PLANNED = "PLANNED"
+    COMPLETED = "COMPLETED"
+
+
+class RecoveryOutcome(str, Enum):
+    RETURNED_TO_BASELINE = "RETURNED_TO_BASELINE"
+    NOT_RETURNED = "NOT_RETURNED"
+    CONFOUNDED = "CONFOUNDED"
+    INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
+
+
+class EventLifecycle(str, Enum):
+    DETECTED = "DETECTED"
+    PERSISTING = "PERSISTING"
+    IMPROVING = "IMPROVING"
+    RESOLVED = "RESOLVED"
 
 
 class Provenance(BaseModel):
@@ -208,7 +236,25 @@ class HealthEvent(BaseModel):
     confidence_label: str
     summary: str
     evidence: list[HealthEventEvidence] = Field(default_factory=list)
+    lifecycle: EventLifecycle = EventLifecycle.DETECTED
+    lifecycle_label: str = "已发现"
+    last_observed_date: date | None = None
+    last_evaluated_date: date | None = None
+    resolved_at: date | None = None
     acknowledged: bool = False
+    acknowledged_at: datetime | None = None
+
+
+class HealthEventObservation(BaseModel):
+    id: str
+    analysis_run_id: str
+    event_id: str
+    user_id: str
+    date: DateValue
+    detected: bool
+    previous_lifecycle: EventLifecycle | None = None
+    lifecycle: EventLifecycle
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class SleepFeatures(BaseModel):
@@ -347,6 +393,7 @@ class TrainingPrescription(BaseModel):
 
 
 class TrainingDecision(BaseModel):
+    recommendation_id: str
     action: DecisionAction
     action_label: str = ""
     confidence: ConfidenceBand
@@ -467,7 +514,10 @@ class WeeklyActions(BaseModel):
 
 class WeeklyProfile(BaseModel):
     schema_version: str = WEEKLY_SCHEMA_VERSION
-    model_version: str = WEEKLY_MODEL_VERSION
+    analysis_run_id: str
+    intelligence_version: str = INTELLIGENCE_VERSION
+    decision_policy_version: str = DECISION_POLICY_VERSION
+    evidence_version: str = EVIDENCE_VERSION
     user_id: str
     period_start: date
     period_end: date
@@ -482,6 +532,7 @@ class WeeklyProfile(BaseModel):
 class SubjectiveFeedbackInput(BaseModel):
     date: DateValue | None = None
     workout_id: str | None = Field(default=None, max_length=128)
+    recommendation_id: str | None = Field(default=None, max_length=64)
     session_rpe: float | None = Field(default=None, ge=1, le=10)
     physical_fatigue: int | None = Field(default=None, ge=1, le=5)
     mental_state: int | None = Field(default=None, ge=1, le=5)
@@ -500,6 +551,10 @@ class SubjectiveFeedbackInput(BaseModel):
             raise ValueError("至少填写一项主观反馈")
         if self.notes is not None:
             self.notes = self.notes.strip() or None
+        if self.session_rpe is not None and not self.workout_id:
+            raise ValueError("训练 RPE 必须关联一次已完成训练")
+        if self.recommendation_id and not self.workout_id:
+            raise ValueError("建议反馈必须同时关联已完成训练")
         return self
 
 
@@ -508,6 +563,7 @@ class SubjectiveFeedback(BaseModel):
     user_id: str
     date: DateValue
     workout_id: str | None = None
+    recommendation_id: str | None = None
     session_rpe: float | None = Field(default=None, ge=1, le=10)
     physical_fatigue: int | None = Field(default=None, ge=1, le=5)
     mental_state: int | None = Field(default=None, ge=1, le=5)
@@ -518,7 +574,10 @@ class SubjectiveFeedback(BaseModel):
 
 class DailyProfile(BaseModel):
     schema_version: str = DAILY_SCHEMA_VERSION
-    model_version: str = MODEL_VERSION
+    analysis_run_id: str
+    intelligence_version: str = INTELLIGENCE_VERSION
+    decision_policy_version: str = DECISION_POLICY_VERSION
+    evidence_version: str = EVIDENCE_VERSION
     user_id: str
     date: DateValue
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -566,15 +625,269 @@ class DecisionExplanation(BaseModel):
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
 
 
+class ContextCurrent(BaseModel):
+    analysis_run_id: str
+    date: DateValue
+    data_quality_status: QualityStatus
+    data_quality_label: str
+    sleep_minutes: int | None = None
+    hrv_metric: str | None = None
+    hrv_value_ms: float | None = None
+    hrv_device_id: str | None = None
+    rhr_bpm: float | None = None
+    recovery_state: RecoveryState
+    recovery_state_label: str
+    training_load_state: LoadState
+    training_load_state_label: str
+    action: DecisionAction
+    action_label: str
+    confidence: ConfidenceBand
+    confidence_label: str
+    recommendation_id: str
+    suggested_type_labels: list[str] = Field(default_factory=list, max_length=3)
+    driver_labels: list[str] = Field(default_factory=list, max_length=5)
+    limitation_labels: list[str] = Field(default_factory=list, max_length=5)
+
+
+class ContextEvent(BaseModel):
+    id: str
+    type: str
+    type_label: str
+    lifecycle: EventLifecycle
+    lifecycle_label: str
+    severity: EventSeverity
+    summary: str
+    acknowledged: bool
+
+
+class ContextFeedback(BaseModel):
+    id: str
+    date: DateValue
+    workout_id: str | None = None
+    session_rpe: float | None = None
+    physical_fatigue: int | None = None
+    mental_state: int | None = None
+    muscle_soreness: int | None = None
+
+
+class ContextRecent(BaseModel):
+    period_start: DateValue
+    period_end: DateValue
+    sleep_average_minutes: float | None = None
+    hrv_change_percent: float | None = None
+    rhr_change_percent: float | None = None
+    workout_count: int = Field(ge=0)
+    training_duration_minutes: int = Field(ge=0)
+    sport_mode_counts: dict[str, int] = Field(default_factory=dict)
+    active_events: list[ContextEvent] = Field(default_factory=list, max_length=5)
+    feedback: list[ContextFeedback] = Field(default_factory=list, max_length=5)
+
+
+class ContextTrend(BaseModel):
+    metric: str
+    metric_label: str
+    window_days: Literal[7, 28, 90]
+    device_id: str | None = None
+    change_percent: float | None = None
+    direction: TrendDirection
+    direction_label: str
+    confidence: ConfidenceBand
+    confidence_label: str
+
+
+class ContextPatternMetric(BaseModel):
+    metric: str
+    device_id: str | None = None
+    median: float | None = None
+    unit: str
+    sample_count: int = Field(ge=0)
+    coverage_ratio: float = Field(ge=0, le=1)
+
+
+class ContextPattern(BaseModel):
+    group_type: Literal["training_family", "sport_mode"]
+    group_key: str
+    group_label: str
+    response_count: int = Field(ge=0)
+    confidence: ConfidenceBand
+    confidence_label: str
+    metrics: list[ContextPatternMetric] = Field(default_factory=list, max_length=3)
+
+
+class ContextPersonal(BaseModel):
+    patterns: list[ContextPattern] = Field(default_factory=list, max_length=6)
+    limitations: list[str] = Field(default_factory=list, max_length=3)
+
+
 class AgentContext(BaseModel):
+    schema_version: Literal["3.0"] = "3.0"
     user_id: str
     date: DateValue
-    daily: DailyProfile
-    weekly: WeeklyProfile
-    unacknowledged_events: list[HealthEvent] = Field(default_factory=list)
-    recent_feedback: list[SubjectiveFeedback] = Field(default_factory=list)
+    current: ContextCurrent
+    recent: ContextRecent
+    trend: list[ContextTrend] = Field(default_factory=list, max_length=12)
+    personal: ContextPersonal
+
+
+class TimelineItem(BaseModel):
+    id: str
+    type: Literal[
+        "analysis",
+        "recommendation",
+        "workout",
+        "feedback",
+        "event_transition",
+        "training_response",
+    ]
+    date: DateValue
+    title: str
+    summary: str
+    references: dict[str, str] = Field(default_factory=dict)
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class HealthTimeline(BaseModel):
+    user_id: str
+    period_start: DateValue
+    period_end: DateValue
+    items: list[TimelineItem] = Field(default_factory=list, max_length=100)
 
 
 class EventAcknowledgement(BaseModel):
     status: Literal["acknowledged"] = "acknowledged"
     event: HealthEvent
+
+
+class RecommendationInstance(BaseModel):
+    id: str
+    analysis_run_id: str
+    user_id: str
+    date: DateValue
+    decision: TrainingDecision
+    linked_workout_id: str | None = None
+    completion_status: RecommendationStatus = RecommendationStatus.PLANNED
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at: datetime | None = None
+
+
+class WorkoutExposure(BaseModel):
+    workout_id: str
+    date: DateValue
+    type: str
+    sport_mode: str
+    sport_mode_label: str
+    training_family: str
+    training_family_label: str
+    duration_minutes: int = Field(ge=0)
+    vendor_load: float = Field(ge=0)
+    heart_rate_avg_bpm: int | None = Field(default=None, ge=1)
+    heart_rate_max_bpm: int | None = Field(default=None, ge=1)
+
+
+class ResponseMetricObservation(BaseModel):
+    metric: str
+    device_id: str | None = None
+    unit: str
+    status: Availability
+    baseline_reference: float | None = None
+    value: float | None = None
+    deviation_percent: float | None = None
+    direction: Literal["above", "near", "below", "unknown"] = "unknown"
+
+
+class TrainingResponseDay(BaseModel):
+    day_offset: Literal[1, 2, 3]
+    date: DateValue
+    observations: list[ResponseMetricObservation] = Field(default_factory=list)
+    overlapping_workout_ids: list[str] = Field(default_factory=list)
+
+
+class TrainingResponse(BaseModel):
+    analysis_run_id: str
+    user_id: str
+    exposure: WorkoutExposure
+    recommendation_id: str | None = None
+    feedback: list[SubjectiveFeedback] = Field(default_factory=list)
+    response_days: list[TrainingResponseDay] = Field(default_factory=list)
+    missing_windows: list[str] = Field(default_factory=list)
+    overlapping_workout_ids: list[str] = Field(default_factory=list)
+    recovery_status: RecoveryOutcome
+    recovery_status_label: str
+    recovery_hours: int | None = Field(default=None, ge=0)
+    confidence: ConfidenceBand
+    confidence_label: str
+    limitations: list[str] = Field(default_factory=list)
+
+
+class TrainingResponseProfile(BaseModel):
+    schema_version: str = TRAINING_RESPONSE_SCHEMA_VERSION
+    analysis_run_id: str
+    intelligence_version: str = INTELLIGENCE_VERSION
+    decision_policy_version: str = DECISION_POLICY_VERSION
+    evidence_version: str = EVIDENCE_VERSION
+    user_id: str
+    date: DateValue
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    responses: list[TrainingResponse] = Field(default_factory=list)
+
+
+class PersonalMetricStats(BaseModel):
+    metric: str
+    device_id: str | None = None
+    unit: str
+    median: float | None = None
+    mad: float | None = None
+    sample_count: int = Field(ge=0)
+    eligible_count: int = Field(ge=0)
+    coverage_ratio: float = Field(ge=0, le=1)
+
+
+class PersonalResponsePattern(BaseModel):
+    group_type: Literal["training_family", "sport_mode"]
+    group_key: str
+    group_label: str
+    response_count: int = Field(ge=0)
+    metrics: list[PersonalMetricStats] = Field(default_factory=list)
+    confidence: ConfidenceBand
+    confidence_label: str
+
+
+class PersonalModel(BaseModel):
+    schema_version: str = PERSONAL_MODEL_SCHEMA_VERSION
+    analysis_run_id: str
+    user_id: str
+    date: DateValue
+    intelligence_version: str = INTELLIGENCE_VERSION
+    decision_policy_version: str = DECISION_POLICY_VERSION
+    evidence_version: str = EVIDENCE_VERSION
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    baselines: list[BaselineStats] = Field(default_factory=list)
+    long_term_trends: list[TrendFeature] = Field(default_factory=list)
+    training_response_patterns: list[PersonalResponsePattern] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class LinkRecommendationInput(BaseModel):
+    workout_id: str = Field(min_length=1, max_length=128)
+
+
+class AnalysisRun(BaseModel):
+    id: str
+    user_id: str
+    target_date: DateValue
+    status: AnalysisRunStatus
+    started_at: datetime
+    completed_at: datetime | None = None
+    intelligence_version: str = INTELLIGENCE_VERSION
+    decision_policy_version: str = DECISION_POLICY_VERSION
+    evidence_version: str = EVIDENCE_VERSION
+    error: str | None = None
+
+
+class AnalysisResult(BaseModel):
+    run: AnalysisRun
+    daily: DailyProfile
+    weekly: WeeklyProfile
+    recommendation: RecommendationInstance
+    training_responses: list[TrainingResponse] = Field(default_factory=list)
+    personal_model: PersonalModel

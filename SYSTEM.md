@@ -467,7 +467,7 @@ fallback when browser credentials cannot be renewed indefinitely.
   - Attribute supported streams to Balance 2, Helio Strap, user-fused, or unknown using
     verified vendor device maps.
   - Separate unavailable streams from available-but-not-yet-decoded streams.
-- [ ] Part 3 - Complete structured all-day and wellness normalization.
+- [x] Part 3 - Complete structured all-day and wellness normalization.
   - Decode minute-level `band_data.data_hr` with timestamps and device provenance when
     supplied.
   - Preserve per-sample SDNN/RMSSD attribution, Charge/body-battery, readiness including
@@ -475,34 +475,34 @@ fallback when browser credentials cannot be renewed indefinitely.
     lactate-threshold fields that are present in verified response shapes.
   - Add focused parser, fetcher, storage, and synchronization regressions for each new
     normalized contract.
-- [ ] Part 4 - Represent and investigate dense second-heart-rate files honestly.
+- [x] Part 4 - Represent and investigate dense second-heart-rate files honestly.
   - Fetch `second_heart_rate/real_data` file indexes and store only normalized metadata
     needed for resumable ingestion, with device attribution and no signed URL leakage.
   - Determine the official file-resolution/download contract and decode `SEC_HR` only
     if the binary format can be verified from real data or a trustworthy public source.
   - Never present file metadata as decoded heart-rate samples; expose capability and
     coverage separately until actual samples pass validation.
-- [ ] Part 5 - Perform real historical synchronization and coverage acceptance.
+- [x] Part 5 - Perform real historical synchronization and coverage acceptance.
   - Synchronize the longest safe history supported by each stream with chunking that
     avoids vendor response caps and SQLite contention.
   - Report record counts, date coverage, device attribution, gaps, and residual raw-only
     streams without exposing identifiers or measured values.
   - Run focused tests, the complete suite, syntax checks, and `git diff --check`.
-- [ ] Part 6 - Establish the credential-continuity boundary.
+- [x] Part 6 - Establish the credential-continuity boundary.
   - Verify browser-link renewal while the official session remains valid and distinguish
     server token validity from extension cookie visibility.
   - Document that logout, cookie expiry, password changes, and vendor risk controls
     cannot be bypassed without an official refresh credential.
   - Fix any false `needs_login` transition that can be reproduced while the saved
     credential still validates.
-- [ ] Part 7 - Start the Balance 2 Zepp OS fallback channel if renewal is finite.
+- [x] Part 7 - Start the Balance 2 Zepp OS fallback channel if renewal is finite.
   - Scaffold a Zepp OS API_LEVEL-compatible device app, persistent app service, and
     companion-side upload path for Balance 2.
   - Collect only supported sensor data with explicit permissions and bounded buffering;
     do not claim Helio Strap support because it is not a Zepp OS app device.
   - Add local validation instructions and keep cloud synchronization as the historical
     source of truth.
-- [ ] Part 8 - Synchronize documentation and deliver.
+- [x] Part 8 - Synchronize documentation and deliver.
   - Update `README.md` and `docs/ARCHITECTURE.md` with implemented streams, provenance,
     history limits, renewal limits, and the Zepp OS fallback boundary.
   - Review changes for secrets and unrelated files, commit the verified implementation,
@@ -532,3 +532,38 @@ fallback when browser credentials cannot be renewed indefinitely.
   single-byte minute slots positioned by the item's local date and summary timezone;
   Charge, SDNN and RMSSD use `startTime` plus millisecond offsets, while readiness
   directly exposes skin-temperature, AHI, AFib, sleep-HRV and sleep-RHR fields.
+- Part 3 (structured normalization): minute heart rate, timestamped SDNN/RMSSD and
+  Charge/readiness samples, skin-temperature and sleep-derived readiness fields,
+  stress summaries, SpO2/ODI, PAI, respiratory rate and lactate threshold now use
+  vendor-neutral metric models. Device attribution participates in the time-series
+  uniqueness key so simultaneous Balance 2 and Helio Strap samples are not collapsed.
+- Part 4 (dense files): `second_heart_rate/real_data` indexes are normalized into a
+  dedicated table with coverage, device attribution and `parse_status=indexed`.
+  Signed URLs are not stored or exposed, file IDs are withheld from the health API,
+  and no samples are claimed because no verified `SEC_HR` payload contract was found.
+- Part 5 (real acceptance): a real 30-day end-to-end run completed all eight streams
+  successfully and performed 191,716 normalized write operations without an auth or
+  SQLite-lock failure. The live database contains structured coverage back to late
+  August 2025. A separate 365-day dense-index backfill processed all 53 seven-day
+  windows and retained 3,850 unique indexes spanning 2025-10-16 through 2026-08-28,
+  covering 316 dates and two device groups. The single absent dense-index date and
+  sparse SpO2/readiness dates remain honest vendor/wear gaps rather than fabricated
+  values.
+- Part 6 (credential boundary): extension 0.2.7 validates the saved server credential
+  when the browser cookie is temporarily invisible. `ZeppAuthError` now distinguishes
+  explicit 401/403 credential rejection from transient network/service failures; the
+  latter returns HTTP 503 and leaves the browser link connected. The focused API/sync
+  run passed 41 tests. The browser link is not an official refresh credential, so
+  logout, session expiry, password changes and vendor risk controls still require the
+  user to log in again.
+- Part 7 (Balance 2 fallback): added an API_LEVEL 4.2 Zepp OS app, bounded 3,600-sample
+  queue, background HeartRate callback service, phone-side authenticated HTTPS upload,
+  and digest-only server device links. High-power Accelerometer collection and Helio
+  Strap support are explicitly excluded. Three static contract tests and all nine
+  JavaScript syntax checks passed.
+- Part 8 (verification): `README.md` and `docs/ARCHITECTURE.md` now describe all eight
+  streams, provenance, dense-file limitations, credential continuity and the device
+  fallback. The complete suite passed 107 tests with 149 existing Python 3.14
+  deprecation warnings; `git diff --check` and the added-content secret scan passed.
+- Part 8 (delivery): commit `09f2102` (`feat: expand Zepp health coverage`) was pushed
+  from local `main` to `origin/main` successfully.

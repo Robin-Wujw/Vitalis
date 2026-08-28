@@ -40,6 +40,31 @@ Every implementation session must follow this order:
 - Existing user changes must be preserved. Unrelated cleanup is outside the task.
 - Test totals in project documentation must come from the latest full test run.
 
+### 3.1 Pre-production New-data-only Policy
+
+This repository is pre-production. Every change must target only the current contract
+and data ingested after that contract is implemented.
+
+- Do not preserve backward compatibility. Remove superseded endpoints, field names,
+  schemas, tools, classes, code paths, and tests instead of retaining aliases or
+  adapters.
+- Do not add legacy-data readers, version branches, dual reads/writes, migrations,
+  backfills, reinterpretation rules, or conversion jobs for data created by an older
+  contract.
+- Existing local data is disposable. When a schema or normalization contract changes,
+  clear the affected old data and ingest it again under the current contract rather
+  than making new code understand the old representation.
+- Do not infer a new required field from an obsolete field, endpoint label, text hint,
+  unrelated metric, default value, or another device stream.
+- Missing observations in newly ingested data remain explicit missing data and may
+  produce `INSUFFICIENT_DATA`; this is data-quality abstention, not a compatibility
+  fallback. Never replace missing measurements with zero or fabricated values.
+- Tests and fixtures must exercise only the current contract. Delete obsolete contract
+  expectations when the implementation changes.
+- An exception requires a new, explicit user instruction that names the exact legacy
+  contract or dataset to preserve. General requests to improve or extend Vitalis do
+  not authorize compatibility work.
+
 ## 4. Project Documentation Map
 
 - `README.md`: user-facing capabilities, setup, API usage, and current test result.
@@ -849,3 +874,31 @@ all statistics, classifications, and recommendations remain owned by Vitalis.
   entrypoints, Skill validation, four real-response JSON Schema validations, OpenAPI
   generation (31 paths, eight Intelligence paths), `git diff --check`, and the
   added-content secret scan passed.
+
+## 12. New-data-only Development Policy Session
+
+Date: 2026-08-28
+
+Goal: make the repository-wide pre-production policy explicit so future changes target
+only current contracts and newly ingested data, with no implicit compatibility or old
+data fallback work.
+
+### Detailed TODO
+
+- [x] Part 1 - Add the global new-data-only policy.
+  - Prohibit legacy endpoints, aliases, schema adapters, dual reads/writes, migrations,
+    backfills, reinterpretation, and old-contract fixtures by default.
+  - Treat affected existing local data as disposable and require re-ingestion under the
+    current contract.
+  - Preserve explicit missing-data abstention without confusing it with compatibility
+    fallback behavior.
+- [x] Part 2 - Verify and deliver the documentation contract.
+  - Confirm the rule is global rather than scoped only to one implementation session.
+  - Run Markdown diff validation, commit the policy, and push it to `origin/main`.
+
+### Verification Log
+
+- The policy is defined in `3.1 Pre-production New-data-only Policy`, before all work
+  session records, so it applies to every future repository change.
+- This is a documentation-only execution-policy change; application tests are not
+  affected. `git diff --check` passed.

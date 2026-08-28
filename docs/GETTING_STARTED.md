@@ -39,6 +39,37 @@ Important configuration:
 The deterministic analysis engine does not require an LLM. Hermes or another agent
 consumes structured Vitalis results and renders them separately.
 
+## Hermes Runtime
+
+Keep the checked-in Skill as the single source of truth by linking it into Hermes'
+local discovery tree from the repository root:
+
+```bash
+mkdir -p "$HOME/.hermes/skills/health"
+ln -s "$PWD/skills/vitalis" "$HOME/.hermes/skills/health/vitalis"
+```
+
+Do not copy the Skill or commit a local user identity. Configure the loopback API and
+the explicit local Vitalis user in Hermes' private `~/.hermes/.env` instead:
+
+```dotenv
+VITALIS_API=http://127.0.0.1:8000
+VITALIS_USER=<local-user-id>
+NO_PROXY=127.0.0.1,localhost
+```
+
+Start Vitalis, then verify discovery and fresh-session loading:
+
+```bash
+hermes skills list --source local --enabled-only
+hermes --skills vitalis prompt-size --json
+```
+
+The list must show `vitalis` as a local enabled Skill, and the prompt-size breakdown
+must resolve `vitalis` from the linked path. `VITALIS_USER` has no fallback: every tool
+passes that exact identity as `X-User-Id`. Hermes remains a Read / Analyze / Act
+orchestrator and must not calculate, merge, or fill health observations.
+
 ## Public Deployment
 
 Keep the application listener on a private or loopback interface and put a
@@ -96,7 +127,7 @@ Run the complete suite:
 .venv/bin/python -m pytest -q
 ```
 
-Current verified result: 165 tests passed. The suite covers connector parsing and
+Current verified result: 167 tests passed. The suite covers connector parsing and
 synchronization, browser pairing, health-data APIs, device isolation, baselines,
 Daily/Weekly/Monthly intelligence, health-event lifecycle, training response,
 personal associations, immutable snapshots, bounded Context, Timeline, push rendering,

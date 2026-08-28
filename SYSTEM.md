@@ -1132,3 +1132,70 @@ details. Preserve all operational and integration information in focused files u
   3.14 `datetime.utcnow()` deprecation warnings.
 - Part 4 delivery: commit `3708aeb` (`docs: turn README into product showcase`) was
   pushed from local `main` to `origin/main` successfully.
+
+## 16. Hermes Runtime Integration Session
+
+Date: 2026-08-28
+
+Goal: connect the local Hermes Agent runtime to the current Vitalis Health Intelligence
+API so Hermes can read and render one user's Balance 2 and Helio-derived structured
+results without performing health calculations or merging device streams.
+
+### Detailed TODO
+
+- [x] Part 1 - Register the current Vitalis Skill with Hermes.
+  - Install the repository Skill into the local Hermes Skill discovery path without
+    copying or forking its contracts.
+  - Keep Hermes as a Read / Analyze / Act orchestrator over the checked-in tools.
+  - Verify Hermes discovers and enables the Skill from a new session.
+- [x] Part 2 - Configure the explicit local runtime identity and API origin.
+  - Configure `VITALIS_API` for the loopback Vitalis service and set the explicit
+    current local user ID in Hermes' private environment.
+  - Do not add an implicit user fallback, expose vendor credentials, or commit local
+    identifiers and secrets.
+- [x] Part 3 - Verify the live Vitalis boundary end to end.
+  - Start the current Vitalis API against the existing current-schema database.
+  - Run a fresh deterministic analysis and verify Daily, Context, workout, and source
+    identity responses for the configured user.
+  - Confirm missing signals remain missing and Balance 2 / Helio-derived streams are
+    not averaged or relabeled by Hermes.
+- [ ] Part 4 - Document, test, and deliver the integration contract.
+  - Add only reusable Hermes runtime setup details to technical documentation; keep
+    machine-local IDs and credentials out of the repository.
+  - Add focused coverage for repo-to-Hermes discovery or runtime configuration where
+    the repository owns the behavior.
+  - Run focused and complete verification, commit and push the repository changes, and
+    record the exact live integration result here.
+
+### Verification Log
+
+- Part 1: `/root/.hermes/skills/health/vitalis` is a symbolic link to the checked-in
+  repository Skill, and its content matches the repository without a copy or fork.
+  Hermes Agent 0.20.5 lists `vitalis` as `health / local / enabled`. A fresh offline
+  prompt-size session resolved and loaded the linked `vitalis/SKILL.md`.
+- Part 2: Hermes' private environment contains the loopback
+  `VITALIS_API=http://127.0.0.1:8000`, an explicit current `VITALIS_USER`, and loopback
+  proxy exclusion. The local identifier remains outside the repository, and the Skill
+  has no implicit identity fallback.
+- Part 3: the current-schema real database contained sleep, activity, metric, daily
+  metric, and workout records through 2026-08-28. A fresh analysis for that latest
+  complete day succeeded under contracts Daily 3.0, Context 4.0, Training Response
+  1.0, and intelligence policy 3.0. Daily, Context, and all 25 training responses shared
+  one immutable AnalysisRun. Two independently attributed HRV device groups remained
+  separate in Daily and Training Response output. An inspected workout detail retained
+  2,829 sensor-unattributed samples as `source_scope=unknown` and `device_id=null`.
+  Insufficient 90-day trends, missing training-response windows, and unavailable
+  associations remained explicit rather than being filled or recalculated.
+- Part 3 (Hermes): one fresh Hermes session invoked `daily.py` and rendered only the
+  returned Chinese labels, prescriptions, limitations, nulls, and separate device
+  streams. A second fresh session invoked both `context.py` and
+  `training_responses.py`, confirmed the shared run identity, summarized available and
+  missing states, and did not output health measurements or device identifiers.
+- Part 4 (pre-delivery verification): `docs/GETTING_STARTED.md` now documents
+  repository-linked Hermes discovery,
+  private runtime configuration, and fresh-session checks without a machine-local user
+  identity. Two focused tests cover the absent user fallback, loopback API default, API
+  origin override, and exact `X-User-Id` forwarding. The focused Skill suite passed all
+  5 tests; the complete suite passed all 167 tests in 2.47 seconds with 184 existing
+  Python 3.14 `datetime.utcnow()` deprecation warnings. Repository and Skill tool
+  compilation plus `git diff --check` passed.

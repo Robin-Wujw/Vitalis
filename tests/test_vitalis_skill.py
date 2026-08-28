@@ -1,3 +1,4 @@
+import importlib.util
 import json
 from pathlib import Path
 
@@ -63,3 +64,50 @@ def test_skill_exposes_read_analyze_and_act_tools():
         "complete_recommendation.py",
     }
     assert expected <= {path.name for path in (SKILL / "tools").glob("*.py")}
+
+
+def test_skill_runtime_requires_explicit_user_and_uses_loopback_default(monkeypatch):
+    monkeypatch.delenv("VITALIS_API", raising=False)
+    monkeypatch.delenv("VITALIS_USER", raising=False)
+    spec = importlib.util.spec_from_file_location(
+        "vitalis_skill_client_test", SKILL / "tools" / "_client.py"
+    )
+    client = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(client)
+
+    assert client.API == "http://localhost:8000"
+    assert client.configured_user() is None
+    monkeypatch.setenv("VITALIS_USER", "explicit-local-user")
+    assert client.configured_user() == "explicit-local-user"
+
+
+def test_skill_client_passes_exact_runtime_identity(monkeypatch):
+    monkeypatch.setenv("VITALIS_API", "http://127.0.0.1:8765/")
+    spec = importlib.util.spec_from_file_location(
+        "vitalis_skill_client_request_test", SKILL / "tools" / "_client.py"
+    )
+    client = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(client)
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"status": "ok"}
+
+    def fake_request(method, url, **kwargs):
+        captured.update(method=method, url=url, **kwargs)
+        return Response()
+
+    monkeypatch.setattr(client.httpx, "request", fake_request)
+    assert client.request("GET", "daily", "explicit-local-user") == {"status": "ok"}
+    assert captured == {
+        "method": "GET",
+        "url": "http://127.0.0.1:8765/api/v1/intelligence/daily",
+        "headers": {"X-User-Id": "explicit-local-user"},
+        "timeout": 60.0,
+    }

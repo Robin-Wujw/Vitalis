@@ -759,7 +759,8 @@ actionable running and strength prescriptions instead of generic activity names.
 - Part 1: the workout catalog matches all 120 entries in the current public Zepp OS
   enum and adds the two distinct public legacy Huami cloud-history IDs. Decimal IDs
   `1`, `6`, `8`, `9`, `10`, `18`, `52`, `92`, `146`, and `191` are locked by tests;
-  unknown `999` remains explicit and carries no recognition confidence.
+  missing IDs and unknown `999` remain explicit and carry no recognition confidence;
+  endpoint or text hints are never used as compatibility fallbacks.
 - Part 2: the decision engine returns Chinese presentation fields and structured Zone
   2 running, full-body strength, recovery, and rest prescriptions. Push rendering uses
   only Chinese labels and includes exact workout mode and recognition confidence.
@@ -774,7 +775,7 @@ actionable running and strength prescriptions instead of generic activity names.
   runs over 230 minutes. All five recent workout types have high recognition
   confidence. The engine returns normal training, moderate confidence/intensity, and a
   45-60 minute Zone 2 running prescription in Chinese.
-- Part 4 (verification): all 130 tests passed with 153 existing Python 3.14
+- Part 4 (verification): all 131 tests passed with 153 existing Python 3.14
   `datetime.utcnow()` deprecation warnings. Python compilation, JSON parsing, live
   DailyProfile schema validation, skill validation, and `git diff --check` passed.
 - Part 4 (delivery): commit `c94ddd9` (`feat: add Chinese workout prescriptions`) was

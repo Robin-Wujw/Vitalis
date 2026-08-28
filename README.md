@@ -200,7 +200,7 @@ Cookie 暂时不可见时，扩展会调用 `/connect/zepp/link/validate` 验证
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest -q        # 130 个测试，全部通过
+.venv/bin/python -m pytest -q        # 131 个测试，全部通过
 ```
 
 覆盖范围：

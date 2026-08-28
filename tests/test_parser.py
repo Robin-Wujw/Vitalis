@@ -189,6 +189,20 @@ def test_unknown_numeric_sport_type_does_not_inherit_run_endpoint():
     assert rows[0].recognition_confidence_label == "无法识别"
 
 
+def test_missing_numeric_sport_type_does_not_use_text_or_endpoint_fallback():
+    rows = ZeppParser().parse_sport_history({
+        "data": {"summary": [{
+            "trackid": 1_777_334_400,
+            "end_time": 1_777_334_700,
+            "sportType": "running",
+        }]}
+    }, sport_hint="run")
+
+    assert rows[0].type == WorkoutType.OTHER
+    assert rows[0].sport_mode_label == "未知运动"
+    assert rows[0].recognition_confidence == "NONE"
+
+
 def test_sport_history_normalizes_vendor_negative_sentinels():
     rows = ZeppParser().parse_sport_history({
         "data": {

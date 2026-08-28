@@ -40,9 +40,9 @@ AFib diagnoses.
 Workout summaries retain the original numeric vendor type ID. `sport_types.py` maps
 all 120 currently public Zepp OS modes plus the two additional public legacy Huami
 cloud-history modes to a stable code, exact Chinese label, broad category, and training
-family. Known numeric definitions carry high recognition confidence; text-only
-fallbacks carry moderate confidence. Unknown IDs remain explicit and auditable rather
-than being guessed into a known activity.
+family. Known numeric definitions carry high recognition confidence. Missing or
+unknown IDs remain explicit and auditable rather than inheriting an endpoint label or
+being guessed into a known activity.
 
 Timestamped measurements remain stored in UTC. Daily intelligence groups them by the
 configured application timezone (`VITALIS_TIMEZONE`, currently `Asia/Shanghai`). Sleep

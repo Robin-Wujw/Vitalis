@@ -101,7 +101,7 @@
                   "sport_mode_label": {"type": "string"},
                   "training_family": {"type": "string"},
                   "training_family_label": {"type": "string"},
-                  "recognition_confidence": {"enum": ["NONE", "MODERATE", "HIGH"]},
+                  "recognition_confidence": {"enum": ["NONE", "HIGH"]},
                   "recognition_confidence_label": {"type": "string"},
                   "recognition_source": {"type": "string"},
                   "recognition_source_label": {"type": "string"},

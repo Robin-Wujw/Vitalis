@@ -174,11 +174,9 @@ class ZeppParser:
                     numeric_type = int(type_id.strip())
                 except ValueError:
                     pass
-            raw_mode = it.get("sportType") or it.get("sport")
-            # /run/history.json is an aggregate endpoint in real accounts. Only use
-            # its URL segment when the record itself has no numeric sport type.
-            fallback = str(raw_mode or (sport_hint if numeric_type is None else ""))
-            mode = resolve_sport_mode(numeric_type, fallback)
+            # This is an aggregate endpoint, so only the record's numeric type is
+            # authoritative. Missing IDs never inherit the URL or a textual hint.
+            mode = resolve_sport_mode(numeric_type)
             wtype = WorkoutType(mode.category)
             started = self._parse_start(it)
             avg_hr = self._first_number(

@@ -181,7 +181,7 @@ FAMILY_LABELS = {
 }
 
 
-def resolve_sport_mode(vendor_type_id: int | None, fallback: str = "") -> SportMode:
+def resolve_sport_mode(vendor_type_id: int | None) -> SportMode:
     if vendor_type_id is not None:
         known = ZEPP_SPORT_MODES.get(vendor_type_id)
         if known:
@@ -197,28 +197,6 @@ def resolve_sport_mode(vendor_type_id: int | None, fallback: str = "") -> SportM
             recognition_source_label="厂商编号未公开",
         )
 
-    fallback_modes = {
-        "run": ZEPP_SPORT_MODES[0x01],
-        "running": ZEPP_SPORT_MODES[0x01],
-        "walking": ZEPP_SPORT_MODES[0x03],
-        "ride": ZEPP_SPORT_MODES[0x04],
-        "cycling": ZEPP_SPORT_MODES[0x04],
-        "swimming": ZEPP_SPORT_MODES[0x06],
-        "strength": ZEPP_SPORT_MODES[0x34],
-        "yoga": ZEPP_SPORT_MODES[0x3C],
-    }
-    known_fallback = fallback_modes.get(fallback.lower())
-    if known_fallback:
-        return SportMode(
-            code=known_fallback.code,
-            label_zh=known_fallback.label_zh,
-            category=known_fallback.category,
-            family=known_fallback.family,
-            recognition_confidence="MODERATE",
-            recognition_confidence_label="中等",
-            recognition_source="vendor_text_fallback",
-            recognition_source_label="厂商文字类型",
-        )
     return SportMode(
         code="unknown",
         label_zh="未知运动",

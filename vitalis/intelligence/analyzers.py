@@ -236,17 +236,9 @@ class TrainingAnalyzer:
                 continue
             data = workout.get("data", {})
             workout_type = str(data.get("type", "")).lower()
-            sport_mode = str(data.get("sport_mode", workout_type or "unknown"))
-            sport_mode_label = str(data.get("sport_mode_label", CATEGORY_LABELS.get(workout_type, "未知运动")))
-            family = str(data.get("training_family") or {
-                "running": "aerobic",
-                "walking": "aerobic",
-                "cycling": "aerobic",
-                "swimming": "aerobic",
-                "strength": "strength",
-                "hiit": "mixed",
-                "yoga": "mobility",
-            }.get(workout_type, "skill"))
+            sport_mode = str(data.get("sport_mode") or "unknown")
+            sport_mode_label = str(data.get("sport_mode_label") or "未知运动")
+            family = str(data.get("training_family") or "skill")
             type_counts[workout_type] = type_counts.get(workout_type, 0) + 1
             type_labels[workout_type] = CATEGORY_LABELS.get(workout_type, "其他运动")
             mode_counts[sport_mode_label] = mode_counts.get(sport_mode_label, 0) + 1

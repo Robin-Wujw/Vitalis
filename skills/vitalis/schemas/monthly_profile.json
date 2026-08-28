@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vitalis.local/schemas/monthly-profile-1.0.json",
+  "title": "Vitalis MonthlyProfile 1.0",
+  "type": "object",
+  "required": ["schema_version", "analysis_run_id", "intelligence_version", "decision_policy_version", "evidence_version", "user_id", "period_start", "period_end", "generated_at", "data_quality", "facts", "inferences", "actions", "evidence_refs"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "analysis_run_id": {"type": "string"},
+    "intelligence_version": {"const": "3.0"},
+    "decision_policy_version": {"const": "3.0"},
+    "evidence_version": {"const": "2026-08"},
+    "user_id": {"type": "string"},
+    "period_start": {"type": "string", "format": "date"},
+    "period_end": {"type": "string", "format": "date"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "data_quality": {"type": "object", "required": ["status", "status_label", "confidence", "confidence_label", "limitations"]},
+    "facts": {"type": "object", "required": ["sleep", "recovery", "training", "activity", "feedback"]},
+    "inferences": {"type": "object", "required": ["trends", "events", "personal_associations", "key_changes", "limitations"]},
+    "actions": {"type": "object", "required": ["recommendations"]},
+    "evidence_refs": {"type": "array", "items": {"type": "object"}}
+  }
+}

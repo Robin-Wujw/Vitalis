@@ -14,6 +14,8 @@ from vitalis.intelligence.contracts import (
     HealthEventResponse,
     HealthTimeline,
     LinkRecommendationInput,
+    MonthlyProfile,
+    PersonalAssociationProfile,
     PersonalModel,
     RecommendationInstance,
     SubjectiveFeedback,
@@ -66,6 +68,18 @@ def weekly_profile(
     user_id: str = Depends(require_user_id),
 ) -> WeeklyProfile:
     return _snapshot_or_404(IntelligenceQuery().weekly(user_id, day))
+
+
+@router.get(
+    "/monthly",
+    response_model=MonthlyProfile,
+    summary="Read the directly computed 28-day profile",
+)
+def monthly_profile(
+    day: date | None = None,
+    user_id: str = Depends(require_user_id),
+) -> MonthlyProfile:
+    return _snapshot_or_404(IntelligenceQuery().monthly(user_id, day))
 
 
 @router.get("/trends", response_model=TrendResponse, summary="Get deterministic personal trends")
@@ -122,13 +136,25 @@ def training_responses(
 @router.get(
     "/personal-model",
     response_model=PersonalModel,
-    summary="Read Personal Model v1",
+    summary="Read Personal Model v2",
 )
 def personal_model(
     day: date | None = None,
     user_id: str = Depends(require_user_id),
 ) -> PersonalModel:
     return _snapshot_or_404(IntelligenceQuery().personal_model(user_id, day))
+
+
+@router.get(
+    "/personal-associations",
+    response_model=PersonalAssociationProfile,
+    summary="Read deterministic 60/90-day personal associations",
+)
+def personal_associations(
+    day: date | None = None,
+    user_id: str = Depends(require_user_id),
+) -> PersonalAssociationProfile:
+    return _snapshot_or_404(IntelligenceQuery().personal_associations(user_id, day))
 
 
 @router.get("/timeline", response_model=HealthTimeline, summary="Read the typed health timeline")

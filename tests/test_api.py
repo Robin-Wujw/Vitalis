@@ -75,8 +75,10 @@ def test_get_intelligence_without_snapshot_is_read_only(client):
     headers = {"X-User-Id": "no-analysis-snapshot"}
     assert client.get("/api/v1/intelligence/daily", headers=headers).status_code == 404
     assert client.get("/api/v1/intelligence/weekly", headers=headers).status_code == 404
+    assert client.get("/api/v1/intelligence/monthly", headers=headers).status_code == 404
     assert client.get("/api/v1/intelligence/training-responses", headers=headers).status_code == 404
     assert client.get("/api/v1/intelligence/personal-model", headers=headers).status_code == 404
+    assert client.get("/api/v1/intelligence/personal-associations", headers=headers).status_code == 404
     with session_scope() as db:
         from vitalis.storage.models import AnalysisRun
 
@@ -179,6 +181,11 @@ def test_intelligence_v3_routes_and_fact_inference_action_contract(client):
     assert weekly.status_code == 200
     assert set(weekly.json()) >= {"facts", "inferences", "actions"}
 
+    monthly = client.get("/api/v1/intelligence/monthly", headers=headers)
+    assert monthly.status_code == 200
+    assert set(monthly.json()) >= {"facts", "inferences", "actions"}
+    assert monthly.json()["period_start"] != weekly.json()["period_start"]
+
     trends = client.get("/api/v1/intelligence/trends", headers=headers)
     assert trends.status_code == 200
     assert set(trends.json()) >= {"user_id", "date", "trends"}
@@ -203,7 +210,13 @@ def test_intelligence_v3_routes_and_fact_inference_action_contract(client):
 
     personal = client.get("/api/v1/intelligence/personal-model", headers=headers)
     assert personal.status_code == 200
-    assert set(personal.json()) >= {"baselines", "long_term_trends", "training_response_patterns"}
+    assert set(personal.json()) >= {
+        "baselines", "long_term_trends", "training_response_patterns", "personal_associations"
+    }
+
+    associations = client.get("/api/v1/intelligence/personal-associations", headers=headers)
+    assert associations.status_code == 200
+    assert set(associations.json()) >= {"analysis_run_id", "associations", "limitations"}
 
     timeline = client.get("/api/v1/intelligence/timeline", headers=headers)
     assert timeline.status_code == 200

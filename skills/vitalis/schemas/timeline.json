@@ -12,7 +12,7 @@
         "type": "object",
         "required": ["id", "type", "date", "title", "summary", "references", "details"],
         "properties": {
-          "type": {"enum": ["analysis", "recommendation", "workout", "feedback", "event_transition", "training_response"]}
+          "type": {"enum": ["analysis", "recommendation", "workout", "feedback", "event_transition", "training_response", "monthly_summary", "personal_association"]}
         }
       }
     }

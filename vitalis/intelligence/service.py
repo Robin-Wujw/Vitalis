@@ -20,8 +20,10 @@ from .contracts import (
     HealthEvent,
     HealthEventResponse,
     HealthTimeline,
+    MonthlyProfile,
     ProfileFeatures,
     PersonalModel,
+    PersonalAssociationProfile,
     RecommendationInstance,
     SubjectiveFeedback,
     SubjectiveFeedbackInput,
@@ -30,11 +32,13 @@ from .contracts import (
     WeeklyProfile,
 )
 from .decision import DecisionEngine
+from .association import PersonalAssociationEngine
 from .context import AgentContextEngine
 from .events import HealthEventEngine
 from .lifecycle import EventLifecycleEngine
 from .profile import ProfileLoader
 from .personal import PersonalModelEngine
+from .monthly import MonthlyProfileEngine
 from .training_response import TrainingResponseEngine
 from .timeline import HealthTimelineEngine
 from .trend import TrendEngine
@@ -105,6 +109,11 @@ class IntelligenceCommand:
                     for item in response_feedback
                     if target - timedelta(days=6) <= item.date <= target
                 ]
+                monthly_feedback = [
+                    item.model_dump(mode="json")
+                    for item in response_feedback
+                    if target - timedelta(days=27) <= item.date <= target
+                ]
                 recommendation_by_workout = repo.recommendations_for_workouts(
                     user_id,
                     [item["workout_id"] for item in raw.workouts if item.get("workout_id")],
@@ -123,8 +132,12 @@ class IntelligenceCommand:
                 date=target,
                 responses=training_responses,
             )
+            association_profile = PersonalAssociationEngine().build(run.id, raw)
             personal_model = PersonalModelEngine().build(
-                run.id, daily, training_responses
+                run.id,
+                daily,
+                training_responses,
+                association_profile.associations,
             )
             recommendation = RecommendationInstance(
                 id=daily.decision.recommendation_id,
@@ -150,6 +163,18 @@ class IntelligenceCommand:
                     feedback=weekly_feedback,
                     evidence_refs=EVIDENCE_REFS,
                 )
+                monthly_events = repo.health_events(
+                    user_id, target - timedelta(days=27), target
+                )
+                monthly = MonthlyProfileEngine().build(
+                    run.id,
+                    raw,
+                    daily.trends,
+                    monthly_events,
+                    association_profile.associations,
+                    feedback=monthly_feedback,
+                    evidence_refs=EVIDENCE_REFS,
+                )
                 repo.save_recommendation(recommendation)
                 self._save_snapshot(repo, run.id, daily, "daily", target, target)
                 self._save_snapshot(
@@ -163,8 +188,24 @@ class IntelligenceCommand:
                 self._save_snapshot(
                     repo,
                     run.id,
+                    monthly,
+                    "monthly",
+                    monthly.period_start,
+                    monthly.period_end,
+                )
+                self._save_snapshot(
+                    repo,
+                    run.id,
                     response_profile,
                     "training_responses",
+                    target - timedelta(days=89),
+                    target,
+                )
+                self._save_snapshot(
+                    repo,
+                    run.id,
+                    association_profile,
+                    "personal_associations",
                     target - timedelta(days=89),
                     target,
                 )
@@ -182,9 +223,11 @@ class IntelligenceCommand:
                 run=completed_run,
                 daily=daily,
                 weekly=weekly,
+                monthly=monthly,
                 recommendation=recommendation,
                 training_responses=training_responses,
                 personal_model=personal_model,
+                personal_associations=association_profile,
             )
         except Exception as exc:
             with session_scope() as db:
@@ -260,6 +303,12 @@ class IntelligenceQuery:
         with session_scope() as db:
             row = HealthRepository(db).latest_analysis_snapshot(user_id, "weekly", target)
             return WeeklyProfile.model_validate(row.payload) if row else None
+
+    def monthly(self, user_id: str, day: date | None = None) -> MonthlyProfile | None:
+        target = day or local_today()
+        with session_scope() as db:
+            row = HealthRepository(db).latest_analysis_snapshot(user_id, "monthly", target)
+            return MonthlyProfile.model_validate(row.payload) if row else None
 
     def trends(self, user_id: str, day: date | None = None) -> TrendResponse | None:
         daily = self.daily(user_id, day)
@@ -356,8 +405,26 @@ class IntelligenceQuery:
             response_profile = (
                 TrainingResponseProfile.model_validate(row.payload) if row else None
             )
+            monthly_row = repo.latest_analysis_snapshot_on_or_before(
+                user_id, "monthly", end
+            )
+            monthly = MonthlyProfile.model_validate(monthly_row.payload) if monthly_row else None
+            association_row = repo.latest_analysis_snapshot_on_or_before(
+                user_id, "personal_associations", end
+            )
+            associations = (
+                PersonalAssociationProfile.model_validate(association_row.payload)
+                if association_row else None
+            )
             return HealthTimelineEngine().build(
-                repo, user_id, start, end, response_profile, limit
+                repo,
+                user_id,
+                start,
+                end,
+                response_profile,
+                monthly,
+                associations,
+                limit,
             )
 
     def feedback(
@@ -394,6 +461,16 @@ class IntelligenceQuery:
                 user_id, "personal_model", target
             )
             return PersonalModel.model_validate(row.payload) if row else None
+
+    def personal_associations(
+        self, user_id: str, day: date | None = None
+    ) -> PersonalAssociationProfile | None:
+        target = day or local_today()
+        with session_scope() as db:
+            row = HealthRepository(db).latest_analysis_snapshot(
+                user_id, "personal_associations", target
+            )
+            return PersonalAssociationProfile.model_validate(row.payload) if row else None
 
 
 

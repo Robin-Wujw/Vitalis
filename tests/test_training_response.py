@@ -164,7 +164,7 @@ def test_personal_model_groups_robust_response_statistics_without_merging_device
         trends=[],
     )
 
-    model = PersonalModelEngine().build("personal-run", daily, responses)
+    model = PersonalModelEngine().build("personal-run", daily, responses, [])
     family = next(
         item for item in model.training_response_patterns
         if item.group_type == "training_family" and item.group_key == "aerobic"

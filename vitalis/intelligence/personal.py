@@ -1,4 +1,4 @@
-"""Personal Model v1 built from robust descriptive statistics only."""
+"""Personal Model v2 built from robust descriptive statistics only."""
 
 from collections import defaultdict
 from statistics import median
@@ -8,6 +8,7 @@ from .contracts import (
     ConfidenceBand,
     PersonalMetricStats,
     PersonalModel,
+    PersonalAssociation,
     PersonalResponsePattern,
     RecoveryOutcome,
     TrainingResponse,
@@ -16,7 +17,13 @@ from .localization import CONFIDENCE_LABELS
 
 
 class PersonalModelEngine:
-    def build(self, analysis_run_id, daily, responses: list[TrainingResponse]) -> PersonalModel:
+    def build(
+        self,
+        analysis_run_id,
+        daily,
+        responses: list[TrainingResponse],
+        associations: list[PersonalAssociation],
+    ) -> PersonalModel:
         baselines = [
             item
             for metric in daily.baselines.values()
@@ -56,6 +63,13 @@ class PersonalModelEngine:
             limitations.append("尚无可用于建立训练响应模式的历史训练。")
         elif all(item.confidence in {ConfidenceBand.NONE, ConfidenceBand.LOW} for item in patterns):
             limitations.append("训练响应样本量或覆盖率有限，个人模式仍处于早期阶段。")
+        supported_associations = [
+            item for item in associations
+            if item.status == Availability.AVAILABLE
+            and item.confidence in {ConfidenceBand.MODERATE, ConfidenceBand.HIGH}
+        ]
+        if not supported_associations:
+            limitations.append("尚无中等或较高置信度的 60/90 天个人关联。")
         return PersonalModel(
             analysis_run_id=analysis_run_id,
             user_id=daily.user_id,
@@ -63,6 +77,7 @@ class PersonalModelEngine:
             baselines=baselines,
             long_term_trends=trends,
             training_response_patterns=patterns,
+            personal_associations=supported_associations,
             limitations=limitations,
         )
 

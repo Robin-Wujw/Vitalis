@@ -5,7 +5,15 @@ from datetime import date
 from vitalis.storage import HealthRepository
 from vitalis.time import local_day
 
-from .contracts import HealthTimeline, TimelineItem, TrainingResponseProfile
+from .contracts import (
+    Availability,
+    ConfidenceBand,
+    HealthTimeline,
+    MonthlyProfile,
+    PersonalAssociationProfile,
+    TimelineItem,
+    TrainingResponseProfile,
+)
 
 
 EVENT_LIFECYCLE_LABELS = {
@@ -24,6 +32,8 @@ class HealthTimelineEngine:
         start: date,
         end: date,
         response_profile: TrainingResponseProfile | None,
+        monthly: MonthlyProfile | None,
+        association_profile: PersonalAssociationProfile | None,
         limit: int = 100,
     ) -> HealthTimeline:
         items: list[TimelineItem] = []
@@ -142,6 +152,56 @@ class HealthTimelineEngine:
                         "recovery_hours": response.recovery_hours,
                         "confidence_label": response.confidence_label,
                         "overlap_count": len(response.overlapping_workout_ids),
+                    },
+                ))
+        if monthly and start <= monthly.period_end <= end:
+            items.append(TimelineItem(
+                id=f"monthly:{monthly.analysis_run_id}",
+                type="monthly_summary",
+                date=monthly.period_end,
+                title="近 28 天健康总结",
+                summary="；".join(monthly.inferences.key_changes[:3]) or "已完成 28 天周期分析",
+                references={"analysis_run_id": monthly.analysis_run_id},
+                details={
+                    "period_start": monthly.period_start.isoformat(),
+                    "period_end": monthly.period_end.isoformat(),
+                    "quality_label": monthly.data_quality.status_label,
+                    **(
+                        {"workout_count": monthly.facts.training.workout_count}
+                        if monthly.facts.training.workout_count is not None else {}
+                    ),
+                    **(
+                        {"training_duration_minutes": monthly.facts.training.duration_minutes}
+                        if monthly.facts.training.duration_minutes is not None else {}
+                    ),
+                },
+            ))
+        if association_profile and start <= association_profile.date <= end:
+            supported = [
+                item for item in association_profile.associations
+                if item.status == Availability.AVAILABLE
+                and item.confidence in {ConfidenceBand.MODERATE, ConfidenceBand.HIGH}
+            ]
+            supported.sort(
+                key=lambda item: (abs(item.coefficient or 0), item.window_days), reverse=True
+            )
+            for association in supported[:6]:
+                items.append(TimelineItem(
+                    id=f"association:{association_profile.analysis_run_id}:{association.id}",
+                    type="personal_association",
+                    date=association_profile.date,
+                    title="个人关联模式",
+                    summary=association.summary,
+                    references={
+                        "analysis_run_id": association_profile.analysis_run_id,
+                        "association_id": association.id,
+                    },
+                    details={
+                        "window_days": association.window_days,
+                        "lag_days": association.lag_days,
+                        "coefficient": association.coefficient,
+                        "confidence_label": association.confidence_label,
+                        "association_only": True,
                     },
                 ))
         items.sort(key=lambda item: (item.date, item.type, item.id), reverse=True)

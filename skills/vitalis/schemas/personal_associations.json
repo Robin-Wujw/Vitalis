@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vitalis.local/schemas/personal-associations-1.0.json",
+  "title": "Vitalis PersonalAssociationProfile 1.0",
+  "type": "object",
+  "required": ["schema_version", "analysis_run_id", "intelligence_version", "decision_policy_version", "evidence_version", "user_id", "date", "generated_at", "associations", "limitations"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "analysis_run_id": {"type": "string"},
+    "intelligence_version": {"const": "3.0"},
+    "decision_policy_version": {"const": "3.0"},
+    "evidence_version": {"const": "2026-08"},
+    "user_id": {"type": "string"},
+    "date": {"type": "string", "format": "date"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "associations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "status", "status_label", "predictor_metric", "predictor_metric_label", "predictor_source", "predictor_source_scope", "predictor_unit", "outcome_metric", "outcome_metric_label", "outcome_source", "outcome_source_scope", "outcome_unit", "lag_days", "window_days", "paired_days", "minimum_paired_days", "coverage_ratio", "method", "direction", "direction_label", "strength", "strength_label", "confidence", "confidence_label", "confounded_pair_days", "summary", "limitations", "association_only"],
+        "properties": {
+          "method": {"const": "SPEARMAN"},
+          "lag_days": {"enum": [0, 1]},
+          "window_days": {"enum": [60, 90]},
+          "coefficient": {"type": ["number", "null"], "minimum": -1, "maximum": 1},
+          "association_only": {"const": true}
+        }
+      }
+    },
+    "limitations": {"type": "array", "items": {"type": "string"}}
+  }
+}

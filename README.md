@@ -12,9 +12,9 @@
                           │
         Health Intelligence Command / Query API
                           │
- Quality → Baseline → Features → Trends → Event Lifecycle
+ Quality → Baseline → Features → Trends → Events → Monthly
                           │
-      Decision → Recommendation → Workout → Response
+ Decision → Recommendation → Workout → Response → Association
                           │
                     Personal Model
                           │
@@ -113,11 +113,13 @@ Vitalis 通过用户浏览器中的官方登录会话连接 Zepp，不要求打�
 - Trend Engine 按指标、来源和设备分别计算 7/28/90 天中位数、前期对比、变化率、斜率、MAD 波动、覆盖率、方向与置信度；缺失值不补零，多设备 HRV 不合并。
 - HealthEvent 只在持续偏离或明确周期变化时生成，覆盖 HRV、静息心率、睡眠、训练负荷/中断、恢复和活动变化；事件按已发现、持续中、改善中、已恢复推进，用户确认时间与生理生命周期彼此独立。
 - WeeklyProfile 严格区分 `facts`、`inferences` 和 `actions`，汇总睡眠、恢复、训练、活动及主观反馈，并与前一周比较。
-- `POST /intelligence/analyze` 创建不可变 AnalysisRun，并同时保存 Daily、Weekly、Training Response 和 Personal Model 快照；所有 GET 只读快照，缺少结果时返回 404。
+- MonthlyProfile 固定覆盖截至目标日期的 28 个本地日，并与此前 28 日比较；睡眠、恢复设备流、训练、活动和反馈都从规范化历史直接重算，不由四份周报拼接。
+- Personal Association Engine 对睡眠、训练负荷、步数与次日/同日 HRV、RHR、睡眠进行设备隔离的 60/90 天 Spearman 等级相关计算。缺失日期成对排除，60 天至少 30 对、90 天至少 45 对，同时要求至少 50% 覆盖和有效变异。结果只表示关联，不表示因果。
+- `POST /intelligence/analyze` 创建不可变 AnalysisRun，并同时保存 Daily、Weekly、Monthly、Training Response、Personal Association 和 Personal Model 快照；所有 GET 只读快照，缺少结果时返回 404。
 - 每个 Daily 决策都有 RecommendationInstance。完成状态只能由用户把建议显式关联到真实 workout，系统不按时间或文本猜测；session RPE 必须带 workout ID。
 - Training Response 使用训练前设备级 28 天基线和 T+1/T+2/T+3 HRV、RHR、睡眠与主观反馈；缺失窗口和重叠训练明确标记，不产生综合压力分。
-- Personal Model v1 按训练家族和具体运动模式汇总响应的中位数、MAD、样本量、覆盖率与置信度，只陈述个人关联模式。
-- Hermes Context 只提供有界的 Current、Recent、Trend、Personal 四层摘要；Health Timeline 只投影类型化事件，不携带原始样本。
+- Personal Model v2 保留按训练家族和具体运动模式汇总的响应分布，并只纳入中等或较高置信度的 60/90 天个人关联。
+- Hermes Context 4.0 只提供有界的 Current、Recent、Trend、Personal 四层摘要；个人层最多包含 6 条训练响应模式和 6 条个人关联。Health Timeline 只投影类型化事件，不携带原始样本。
 - 各事件面按 7 天窗口拉取；API 和同步入口最多接受 730 天。实际覆盖取决于账号创建时间、佩戴情况和厂商保留窗口，空白日期不会被补造。
 
 ### 运动期间高频心率
@@ -173,12 +175,14 @@ Helio Strap 不能运行 Zepp OS 应用，所以这条通道仅适用于 Balance
 | POST | `/intelligence/analyze?day=YYYY-MM-DD` | 显式运行一次分析并保存不可变结果 |
 | GET | `/intelligence/daily?day=YYYY-MM-DD` | DailyProfile：质量、事实、基线、趋势、事件、状态、决策 |
 | GET | `/intelligence/weekly?day=YYYY-MM-DD` | WeeklyProfile：事实、推断、行动与前周比较 |
+| GET | `/intelligence/monthly?day=YYYY-MM-DD` | MonthlyProfile：直接计算的近 28 天事实、推断与行动 |
 | GET | `/intelligence/trends?day=YYYY-MM-DD` | 按设备隔离的 7/28/90 天趋势 |
 | GET | `/intelligence/events?start=&end=&event_type=` | 持续健康事件 |
 | GET | `/intelligence/explain?day=YYYY-MM-DD` | 训练决策的事实 → 推断 → 行动解释 |
 | GET | `/intelligence/context?day=YYYY-MM-DD` | Hermes 所需的有界结构化上下文 |
 | GET | `/intelligence/training-responses?day=YYYY-MM-DD` | 训练后 T+1/T+2/T+3 响应 |
 | GET | `/intelligence/personal-model?day=YYYY-MM-DD` | 个人基线、长期趋势和训练响应模式 |
+| GET | `/intelligence/personal-associations?day=YYYY-MM-DD` | 设备隔离的 60/90 天个人关联评估 |
 | GET | `/intelligence/timeline?start=&end=&limit=` | 类型化健康时间线摘要 |
 | GET | `/intelligence/recommendations/{id}` | 查询一次具体训练建议 |
 | POST | `/intelligence/recommendations/{id}/complete` | 显式关联完成该建议的 workout |
@@ -220,6 +224,10 @@ curl 'localhost:8000/api/v1/intelligence/daily?day=2026-08-27' \
 curl 'localhost:8000/api/v1/intelligence/weekly?day=2026-08-28' \
   -H 'X-User-Id: <local-user-id>'
 
+# 获取直接计算的近 28 天周期分析
+curl 'localhost:8000/api/v1/intelligence/monthly?day=2026-08-28' \
+  -H 'X-User-Id: <local-user-id>'
+
 # 记录训练后的主观用力程度和身体疲劳（RPE 必须关联真实 workout）
 curl -X POST localhost:8000/api/v1/intelligence/feedback \
   -H 'Content-Type: application/json' -H 'X-User-Id: <local-user-id>' \
@@ -244,7 +252,7 @@ Cookie 暂时不可见时，扩展会调用 `/connect/zepp/link/validate` 验证
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest -q        # 161 个测试，全部通过
+.venv/bin/python -m pytest -q
 ```
 
 覆盖范围：
@@ -258,6 +266,7 @@ Cookie 暂时不可见时，扩展会调用 `/connect/zepp/link/validate` 验证
 - `test_baseline_engine.py` — 设备/指标隔离、日聚合、7/28 天 robust baseline
 - `test_profile_loader.py` — 数据质量、身份隔离和 provenance
 - `test_intelligence_analyzers.py` — 睡眠/HRV/恢复/训练与确定性决策
+- `test_longitudinal_intelligence.py` — 28 天月度计算、60/90 天关联、配对门槛和设备隔离
 - `test_intelligence_contracts.py` — DailyProfile 版本化契约和无分数兜底语义
 - `test_trend_engine.py` — 7/28/90 天趋势、覆盖率和设备隔离
 - `test_health_events.py` — 持续事件检测、稳定 ID、持久化和用户确认

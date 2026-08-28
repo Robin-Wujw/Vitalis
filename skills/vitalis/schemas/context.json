@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/context-3.0.json",
-  "title": "Vitalis AgentContext 3.0",
+  "$id": "https://vitalis.local/schemas/context-4.0.json",
+  "title": "Vitalis AgentContext 4.0",
   "type": "object",
   "required": ["schema_version", "user_id", "date", "current", "recent", "trend", "personal"],
   "properties": {
-    "schema_version": {"const": "3.0"},
+    "schema_version": {"const": "4.0"},
     "user_id": {"type": "string"},
     "date": {"type": "string", "format": "date"},
     "current": {"type": "object", "required": ["analysis_run_id", "action", "action_label", "recommendation_id"]},
@@ -20,8 +20,11 @@
     "trend": {"type": "array", "maxItems": 12},
     "personal": {
       "type": "object",
-      "required": ["patterns", "limitations"],
-      "properties": {"patterns": {"type": "array", "maxItems": 6}}
+      "required": ["patterns", "associations", "limitations"],
+      "properties": {
+        "patterns": {"type": "array", "maxItems": 6},
+        "associations": {"type": "array", "maxItems": 6}
+      }
     }
   }
 }

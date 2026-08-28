@@ -3,6 +3,7 @@
 from .contracts import (
     AgentContext,
     ContextCurrent,
+    ContextAssociation,
     ContextEvent,
     ContextFeedback,
     ContextPattern,
@@ -126,6 +127,33 @@ class AgentContextEngine:
                     ],
                 )
                 for item in patterns
+            ],
+            associations=[
+                ContextAssociation(
+                    id=item.id,
+                    predictor_metric_label=item.predictor_metric_label,
+                    outcome_metric_label=item.outcome_metric_label,
+                    predictor_device_id=item.predictor_device_id,
+                    outcome_device_id=item.outcome_device_id,
+                    lag_days=item.lag_days,
+                    window_days=item.window_days,
+                    coefficient=item.coefficient,
+                    direction_label=item.direction_label,
+                    strength_label=item.strength_label,
+                    confidence=item.confidence,
+                    confidence_label=item.confidence_label,
+                    summary=item.summary,
+                )
+                for item in sorted(
+                    personal_model.personal_associations,
+                    key=lambda value: (
+                        confidence_rank[value.confidence.value],
+                        abs(value.coefficient or 0),
+                        value.window_days,
+                    ),
+                    reverse=True,
+                )[:6]
+                if item.coefficient is not None
             ],
             limitations=personal_model.limitations[:3],
         )

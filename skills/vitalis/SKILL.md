@@ -7,7 +7,8 @@ description: Use Vitalis Health Intelligence APIs for deterministic Chinese heal
 
 Vitalis is a renderer and orchestrator over the Health Intelligence API. The Python
 engine owns normalization, quality, baselines, features, trends, event lifecycles,
-decisions, recommendations, training responses, personal models, and snapshots. Never reproduce those calculations in the model.
+decisions, recommendations, monthly analysis, personal associations, training responses,
+personal models, and snapshots. Never reproduce those calculations in the model.
 
 ## Required Flow
 
@@ -26,7 +27,8 @@ codes exist only for program control and must never appear in the answer.
 ## Hard Boundaries
 
 - Do not create, average, transform, score, threshold, or trend health measurements.
-- Do not calculate a WeeklyProfile by combining DailyProfiles.
+- Do not calculate a WeeklyProfile or MonthlyProfile by combining shorter profiles.
+- Do not calculate, rank, or reinterpret correlation coefficients.
 - Do not calculate training response, recovery time, personal patterns, or timeline
   relationships from DailyProfiles or raw fields.
 - Do not change `decision.action`, `decision.confidence`, intensity, duration, drivers,
@@ -46,6 +48,8 @@ codes exist only for program control and must never appear in the answer.
 - Morning status or today's training: call `tools/daily.py`, then `workflows/morning.md`.
 - Evening summary or tonight's focus: call `tools/daily.py`, then `workflows/evening.md`.
 - Weekly review: call `tools/weekly.py`, then `workflows/weekly.md`.
+- Monthly review or recent 28-day cycle: call `tools/monthly.py`, then
+  `workflows/monthly.md`.
 - Trends or recent changes: call `tools/trends.py` or `tools/events.py`, then
   `workflows/on_demand.md`.
 - "Why this recommendation?": call `tools/explain.py`, then `workflows/on_demand.md`.
@@ -54,6 +58,8 @@ codes exist only for program control and must never appear in the answer.
   the returned Daily, Weekly, response, or personal result.
 - Training response: call `tools/training_responses.py`, then `workflows/on_demand.md`.
 - Personal patterns: call `tools/personal_model.py`, then `workflows/on_demand.md`.
+- Cross-metric personal associations: call `tools/personal_associations.py`, then
+  `workflows/on_demand.md`.
 - Recent sequence of events: call `tools/timeline.py`, then `workflows/on_demand.md`.
 - Mark a recommendation completed only after the user identifies both the recommendation
   and completed workout: call `tools/complete_recommendation.py`.

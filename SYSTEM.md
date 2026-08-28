@@ -1001,3 +1001,77 @@ adapted.
   read, backfilled, or used as a fallback.
 - Part 7 delivery: implementation commit `aa04d31` (`feat: add personal health
   intelligence loop`) was pushed from local `main` to `origin/main` successfully.
+
+## 14. Longitudinal Health Intelligence Session
+
+Date: 2026-08-28
+
+Goal: extend the current-only intelligence pipeline with a directly computed 28-day
+MonthlyProfile and deterministic 60/90-day personal associations. All results belong
+to one immutable AnalysisRun, preserve metric and device identity, and remain bounded
+structured inputs for Hermes rather than model-side calculations.
+
+### Detailed TODO
+
+- [x] Part 1 - Define MonthlyProfile and personal-association contracts.
+  - Define one month as the 28 local days ending on the requested date and compare it
+    with the immediately preceding 28 local days; do not support calendar-month or
+    legacy variants.
+  - Preserve fact, inference, and action separation, explicit missingness, version
+    identity, source/device identity, and Chinese presentation fields.
+  - Define associations as descriptive patterns only, never diagnoses or causal claims.
+- [x] Part 2 - Implement MonthlyProfile from normalized history.
+  - Recompute sleep, recovery observations, training, activity, feedback, changes,
+    events, and recommendations directly from normalized records.
+  - Never construct MonthlyProfile by combining WeeklyProfile snapshots.
+  - Exclude absent observations rather than replacing them with zero or vendor scores.
+- [x] Part 3 - Implement deterministic 60/90-day personal associations.
+  - Use Spearman rank correlation with deterministic average ranks for ties and
+    pairwise exclusion of missing days.
+  - Require at least 30 paired days for 60-day windows and 45 for 90-day windows,
+    adequate coverage, and meaningful variation in both variables.
+  - Keep HRV and RHR streams isolated by metric, source, scope, device, and unit; add
+    overlap and observational-design limitations instead of causal interpretation.
+- [x] Part 4 - Persist and expose longitudinal intelligence.
+  - Persist immutable MonthlyProfile and personal-association snapshots under the same
+    successful AnalysisRun as Daily, Weekly, Training Response, and Personal Model.
+  - Add current-only, read-only API queries and incorporate supported patterns into
+    Personal Model v2, Timeline, and bounded Current/Recent/Trend/Personal Context.
+  - Keep every GET side-effect free and return explicit not-found/insufficient results.
+- [x] Part 5 - Extend Hermes and documentation.
+  - Add Read tools and JSON Schemas for MonthlyProfile and personal associations.
+  - Route monthly, personal-pattern, and explanation requests to Vitalis outputs; Hermes
+    must not recompute correlations, aggregate periods, or infer causal relationships.
+  - Update README and architecture documentation with current contracts and boundaries.
+- [ ] Part 6 - Verify, deliver, and record the result.
+  - Run focused and full tests, Python compilation, Skill validation, OpenAPI checks,
+    live JSON Schema validation, context-size validation, diff checks, and secret scan.
+  - Commit and push the implementation to `origin/main`, then record the exact delivery
+    commit and final verification state in this session.
+
+### Verification Log
+
+- Parts 1-3: MonthlyProfile uses one fixed 28-local-day period and the preceding 28
+  days, recomputing facts directly from normalized history. Personal associations use
+  deterministic Spearman average ranks across fixed 60/90-day candidates, pairwise
+  missing-data exclusion, 30/45-pair minimums, 50% coverage, meaningful-variation
+  gates, and full metric/source/scope/device/unit identity. Training on an outcome day
+  is recorded as a potential confounder and can lower confidence. Focused tests verify
+  positive and negative device-isolated HRV associations, tied values, insufficient
+  variation, exact month boundaries, and explicit missing training records.
+- Part 4: one successful AnalysisRun now persists immutable Daily, Weekly, Monthly,
+  Training Response, Personal Association, and Personal Model v2 snapshots. New GET
+  queries are read-only; supported associations are bounded in Personal Model, Context
+  4.0, and Timeline summaries. Missing training coverage remains null and produces an
+  abstention instead of a zero-derived volume recommendation.
+- Part 5: Hermes exposes dedicated Monthly and Personal Association Read tools, a
+  monthly workflow, and current JSON Schemas. It is explicitly prohibited from
+  assembling monthly output, recomputing correlations, or converting association into
+  causality or a new action. The official Skill validator and every tool `--help`
+  entrypoint passed.
+- Part 6 verification: all 165 tests passed with 184 existing Python 3.14
+  `datetime.utcnow()` deprecation warnings. Python compilation, `git diff --check`, and
+  added-content secret scanning passed. A fresh current-schema database produced five
+  live responses that passed JSON Schema validation; OpenAPI contains 39 paths, the
+  MonthlyProfile spans exactly 28 days, and serialized Context is 5,837 bytes against
+  the 20 KB limit. Delivery is pending commit and push.

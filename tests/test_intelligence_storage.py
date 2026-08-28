@@ -107,7 +107,7 @@ def test_analysis_snapshots_are_immutable_per_run():
     assert rows[0].analysis_run_id != rows[1].analysis_run_id
 
 
-def test_command_persists_one_run_and_daily_weekly_snapshots():
+def test_command_persists_one_run_and_all_intelligence_snapshots():
     user_id = "pipeline-snapshot-user"
     with session_scope() as db:
         repo = HealthRepository(db)
@@ -148,10 +148,13 @@ def test_command_persists_one_run_and_daily_weekly_snapshots():
     result = IntelligenceCommand().analyze(user_id, TARGET)
     daily = result.daily
     weekly = result.weekly
+    monthly = result.monthly
 
     assert result.run.status == AnalysisRunStatus.SUCCEEDED
     assert result.run.completed_at is not None
     assert daily.analysis_run_id == result.run.id == weekly.analysis_run_id
+    assert monthly.analysis_run_id == result.run.id
+    assert result.personal_associations.analysis_run_id == result.run.id
     assert result.recommendation.id == daily.decision.recommendation_id
     assert result.recommendation.analysis_run_id == result.run.id
     assert weekly.facts.feedback.response_count == 1
@@ -170,12 +173,20 @@ def test_command_persists_one_run_and_daily_weekly_snapshots():
         personal_rows = repo.analysis_snapshots(
             user_id, "personal_model", TARGET, TARGET
         )
+        monthly_rows = repo.analysis_snapshots(
+            user_id, "monthly", TARGET - timedelta(days=27), TARGET
+        )
+        association_rows = repo.analysis_snapshots(
+            user_id, "personal_associations", TARGET - timedelta(days=89), TARGET
+        )
     assert len(daily_rows) == 1
     assert daily_rows[0].payload["date"] == daily.date.isoformat()
     assert len(weekly_rows) == 1
     assert weekly_rows[0].payload["period_end"] == TARGET.isoformat()
     assert len(response_rows) == 1
     assert len(personal_rows) == 1
+    assert len(monthly_rows) == 1
+    assert len(association_rows) == 1
     assert personal_rows[0].payload["analysis_run_id"] == result.run.id
 
 
@@ -189,6 +200,8 @@ def test_queries_are_read_only_and_return_latest_immutable_run():
     query = IntelligenceQuery()
     assert query.daily(user_id, TARGET) is None
     assert query.weekly(user_id, TARGET) is None
+    assert query.monthly(user_id, TARGET) is None
+    assert query.personal_associations(user_id, TARGET) is None
     with session_scope() as db:
         assert db.query(OrmAnalysisRun).filter_by(user_id=user_id).count() == 0
 
@@ -201,6 +214,8 @@ def test_queries_are_read_only_and_return_latest_immutable_run():
         repo = HealthRepository(db)
         assert len(repo.analysis_snapshots(user_id, "daily", TARGET, TARGET)) == 2
         assert len(repo.analysis_snapshots(user_id, "weekly", TARGET, TARGET)) == 2
+        assert len(repo.analysis_snapshots(user_id, "monthly", TARGET, TARGET)) == 2
+        assert len(repo.analysis_snapshots(user_id, "personal_associations", TARGET, TARGET)) == 2
 
 
 def test_recommendation_completion_and_feedback_form_an_explicit_identity_chain():

@@ -12,4 +12,7 @@
 训练响应问题只使用 TrainingResponse：明确区分 T+1/T+2/T+3、设备流、缺失窗口与
 重叠训练；只有 `recovery_hours` 非空时才说明恢复时长。个人规律只使用 PersonalModel
 中的中位数、MAD、样本量、覆盖率和置信度，并称为“关联”或“个人模式”，不得称为
-因果。时间线只按已返回的 typed summary 说明先后顺序，不得从时间接近推断因果。
+因果。PersonalAssociation 只能复述 `summary`、配对天数、覆盖率、系数、强度、置信度
+和限制；必须说明 `association_only=true` 的含义，不得自行筛选阈值、计算显著性或把
+弱关联升级为行动建议。时间线只按已返回的 typed summary 说明先后顺序，不得从时间
+接近推断因果。

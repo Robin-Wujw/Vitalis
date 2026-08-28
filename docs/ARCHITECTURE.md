@@ -1,4 +1,4 @@
-# Vitalis Health Intelligence Architecture v3.0
+# Vitalis Health Intelligence Architecture v3.1
 
 ## 1. System Boundary
 
@@ -12,9 +12,9 @@ Assistant
 Intelligence                  v
   Sync -> Analyze command -> immutable AnalysisRun / snapshots
                               |
-  Quality -> Baseline -> Features -> Trends -> Event Lifecycle
+  Quality -> Baseline -> Features -> Trends -> Event Lifecycle -> Monthly
                               |
-  Decision -> Recommendation -> Workout -> Response -> Personal Model
+  Decision -> Recommendation -> Workout -> Response -> Association -> Personal Model
                               |
 Data                          v
   Zepp connector -> normalized records -> SQLite/PostgreSQL
@@ -22,7 +22,8 @@ Data                          v
 
 Hermes is not an analysis engine. It may select and phrase fields from structured
 Vitalis responses, but cannot calculate trends, weekly aggregates, scores, thresholds,
-training responses, recovery time, personal patterns, confidence, or replacement advice.
+training responses, recovery time, monthly aggregates, correlations, personal patterns,
+confidence, or replacement advice.
 
 ## 2. Data Layer
 
@@ -69,6 +70,8 @@ The implementation lives in `vitalis/intelligence`:
 | `events.py` | Persistent deviations and period-change event detection |
 | `lifecycle.py` | Event observations and DETECTED/PERSISTING/IMPROVING/RESOLVED transitions |
 | `weekly.py` | Weekly facts, inferences, and deterministic actions |
+| `monthly.py` | Direct 28-day facts, inferences, comparison, and actions |
+| `association.py` | Device-isolated 60/90-day Spearman personal associations |
 | `training_response.py` | Device-isolated pre-workout baseline and T+1/T+2/T+3 response analysis |
 | `personal.py` | Robust per-family and per-mode personal response distributions |
 | `context.py` | Bounded Current/Recent/Trend/Personal agent context |
@@ -157,12 +160,32 @@ Vitalis `inferences`, and deterministic `actions`. Recovery events take priority
 generic volume targets. Subjective RPE, physical fatigue, mental state, soreness, and
 notes remain distinct from device facts and are never inferred when absent.
 
-An explicit analysis command persists one immutable AnalysisRun and one immutable
-Daily, Weekly, Training Response, and Personal Model snapshot. Repeated analysis creates
-new runs rather than overwriting prior output. GET requests only read the most recent
-persisted result for the requested date and return 404 when none exists.
+An explicit analysis command persists one immutable AnalysisRun and immutable Daily,
+Weekly, Monthly, Training Response, Personal Association, and Personal Model snapshots.
+Repeated analysis creates new runs rather than overwriting prior output. GET requests
+only read the most recent persisted result for the requested date and return 404 when
+none exists.
 
-### 3.6 Recommendation, Training Response, and Personal Model
+### 3.6 MonthlyProfile and Personal Associations
+
+MonthlyProfile covers exactly 28 local days ending on the requested date and compares
+them with the immediately preceding 28 days. It is recomputed from normalized sleep,
+activity, training, workout, metric-stream, feedback, trend, and event data. It is not
+assembled from WeeklyProfile snapshots. Facts, inferences, and actions remain separate.
+
+The Personal Association Engine evaluates fixed, documented candidate pairs across
+60- and 90-day windows. Sleep duration and training load are paired with next-day HRV,
+RHR, and sleep; steps are paired with same-day sleep. Each measurement stream retains
+metric, source, source scope, device ID, and unit. Missing days are excluded pairwise,
+never zero-filled. Spearman ranks use deterministic average ranks for ties.
+
+A 60-day association requires at least 30 paired days; a 90-day association requires
+45. Both require at least 50% coverage and meaningful variation in predictor and
+outcome. Training on an outcome day is counted as a potential confounder and can lower
+confidence. Strength bands (`<0.2`, `0.2-0.4`, `0.4-0.6`, `>=0.6`) are product display
+policy. Every result has `association_only=true`; it is descriptive and never causal.
+
+### 3.7 Recommendation, Training Response, and Personal Model
 
 Every Daily decision has a RecommendationInstance tied to its AnalysisRun. Completion
 requires an explicit user-scoped link to one stored workout; Vitalis never infers it
@@ -176,19 +199,20 @@ the result confounded. Recovery hours are emitted only when HRV has returned nea
 baseline, RHR near/below baseline, available sleep is not below baseline, and the window
 is not confounded. This is deterministic product policy, not a medical recovery model.
 
-Personal Model v1 groups responses by training family and exact sport mode. It reports
+Personal Model v2 groups responses by training family and exact sport mode. It reports
 median, MAD, sample count, eligible count, coverage, and coverage-derived confidence for
-each device-specific response stream. It contains no ML, synthetic stress score, or
-causal claim.
+each device-specific response stream. It also includes only medium/high-confidence
+personal associations. It contains no ML, synthetic stress score, or causal claim.
 
-### 3.7 Timeline and Agent Context
+### 3.8 Timeline and Agent Context
 
 Health Timeline projects typed summaries for analysis, recommendation, workout,
-feedback, event transition, and training response. It never copies raw sensor or
-workout samples. Agent Context 3.0 contains only bounded Current, Recent, Trend, and
-Personal layers, with hard item caps and no embedded Daily/Weekly payloads.
+feedback, event transition, training response, monthly summary, and supported personal
+association. It never copies raw sensor or workout samples. Agent Context 4.0 contains
+only bounded Current, Recent, Trend, and Personal layers, with hard item caps and no
+embedded Daily/Weekly/Monthly payloads.
 
-### 3.8 Feature and Decision Policy
+### 3.9 Feature and Decision Policy
 
 The preferred HRV stream must have a target-day observation. Selection ranks usable
 28-day coverage first, then metric preference (`RMSSD`, sleep HRV, SDNN). Every current
@@ -232,12 +256,14 @@ The Health Intelligence API is:
 POST /api/v1/intelligence/analyze
 GET  /api/v1/intelligence/daily
 GET  /api/v1/intelligence/weekly
+GET  /api/v1/intelligence/monthly
 GET  /api/v1/intelligence/trends
 GET  /api/v1/intelligence/events
 GET  /api/v1/intelligence/explain
 GET  /api/v1/intelligence/context
 GET  /api/v1/intelligence/training-responses
 GET  /api/v1/intelligence/personal-model
+GET  /api/v1/intelligence/personal-associations
 GET  /api/v1/intelligence/timeline
 GET  /api/v1/intelligence/recommendations/{recommendation_id}
 POST /api/v1/intelligence/recommendations/{recommendation_id}/complete
@@ -254,8 +280,8 @@ pre-production.
 prototype `/api/v1/health/today` and `/api/v1/analyze` paths were removed because the
 application is pre-production and no compatibility contract is required.
 
-`skills/vitalis` exposes Read tools for persisted Daily, Weekly, trends, events,
-training responses, Personal Model, timeline, and context. Analyze is an explicit POST
+`skills/vitalis` exposes Read tools for persisted Daily, Weekly, Monthly, trends, events,
+training responses, associations, Personal Model, timeline, and context. Analyze is an explicit POST
 tool. Act covers synchronization, recommendation completion, subjective feedback, and
 event acknowledgement. Every user-facing value comes from Chinese labels or structured
 engine fields. Hermes never derives one intelligence contract from another.
@@ -287,14 +313,14 @@ so `device_validity.status` remains `UNKNOWN`.
 ## 7. Current Scope
 
 Implemented: immutable AnalysisRun snapshots, command/query separation, versioned
-Daily/Weekly, recommendation/workout/feedback identity, device-isolated Training
-Response v1, Personal Model v1 robust distributions, event lifecycle observations,
+Daily/Weekly/Monthly, recommendation/workout/feedback identity, device-isolated Training
+Response v1, Personal Model v2 robust distributions and supported personal associations, event lifecycle observations,
 typed Timeline, bounded layered Context, deterministic quality/provenance, 7/28-day
 baselines, 7/28/90-day trends, explainable decisions, 122 public workout IDs, Chinese
 presentation contracts, structured running/strength prescriptions, scheduled analysis,
 and thin Hermes Read/Analyze/Act tools.
 
-Not implemented: general cross-metric 60/90-day correlation discovery, monthly profile,
-minute-level stress load, Energy Dynamics, body composition/BP intelligence, forecasts,
+Not implemented: unrestricted exploratory correlation discovery, minute-level stress
+load, Energy Dynamics, body composition/BP intelligence, forecasts,
 or medical alerts. These require explicit new contracts and validation rather than LLM
 inference.

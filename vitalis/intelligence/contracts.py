@@ -12,11 +12,13 @@ DateValue = date
 
 DAILY_SCHEMA_VERSION = "3.0"
 WEEKLY_SCHEMA_VERSION = "2.0"
+MONTHLY_SCHEMA_VERSION = "1.0"
 INTELLIGENCE_VERSION = "3.0"
 DECISION_POLICY_VERSION = "3.0"
 EVIDENCE_VERSION = "2026-08"
 TRAINING_RESPONSE_SCHEMA_VERSION = "1.0"
-PERSONAL_MODEL_SCHEMA_VERSION = "1.0"
+PERSONAL_MODEL_SCHEMA_VERSION = "2.0"
+ASSOCIATION_SCHEMA_VERSION = "1.0"
 
 
 class Availability(str, Enum):
@@ -529,6 +531,164 @@ class WeeklyProfile(BaseModel):
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
 
 
+class MonthlyDataQuality(BaseModel):
+    status: QualityStatus
+    status_label: str
+    sleep_days: int = Field(ge=0, le=28)
+    hrv_days: int = Field(ge=0, le=28)
+    activity_days: int = Field(ge=0, le=28)
+    training_record_days: int = Field(ge=0, le=28)
+    training_days: int | None = Field(default=None, ge=0, le=28)
+    confidence: ConfidenceBand
+    confidence_label: str
+    limitations: list[str] = Field(default_factory=list)
+
+
+class MonthlySleepFacts(BaseModel):
+    available_days: int = Field(ge=0, le=28)
+    average_minutes: float | None = None
+    median_minutes: float | None = None
+    previous_average_minutes: float | None = None
+    change_percent: float | None = None
+    bedtime_regularity_minutes: float | None = None
+
+
+class MonthlyRecoveryStreamFacts(BaseModel):
+    metric: str
+    metric_label: str
+    source: str
+    source_scope: str
+    device_id: str | None = None
+    unit: str
+    available_days: int = Field(ge=0, le=28)
+    previous_available_days: int = Field(ge=0, le=28)
+    median: float | None = None
+    previous_median: float | None = None
+    change_percent: float | None = None
+
+
+class MonthlyRecoveryFacts(BaseModel):
+    streams: list[MonthlyRecoveryStreamFacts] = Field(default_factory=list)
+
+
+class MonthlyTrainingFacts(BaseModel):
+    record_days: int = Field(ge=0, le=28)
+    workout_count: int | None = Field(default=None, ge=0)
+    training_days: int | None = Field(default=None, ge=0, le=28)
+    rest_days: int | None = Field(default=None, ge=0, le=28)
+    duration_minutes: int | None = Field(default=None, ge=0)
+    vendor_load: float | None = Field(default=None, ge=0)
+    previous_vendor_load: float | None = Field(default=None, ge=0)
+    load_change_percent: float | None = None
+    aerobic_minutes: int | None = Field(default=None, ge=0)
+    strength_sessions: int | None = Field(default=None, ge=0)
+    sport_mode_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class MonthlyActivityFacts(BaseModel):
+    available_days: int = Field(ge=0, le=28)
+    total_steps: int | None = Field(default=None, ge=0)
+    average_steps: float | None = Field(default=None, ge=0)
+    previous_average_steps: float | None = Field(default=None, ge=0)
+    steps_change_percent: float | None = None
+    active_minutes: int | None = Field(default=None, ge=0)
+
+
+class MonthlyFeedbackFacts(BaseModel):
+    response_count: int = Field(ge=0)
+    average_session_rpe: float | None = Field(default=None, ge=1, le=10)
+    average_physical_fatigue: float | None = Field(default=None, ge=1, le=5)
+    average_mental_state: float | None = Field(default=None, ge=1, le=5)
+    average_muscle_soreness: float | None = Field(default=None, ge=1, le=5)
+
+
+class MonthlyFacts(BaseModel):
+    sleep: MonthlySleepFacts
+    recovery: MonthlyRecoveryFacts
+    training: MonthlyTrainingFacts
+    activity: MonthlyActivityFacts
+    feedback: MonthlyFeedbackFacts
+
+
+class PersonalAssociation(BaseModel):
+    id: str
+    status: Availability
+    status_label: str
+    predictor_metric: str
+    predictor_metric_label: str
+    predictor_source: str
+    predictor_source_scope: str
+    predictor_device_id: str | None = None
+    predictor_unit: str
+    outcome_metric: str
+    outcome_metric_label: str
+    outcome_source: str
+    outcome_source_scope: str
+    outcome_device_id: str | None = None
+    outcome_unit: str
+    lag_days: Literal[0, 1]
+    window_days: Literal[60, 90]
+    paired_days: int = Field(ge=0)
+    minimum_paired_days: int = Field(ge=1)
+    coverage_ratio: float = Field(ge=0, le=1)
+    method: Literal["SPEARMAN"] = "SPEARMAN"
+    coefficient: float | None = Field(default=None, ge=-1, le=1)
+    direction: Literal["POSITIVE", "NEGATIVE", "NEUTRAL", "INSUFFICIENT_DATA"]
+    direction_label: str
+    strength: Literal["WEAK", "MODEST", "MODERATE", "STRONG", "INSUFFICIENT_DATA"]
+    strength_label: str
+    confidence: ConfidenceBand
+    confidence_label: str
+    predictor_median: float | None = None
+    outcome_median: float | None = None
+    confounded_pair_days: int = Field(default=0, ge=0)
+    summary: str
+    limitations: list[str] = Field(default_factory=list)
+    association_only: Literal[True] = True
+
+
+class PersonalAssociationProfile(BaseModel):
+    schema_version: str = ASSOCIATION_SCHEMA_VERSION
+    analysis_run_id: str
+    intelligence_version: str = INTELLIGENCE_VERSION
+    decision_policy_version: str = DECISION_POLICY_VERSION
+    evidence_version: str = EVIDENCE_VERSION
+    user_id: str
+    date: DateValue
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    associations: list[PersonalAssociation] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class MonthlyInferences(BaseModel):
+    trends: list[TrendFeature] = Field(default_factory=list)
+    events: list[HealthEvent] = Field(default_factory=list)
+    personal_associations: list[PersonalAssociation] = Field(default_factory=list)
+    key_changes: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class MonthlyActions(BaseModel):
+    recommendations: list[WeeklyRecommendation] = Field(default_factory=list)
+
+
+class MonthlyProfile(BaseModel):
+    schema_version: str = MONTHLY_SCHEMA_VERSION
+    analysis_run_id: str
+    intelligence_version: str = INTELLIGENCE_VERSION
+    decision_policy_version: str = DECISION_POLICY_VERSION
+    evidence_version: str = EVIDENCE_VERSION
+    user_id: str
+    period_start: date
+    period_end: date
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    data_quality: MonthlyDataQuality
+    facts: MonthlyFacts
+    inferences: MonthlyInferences
+    actions: MonthlyActions
+    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+
+
 class SubjectiveFeedbackInput(BaseModel):
     date: DateValue | None = None
     workout_id: str | None = Field(default=None, max_length=128)
@@ -714,13 +874,30 @@ class ContextPattern(BaseModel):
     metrics: list[ContextPatternMetric] = Field(default_factory=list, max_length=3)
 
 
+class ContextAssociation(BaseModel):
+    id: str
+    predictor_metric_label: str
+    outcome_metric_label: str
+    predictor_device_id: str | None = None
+    outcome_device_id: str | None = None
+    lag_days: Literal[0, 1]
+    window_days: Literal[60, 90]
+    coefficient: float
+    direction_label: str
+    strength_label: str
+    confidence: ConfidenceBand
+    confidence_label: str
+    summary: str
+
+
 class ContextPersonal(BaseModel):
     patterns: list[ContextPattern] = Field(default_factory=list, max_length=6)
+    associations: list[ContextAssociation] = Field(default_factory=list, max_length=6)
     limitations: list[str] = Field(default_factory=list, max_length=3)
 
 
 class AgentContext(BaseModel):
-    schema_version: Literal["3.0"] = "3.0"
+    schema_version: Literal["4.0"] = "4.0"
     user_id: str
     date: DateValue
     current: ContextCurrent
@@ -738,6 +915,8 @@ class TimelineItem(BaseModel):
         "feedback",
         "event_transition",
         "training_response",
+        "monthly_summary",
+        "personal_association",
     ]
     date: DateValue
     title: str
@@ -864,6 +1043,7 @@ class PersonalModel(BaseModel):
     baselines: list[BaselineStats] = Field(default_factory=list)
     long_term_trends: list[TrendFeature] = Field(default_factory=list)
     training_response_patterns: list[PersonalResponsePattern] = Field(default_factory=list)
+    personal_associations: list[PersonalAssociation] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
 
 
@@ -888,6 +1068,8 @@ class AnalysisResult(BaseModel):
     run: AnalysisRun
     daily: DailyProfile
     weekly: WeeklyProfile
+    monthly: MonthlyProfile
     recommendation: RecommendationInstance
     training_responses: list[TrainingResponse] = Field(default_factory=list)
     personal_model: PersonalModel
+    personal_associations: PersonalAssociationProfile

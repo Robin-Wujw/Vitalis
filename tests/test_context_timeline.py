@@ -30,6 +30,7 @@ def test_agent_context_is_layered_bounded_and_contains_no_full_profiles():
     assert len(payload["trend"]) <= 12
     assert len(payload["recent"]["active_events"]) <= 5
     assert len(payload["personal"]["patterns"]) <= 6
+    assert len(payload["personal"]["associations"]) <= 6
     assert len(encoded) < 20_000
 
 
@@ -74,7 +75,10 @@ def test_timeline_projects_typed_summaries_without_raw_samples():
     item_types = {item["type"] for item in payload["items"]}
     encoded = json.dumps(payload, ensure_ascii=False)
 
-    assert {"analysis", "recommendation", "workout", "feedback", "training_response"} <= item_types
+    assert {
+        "analysis", "recommendation", "workout", "feedback", "training_response",
+        "monthly_summary",
+    } <= item_types
     assert len(payload["items"]) <= 100
     assert "metric_samples" not in encoded
     assert "workout_samples" not in encoded

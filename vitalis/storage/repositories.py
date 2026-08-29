@@ -22,6 +22,7 @@ from vitalis.intelligence.contracts import (
     HealthEventObservation,
     RecommendationInstance,
     RecommendationStatus,
+    StrengthExerciseRecord,
     SubjectiveFeedback,
 )
 
@@ -523,6 +524,62 @@ class HealthRepository:
                 orm.Workout.workout_id == workout_id,
             )
         ).scalar_one_or_none()
+
+    def replace_strength_exercises(
+        self,
+        user_id: str,
+        workout_id: str,
+        exercises: list[StrengthExerciseRecord],
+    ) -> list[StrengthExerciseRecord]:
+        self.db.execute(delete(orm.StrengthExercise).where(
+            orm.StrengthExercise.user_id == user_id,
+            orm.StrengthExercise.workout_id == workout_id,
+        ))
+        self.db.add_all([
+            orm.StrengthExercise(**item.model_dump(mode="python"))
+            for item in exercises
+        ])
+        self.db.flush()
+        return exercises
+
+    def strength_exercises_for_workouts(
+        self, user_id: str, workout_ids: list[str]
+    ) -> dict[str, list[StrengthExerciseRecord]]:
+        if not workout_ids:
+            return {}
+        rows = self.db.execute(select(orm.StrengthExercise).where(
+            orm.StrengthExercise.user_id == user_id,
+            orm.StrengthExercise.workout_id.in_(workout_ids),
+        ).order_by(
+            orm.StrengthExercise.workout_id,
+            orm.StrengthExercise.order,
+        )).scalars().all()
+        output: dict[str, list[StrengthExerciseRecord]] = {}
+        for row in rows:
+            output.setdefault(row.workout_id, []).append(StrengthExerciseRecord(
+                id=row.id,
+                user_id=row.user_id,
+                workout_id=row.workout_id,
+                order=row.order,
+                exercise_name=row.exercise_name,
+                exercise_id=row.exercise_id,
+                session_focus=row.session_focus,
+                movement_pattern=row.movement_pattern,
+                movement_pattern_label=row.movement_pattern_label,
+                muscle_groups=list(row.muscle_groups or []),
+                muscle_group_labels=list(row.muscle_group_labels or []),
+                sets=row.sets,
+                repetitions=row.repetitions,
+                weight_kg=row.weight_kg,
+                rpe=row.rpe,
+                rir=row.rir,
+                rest_seconds=row.rest_seconds,
+                source=row.source,
+                confidence=row.confidence,
+                confidence_label=row.confidence_label,
+                created_at=row.created_at.replace(tzinfo=timezone.utc),
+            ))
+        return output
 
     # ---- 健康智能事件 ----
 
@@ -1057,7 +1114,8 @@ class HealthRepository:
     def delete_for_user(self, user_id: str) -> None:
         for model in (
             orm.Device, orm.SleepRecord, orm.ActivityRecord, orm.TrainingRecord,
-            orm.MetricSample, orm.DailyMetric, orm.DenseDataFile, orm.Workout,
+            orm.MetricSample, orm.DailyMetric, orm.DenseDataFile,
+            orm.WorkoutMetricSample, orm.StrengthExercise, orm.Workout,
             orm.HealthEventObservation, orm.HealthEventRecord, orm.AnalysisSnapshot,
             orm.RecommendationInstance,
             orm.AnalysisRun,

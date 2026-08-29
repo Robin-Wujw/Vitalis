@@ -30,6 +30,7 @@ from .profile import (
     device_measurement_site,
 )
 from .running import RunningAnalyzer
+from .strength import StrengthAnalyzer
 from vitalis.connectors.zepp.sport_types import CATEGORY_LABELS, FAMILY_LABELS
 from .localization import (
     AVAILABILITY_LABELS,
@@ -412,6 +413,7 @@ class TrainingAnalyzer:
             limitations.append("training_load_28d_baseline_insufficient")
         limitations.append("session_rpe_unavailable")
         running = RunningAnalyzer().analyze(raw)
+        strength = StrengthAnalyzer().analyze(raw)
         if running.sessions_28d and running.zone_method == "unavailable":
             limitations.append("aerobic_intensity_classification_unavailable")
         return TrainingFeatures(
@@ -431,6 +433,7 @@ class TrainingAnalyzer:
             sport_mode_counts_7d=dict(sorted(mode_counts.items())),
             recent_workouts=sorted(recent_workouts, key=lambda item: item.date, reverse=True),
             running=running,
+            strength=strength,
             load_deviation=deviation,
             load_state=load_state,
             load_state_label=LOAD_LABELS[load_state.value],

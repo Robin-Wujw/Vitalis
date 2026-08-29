@@ -56,6 +56,7 @@ class RawDailyProfile:
     activity_by_day: dict[date, dict] = field(default_factory=dict)
     training_by_day: dict[date, dict] = field(default_factory=dict)
     workouts: list[dict] = field(default_factory=list)
+    feedback_by_workout: dict[str, list] = field(default_factory=dict)
     device_models: dict[str, str] = field(default_factory=dict)
     dense_heart_rate_coverage: dict[str, dict] = field(default_factory=dict)
     facts: dict[str, list[MeasurementFact]] = field(default_factory=dict)
@@ -99,6 +100,9 @@ class ProfileLoader:
         samples_by_workout: dict[str, list] = defaultdict(list)
         for sample in self.repo.workout_metric_samples_for_workouts(user_id, detail_ids):
             samples_by_workout[sample.workout_id].append(sample)
+        exercises_by_workout = self.repo.strength_exercises_for_workouts(
+            user_id, [row.workout_id for row in workout_rows]
+        )
         raw.workouts = [
             {
                 "workout_id": row.workout_id,
@@ -109,6 +113,7 @@ class ProfileLoader:
                 "detail_available": row.detail_synced,
                 "detail": row.detail or None,
                 "samples": samples_by_workout.get(row.workout_id, []),
+                "confirmed_exercises": exercises_by_workout.get(row.workout_id, []),
                 "data": row.data or {},
             }
             for row in workout_rows

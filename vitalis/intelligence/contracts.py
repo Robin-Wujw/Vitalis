@@ -429,6 +429,131 @@ class RunningAnalysis(BaseModel):
     limitations: list[str] = Field(default_factory=list)
 
 
+class StrengthExerciseInput(BaseModel):
+    exercise_name: str = Field(min_length=1, max_length=100)
+    exercise_id: str | None = Field(default=None, max_length=100)
+    sets: int | None = Field(default=None, ge=1, le=100)
+    repetitions: str | None = Field(default=None, max_length=50)
+    weight_kg: float | None = Field(default=None, ge=0, le=2000)
+    rpe: float | None = Field(default=None, ge=1, le=10)
+    rir: float | None = Field(default=None, ge=0, le=10)
+    rest_seconds: int | None = Field(default=None, ge=0, le=3600)
+
+
+class StrengthWorkoutConfirmationInput(BaseModel):
+    session_focus: Literal[
+        "PUSH", "PULL", "LEGS", "UPPER", "LOWER", "FULL_BODY",
+        "CHEST", "BACK", "SHOULDERS", "ARMS",
+    ] | None = None
+    exercises: list[StrengthExerciseInput] = Field(min_length=1, max_length=50)
+
+
+class StrengthExerciseRecord(BaseModel):
+    id: str
+    user_id: str
+    workout_id: str
+    order: int = Field(ge=1)
+    exercise_name: str
+    exercise_id: str | None = None
+    session_focus: str | None = None
+    movement_pattern: Literal[
+        "squat",
+        "hinge",
+        "horizontal_push",
+        "horizontal_pull",
+        "vertical_push",
+        "vertical_pull",
+        "unilateral_leg",
+        "core",
+        "carry",
+        "isolation",
+        "unknown",
+    ]
+    movement_pattern_label: str
+    muscle_groups: list[str] = Field(default_factory=list)
+    muscle_group_labels: list[str] = Field(default_factory=list)
+    sets: int | None = Field(default=None, ge=1)
+    repetitions: str | None = None
+    weight_kg: float | None = Field(default=None, ge=0)
+    rpe: float | None = Field(default=None, ge=1, le=10)
+    rir: float | None = Field(default=None, ge=0, le=10)
+    rest_seconds: int | None = Field(default=None, ge=0)
+    source: Literal["user_confirmed", "vendor_explicit"]
+    confidence: ConfidenceBand
+    confidence_label: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ExerciseHypothesis(BaseModel):
+    exercise_name: str | None = None
+    movement_pattern: str = "unknown"
+    movement_pattern_label: str = "动作模式未知"
+    muscle_groups: list[str] = Field(default_factory=list)
+    muscle_group_labels: list[str] = Field(default_factory=list)
+    estimated_work_bouts: int | None = Field(default=None, ge=1)
+    confidence: ConfidenceBand
+    confidence_label: str
+    source: Literal["heart_rate_structure", "rotation_history"]
+    evidence: list[str] = Field(default_factory=list)
+
+
+class StrengthSessionAnalysis(BaseModel):
+    workout_id: str
+    date: DateValue
+    duration_minutes: int = Field(ge=0)
+    focus: Literal[
+        "PUSH", "PULL", "LEGS", "UPPER", "LOWER", "FULL_BODY",
+        "CHEST", "BACK", "SHOULDERS", "ARMS", "UNKNOWN",
+    ]
+    focus_label: str
+    confidence: ConfidenceBand
+    confidence_label: str
+    explicit_exercises: list[StrengthExerciseRecord] = Field(default_factory=list)
+    hypotheses: list[ExerciseHypothesis] = Field(default_factory=list)
+    movement_patterns: list[str] = Field(default_factory=list)
+    movement_pattern_labels: list[str] = Field(default_factory=list)
+    muscle_groups: list[str] = Field(default_factory=list)
+    muscle_group_labels: list[str] = Field(default_factory=list)
+    total_sets: int | None = Field(default=None, ge=0)
+    estimated_work_bouts: int | None = Field(default=None, ge=0)
+    median_work_seconds: float | None = Field(default=None, ge=0)
+    median_rest_seconds: float | None = Field(default=None, ge=0)
+    average_heart_rate_bpm: float | None = Field(default=None, ge=1)
+    maximum_heart_rate_bpm: float | None = Field(default=None, ge=1)
+    heart_rate_zones: list[RunningHeartRateZone] = Field(default_factory=list)
+    session_rpe: float | None = Field(default=None, ge=1, le=10)
+    muscle_soreness: int | None = Field(default=None, ge=1, le=5)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class MuscleRecoveryStatus(BaseModel):
+    muscle_group: str
+    muscle_group_label: str
+    days_since_last_trained: int | None = Field(default=None, ge=0)
+    last_session_rpe: float | None = Field(default=None, ge=1, le=10)
+    latest_soreness: int | None = Field(default=None, ge=1, le=5)
+
+
+class StrengthAnalysis(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    status: Availability
+    status_label: str
+    sessions_7d: int = Field(ge=0)
+    sessions_28d: int = Field(ge=0)
+    explicit_session_coverage: float = Field(ge=0, le=1)
+    detected_split: Literal[
+        "FULL_BODY", "UPPER_LOWER", "PUSH_PULL_LEGS", "FIVE_DAY", "UNRESOLVED"
+    ] = "UNRESOLVED"
+    detected_split_label: str = "尚未识别训练分化"
+    split_confidence: ConfidenceBand = ConfidenceBand.NONE
+    split_confidence_label: str = "无"
+    next_focus: str | None = None
+    next_focus_label: str | None = None
+    recent_sessions: list[StrengthSessionAnalysis] = Field(default_factory=list, max_length=8)
+    muscle_recovery: list[MuscleRecoveryStatus] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
 class TrainingFeatures(BaseModel):
     status: Availability
     status_label: str = ""
@@ -446,6 +571,7 @@ class TrainingFeatures(BaseModel):
     sport_mode_counts_7d: dict[str, int] = Field(default_factory=dict)
     recent_workouts: list[WorkoutFeature] = Field(default_factory=list)
     running: RunningAnalysis | None = None
+    strength: StrengthAnalysis | None = None
     load_deviation: Deviation | None = None
     load_state: LoadState = LoadState.INSUFFICIENT_DATA
     load_state_label: str = ""

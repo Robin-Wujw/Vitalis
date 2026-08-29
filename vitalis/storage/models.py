@@ -184,6 +184,39 @@ class WorkoutMetricSample(Base):
     device_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
+class StrengthExercise(Base):
+    """One explicit strength exercise attached to a user-owned workout."""
+
+    __tablename__ = "strength_exercises"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "workout_id", "order", name="uq_strength_exercise_order"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    workout_id: Mapped[str] = mapped_column(String(128), index=True)
+    order: Mapped[int] = mapped_column(Integer)
+    exercise_name: Mapped[str] = mapped_column(String(100))
+    exercise_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    session_focus: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    movement_pattern: Mapped[str] = mapped_column(String(32), index=True)
+    movement_pattern_label: Mapped[str] = mapped_column(String(40))
+    muscle_groups: Mapped[list] = mapped_column(JSON, default=list)
+    muscle_group_labels: Mapped[list] = mapped_column(JSON, default=list)
+    sets: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    repetitions: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    weight_kg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rpe: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rir: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rest_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source: Mapped[str] = mapped_column(String(24))
+    confidence: Mapped[str] = mapped_column(String(16))
+    confidence_label: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class HealthEventRecord(Base):
     """A deterministic, explainable event emitted by the intelligence engine."""
 

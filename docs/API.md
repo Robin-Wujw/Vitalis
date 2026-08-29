@@ -41,6 +41,7 @@ semantics.
 | POST | `/intelligence/recommendations/{id}/complete` | Explicitly link a recommendation to a completed workout |
 | POST | `/intelligence/feedback` | Record RPE, fatigue, mental state, soreness, or notes |
 | GET | `/intelligence/feedback?start=&end=` | Read subjective feedback |
+| POST | `/intelligence/workouts/{workout_id}/strength-exercises` | Replace confirmed exercises and session focus for a user-owned strength workout |
 | POST | `/intelligence/events/{id}/acknowledge` | Acknowledge a user-scoped event |
 
 ## Health Data and Synchronization
@@ -95,6 +96,26 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/feedback' \
   }'
 ```
 
+Confirm the exercises in one strength workout. This replaces that workout's current
+exercise list and does not infer old records:
+
+```bash
+curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/strength-exercises' \
+  -H 'Content-Type: application/json' \
+  -H 'X-User-Id: <local-user-id>' \
+  -d '{
+    "session_focus": "PUSH",
+    "exercises": [{
+      "exercise_name": "卧推",
+      "sets": 4,
+      "repetitions": "8",
+      "weight_kg": 60,
+      "rir": 2,
+      "rest_seconds": 120
+    }]
+  }'
+```
+
 ## Contract Boundaries
 
 - `POST /intelligence/analyze` is the calculation command; GET endpoints do not run or
@@ -105,6 +126,8 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/feedback' \
 - Missing measurements remain null or produce explicit insufficient-data state.
 - Workout-detail samples use `metric`, `value`, and `unit`; the removed heart-rate-only
   sample shape is not retained as an alias.
+- Exact strength exercises come only from explicit vendor sets or user confirmation.
+  Heart rate can estimate work/rest structure but not exercise identity or load.
 - Internal enum codes are for program control; Chinese `*_label` fields are the
   presentation contract.
 - Association responses are observational and always carry `association_only=true`.

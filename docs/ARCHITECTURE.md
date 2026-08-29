@@ -75,6 +75,7 @@ The implementation lives in `vitalis/intelligence`:
 | `baseline.py` | Device/metric-specific 7-day and 28-day robust statistics |
 | `analyzers.py` | Sleep, HRV/RHR, recovery, and training feature extraction |
 | `running.py` | Individual-threshold zones, cadence, pace/HR drift, segments, session type, and 7/28-day running structure |
+| `strength.py` | Confirmed exercises, movement and muscle knowledge, work/rest structure, split state, and muscle recovery context |
 | `decision.py` | Explainable training action policy with abstention |
 | `trend.py` | Device-isolated 7/28/90-day trends and variability |
 | `events.py` | Persistent deviations and period-change event detection |
@@ -285,6 +286,25 @@ speed differs by more than 15%. Cadence is a personal observation; no universal
 long, or unclassified. These thresholds are versioned product policy rather than
 medical or coaching truth.
 
+### 3.11 Strength Analysis
+
+DailyProfile 4.0 embeds `TrainingFeatures.strength` with Strength Analysis v1. A user
+can confirm exercise name, set count, repetitions, load, RPE/RIR, rest, and session
+focus against a user-owned strength workout. Vitalis normalizes known Chinese or
+English exercise names to movement patterns and muscle groups while preserving the
+original name as the auditable fact.
+
+Explicit vendor sets and user-confirmed exercises are the only sources of exact
+exercise identity. When they are absent, workout heart rate or verified zero-distance
+laps may estimate work-bout count and work/rest duration, but cannot identify a squat,
+bench press, or any target muscle. Strength heart-rate zones describe cardiovascular
+context only and never represent load intensity.
+
+The last 28 days support confidence-bounded full-body, upper/lower, push-pull-legs, and
+five-day split detection. A next focus is returned only after a recognizable rotation
+exists. Per-muscle recency and confirmed soreness/RPE remain separate observations;
+missing exercise coverage leaves muscle volume and recovery incomplete.
+
 ## 4. API and Assistant
 
 The Health Intelligence API is:
@@ -306,6 +326,7 @@ GET  /api/v1/intelligence/recommendations/{recommendation_id}
 POST /api/v1/intelligence/recommendations/{recommendation_id}/complete
 POST /api/v1/intelligence/feedback
 GET  /api/v1/intelligence/feedback
+POST /api/v1/intelligence/workouts/{workout_id}/strength-exercises
 POST /api/v1/intelligence/events/{event_id}/acknowledge
 ```
 
@@ -359,11 +380,10 @@ Daily/Weekly/Monthly, recommendation/workout/feedback identity, device-isolated 
 Response v1, Personal Model v2 robust distributions and supported personal associations, event lifecycle observations,
 typed Timeline, bounded layered Context, deterministic quality/provenance, 7/28-day
 baselines, 7/28/90-day trends, explainable decisions, 122 public workout IDs, Chinese
-presentation contracts, structured running/strength prescriptions, scheduled analysis,
+presentation contracts, running and strength workout analysis, structured prescriptions, scheduled analysis,
 and thin Hermes Read/Analyze/Act tools.
 
-Not implemented: strength interpretation over the newly normalized workout metrics,
-unrestricted exploratory correlation discovery, minute-level stress load,
+Not implemented: unrestricted exploratory correlation discovery, minute-level stress load,
 Energy Dynamics, body composition/BP intelligence, forecasts,
 or medical alerts. These require explicit new contracts and validation rather than LLM
 inference.

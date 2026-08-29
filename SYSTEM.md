@@ -1480,7 +1480,7 @@ retained.
   - Analyze pace, cadence, heart-rate zones, cardiac drift, work/recovery segments,
     weekly volume, intensity distribution, and progression only when inputs support it.
   - Add a versioned RunningAnalysis contract, tests, and documentation.
-- [ ] Part 3 - Add strength analysis, exercise hypotheses, and split state.
+- [x] Part 3 - Add strength analysis, exercise hypotheses, and split state.
   - Model movement patterns, muscle groups, sets, repetitions, load, RPE/RIR, rest,
     training density, and per-muscle recovery.
   - Use vendor exercise identifiers and confirmed plans as primary evidence; infer only
@@ -1530,3 +1530,13 @@ retained.
   the affected calculation. No age-derived maximum HR or universal cadence target is
   used. The focused running, feature, loader, API, storage, and Skill suite passed all
   72 tests; compilation, all JSON schema parsing, and `git diff --check` passed.
+- Part 3: Strength Analysis v1 normalizes user-confirmed and explicit vendor exercises
+  into movement patterns, muscles, sets, repetitions, load, RPE/RIR, and rest while
+  retaining source and confidence. Heart rate and verified lap structure may estimate
+  work/rest bouts and cardiovascular-zone context but never identify an exact exercise
+  or resistance intensity. The 28-day analyzer detects full-body, upper/lower,
+  push-pull-legs, and five-day rotations, exposes confidence-aware next focus, and
+  reports per-muscle recency with recorded soreness/RPE. A user-scoped replacement API
+  records confirmed exercises. The focused strength, API, loader, feature, storage, and
+  Skill suite passed all 73 tests; compilation, JSON schema parsing, and
+  `git diff --check` passed.

@@ -25,6 +25,8 @@ from .contracts import (
     PersonalModel,
     PersonalAssociationProfile,
     RecommendationInstance,
+    StrengthExerciseRecord,
+    StrengthWorkoutConfirmationInput,
     SubjectiveFeedback,
     SubjectiveFeedbackInput,
     TrendResponse,
@@ -40,6 +42,7 @@ from .profile import ProfileLoader
 from .personal import PersonalModelEngine
 from .monthly import MonthlyProfileEngine
 from .training_response import TrainingResponseEngine
+from .strength import normalize_exercise
 from .timeline import HealthTimelineEngine
 from .trend import TrendEngine
 from .weekly import WeeklyProfileEngine
@@ -134,6 +137,9 @@ class IntelligenceCommand:
                 response_feedback = repo.subjective_feedback(
                     user_id, target - timedelta(days=179), target
                 )
+                for item in response_feedback:
+                    if item.workout_id:
+                        raw.feedback_by_workout.setdefault(item.workout_id, []).append(item)
                 weekly_feedback = [
                     item.model_dump(mode="json")
                     for item in response_feedback
@@ -544,6 +550,32 @@ class IntelligenceAction:
                 **feedback_input.model_dump(exclude={"date"}),
             )
             return repo.save_subjective_feedback(feedback)
+
+    def confirm_strength_workout(
+        self,
+        user_id: str,
+        workout_id: str,
+        confirmation: StrengthWorkoutConfirmationInput,
+    ) -> list[StrengthExerciseRecord]:
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            workout = repo.workout(user_id, workout_id)
+            if workout is None:
+                raise ValueError("指定训练不存在或不属于当前用户")
+            data = workout.data or {}
+            if data.get("training_family") != "strength" and data.get("type") != "strength":
+                raise ValueError("指定训练不是力量训练")
+            exercises = [
+                normalize_exercise(
+                    user_id,
+                    workout_id,
+                    order,
+                    item,
+                    confirmation.session_focus,
+                )
+                for order, item in enumerate(confirmation.exercises, start=1)
+            ]
+            return repo.replace_strength_exercises(user_id, workout_id, exercises)
 
 def _run_from_row(row) -> AnalysisRun:
     return AnalysisRun(

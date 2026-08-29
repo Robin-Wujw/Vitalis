@@ -87,7 +87,10 @@ with Balance 2 is not sufficient evidence to label its samples as Balance 2 or H
 
 Empty fields remain absent. In particular, a strength workout may contain second-level
 heart rate and vendor assessment data while providing no explicit exercise sets. In
-that case Vitalis does not infer an exercise name at the connector boundary.
+that case Vitalis does not infer an exercise name at the connector boundary or the
+intelligence layer. It may estimate work/rest structure from heart rate while keeping
+the movement and target muscle unknown until an explicit vendor set or user
+confirmation is available.
 
 `second_heart_rate/real_data` currently stores only opaque `SEC_HR` coverage metadata.
 `sample_count=0` and `parse_status=indexed` explicitly mean that no measurement samples

@@ -8,7 +8,15 @@ from starlette.requests import Request
 
 from vitalis.config import settings
 from vitalis.intelligence.contracts import ConfidenceBand, EventSeverity, HealthEvent
-from vitalis.models import ActivityRecord, MetricSample, NormalizedDaily, SleepRecord, TrainingRecord
+from vitalis.models import (
+    ActivityRecord,
+    MetricSample,
+    NormalizedDaily,
+    SleepRecord,
+    TrainingRecord,
+    Workout,
+    WorkoutType,
+)
 from vitalis.storage import HealthRepository, session_scope
 
 
@@ -303,6 +311,49 @@ def test_removed_daily_profile_route_is_not_kept_as_compatibility_alias(client):
     assert client.get(
         "/api/v1/intelligence/daily-profile", headers={"X-User-Id": "001"}
     ).status_code == 404
+
+
+def test_strength_exercise_confirmation_is_user_scoped(client):
+    user_id = "strength-api-owner"
+    workout_id = "strength-api-workout"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        repo.save_workout(Workout(
+            user_id=user_id,
+            workout_id=workout_id,
+            type=WorkoutType.STRENGTH,
+            training_family="strength",
+            duration=45,
+        ))
+
+    response = client.post(
+        f"/api/v1/intelligence/workouts/{workout_id}/strength-exercises",
+        headers={"X-User-Id": user_id},
+        json={
+            "session_focus": "PUSH",
+            "exercises": [{
+                "exercise_name": "卧推",
+                "sets": 4,
+                "repetitions": "8",
+                "weight_kg": 60,
+            }],
+        },
+    )
+
+    assert response.status_code == 201
+    exercise = response.json()[0]
+    assert exercise["movement_pattern"] == "horizontal_push"
+    assert exercise["muscle_group_labels"] == ["胸部", "肱三头肌", "肩部"]
+    assert exercise["source"] == "user_confirmed"
+    assert client.post(
+        f"/api/v1/intelligence/workouts/{workout_id}/strength-exercises",
+        headers={"X-User-Id": "strength-api-other"},
+        json={
+            "session_focus": "PUSH",
+            "exercises": [{"exercise_name": "卧推"}],
+        },
+    ).status_code == 422
 
 
 def test_health_event_acknowledgement_api_is_user_scoped(client):

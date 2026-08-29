@@ -18,6 +18,8 @@ from vitalis.intelligence.contracts import (
     PersonalAssociationProfile,
     PersonalModel,
     RecommendationInstance,
+    StrengthExerciseRecord,
+    StrengthWorkoutConfirmationInput,
     SubjectiveFeedback,
     SubjectiveFeedbackInput,
     TrendResponse,
@@ -225,6 +227,25 @@ def feedback(
     if period_start > period_end:
         raise HTTPException(status_code=422, detail="开始日期不能晚于结束日期")
     return IntelligenceQuery().feedback(user_id, period_start, period_end)
+
+
+@router.post(
+    "/workouts/{workout_id}/strength-exercises",
+    response_model=list[StrengthExerciseRecord],
+    status_code=201,
+    summary="Replace user-confirmed exercises for one strength workout",
+)
+def confirm_strength_workout(
+    workout_id: str,
+    payload: StrengthWorkoutConfirmationInput,
+    user_id: str = Depends(require_user_id),
+) -> list[StrengthExerciseRecord]:
+    try:
+        return IntelligenceAction().confirm_strength_workout(
+            user_id, workout_id, payload
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post(

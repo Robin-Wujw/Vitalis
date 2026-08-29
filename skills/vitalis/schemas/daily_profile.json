@@ -86,7 +86,7 @@
         },
         "training": {
           "type": "object",
-          "required": ["status", "status_label", "load_state", "load_state_label", "sport_mode_counts_7d", "recent_workouts", "running", "limitation_labels"],
+          "required": ["status", "status_label", "load_state", "load_state_label", "sport_mode_counts_7d", "recent_workouts", "running", "strength", "limitation_labels"],
           "properties": {
             "status": {"enum": ["AVAILABLE", "INSUFFICIENT_DATA"]},
             "status_label": {"type": "string"},
@@ -107,6 +107,21 @@
                 "status": {"enum": ["AVAILABLE", "INSUFFICIENT_DATA"]},
                 "zone_method": {"enum": ["lactate_threshold", "unavailable"]},
                 "recent_sessions": {"type": "array", "items": {"type": "object"}},
+                "limitations": {"type": "array", "items": {"type": "string"}}
+              }
+            },
+            "strength": {
+              "type": ["object", "null"],
+              "properties": {
+                "schema_version": {"const": "1.0"},
+                "status": {"enum": ["AVAILABLE", "INSUFFICIENT_DATA"]},
+                "sessions_7d": {"type": "integer", "minimum": 0},
+                "sessions_28d": {"type": "integer", "minimum": 0},
+                "explicit_session_coverage": {"type": "number", "minimum": 0, "maximum": 1},
+                "detected_split": {"enum": ["FULL_BODY", "UPPER_LOWER", "PUSH_PULL_LEGS", "FIVE_DAY", "UNRESOLVED"]},
+                "next_focus": {"type": ["string", "null"]},
+                "recent_sessions": {"type": "array", "items": {"type": "object"}},
+                "muscle_recovery": {"type": "array", "items": {"type": "object"}},
                 "limitations": {"type": "array", "items": {"type": "string"}}
               }
             },

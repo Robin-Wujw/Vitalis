@@ -1495,7 +1495,7 @@ retained.
     including evidence, dose, stop conditions, expiry, and missing-input gates.
   - Replace the existing DailyProfile decision/context contracts and add focused
     concurrent-planning coverage.
-- [ ] Part 5 - Update Hermes delivery, verify, re-ingest, and publish.
+- [x] Part 5 - Update Hermes delivery, verify, re-ingest, and publish.
   - Replace Hermes schemas/workflows and deterministic PushPlus rendering with the new
     running/strength plan; do not add model-generated exercise content.
   - Update architecture, API, integration, setup, and product documentation for the
@@ -1568,5 +1568,10 @@ retained.
   4.0 / Decision Policy 4.0 analysis and JSON Schema validation passed, and the private
   morning renderer contained the action plan plus running and strength detail without
   internal codes. The complete suite passed all 209 tests; compilation, extension
-  syntax, all JSON Schemas, and `git diff --check` passed. Runtime restart, live delivery,
-  GitHub publication, and final recording remain pending.
+  syntax, all JSON Schemas, and `git diff --check` passed. A pre-rebuild database copy
+  was stored outside the repository under root-only local state. Both `vitalis.service`
+  and `hermes-gateway.service` restarted active; Hermes resolved the repository-linked
+  Vitalis Skill, retained both active no-agent cron jobs, and had no proxy environment.
+  One current-schema morning report was sent through a direct no-proxy PushPlus
+  connection and accepted. Commits `5ae1b82`, `cb00e27`, `8126b91`, `57f9637`, and
+  `b456839` were pushed from `main` to `origin/main` before this final record.

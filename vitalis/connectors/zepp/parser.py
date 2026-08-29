@@ -6,6 +6,7 @@ TrainingRecord / Workout。此处是「厂商格式隔离」的关键边界 —�
 """
 
 from datetime import date, datetime, time, timedelta, timezone
+import json
 
 from vitalis.models import (
     ActivityRecord,
@@ -31,6 +32,11 @@ _TYPE_MAP = {
     "walking": WorkoutType.WALKING,
     "hiit": WorkoutType.HIIT,
     "yoga": WorkoutType.YOGA,
+}
+
+_PRODUCT_MODELS = {
+    "146": "Amazfit Balance 2",
+    "157": "Amazfit Helio Strap",
 }
 
 class ZeppParser:
@@ -939,12 +945,39 @@ class ZeppParser:
         )
 
     def parse_device(self, raw: dict) -> Device:
+        additional = raw.get("additionalInfo")
+        if isinstance(additional, str):
+            try:
+                additional = json.loads(additional)
+            except ValueError:
+                additional = {}
+        if not isinstance(additional, dict):
+            additional = {}
+        product_id = str(additional.get("productId") or "")
+        model = (
+            _PRODUCT_MODELS.get(product_id)
+            or raw.get("displayName")
+            or raw.get("model")
+            or (f"Zepp product {product_id}" if product_id else "Zepp device")
+        )
+        device_id = self._normalize_device_identifier(
+            additional.get("btmac") or raw.get("macAddress")
+        ) or self._device_id(raw)
         return Device(
             user_id="",
             source=self.source,
-            model=raw.get("model", ""),
-            device_id=raw.get("deviceId", ""),
+            model=str(model),
+            device_id=device_id or "",
         )
+
+    def parse_devices(self, raw: dict) -> list[Device]:
+        items = raw.get("items", []) if isinstance(raw, dict) else []
+        return [
+            device
+            for item in items
+            if isinstance(item, dict)
+            and (device := self.parse_device(item)).device_id
+        ]
 
     @staticmethod
     def _to_time(v: str | None) -> time | None:
@@ -1064,6 +1097,13 @@ class ZeppParser:
                 except ValueError:
                     pass
         return None
+
+    @staticmethod
+    def _normalize_device_identifier(value: object) -> str | None:
+        normalized = "".join(
+            character for character in str(value or "") if character.isalnum()
+        ).upper()
+        return normalized if len(normalized) >= 8 else None
 
     @staticmethod
     def _device_id(obj: dict) -> str | None:

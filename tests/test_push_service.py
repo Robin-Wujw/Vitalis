@@ -16,11 +16,45 @@ def _profile_payload():
                 "status": "AVAILABLE",
                 "status_label": "可用",
                 "duration_minutes": 447,
+                "bedtime": "00:48:00",
+                "wake_time": "08:15:00",
+                "deep_minutes": 92,
+                "rem_minutes": 106,
+                "awake_minutes": 24,
+                "regularity_minutes": 18.0,
+                "vendor_sleep_score": 84,
                 "duration_deviation": {"direction": "above", "percent": 6.5},
             },
             "hrv": {
                 "value_ms": 71,
                 "deviation": {"direction": "above", "percent": 8.2},
+                "preferred_device_label": "Amazfit Helio Strap",
+                "fusion_confidence_label": "较高",
+                "fusion_summary": "2 台设备相对各自 28 天基线方向一致：高于基线",
+                "streams": [{
+                    "device_label": "Amazfit Helio Strap",
+                    "measurement_site": "upper_arm",
+                    "value_ms": 71,
+                    "sample_count_today": 432,
+                    "baseline_distinct_days": 28,
+                    "deviation": {"direction": "above", "percent": 8.2},
+                    "selected": True,
+                }, {
+                    "device_label": "Amazfit Balance 2",
+                    "measurement_site": "wrist",
+                    "value_ms": 68,
+                    "sample_count_today": 301,
+                    "baseline_distinct_days": 28,
+                    "deviation": {"direction": "above", "percent": 5.1},
+                    "selected": False,
+                }],
+                "heart_rate_coverage": [{
+                    "device_label": "Amazfit Helio Strap",
+                    "today_coverage_minutes": 580.0,
+                    "coverage_hours_28d": 164.5,
+                    "covered_days_28d": 27,
+                    "payload_decoded": False,
+                }],
                 "rhr_bpm": 47,
                 "rhr_deviation": {"direction": "near", "percent": -1.0},
             },
@@ -28,12 +62,17 @@ def _profile_payload():
                 "state_label": "恢复良好",
                 "positive_signal_labels": ["HRV 高于个人基线"],
                 "negative_signal_labels": [],
+                "vendor_readiness": 78,
+                "vendor_charge": 72,
             },
             "training": {
                 "today_duration_minutes": 35,
                 "today_load": 62,
                 "duration_7d": 180,
                 "load_7d": 260,
+                "load_28d": 945,
+                "aerobic_minutes_7d": 142,
+                "strength_sessions_7d": 2,
                 "load_state_label": "近期负荷正常",
                 "recent_workouts": [{
                     "date": "2026-08-28",
@@ -112,6 +151,14 @@ def test_morning_push_uses_chinese_labels_and_renders_prescription():
     assert "个人基线：高于 28 天基线（+6.5%）" in message.body
     assert "HRV 个人基线：高于 28 天基线（+8.2%）" in message.body
     assert "RHR 个人基线：接近 28 天基线（-1%）" in message.body
+    assert "## 多设备心率融合" in message.body
+    assert "Amazfit Helio Strap（上臂）" in message.body
+    assert "2 台设备相对各自 28 天基线方向一致" in message.body
+    assert "近 28 日 164.5 小时/27 天 · 仅覆盖索引，数值尚未解码" in message.body
+    assert "## 睡眠详情" in message.body
+    assert "深睡 92 分钟 · REM 106 分钟 · 清醒 24 分钟" in message.body
+    assert "## 近期负荷与背景" in message.body
+    assert "有氧 142 分钟 · 力量 2 次" in message.body
     assert "\n## 训练安排\n" in message.body
     assert "- **结论把握**：中等" in message.body
     assert "\n## 判断依据\n" in message.body

@@ -171,7 +171,7 @@ Run the complete suite:
 .venv/bin/python -m pytest -q
 ```
 
-Current verified result: 180 tests passed. The suite covers connector parsing and
+Current verified result: 184 tests passed. The suite covers connector parsing and
 synchronization, browser pairing, health-data APIs, device isolation, baselines,
 Daily/Weekly/Monthly intelligence, health-event lifecycle, training response,
 personal associations, immutable snapshots, bounded Context, Timeline, push rendering,

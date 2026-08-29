@@ -101,6 +101,8 @@ LIMITATION_LABELS = {
     "vendor_readiness_is_context_only": "厂商准备度仅作为参考信息",
     "vendor_charge_is_context_only": "身体电量仅作为参考信息",
     "multiple_hrv_devices_no_preferred_device_configured": "存在多台 HRV 设备，尚未指定首选设备",
+    "multi_device_hrv_disagreement": "多台设备相对各自基线的 HRV 方向不一致",
+    "dense_heart_rate_payload_not_decoded": "秒级心率文件已有覆盖索引，但数值载荷尚未完成解码验证",
 }
 
 

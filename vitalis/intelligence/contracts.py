@@ -140,6 +140,8 @@ class DeviceValidity(BaseModel):
     """Evidence metadata, never a synthetic measurement-quality probability."""
 
     device_id: str
+    device_label: str | None = None
+    measurement_site: Literal["upper_arm", "wrist", "unknown"] = "unknown"
     status: Literal["UNKNOWN", "SUPPORTED_BY_EVIDENCE", "LIMITED_BY_EVIDENCE"] = "UNKNOWN"
     evidence_refs: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
@@ -278,10 +280,27 @@ class SleepFeatures(BaseModel):
 class HrvStreamFeature(BaseModel):
     metric: Literal["hrv_rmssd", "hrv_sdnn", "sleep_hrv"]
     device_id: str | None = None
+    device_label: str | None = None
+    measurement_site: Literal["upper_arm", "wrist", "unknown"] = "unknown"
     value_ms: float
     ln_rmssd: float | None = None
     deviation: Deviation | None = None
+    sample_count_today: int = Field(default=0, ge=0)
+    baseline_distinct_days: int = Field(default=0, ge=0)
     selected: bool = False
+
+
+class HeartRateCoverageFeature(BaseModel):
+    """Indexed high-frequency coverage; values remain unavailable until decoded."""
+
+    device_id: str
+    device_label: str
+    measurement_site: Literal["upper_arm", "wrist", "unknown"] = "unknown"
+    today_coverage_minutes: float = Field(default=0, ge=0)
+    coverage_hours_28d: float = Field(default=0, ge=0)
+    covered_days_28d: int = Field(default=0, ge=0, le=28)
+    file_count_28d: int = Field(default=0, ge=0)
+    payload_decoded: bool = False
 
 
 class HrvFeatures(BaseModel):
@@ -289,12 +308,20 @@ class HrvFeatures(BaseModel):
     status_label: str = ""
     preferred_metric: Literal["hrv_rmssd", "hrv_sdnn", "sleep_hrv"] | None = None
     preferred_device_id: str | None = None
+    preferred_device_label: str | None = None
     value_ms: float | None = None
     ln_rmssd: float | None = None
     deviation: Deviation | None = None
+    fusion_method: Literal["device_specific_baseline_consensus"] | None = None
+    fusion_direction: Literal["above", "near", "below", "mixed", "unknown"] = "unknown"
+    fusion_confidence: ConfidenceBand = ConfidenceBand.NONE
+    fusion_confidence_label: str = ""
+    fusion_summary: str = ""
+    fused_device_count: int = Field(default=0, ge=0)
     rhr_bpm: float | None = None
     rhr_deviation: Deviation | None = None
     streams: list[HrvStreamFeature] = Field(default_factory=list)
+    heart_rate_coverage: list[HeartRateCoverageFeature] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     limitation_labels: list[str] = Field(default_factory=list)
 

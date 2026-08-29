@@ -55,6 +55,8 @@ class RawDailyProfile:
     activity_by_day: dict[date, dict] = field(default_factory=dict)
     training_by_day: dict[date, dict] = field(default_factory=dict)
     workouts: list[dict] = field(default_factory=list)
+    device_models: dict[str, str] = field(default_factory=dict)
+    dense_heart_rate_coverage: dict[str, dict] = field(default_factory=dict)
     facts: dict[str, list[MeasurementFact]] = field(default_factory=dict)
     data_quality: DataQuality | None = None
 
@@ -80,6 +82,7 @@ class ProfileLoader:
         self._add_record_series(raw)
         self._add_daily_metrics(raw, start)
         self._add_sample_metrics(raw, start)
+        self._add_device_context(raw)
         raw.workouts = [
             {
                 "workout_id": row.workout_id,
@@ -96,6 +99,80 @@ class ProfileLoader:
         raw.facts = self._facts_for_day(raw)
         raw.data_quality = self._quality(raw)
         return raw
+
+    def _add_device_context(self, raw: RawDailyProfile) -> None:
+        raw.device_models = {
+            row.device_id.upper(): row.model
+            for row in self.repo.devices(raw.user_id)
+            if row.device_id
+        }
+        start = raw.day - timedelta(days=27)
+        files = self.repo.dense_data_files(
+            raw.user_id, "second_heart_rate", start, raw.day, limit=20_000
+        )
+        range_start, _ = local_day_utc_bounds(start)
+        _, range_end = local_day_utc_bounds(raw.day)
+        day_start, day_end = local_day_utc_bounds(raw.day)
+        range_start = range_start.replace(tzinfo=None)
+        range_end = range_end.replace(tzinfo=None)
+        day_start = day_start.replace(tzinfo=None)
+        day_end = day_end.replace(tzinfo=None)
+        for row in files:
+            if not row.device_id:
+                continue
+            device_id = row.device_id.upper()
+            item = raw.dense_heart_rate_coverage.setdefault(device_id, {
+                "file_count_28d": 0,
+                "covered_days": set(),
+                "intervals_28d": [],
+                "today_intervals": [],
+                "payload_decoded": False,
+            })
+            item["file_count_28d"] += 1
+            if row.date:
+                item["covered_days"].add(row.date)
+            if row.start_utc and row.end_utc and row.end_utc > row.start_utc:
+                interval = (
+                    max(row.start_utc, range_start),
+                    min(row.end_utc, range_end),
+                )
+                if interval[1] > interval[0]:
+                    item["intervals_28d"].append(interval)
+                today_interval = (
+                    max(row.start_utc, day_start),
+                    min(row.end_utc, day_end),
+                )
+                if today_interval[1] > today_interval[0]:
+                    item["today_intervals"].append(today_interval)
+            item["payload_decoded"] = (
+                item["payload_decoded"] or row.parse_status == "decoded"
+            )
+        for item in raw.dense_heart_rate_coverage.values():
+            item["coverage_seconds_28d"] = _merged_interval_seconds(
+                item.pop("intervals_28d")
+            )
+            item["today_coverage_seconds"] = _merged_interval_seconds(
+                item.pop("today_intervals")
+            )
+        observed_ids = {
+            point.device_id.upper()
+            for points in raw.series.values()
+            for point in points
+            if point.device_id
+        } | set(raw.dense_heart_rate_coverage)
+        inventory = list(raw.device_models.items())
+        for observed_id in observed_ids:
+            if observed_id in raw.device_models:
+                continue
+            matches = [
+                model
+                for inventory_id, model in inventory
+                if len(inventory_id) >= 12
+                and observed_id.startswith(inventory_id[:6])
+                and observed_id.endswith(inventory_id[-6:])
+            ]
+            if len(set(matches)) == 1:
+                raw.device_models[observed_id] = matches[0]
 
     def _add_record_series(self, raw: RawDailyProfile) -> None:
         for day, record in raw.sleep_by_day.items():
@@ -243,7 +320,7 @@ class ProfileLoader:
             for points in raw.series.values()
             for point in points
             if point.device_id
-        })
+        } | set(raw.dense_heart_rate_coverage))
         return DataQuality(
             status=status,
             status_label=QUALITY_LABELS[status.value],
@@ -253,7 +330,7 @@ class ProfileLoader:
             missing_required_signal_labels=labels(missing, SIGNAL_LABELS),
             coverage=coverage,
             flags=flags,
-            device_validity=[DeviceValidity(device_id=device_id) for device_id in device_ids],
+            device_validity=[_device_validity(raw, device_id) for device_id in device_ids],
         )
 
 
@@ -266,6 +343,81 @@ def _records_by_day(records: list[dict]) -> dict[date, dict]:
         if isinstance(value, date):
             output[value] = record
     return output
+
+
+def _merged_interval_seconds(intervals: list[tuple[datetime, datetime]]) -> float:
+    if not intervals:
+        return 0.0
+    ordered = sorted(intervals)
+    merged = [ordered[0]]
+    for start, end in ordered[1:]:
+        previous_start, previous_end = merged[-1]
+        if start <= previous_end:
+            merged[-1] = (previous_start, max(previous_end, end))
+        else:
+            merged.append((start, end))
+    return sum((end - start).total_seconds() for start, end in merged)
+
+
+def device_label(raw: RawDailyProfile, device_id: str | None) -> str:
+    if not device_id:
+        return "来源未标识设备"
+    model = raw.device_models.get(device_id.upper())
+    if model:
+        return model
+    all_ids = sorted({
+        point.device_id
+        for points in raw.series.values()
+        for point in points
+        if point.device_id
+    } | set(raw.dense_heart_rate_coverage))
+    index = all_ids.index(device_id) if device_id in all_ids else len(all_ids)
+    return f"未识别设备 {chr(ord('A') + min(index, 25))}"
+
+
+def device_measurement_site(raw: RawDailyProfile, device_id: str | None) -> str:
+    model = raw.device_models.get((device_id or "").upper(), "").lower()
+    if "helio strap" in model:
+        return "upper_arm"
+    if "balance 2" in model:
+        return "wrist"
+    return "unknown"
+
+
+def _device_validity(raw: RawDailyProfile, device_id: str) -> DeviceValidity:
+    label = device_label(raw, device_id)
+    site = device_measurement_site(raw, device_id)
+    if site == "upper_arm":
+        return DeviceValidity(
+            device_id=device_id,
+            device_label=label,
+            measurement_site=site,
+            status="LIMITED_BY_EVIDENCE",
+            evidence_refs=[
+                "ARM_PPG_OH1_2019",
+                "ARM_WRIST_PPG_2025",
+                "PPG_ERROR_SOURCES_2020",
+                "PRV_HRV_REVIEW_2013",
+            ],
+            limitations=[
+                "上臂 PPG 形态有外部心率验证，但不是 Helio Strap 型号专项验证",
+                "PPG 脉率变异性不能在所有场景下等同于 ECG HRV",
+            ],
+        )
+    if site == "wrist":
+        return DeviceValidity(
+            device_id=device_id,
+            device_label=label,
+            measurement_site=site,
+            status="LIMITED_BY_EVIDENCE",
+            evidence_refs=["WRIST_PPG_META_2020", "PPG_ERROR_SOURCES_2020"],
+            limitations=["腕部 PPG 误差随活动类型和运动伪影变化"],
+        )
+    return DeviceValidity(
+        device_id=device_id,
+        device_label=label,
+        measurement_site="unknown",
+    )
 
 
 def _append(

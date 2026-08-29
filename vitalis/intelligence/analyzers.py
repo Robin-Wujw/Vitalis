@@ -1,5 +1,7 @@
 """Deterministic feature analyzers over normalized profile data."""
 
+from collections import Counter
+from dataclasses import dataclass
 from datetime import date, timedelta
 from math import log
 from statistics import median
@@ -8,6 +10,8 @@ from .baseline import BaselineEngine, daily_stream_values
 from .contracts import (
     Availability,
     BaselineStats,
+    ConfidenceBand,
+    HeartRateCoverageFeature,
     HrvFeatures,
     HrvStreamFeature,
     LoadState,
@@ -19,10 +23,16 @@ from .contracts import (
     TrainingFeatures,
     WorkoutFeature,
 )
-from .profile import RawDailyProfile, SeriesPoint
+from .profile import (
+    RawDailyProfile,
+    SeriesPoint,
+    device_label,
+    device_measurement_site,
+)
 from vitalis.connectors.zepp.sport_types import CATEGORY_LABELS, FAMILY_LABELS
 from .localization import (
     AVAILABILITY_LABELS,
+    CONFIDENCE_LABELS,
     DRIVER_LABELS,
     LIMITATION_LABELS,
     LOAD_LABELS,
@@ -30,6 +40,38 @@ from .localization import (
     SLEEP_LABELS,
     labels,
 )
+
+
+@dataclass(frozen=True)
+class _HrvCandidate:
+    metric: str
+    metric_priority: int
+    source: str
+    scope: str
+    device_id: str | None
+    device_label: str
+    measurement_site: str
+    value: float
+    sample_count_today: int
+    baseline: BaselineStats | None
+
+    @property
+    def selection_key(self) -> tuple:
+        baseline_available = int(bool(
+            self.baseline and self.baseline.status == Availability.AVAILABLE
+        ))
+        baseline_days = self.baseline.distinct_days if self.baseline else 0
+        arm_worn = int(self.measurement_site == "upper_arm")
+        return (
+            baseline_available,
+            self.metric_priority,
+            arm_worn,
+            min(self.sample_count_today, 1_440),
+            baseline_days,
+            self.source,
+            self.scope,
+            self.device_id or "",
+        )
 
 
 class SleepAnalyzer:
@@ -98,21 +140,28 @@ class HrvAnalyzer:
         raw: RawDailyProfile,
         baselines: dict[str, list[BaselineStats]],
     ) -> HrvFeatures:
-        candidates = []
+        candidates: list[_HrvCandidate] = []
         for metric, priority in self.METRIC_PRIORITY.items():
             for stream, value in daily_stream_values(raw.series.get(metric, []), raw.day).items():
                 source, scope, device_id = stream
                 baseline = _baseline_for(baselines, metric, source, scope, device_id)
-                candidates.append((
-                    int(bool(baseline and baseline.status == Availability.AVAILABLE)),
-                    baseline.distinct_days if baseline else 0,
-                    priority,
-                    source,
-                    scope,
-                    device_id,
-                    metric,
-                    value,
-                    baseline,
+                sample_count = sum(
+                    1
+                    for point in raw.series.get(metric, [])
+                    if point.day == raw.day
+                    and (point.source, point.source_scope, point.device_id) == stream
+                )
+                candidates.append(_HrvCandidate(
+                    metric=metric,
+                    metric_priority=priority,
+                    source=source,
+                    scope=scope,
+                    device_id=device_id,
+                    device_label=device_label(raw, device_id),
+                    measurement_site=device_measurement_site(raw, device_id),
+                    value=value,
+                    sample_count_today=sample_count,
+                    baseline=baseline,
                 ))
         if not candidates:
             return HrvFeatures(
@@ -121,31 +170,46 @@ class HrvAnalyzer:
                 limitations=["target_day_hrv_missing"],
                 limitation_labels=[LIMITATION_LABELS["target_day_hrv_missing"]],
             )
-        selected = max(
-            candidates,
-            key=lambda item: item[:3] + (item[3], item[4], item[5] or ""),
-        )
-        _, _, _, source, scope, device_id, metric, value, baseline = selected
+        selected = max(candidates, key=lambda item: item.selection_key)
+        device_id = selected.device_id
+        metric = selected.metric
+        value = selected.value
+        baseline = selected.baseline
         deviation = BaselineEngine.deviation(value, baseline) if baseline else None
+        metric_candidates = [item for item in candidates if item.metric == metric]
         streams = [
             HrvStreamFeature(
-                metric=item[6],
-                device_id=item[5],
-                value_ms=round(item[7], 2),
+                metric=item.metric,
+                device_id=item.device_id,
+                device_label=item.device_label,
+                measurement_site=item.measurement_site,
+                value_ms=round(item.value, 2),
                 ln_rmssd=(
-                    round(log(item[7]), 4)
-                    if item[6] == "hrv_rmssd" and item[7] > 0
+                    round(log(item.value), 4)
+                    if item.metric == "hrv_rmssd" and item.value > 0
                     else None
                 ),
-                deviation=(BaselineEngine.deviation(item[7], item[8]) if item[8] else None),
-                selected=item[3:8] == selected[3:8],
+                deviation=(
+                    BaselineEngine.deviation(item.value, item.baseline)
+                    if item.baseline else None
+                ),
+                sample_count_today=item.sample_count_today,
+                baseline_distinct_days=(
+                    item.baseline.distinct_days if item.baseline else 0
+                ),
+                selected=item == selected,
             )
             for item in sorted(
-                candidates,
-                key=lambda item: (item[6], item[5] or "", item[3], item[4]),
+                metric_candidates,
+                key=lambda item: (item.device_label, item.source, item.scope),
             )
-            if item[6] == metric
         ]
+        (
+            fusion_direction,
+            fusion_confidence,
+            fusion_summary,
+            fused_device_count,
+        ) = _fuse_hrv_streams(metric_candidates)
 
         rhr_candidates = []
         for rhr_metric in ("sleep_rhr", "resting_hr"):
@@ -163,26 +227,101 @@ class HrvAnalyzer:
         limitations = []
         if baseline is None or baseline.status == Availability.INSUFFICIENT_DATA:
             limitations.append("hrv_28d_baseline_insufficient")
-        if len({item.device_id for item in streams if item.device_id}) > 1:
-            limitations.append("multiple_hrv_devices_no_preferred_device_configured")
+        if fusion_direction == "mixed":
+            limitations.append("multi_device_hrv_disagreement")
         if rhr_value is None:
             limitations.append("target_day_rhr_missing")
         elif rhr_deviation is None or rhr_deviation.direction == "unknown":
             limitations.append("rhr_28d_baseline_insufficient")
+        heart_rate_coverage = []
+        for coverage_device_id, item in sorted(
+            raw.dense_heart_rate_coverage.items(),
+            key=lambda value: device_label(raw, value[0]),
+        ):
+            heart_rate_coverage.append(HeartRateCoverageFeature(
+                device_id=coverage_device_id,
+                device_label=device_label(raw, coverage_device_id),
+                measurement_site=device_measurement_site(raw, coverage_device_id),
+                today_coverage_minutes=round(
+                    item["today_coverage_seconds"] / 60, 1
+                ),
+                coverage_hours_28d=round(
+                    item["coverage_seconds_28d"] / 3_600, 1
+                ),
+                covered_days_28d=len(item["covered_days"]),
+                file_count_28d=item["file_count_28d"],
+                payload_decoded=item["payload_decoded"],
+            ))
+        if heart_rate_coverage and not any(
+            item.payload_decoded for item in heart_rate_coverage
+        ):
+            limitations.append("dense_heart_rate_payload_not_decoded")
         return HrvFeatures(
             status=Availability.AVAILABLE,
             status_label=AVAILABILITY_LABELS[Availability.AVAILABLE.value],
             preferred_metric=metric,
             preferred_device_id=device_id,
+            preferred_device_label=selected.device_label,
             value_ms=round(value, 2),
             ln_rmssd=round(log(value), 4) if metric == "hrv_rmssd" and value > 0 else None,
             deviation=deviation,
+            fusion_method="device_specific_baseline_consensus",
+            fusion_direction=fusion_direction,
+            fusion_confidence=fusion_confidence,
+            fusion_confidence_label=CONFIDENCE_LABELS[fusion_confidence.value],
+            fusion_summary=fusion_summary,
+            fused_device_count=fused_device_count,
             rhr_bpm=round(rhr_value, 1) if rhr_value is not None else None,
             rhr_deviation=rhr_deviation,
             streams=streams,
+            heart_rate_coverage=heart_rate_coverage,
             limitations=limitations,
             limitation_labels=labels(limitations, LIMITATION_LABELS),
         )
+
+
+def _fuse_hrv_streams(
+    candidates: list[_HrvCandidate],
+) -> tuple[str, ConfidenceBand, str, int]:
+    interpreted = []
+    for item in candidates:
+        if not item.baseline or item.baseline.status != Availability.AVAILABLE:
+            continue
+        deviation = BaselineEngine.deviation(item.value, item.baseline)
+        if deviation.direction != "unknown":
+            interpreted.append((item, deviation.direction))
+    if not interpreted:
+        return "unknown", ConfidenceBand.NONE, "没有足够的设备内基线用于融合", 0
+
+    counts = Counter(direction for _, direction in interpreted)
+    direction, count = counts.most_common(1)[0]
+    device_count = len({item.device_id or item.device_label for item, _ in interpreted})
+    direction_label = {"above": "高于", "near": "接近", "below": "低于"}[direction]
+    labels_text = "、".join(item.device_label for item, _ in interpreted)
+    if len(counts) == 1:
+        confidence = (
+            ConfidenceBand.HIGH if device_count >= 2 else ConfidenceBand.MODERATE
+        )
+        return (
+            direction,
+            confidence,
+            f"{device_count} 台设备相对各自 28 天基线方向一致：{direction_label}基线"
+            f"（{labels_text}）",
+            device_count,
+        )
+    if count / len(interpreted) >= 2 / 3:
+        return (
+            direction,
+            ConfidenceBand.MODERATE,
+            f"多数设备指向{direction_label}基线，但仍有设备不一致（{labels_text}）",
+            device_count,
+        )
+    return (
+        "mixed",
+        ConfidenceBand.LOW,
+        f"设备间方向不一致，HRV 不参与强化恢复结论（{labels_text}）",
+        device_count,
+    )
 
 
 class TrainingAnalyzer:
@@ -306,9 +445,12 @@ class RecoveryAnalyzer:
     ) -> RecoveryFeatures:
         positive = []
         negative = []
-        if hrv.deviation and hrv.deviation.direction == "above":
+        hrv_direction = hrv.fusion_direction
+        if hrv_direction == "unknown" and hrv.deviation:
+            hrv_direction = hrv.deviation.direction
+        if hrv_direction == "above":
             positive.append("HRV_ABOVE_BASELINE")
-        elif hrv.deviation and hrv.deviation.direction == "below":
+        elif hrv_direction == "below":
             negative.append("HRV_BELOW_BASELINE")
         if hrv.rhr_deviation and hrv.rhr_deviation.direction == "below":
             positive.append("RHR_BELOW_BASELINE")

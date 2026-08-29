@@ -48,19 +48,27 @@
         },
         "hrv": {
           "type": "object",
-          "required": ["status", "status_label", "streams", "limitations", "limitation_labels"],
+          "required": ["status", "status_label", "fusion_direction", "fusion_confidence", "fusion_confidence_label", "fusion_summary", "fused_device_count", "streams", "heart_rate_coverage", "limitations", "limitation_labels"],
           "properties": {
             "status": {"enum": ["AVAILABLE", "INSUFFICIENT_DATA"]},
             "status_label": {"type": "string"},
+            "preferred_device_label": {"type": ["string", "null"]},
+            "fusion_method": {"enum": ["device_specific_baseline_consensus", null]},
+            "fusion_direction": {"enum": ["above", "near", "below", "mixed", "unknown"]},
+            "fusion_confidence": {"enum": ["NONE", "LOW", "MODERATE", "HIGH"]},
+            "fusion_confidence_label": {"type": "string"},
+            "fusion_summary": {"type": "string"},
+            "fused_device_count": {"type": "integer", "minimum": 0},
             "limitations": {"type": "array", "items": {"type": "string"}},
             "limitation_labels": {"type": "array", "items": {"type": "string"}},
             "streams": {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["metric", "value_ms", "selected"]
+                "required": ["metric", "device_label", "measurement_site", "value_ms", "sample_count_today", "baseline_distinct_days", "selected"]
               }
-            }
+            },
+            "heart_rate_coverage": {"type": "array", "items": {"type": "object"}}
           }
         },
         "recovery": {

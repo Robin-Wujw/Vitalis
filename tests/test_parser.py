@@ -326,6 +326,34 @@ def test_parse_hrv_wellness_rejects_incomplete_device_map():
     assert [sample.device_id for sample in samples] == [None, None]
 
 
+def test_parse_device_inventory_maps_verified_products_without_private_fields():
+    payload = {
+        "items": [{
+            "deviceId": "numeric-vendor-id",
+            "macAddress": "D8:80:3C:D5:44:71",
+            "additionalInfo": json.dumps({
+                "btmac": "D8:80:3C:D5:44:71",
+                "productId": "146",
+                "auth_key": "must-not-be-persisted",
+            }),
+        }, {
+            "macAddress": "CE:4A:84:92:1F:A6",
+            "additionalInfo": json.dumps({
+                "productId": "157",
+                "auth_key": "must-not-be-persisted",
+            }),
+        }],
+    }
+
+    devices = ZeppParser().parse_devices(payload)
+
+    assert [(item.model, item.device_id) for item in devices] == [
+        ("Amazfit Balance 2", "D8803CD54471"),
+        ("Amazfit Helio Strap", "CE4A84921FA6"),
+    ]
+    assert "must-not-be-persisted" not in repr(devices)
+
+
 def test_parse_band_heart_rate_uses_local_midnight_and_device():
     summary = base64.b64encode(json.dumps({"tz": 8 * 60 * 60}).encode()).decode()
     readings = base64.b64encode(bytes([0, 72, 255, 75])).decode()

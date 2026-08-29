@@ -176,6 +176,10 @@ def test_strength_is_not_recommended_within_two_days_of_last_session():
 
 def test_hrv_exposes_all_device_streams_without_merging_them():
     raw = _profile(hrv_today=62)
+    raw.device_models = {
+        "HELIO": "Amazfit Helio Strap",
+        "BALANCE": "Amazfit Balance 2",
+    }
     raw.series["hrv_rmssd"] += _series(
         "hrv_rmssd",
         [58] + [48 + (i % 3) for i in range(1, 22)],
@@ -188,4 +192,37 @@ def test_hrv_exposes_all_device_streams_without_merging_them():
     assert {stream.device_id for stream in hrv.streams} == {"helio", "balance"}
     assert {stream.value_ms for stream in hrv.streams} == {58, 62}
     assert sum(stream.selected for stream in hrv.streams) == 1
-    assert "multiple_hrv_devices_no_preferred_device_configured" in hrv.limitations
+    assert hrv.preferred_device_label == "Amazfit Helio Strap"
+    assert hrv.fusion_direction == "above"
+    assert hrv.fusion_confidence.value == "HIGH"
+    assert hrv.fused_device_count == 2
+    assert "方向一致" in hrv.fusion_summary
+    assert not hrv.limitations
+
+
+def test_hrv_device_disagreement_is_not_averaged_into_a_recovery_signal():
+    raw = _profile(hrv_today=62)
+    raw.device_models = {
+        "HELIO": "Amazfit Helio Strap",
+        "BALANCE": "Amazfit Balance 2",
+    }
+    raw.series["hrv_rmssd"] += _series(
+        "hrv_rmssd",
+        [40] + [60 + (i % 3) for i in range(1, 22)],
+        device="balance",
+        scope="device",
+    )
+
+    baselines = BaselineEngine().build(raw.series, raw.day)
+    sleep, sleep_state = SleepAnalyzer().analyze(raw, baselines)
+    hrv = HrvAnalyzer().analyze(raw, baselines)
+    training = TrainingAnalyzer().analyze(raw, baselines)
+    recovery = RecoveryAnalyzer().analyze(
+        raw, sleep, sleep_state, hrv, training
+    )
+
+    assert hrv.fusion_direction == "mixed"
+    assert hrv.fusion_confidence.value == "LOW"
+    assert "multi_device_hrv_disagreement" in hrv.limitations
+    assert "HRV_ABOVE_BASELINE" not in recovery.positive_signals
+    assert "HRV_BELOW_BASELINE" not in recovery.negative_signals

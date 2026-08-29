@@ -129,6 +129,31 @@ class TestSyncManager:
         assert "dense_files" in stream_names
         assert report.records_written >= 0
 
+    def test_sync_refreshes_device_inventory_for_analysis_labels(
+        self, mock_fetcher, setup_db
+    ):
+        class InventoryClient:
+            @staticmethod
+            def fetch_devices():
+                return {"items": [{
+                    "macAddress": "CE:4A:84:92:1F:A6",
+                    "additionalInfo": '{"productId":"157"}',
+                }]}
+
+        mock_fetcher.connector = InventoryClient()
+        manager = SyncManager(mock_fetcher)
+        user = User(id="device-inventory-user")
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            report = manager.sync_report(user, days=2, repo=repo)
+            devices = repo.devices(user.id)
+
+        assert report.success is True
+        assert [(item.model, item.device_id) for item in devices] == [
+            ("Amazfit Helio Strap", "CE4A84921FA6")
+        ]
+
     def test_sync_report_cancel(self, mock_fetcher, setup_db):
         manager = SyncManager(mock_fetcher)
         user = User(id="test-002")

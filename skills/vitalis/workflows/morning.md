@@ -8,14 +8,19 @@ Use the requested date, or today's date when none is given.
    否则延后重试，不得改用昨天的数据。
 2. 使用 `decision.action_label`、`states.recovery_label` 和
    `decision.confidence_label` 展示综合结论。
-3. 展示睡眠时长及可用的 28 天偏差。
-4. 展示所选 HRV 指标的每个当天设备流及其 28 天偏差，并标出所选流；仅在有值时
-   展示静息心率（RHR）。不得暗示确定性选择代表该设备更准确。
-5. 使用 `positive_signal_labels` 和 `negative_signal_labels` 解释恢复判断。
-6. 使用 `suggested_type_labels`、`intensity_label`、时长和
+3. 展示睡眠时长、时段、结构、规律性、厂商评分及可用的 28 天偏差。
+4. 展示 `fusion_summary`、融合把握，以及所选 HRV 指标的每个当天设备流、样本数、
+   设备内 28 天偏差和基线天数；仅在有值时展示静息心率（RHR）。设备冲突时不得
+   平均原始毫秒值或选边站队。
+5. 展示 `heart_rate_coverage`，但 `payload_decoded=false` 时必须明确它只是秒级文件
+   覆盖索引，不能把覆盖时长当成已解码的心率或准确率。
+6. 使用 `positive_signal_labels`、`negative_signal_labels`、厂商准备度和身体电量
+   解释恢复判断；厂商分数只能标为参考。
+7. 展示 7/28 日训练负荷、训练结构、可用趋势和未解决事件。
+8. 使用 `suggested_type_labels`、`intensity_label`、时长和
    `prescription_guidance` 展示建议，再逐项完整渲染 `prescriptions` 的目标、步骤、
    组次、休息、进阶和注意事项。
-7. 使用 `driver_labels` 展示依据，并把 `limitation_labels` 作为最后一节。
+9. 使用 `driver_labels` 展示依据，并把 `limitation_labels` 作为最后一节。
 
 当内部动作是 `INSUFFICIENT_DATA` 时，仅使用 `data_quality.status_label`、
 `missing_required_signal_labels` 和中文限制说明，不得用通用训练建议代替缺失结论。

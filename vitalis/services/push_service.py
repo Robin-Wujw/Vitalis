@@ -144,6 +144,7 @@ def _render_morning(payload: dict) -> tuple[str, list[str]]:
         "",
         f"- **恢复判断**：{states.get('recovery_label') or recovery.get('state_label', '数据不足')}",
         f"- **睡眠判断**：{states.get('sleep_label') or sleep.get('status_label', '数据不足')}",
+        f"- **负荷判断**：{states.get('training_load_label') or features['training'].get('load_state_label', '数据不足')}",
         f"- **今日安排**：{decision['action_label']} · {decision['intensity_label']}",
         f"- **结论把握**：{decision['confidence_label']}",
         "",
@@ -151,8 +152,14 @@ def _render_morning(payload: dict) -> tuple[str, list[str]]:
         "",
         f"- **积极信号**：{_join_labels(recovery.get('positive_signal_labels'))}",
         f"- **需关注信号**：{_join_labels(recovery.get('negative_signal_labels'))}",
+    ])
+    if recovery.get("vendor_readiness") is not None:
+        lines.append(f"- **厂商准备度（参考）**：{recovery['vendor_readiness']}")
+    if recovery.get("vendor_charge") is not None:
+        lines.append(f"- **身体电量（参考）**：{recovery['vendor_charge']}")
+    lines.extend([
         "",
-        "## 关键指标",
+        "## 睡眠详情",
         "",
         f"- **睡眠**：{_display_with_unit(sleep.get('duration_minutes'), '分钟')}",
     ])
@@ -160,8 +167,31 @@ def _render_morning(payload: dict) -> tuple[str, list[str]]:
         lines.append(
             f"  - 个人基线：{_deviation_text(sleep['duration_deviation'])}"
         )
+    clock_parts = []
+    if sleep.get("bedtime"):
+        clock_parts.append(f"入睡 {sleep['bedtime']}")
+    if sleep.get("wake_time"):
+        clock_parts.append(f"醒来 {sleep['wake_time']}")
+    if clock_parts:
+        lines.append(f"- **睡眠时段**：{' · '.join(clock_parts)}")
+    stage_parts = [
+        f"深睡 {_display_with_unit(sleep.get('deep_minutes'), '分钟')}",
+        f"REM {_display_with_unit(sleep.get('rem_minutes'), '分钟')}",
+        f"清醒 {_display_with_unit(sleep.get('awake_minutes'), '分钟')}",
+    ]
+    if any(sleep.get(key) is not None for key in ("deep_minutes", "rem_minutes", "awake_minutes")):
+        lines.append(f"- **睡眠结构**：{' · '.join(stage_parts)}")
+    if sleep.get("regularity_minutes") is not None:
+        lines.append(
+            f"- **近 7 日入睡规律性**：典型偏差 {sleep['regularity_minutes']} 分钟"
+        )
+    if sleep.get("vendor_sleep_score") is not None:
+        lines.append(f"- **厂商睡眠评分（参考）**：{sleep['vendor_sleep_score']}")
+    lines.extend(["", "## 多设备心率融合", ""])
+    lines.extend(_render_hrv_fusion(hrv))
     lines.append(
         f"- **心率变异性（HRV）**：{_display_with_unit(hrv.get('value_ms'), '毫秒')}"
+        + (f" · {hrv['preferred_device_label']}" if hrv.get("preferred_device_label") else "")
     )
     if hrv.get("deviation"):
         lines.append(f"  - HRV 个人基线：{_deviation_text(hrv['deviation'])}")
@@ -173,6 +203,27 @@ def _render_morning(payload: dict) -> tuple[str, list[str]]:
             lines.append(
                 f"  - RHR 个人基线：{_deviation_text(hrv['rhr_deviation'])}"
             )
+    coverage_lines = _render_heart_rate_coverage(hrv)
+    if coverage_lines:
+        lines.extend(["", "### 高频心率覆盖", "", *coverage_lines])
+    training = features["training"]
+    lines.extend([
+        "",
+        "## 近期负荷与背景",
+        "",
+        (
+            "- **近 7 日训练**："
+            f"{_display_with_unit(training.get('duration_7d'), '分钟')} · "
+            f"负荷 {_display(training.get('load_7d'))}"
+        ),
+        f"- **近 28 日负荷**：{_display(training.get('load_28d'))}",
+        (
+            "- **训练结构**："
+            f"有氧 {_display_with_unit(training.get('aerobic_minutes_7d'), '分钟')} · "
+            f"力量 {_display(training.get('strength_sessions_7d'))} 次"
+        ),
+    ])
+    lines.extend(_render_trends_and_events(payload))
     lines.extend(
         [
             "",
@@ -263,6 +314,10 @@ def _render_evening(payload: dict) -> tuple[str, list[str]]:
         f"- **积极信号**：{_join_labels(recovery.get('positive_signal_labels'))}",
         f"- **需关注信号**：{_join_labels(recovery.get('negative_signal_labels'))}",
     ])
+    if features.get("hrv", {}).get("fusion_summary"):
+        lines.append(
+            f"- **多设备 HRV**：{features['hrv']['fusion_summary']}"
+        )
     trend_lines = [
         (
             f"- **{trend['metric_label']}（{trend['window_days']} 日）**："
@@ -292,6 +347,69 @@ def _render_evening(payload: dict) -> tuple[str, list[str]]:
 def _metadata(payload: dict) -> list[str]:
     quality = payload.get("data_quality", {}).get("status_label", "数据状态未知")
     return [f"> **数据日期：{payload['date']}** · {quality}"]
+
+
+def _render_hrv_fusion(hrv: dict) -> list[str]:
+    lines = []
+    if hrv.get("fusion_summary"):
+        confidence = hrv.get("fusion_confidence_label") or "未知"
+        lines.append(f"- **融合结论**：{hrv['fusion_summary']} · {confidence}把握")
+    for stream in hrv.get("streams", []):
+        label = stream.get("device_label") or "来源未标识设备"
+        site = {
+            "upper_arm": "上臂",
+            "wrist": "腕部",
+            "unknown": "位置未知",
+        }.get(stream.get("measurement_site"), "位置未知")
+        selected = " · 首选展示" if stream.get("selected") else ""
+        details = [
+            _display_with_unit(stream.get("value_ms"), "毫秒"),
+            f"当天 {stream.get('sample_count_today', 0)} 个样本",
+            f"基线 {stream.get('baseline_distinct_days', 0)} 天",
+        ]
+        if stream.get("deviation"):
+            details.append(_deviation_text(stream["deviation"]))
+        lines.append(
+            f"- **{label}（{site}）**：{' · '.join(details)}{selected}"
+        )
+    if not lines:
+        lines.append("- 暂无可融合的设备级 HRV")
+    return lines
+
+
+def _render_heart_rate_coverage(hrv: dict) -> list[str]:
+    lines = []
+    for item in hrv.get("heart_rate_coverage", []):
+        state = "数值已解码" if item.get("payload_decoded") else "仅覆盖索引，数值尚未解码"
+        lines.append(
+            f"- **{item['device_label']}**：今日 {item.get('today_coverage_minutes', 0):g} 分钟 · "
+            f"近 28 日 {item.get('coverage_hours_28d', 0):g} 小时/"
+            f"{item.get('covered_days_28d', 0)} 天 · {state}"
+        )
+    return lines
+
+
+def _render_trends_and_events(payload: dict) -> list[str]:
+    trend_lines = [
+        (
+            f"- **{trend['metric_label']}（{trend['window_days']} 日）**："
+            f"{trend['direction_label']} · {trend['confidence_label']}置信度"
+        )
+        for trend in payload.get("trends", [])
+        if trend.get("status") == "AVAILABLE"
+    ]
+    event_lines = [
+        f"- **{event['type_label']}**：{event['summary']}"
+        for event in payload.get("events", [])
+        if event.get("lifecycle") != "RESOLVED"
+    ]
+    return [
+        "",
+        "### 趋势与事件",
+        "",
+        *(trend_lines[:6] or ["- 暂无可用趋势"]),
+        *(event_lines[:4] or ["- 暂无进行中的健康事件"]),
+    ]
 
 
 def _render_drivers(decision: dict) -> list[str]:

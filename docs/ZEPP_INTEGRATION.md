@@ -106,4 +106,8 @@ Build and device-side setup instructions are in
 
 Every request uses an explicit local user identity. Vendor identities are not silently
 merged across local users. Metrics retain source, source scope, device ID, and unit;
-Balance 2 and Helio HRV streams are analyzed independently rather than averaged.
+the device inventory maps verified product IDs to Balance 2 and Helio Strap without
+persisting device authentication material. Their HRV values remain separate: Vitalis
+compares each stream with its own baseline and fuses only the resulting directions.
+Upper-arm evidence can choose Helio as the display stream when equivalent baselines are
+available, but it does not override cross-device disagreement or imply ECG equivalence.

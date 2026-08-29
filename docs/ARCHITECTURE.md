@@ -88,7 +88,7 @@ DailyProfile
 |- data_quality: status, missing signals, coverage, flags, device validity
 |- facts: target-day normalized observations and provenance
 |- baselines: 7d/28d robust statistics per metric and device stream
-|- features: sleep, HRV/RHR, recovery, exact workout modes, training
+|- features: sleep, device-baseline HRV fusion, dense-HR coverage, RHR, recovery, training
 |- trends: device-isolated 7/28/90-day period features
 |- events: persistent or period-change observations
 |- states: sleep, recovery, training load, Chinese labels
@@ -99,6 +99,18 @@ DailyProfile
 
 There is no uncalibrated Vitalis 0-100 recovery score. Vendor readiness, Charge, and
 sleep scores are labeled as vendor context and do not become the Vitalis result.
+
+HRV fusion never averages raw milliseconds across devices. Each RMSSD stream is first
+compared with that device's own robust 28-day baseline. Matching directions strengthen
+the recovery evidence; disagreement is reported as `mixed` and contributes no positive
+or negative HRV driver. When equivalent streams are available, an identified upper-arm
+Helio stream is preferred for display, while its evidence remains form-factor-level
+rather than a claim of model-specific ECG validation.
+
+`second_heart_rate` contributes per-device coverage hours and days only while its
+`SEC_HR` payload remains indexed rather than decoded. Coverage can explain wear and data
+density, but it cannot contribute heart-rate values or accuracy weights until the
+binary payload and signal quality have been validated.
 
 ### 3.2 Data Quality
 

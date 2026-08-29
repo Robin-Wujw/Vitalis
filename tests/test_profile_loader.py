@@ -2,7 +2,14 @@ from datetime import date, datetime, timedelta, timezone
 
 from vitalis.intelligence.contracts import QualityStatus
 from vitalis.intelligence.profile import ProfileLoader
-from vitalis.models import MetricSample, NormalizedDaily, SleepRecord, User
+from vitalis.models import (
+    DenseDataFile,
+    Device,
+    MetricSample,
+    NormalizedDaily,
+    SleepRecord,
+    User,
+)
 from vitalis.storage import HealthRepository, session_scope
 
 
@@ -118,3 +125,45 @@ def test_profile_loader_groups_utc_samples_by_shanghai_natural_day():
     target_values = [point.value for point in raw.series["hrv_rmssd"] if point.day == day]
     assert target_values == [50, 70]
     assert raw.facts["hrv_rmssd"][0].value == 60
+
+
+def test_profile_loader_attaches_device_identity_and_dense_hr_coverage():
+    user_id = "intelligence-device-context"
+    day = date(2026, 8, 28)
+    start = datetime(2026, 8, 27, 16, 0, tzinfo=timezone.utc)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+        repo.upsert_device(Device(
+            user_id=user_id,
+            source="zepp",
+            model="Amazfit Helio Strap",
+            device_id="CE4A84921FA6",
+        ))
+        repo.save_dense_data_files([DenseDataFile(
+            user_id=user_id,
+            source="zepp",
+            stream="second_heart_rate",
+            file_id="private-file-id",
+            file_type="SEC_HR",
+            date=day,
+            start_utc=start,
+            end_utc=start + timedelta(hours=8),
+            source_scope="device",
+            device_id="CE4A84FFFF921FA6",
+            parse_status="indexed",
+        )])
+        raw = ProfileLoader(repo).load(user_id, day)
+
+    assert raw.device_models == {
+        "CE4A84921FA6": "Amazfit Helio Strap",
+        "CE4A84FFFF921FA6": "Amazfit Helio Strap",
+    }
+    coverage = raw.dense_heart_rate_coverage["CE4A84FFFF921FA6"]
+    assert coverage["today_coverage_seconds"] == 8 * 60 * 60
+    validity = raw.data_quality.device_validity[0]
+    assert validity.device_label == "Amazfit Helio Strap"
+    assert validity.measurement_site == "upper_arm"
+    assert validity.status == "LIMITED_BY_EVIDENCE"
+    assert "private-file-id" not in repr(raw.data_quality)

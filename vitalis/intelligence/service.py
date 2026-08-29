@@ -59,6 +59,36 @@ EVIDENCE_REFS = [
         applies_to=["hrv_measurement", "ln_rmssd"],
     ),
     EvidenceRef(
+        id="ARM_PPG_OH1_2019",
+        title="Validation of Polar OH1 optical heart rate sensor during exercise",
+        url="https://pubmed.ncbi.nlm.nih.gov/31120968/",
+        applies_to=["upper_arm_ppg_heart_rate", "measurement_site"],
+    ),
+    EvidenceRef(
+        id="ARM_WRIST_PPG_2025",
+        title="Wrist-worn and arm-worn wearables for monitoring heart rate",
+        url="https://pubmed.ncbi.nlm.nih.gov/40116771/",
+        applies_to=["upper_arm_ppg_heart_rate", "measurement_site"],
+    ),
+    EvidenceRef(
+        id="WRIST_PPG_META_2020",
+        title="Validity of wrist-worn PPG devices to measure heart rate",
+        url="https://doi.org/10.1080/02640414.2020.1767348",
+        applies_to=["wrist_ppg_heart_rate", "activity_specific_accuracy"],
+    ),
+    EvidenceRef(
+        id="PPG_ERROR_SOURCES_2020",
+        title="Investigating sources of inaccuracy in wearable optical heart rate sensors",
+        url="https://doi.org/10.1038/s41746-020-0226-6",
+        applies_to=["ppg_motion_artifact", "device_specific_accuracy"],
+    ),
+    EvidenceRef(
+        id="PRV_HRV_REVIEW_2013",
+        title="How accurate is pulse rate variability as an estimate of heart rate variability?",
+        url="https://doi.org/10.1016/j.ijcard.2012.03.119",
+        applies_to=["ppg_hrv_limitations", "device_fusion"],
+    ),
+    EvidenceRef(
         id="WSS_WEARABLE_SLEEP_2025",
         title="World Sleep Society recommendations for consumer sleep trackers",
         url="https://pubmed.ncbi.nlm.nih.gov/40300398/",

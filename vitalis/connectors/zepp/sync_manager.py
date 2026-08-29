@@ -80,6 +80,7 @@ class SyncManager:
             self._cancel.clear()
             window = FetchWindow.days_back(days)
             streams: list[StreamReport] = []
+            self._refresh_devices(repo, user)
             started = time.monotonic()
             budget = 90 if days <= 7 else min(45 + days * 3, 20 * 60)
             deadline = started + budget
@@ -234,6 +235,21 @@ class SyncManager:
             run_lock.release()
 
     # ---- internal ----
+
+    def _refresh_devices(
+        self, repo: HealthRepository | None, user: User
+    ) -> None:
+        connector = getattr(self.fetcher, "connector", None)
+        if repo is None or connector is None or not hasattr(connector, "fetch_devices"):
+            return
+        try:
+            payload = connector.fetch_devices()
+        except ZeppAuthError:
+            # Device naming enriches provenance but must not block health streams.
+            return
+        for device in ZeppParser().parse_devices(payload):
+            device.user_id = user.id
+            repo.upsert_device(device)
 
     def _fetch_pending_workout_details(
         self, window: FetchWindow, repo: HealthRepository | None, user: User

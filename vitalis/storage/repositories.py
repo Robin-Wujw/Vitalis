@@ -1,6 +1,7 @@
 """仓储层：封装对 ORM 的读写，业务层只依赖仓储接口。"""
 
 from datetime import date, datetime, timedelta, timezone
+import hashlib
 from uuid import uuid4
 
 from sqlalchemy import delete, or_, select, update
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from vitalis.models import (
     AuthToken,
+    Device,
     NormalizedDaily,
     DailyMetric,
     DenseDataFile,
@@ -71,6 +73,37 @@ class HealthRepository:
             "source_user_id_present": source_user_id is not None,
             "shared_local_user_count": len(local_user_ids),
         }
+
+    # ---- 设备 ----
+    def upsert_device(self, device: Device) -> orm.Device:
+        row = self.db.execute(select(orm.Device).where(
+            orm.Device.user_id == device.user_id,
+            orm.Device.source == device.source,
+            orm.Device.device_id == device.device_id,
+        )).scalar_one_or_none()
+        if row is None:
+            stable_id = hashlib.sha256(
+                f"{device.user_id}:{device.source}:{device.device_id}".encode("utf-8")
+            ).hexdigest()
+            row = orm.Device(
+                id=stable_id,
+                user_id=device.user_id,
+                source=device.source,
+                model=device.model,
+                device_id=device.device_id,
+            )
+            self.db.add(row)
+        else:
+            row.model = device.model or row.model
+        self.db.flush()
+        return row
+
+    def devices(self, user_id: str) -> list[orm.Device]:
+        return list(self.db.execute(
+            select(orm.Device).where(orm.Device.user_id == user_id).order_by(
+                orm.Device.model, orm.Device.device_id
+            )
+        ).scalars().all())
 
     # ---- 每日健康 ----
     def save_daily(self, daily: NormalizedDaily) -> None:
@@ -992,7 +1025,7 @@ class HealthRepository:
 
     def delete_for_user(self, user_id: str) -> None:
         for model in (
-            orm.SleepRecord, orm.ActivityRecord, orm.TrainingRecord,
+            orm.Device, orm.SleepRecord, orm.ActivityRecord, orm.TrainingRecord,
             orm.MetricSample, orm.DailyMetric, orm.DenseDataFile, orm.Workout,
             orm.HealthEventObservation, orm.HealthEventRecord, orm.AnalysisSnapshot,
             orm.RecommendationInstance,

@@ -1389,3 +1389,62 @@ with interpreted recovery and training context.
   the gateway running with both jobs active, `hermes gateway status` reported the
   boot-enabled system service active, the latest Morning execution was completed, and
   `hermes doctor` finished with all required checks passed.
+
+## 20. Evidence-Bounded Multi-Device Fusion and Rich Daily Interpretation
+
+Date: 2026-08-29
+
+Goal: use Balance 2 and Helio Strap together without averaging incompatible raw
+measurements, incorporate upper-arm PPG evidence honestly, and make the daily report
+substantially more informative.
+
+### Detailed TODO
+
+- [x] Part 1 - Review real device coverage and primary research.
+  - Confirm that structured RMSSD streams exist for two device identities and that
+    Helio has materially longer indexed `SEC_HR` coverage, while the dense payload is
+    still not decoded into heart-rate samples.
+  - Review upper-arm exercise-HR validation, wrist PPG meta-analysis, PPG motion/error
+    evidence, and the PRV-versus-HRV evidence boundary.
+- [x] Part 2 - Add verified device identity and evidence metadata.
+  - Parse the Zepp device inventory into a minimal product model and normalized device
+    identity without persisting embedded device authentication material.
+  - Attach measurement site, evidence references, and explicit model-specific limits.
+- [x] Part 3 - Implement device-specific baseline fusion.
+  - Compare the same HRV metric within each device's own 28-day baseline and fuse only
+    deviation directions; never average Balance 2 and Helio milliseconds.
+  - Strengthen consistent multi-device evidence and abstain from an HRV recovery driver
+    when devices conflict.
+- [x] Part 4 - Expand the deterministic PushPlus interpretation.
+  - Add sleep timing/structure/regularity, every device HRV stream, fusion confidence,
+    high-frequency coverage, vendor context, 7/28-day load, trends, events, and training
+    structure while keeping limitations last.
+  - Keep indexed high-frequency coverage distinct from decoded heart-rate values.
+- [x] Part 5 - Live acceptance and delivery.
+  - Refresh the real device inventory, generate a current profile and renderer preview,
+    and verify that no private identifier appears in the message.
+  - Run full verification, restart the Vitalis service, confirm Hermes health, commit,
+    push, and record anonymized delivery evidence.
+
+### Verification Log
+
+- Parts 1-4: focused research found direct upper-arm Polar OH1 ECG agreement evidence
+  (Hettiarachchi et al. 2019), a later arm-versus-wrist validation, device/activity
+  dependent PPG error evidence (Bent et al. 2020), and the PRV/HRV non-equivalence
+  boundary (Schaefer and Vagedes 2013). The implementation retains device-isolated raw
+  values and uses only device-baseline direction consensus. All 184 repository tests
+  passed after adding device-inventory, agreement, disagreement, coverage, privacy, and
+  rich-renderer regressions.
+- Part 5 (live acceptance): a real two-day sync completed all eight streams and refreshed
+  the private device inventory. The current profile identified Helio Strap as upper-arm
+  and Balance 2 as wrist-worn. Helio was near its own baseline while Balance 2 was above
+  its own baseline, so the engine correctly returned `fusion_direction=mixed`,
+  `fusion_confidence=LOW`, and no fused HRV recovery driver. The renderer produced nine
+  analysis sections and 1,564 characters, named both products, reported merged dense-HR
+  coverage as undecoded, and contained no local user or device identifier.
+- Part 5 (verification): the complete suite passed all 184 tests in 2.84 seconds with
+  193 existing Python 3.14 `datetime.utcnow()` deprecation warnings. Compilation, JSON
+  schema parsing, `git diff --check`, and added-content private-value scans passed.
+  Vitalis and the boot-enabled Hermes gateway were active. The 15:30 automatic Morning
+  execution completed successfully and advanced to 16:30 without duplicating the
+  already-delivered report.

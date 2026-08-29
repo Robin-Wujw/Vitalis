@@ -1741,3 +1741,75 @@ their disagreement materially changes today's recommendation.
 - Part 4 (delivery): feature commit `f440d14` (`feat: deliver actionable health brief`)
   was pushed to `origin/main`. The delivery record was then committed and pushed on the
   same branch; local and remote `main` were verified synchronized.
+
+## 25. Recovery Depth And Individualized Prescription Session
+
+Date: 2026-08-30
+
+Goal: make DailyProfile and the morning brief use materially more of the available
+nocturnal heart-rate/HRV and workout-detail evidence. Running and strength sessions must
+be selected and dosed from the user's recent sessions and response data instead of
+mostly fixed weekly-frequency templates.
+
+### Detailed TODO
+
+- [x] Part 1 - Add canonical-device nocturnal recovery context.
+  - Derive night heart-rate coverage, median, artifact-resistant low point, and
+    first-half/second-half trajectory from timestamped heart-rate samples inside each
+    recorded sleep window; keep device streams isolated.
+  - Build a historical personal baseline for the canonical nightly stream and add a
+    same-device 7-day HRV comparison against the preceding 7 days.
+  - Do not derive beat-to-beat HRV from minute heart-rate samples or claim decoded
+    second-level data while the `SEC_HR` payload remains unverified.
+  - Add focused loader, analyzer, contract, and API tests.
+- [x] Part 2 - Replace coarse running and strength prescription rules.
+  - Select recovery/easy/steady/quality/long running content from recovery state,
+    recent session classes, recent duration and distance, threshold availability,
+    cardiac drift, and lower-body conflicts.
+  - Anchor running duration to recent completed sessions and preserve individual HR
+    zones, natural cadence, and bounded progression rather than universal targets.
+  - Reuse confirmed strength exercises, prior sets/repetitions/load/rest and RPE/RIR
+    when present; otherwise prescribe explicit movement-pattern choices without
+    pretending heart rate identifies an exercise.
+  - Bind ACSM, concurrent-training, and RIR evidence ids to planned sessions and add
+    focused decision tests.
+- [x] Part 3 - Explain the richer decision without rebuilding an audit report.
+  - Make the morning brief explain the useful overnight HR/HRV pattern and the exact
+    recent workout fact that changed today's session.
+  - Keep at most four short reasons and suppress metrics that did not influence the
+    plan; retain the concise action-first presentation.
+  - Add renderer tests for personalized running and strength plans and absent-data
+    behavior.
+- [ ] Part 4 - Rebuild current intelligence output, verify, and publish.
+  - Update current schemas, evidence/workflow/architecture documentation, and version
+    constants directly with no legacy contract or fallback path.
+  - Run focused and complete tests, validate real stored data privately, restart both
+    services, commit, and push synchronized `main` to GitHub.
+
+### Verification Log
+
+- Part 1: ordinary minute heart rate is loaded into a separate, non-daily series over
+  the bounded nocturnal history window. Device-isolated sleep intervals require at
+  least 120 covered minutes and 50% coverage before producing median HR, rolling
+  five-minute low, first/second-half trajectory, and a same-device historical
+  comparison. The canonical HRV stream now compares its latest 7-day median with the
+  preceding 7 days. Minute HR and indexed `SEC_HR` data are not treated as HRV.
+- Part 2: the running planner now selects recovery, easy, steady, threshold, or
+  long-easy content from recent session type, personal duration, threshold HR, cardiac
+  drift, recent hard work, and lower-body conflicts. Strength planning reuses explicit
+  exercise dose and RPE/RIR when present; absent explicit exercises remain movement-
+  pattern prescriptions and heart rate never supplies an exercise identity. Planned
+  sessions carry the ACSM, concurrent-training, RIR, and physical-activity evidence IDs.
+- Part 3: the morning brief keeps four reasons at most and reports only the overnight
+  and workout facts that explain the actual plan. A real private preview aligned the
+  conclusion with a 21-26 minute recovery run and explained that the latest 8.1%
+  cardiac drift caused the reduction. It contained no device name, empty signals,
+  unknown safety text, vendor scores, planning gates, or generic limitation section.
+- Part 4 (verification): all 217 tests passed with 225 existing Python 3.14
+  `datetime.utcnow()` deprecation warnings. Compilation, Skill JSON parsing, evidence-
+  ID checks, and `git diff --check` passed. Real-data timing attributed about 2 seconds
+  to nocturnal recovery analysis and 0.3 seconds to training analysis within a roughly
+  21-second local analysis. `vitalis.service` and `hermes-gateway.service` were
+  restarted and are active; `/healthz` returns 200 without a proxy. Both Hermes cron
+  jobs are active, their latest executions are `ok`, and the next morning run is
+  scheduled for 2026-08-30 09:30 Asia/Shanghai.

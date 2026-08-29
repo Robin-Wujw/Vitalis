@@ -1,13 +1,18 @@
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 from vitalis.intelligence.analyzers import HrvAnalyzer, RecoveryAnalyzer, SleepAnalyzer, TrainingAnalyzer
 from vitalis.intelligence.baseline import BaselineEngine
 from vitalis.intelligence.contracts import (
+    Availability,
+    ConfidenceBand,
     DecisionAction,
     LoadState,
     RecoveryState,
+    RunningAnalysis,
+    RunningSessionAnalysis,
     SleepState,
     StrengthExerciseInput,
+    TrainingFeatures,
     TrainingPreferences,
 )
 from vitalis.intelligence.decision import DecisionEngine
@@ -176,7 +181,8 @@ def test_decision_returns_primary_running_and_optional_strength_plan():
     assert decision.confidence_label in {"中等", "较高"}
     action_plan = decision.action_plan
     assert action_plan.goal_label == "综合健康优先，跑步与力量并行"
-    assert action_plan.primary_session.title == "阈值间歇跑"
+    assert action_plan.primary_session.title == "轻松跑"
+    assert action_plan.primary_session.code == "easy_run"
     assert action_plan.optional_session.session_type == "STRENGTH"
     assert action_plan.session_relationship == "ALTERNATIVE"
     assert action_plan.weekly_balance.running_due is True
@@ -186,6 +192,66 @@ def test_decision_returns_primary_running_and_optional_strength_plan():
     assert action_plan.primary_session.evidence
     assert action_plan.primary_session.stop_conditions
     assert action_plan.missing_input_gates
+
+
+def test_nocturnal_heart_rate_and_same_device_hrv_history_are_analyzed():
+    raw = _profile(hrv_today=45, rhr_today=56, sleep_today=240, load_today=20)
+    raw.series["hrv_rmssd"] = _series(
+        "hrv_rmssd",
+        [45] * 7 + [55] * 7,
+        device="helio",
+        scope="device",
+    )
+    raw.sleep_by_day = {}
+    raw.heart_rate_samples = []
+    for offset in range(9):
+        sleep_day = TARGET - timedelta(days=offset)
+        raw.sleep_by_day[sleep_day] = {
+            "date": sleep_day,
+            "sleep_duration": 240,
+            "bedtime": time(0, 0),
+            "wake_time": time(4, 0),
+            "source": "zepp",
+        }
+        for minute in range(240):
+            value = 60
+            if offset == 0 and minute >= 120:
+                value = 56
+            local_at = datetime.combine(
+                sleep_day, time.min, tzinfo=timezone(timedelta(hours=8))
+            ) + timedelta(minutes=minute)
+            raw.heart_rate_samples.append(SeriesPoint(
+                metric="heart_rate",
+                value=value,
+                unit="bpm",
+                day=sleep_day,
+                observed_at=local_at.astimezone(timezone.utc),
+                source="zepp",
+                source_scope="device",
+                device_id="helio",
+            ))
+
+    hrv = HrvAnalyzer().analyze(raw, BaselineEngine().build(raw.series, raw.day))
+    night = hrv.nocturnal_heart_rate
+
+    assert hrv.recent_7d_median_ms == 45
+    assert hrv.previous_7d_median_ms == 55
+    assert hrv.recent_7d_change_percent == -18.2
+    assert hrv.recent_7d_direction == "below"
+    assert night.status.value == "AVAILABLE"
+    assert night.coverage_ratio == 1
+    assert night.low_5m_bpm == 56
+    assert night.second_minus_first_bpm == -4
+    assert night.baseline_nights == 8
+    assert night.direction == "below"
+
+    raw.series["hrv_rmssd"] = []
+    without_hrv = HrvAnalyzer().analyze(
+        raw, BaselineEngine().build(raw.series, raw.day)
+    )
+    assert without_hrv.status == Availability.INSUFFICIENT_DATA
+    assert without_hrv.nocturnal_heart_rate.status == Availability.AVAILABLE
+    assert without_hrv.rhr_deviation.direction == "below"
 
 
 def test_recent_strength_keeps_running_primary_and_strength_as_alternative():
@@ -258,6 +324,93 @@ def test_recent_leg_session_suppresses_quality_run_conflict():
     assert "近 48 小时已有腿部力量训练，今天不安排高强度跑。" in (
         decision.action_plan.conflict_checks
     )
+
+
+def test_high_cardiac_drift_changes_quality_run_to_short_recovery_run():
+    latest = RunningSessionAnalysis(
+        workout_id="run-high-drift",
+        date=TARGET - timedelta(days=2),
+        classification="EASY_RUN",
+        classification_label="轻松跑",
+        confidence=ConfidenceBand.HIGH,
+        confidence_label="较高",
+        duration_minutes=48,
+        average_pace_seconds_per_km=360,
+        median_cadence_spm=172,
+        cardiac_drift_percent=8.5,
+    )
+    training = TrainingFeatures(
+        status=Availability.AVAILABLE,
+        running=RunningAnalysis(
+            status=Availability.AVAILABLE,
+            status_label="可用",
+            zone_method="lactate_threshold",
+            lactate_threshold_bpm=170,
+            sessions_7d=1,
+            duration_minutes_7d=48,
+            sessions_28d=1,
+            duration_minutes_28d=48,
+            recent_sessions=[latest],
+        ),
+    )
+
+    session = DecisionEngine()._running(
+        TARGET,
+        TrainingPreferences(user_id="u"),
+        training,
+        "PRIMARY",
+        True,
+        "high",
+    )
+
+    assert session.code == "recovery_run"
+    assert session.total_duration_minutes == (31, 35)
+    assert any("本次因此缩短" in item for item in session.personalization_reasons)
+    assert "沿用你最近自然步频约 172 步/分钟" in session.steps[1].instructions[1]
+
+
+def test_strength_plan_reuses_confirmed_exercise_dose_and_effort():
+    raw = _profile(hrv_today=55, rhr_today=55, sleep_today=450, load_today=20)
+    workouts = []
+    for offset, workout_id, focus, exercise in [
+        (4, "push", "PUSH", StrengthExerciseInput(
+            exercise_name="卧推",
+            sets=4,
+            repetitions="8 次",
+            weight_kg=60,
+            rir=3,
+            rest_seconds=150,
+        )),
+        (2, "pull", "PULL", StrengthExerciseInput(exercise_name="划船", sets=4)),
+        (1, "legs", "LEGS", StrengthExerciseInput(exercise_name="深蹲", sets=4)),
+    ]:
+        workouts.append({
+            "workout_id": workout_id,
+            "local_day": TARGET - timedelta(days=offset),
+            "confirmed_exercises": [normalize_exercise("u", workout_id, 1, exercise, focus)],
+            "samples": [],
+            "detail": None,
+            "data": {
+                "type": "strength",
+                "training_family": "strength",
+                "duration": 45,
+            },
+        })
+    raw.workouts = workouts
+    training = TrainingAnalyzer().analyze(raw, BaselineEngine().build(raw.series, raw.day))
+
+    session = DecisionEngine()._strength(
+        TrainingPreferences(user_id="u"), training, "PRIMARY", "moderate"
+    )
+    bench = next(step for step in session.steps if step.name == "卧推")
+
+    assert session.title == "推类训练"
+    assert bench.sets == 4
+    assert bench.repetitions == "8 次"
+    assert bench.load_kg == 60
+    assert bench.rest_seconds == (150, 150)
+    assert any("增加少量重量" in item for item in bench.instructions)
+    assert "ACSM_RESISTANCE_TRAINING_2026" in session.evidence_ref_ids
 
 
 def test_hrv_exposes_all_device_streams_without_merging_them():

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
+from statistics import median
 
 from vitalis.time import local_timezone
 
@@ -156,7 +157,7 @@ class DecisionEngine:
             )
 
         conflicts = self._conflicts(day, training)
-        action = self._training_action(sleep_state, recovery, training)
+        action = self._training_action(sleep_state, hrv, recovery, training)
         intensity = {
             DecisionAction.TRAIN_HARD: "high",
             DecisionAction.TRAIN_NORMAL: "moderate",
@@ -248,8 +249,13 @@ class DecisionEngine:
         return "CLEAR", "未记录疼痛或伤病限制"
 
     @staticmethod
-    def _training_action(sleep_state, recovery, training) -> DecisionAction:
+    def _training_action(sleep_state, hrv, recovery, training) -> DecisionAction:
         if recovery.state == RecoveryState.NORMAL and training.load_state == LoadState.ELEVATED:
+            return DecisionAction.TRAIN_LIGHT
+        if (
+            hrv.recent_7d_direction == "below"
+            and hrv.fusion_direction != "above"
+        ):
             return DecisionAction.TRAIN_LIGHT
         if (
             recovery.state == RecoveryState.GOOD
@@ -287,9 +293,14 @@ class DecisionEngine:
                 and "近 48 小时已有腿部力量训练，今天不安排高强度跑。" not in conflicts
                 and not self._quality_run_this_week(day, training)
             )
-            primary = self._running(preferences, training, "PRIMARY", quality_allowed)
+            primary = self._running(day, preferences, training, "PRIMARY", quality_allowed, intensity)
             if balance.strength_due:
-                optional = self._strength(preferences, training, "OPTIONAL", "moderate")
+                optional = self._strength(
+                    preferences,
+                    training,
+                    "OPTIONAL",
+                    "low" if intensity == "low" else "moderate",
+                )
                 relationship = "ALTERNATIVE" if quality_allowed or lower_focus else "ADDITION"
             else:
                 optional = self._recovery(preferences, "跑步后的低负担恢复", "OPTIONAL")
@@ -298,7 +309,7 @@ class DecisionEngine:
 
         primary = self._strength(preferences, training, "PRIMARY", intensity)
         if balance.running_due:
-            optional = self._running(preferences, training, "OPTIONAL", False)
+            optional = self._running(day, preferences, training, "OPTIONAL", False, "low")
             relationship = "ALTERNATIVE" if lower_focus else "ADDITION"
         else:
             optional = self._recovery(preferences, "力量训练后的低负担恢复", "OPTIONAL")
@@ -342,39 +353,104 @@ class DecisionEngine:
         )
 
     def _running(
-        self, preferences, training, role: str, quality: bool
+        self, day, preferences, training, role: str, quality: bool, intensity: str
     ) -> PlannedSession:
-        threshold = training.running.lactate_threshold_bpm if training.running else None
+        running = training.running
+        threshold = running.lactate_threshold_bpm if running else None
+        recent = running.recent_sessions if running else []
+        durations = [item.duration_minutes for item in recent if item.duration_minutes >= 15]
+        typical = int(round(median(durations))) if durations else 35
+        latest = recent[0] if recent else None
+        recent_hard = any(
+            item.classification in {"TEMPO_RUN", "INTERVAL_RUN", "LONG_RUN"}
+            and (day - item.date).days <= 2
+            for item in recent
+        )
+        high_drift = bool(
+            latest and latest.cardiac_drift_percent is not None
+            and (day - latest.date).days <= 7
+            and latest.cardiac_drift_percent > 5
+        )
+        established = len(durations) >= 4
+        quality = (
+            quality
+            and threshold is not None
+            and not recent_hard
+            and not high_drift
+            and (preferences.max_session_minutes or 60) >= 40
+        )
+        long_due = (
+            intensity != "low" and established and not recent_hard
+            and not any(
+                item.classification == "LONG_RUN" and (day - item.date).days <= 13
+                for item in recent
+            )
+        )
+        reasons = []
+        if high_drift:
+            reasons.append(
+                f"最近一次可解释的心率漂移为 {latest.cardiac_drift_percent:+.1f}%，"
+                "本次因此缩短并保持轻松。"
+            )
+        elif recent_hard:
+            reasons.append("近 72 小时已有质量跑或长跑，本次因此降低刺激。")
+        if latest:
+            detail = f"最近一次跑步为{latest.classification_label}，{latest.duration_minutes} 分钟"
+            if latest.average_pace_seconds_per_km is not None:
+                pace_seconds = int(round(latest.average_pace_seconds_per_km))
+                detail += f"，平均配速 {pace_seconds // 60}:{pace_seconds % 60:02d}/公里"
+            if latest.median_cadence_spm is not None:
+                detail += f"，自然步频约 {latest.median_cadence_spm:.0f} 步/分钟"
+            reasons.append(f"{detail}。")
+            if latest.cardiac_drift_percent is not None and not high_drift:
+                reasons.append(f"最近一次可解释的心率漂移为 {latest.cardiac_drift_percent:+.1f}%。")
+
         if quality:
-            duration = self._duration(preferences, (42, 55))
-            intensity = "high"
+            duration = self._duration_around(preferences, typical, 0.95, 1.15, 40, 60)
+            planned_intensity = "high"
             code = "threshold_intervals"
             title = "阈值间歇跑"
-            focus = "一次质量跑，避免连续两天高负荷下肢刺激"
-            main_intensity = (
-                f"工作段约 {round(threshold * 0.95)}–{round(threshold) - 1} 次/分钟"
-                if threshold else "工作段主观用力 7/10，仍能维持动作稳定"
-            )
+            focus = "今天安排本周质量跑；工作段受控，不做冲刺"
+            main_intensity = f"工作段约 {round(threshold * 0.95)}–{round(threshold) - 1} 次/分钟"
             steps = [
                 TrainingStep(order=1, name="热身", duration_minutes=(10, 12), intensity="轻松", instructions=["从快走逐渐过渡到慢跑"]),
                 TrainingStep(order=2, name="阈值工作段", sets=3, repetitions="每组 6 分钟", rest_seconds=(120, 120), intensity=main_intensity, instructions=["组间慢跑恢复", "最后一组不冲刺"]),
                 TrainingStep(order=3, name="冷身", duration_minutes=(8, 10), intensity="轻松"),
             ]
+            reasons.append("恢复和训练间隔允许，且本周尚无质量跑。")
+        elif intensity == "low" or recent_hard or high_drift:
+            duration = self._duration_around(preferences, typical, 0.65, 0.8, 20, 35)
+            planned_intensity = "low"
+            code = "recovery_run"
+            title = "恢复跑"
+            focus = "缩短跑量，用很轻松的强度维持跑步节奏"
+            steps = self._continuous_run_steps(duration, "恢复跑", self._easy_zone(threshold, True), latest)
+        elif long_due:
+            duration = self._duration_around(preferences, typical, 1.15, 1.3, 45, 75)
+            planned_intensity = "low"
+            code = "long_easy_run"
+            title = "长距离轻松跑"
+            focus = "在近期个人时长基础上小幅延长，全程保持低强度"
+            steps = self._continuous_run_steps(duration, "长距离轻松跑", self._easy_zone(threshold), latest)
+            reasons.append(f"近期跑步时长中位数约 {typical} 分钟，且近两周没有长跑。")
+        elif established and intensity == "moderate" and latest and latest.classification in {"RECOVERY_RUN", "EASY_RUN"}:
+            duration = self._duration_around(preferences, typical, 0.9, 1.1, 30, 55)
+            planned_intensity = "moderate"
+            code = "steady_run"
+            title = "稳定跑"
+            focus = "在可控呼吸下连续完成，不进入阈值强度"
+            zone = (
+                f"主体约 {round(threshold * 0.90)}–{round(threshold * 0.95) - 1} 次/分钟"
+                if threshold else "主观用力约 5–6/10，呼吸加深但可控"
+            )
+            steps = self._continuous_run_steps(duration, "稳定跑", zone, latest)
         else:
-            duration = self._duration(preferences, (30, 45))
-            intensity = "low"
+            duration = self._duration_around(preferences, typical, 0.85, 1.05, 25, 55)
+            planned_intensity = "low"
             code = "easy_run"
             title = "轻松跑"
-            focus = "补足有氧频次并控制恢复成本"
-            zone = (
-                f"约 {round(threshold * 0.85)}–{round(threshold * 0.90) - 1} 次/分钟"
-                if threshold else "以谈话测试为准，不使用推测心率区间"
-            )
-            steps = [
-                TrainingStep(order=1, name="热身", duration_minutes=(6, 8), intensity="轻松", instructions=["快走后逐渐进入慢跑"]),
-                TrainingStep(order=2, name="轻松跑", duration_minutes=(18, 30), intensity=zone, instructions=["保持能连续说出完整短句", "步频保持自然，不追求固定数值"]),
-                TrainingStep(order=3, name="冷身", duration_minutes=(5, 7), intensity="轻松"),
-            ]
+            focus = "按近期可完成的时长维持低强度有氧"
+            steps = self._continuous_run_steps(duration, "轻松跑", self._easy_zone(threshold), latest)
         return PlannedSession(
             role=role,
             role_label=ROLE_LABELS[role],
@@ -384,23 +460,89 @@ class DecisionEngine:
             title=title,
             focus=focus,
             goal="在健康优先前提下维持跑步连续性",
-            intensity=intensity,
-            intensity_label=INTENSITY_LABELS[intensity],
+            intensity=planned_intensity,
+            intensity_label=INTENSITY_LABELS[planned_intensity],
             total_duration_minutes=duration,
             steps=steps,
             evidence=[
-                f"近 7 天完成跑步 {training.running.sessions_7d if training.running else 0} 次。",
-                f"近 28 天完成跑步 {training.running.sessions_28d if training.running else 0} 次。",
+                f"近 7 天完成跑步 {running.sessions_7d if running else 0} 次。",
+                f"近 28 天完成跑步 {running.sessions_28d if running else 0} 次。",
             ],
-            progression=["连续两次按当前剂量完成且次日恢复未受抑制时，再增加 5 分钟或一个工作段。"],
+            evidence_ref_ids=["WHO_PHYSICAL_ACTIVITY", "CONCURRENT_TRAINING_2022"],
+            personalization_reasons=reasons[:3],
+            progression=["本次完成轻松且次日恢复正常时，下次只增加时长或强度其中一项。"],
             stop_conditions=["出现胸痛、异常气短、头晕、步态改变或持续疼痛时立即停止。"],
         )
+
+    @staticmethod
+    def _easy_zone(threshold: float | None, recovery: bool = False) -> str:
+        if threshold is None:
+            return "能连续说完整句子；不使用推测心率区间"
+        upper_ratio = 0.85 if recovery else 0.90
+        lower_ratio = 0.75 if recovery else 0.85
+        return f"约 {round(threshold * lower_ratio)}–{round(threshold * upper_ratio) - 1} 次/分钟"
+
+    @staticmethod
+    def _continuous_run_steps(duration, name: str, zone: str, latest):
+        low, high = duration
+        warm_low, warm_high = 6, min(10, max(6, low // 5))
+        cool_low, cool_high = 5, min(8, max(5, low // 6))
+        main_low = max(10, low - warm_high - cool_high)
+        main_high = max(main_low, high - warm_low - cool_low)
+        instructions = ["保持能连续说出完整短句", "步频自然，不追求统一目标"]
+        if latest and latest.median_cadence_spm is not None:
+            instructions[-1] = f"沿用你最近自然步频约 {latest.median_cadence_spm:.0f} 步/分钟，不刻意提频"
+        return [
+            TrainingStep(order=1, name="热身", duration_minutes=(warm_low, warm_high), intensity="轻松", instructions=["快走后逐渐进入慢跑"]),
+            TrainingStep(order=2, name=name, duration_minutes=(main_low, main_high), intensity=zone, instructions=instructions),
+            TrainingStep(order=3, name="冷身", duration_minutes=(cool_low, cool_high), intensity="轻松"),
+        ]
+
+    @staticmethod
+    def _duration_around(preferences, typical, low_ratio, high_ratio, minimum, maximum):
+        cap = preferences.max_session_minutes or 60
+        low = max(minimum, int(round(typical * low_ratio)))
+        high = max(low, int(round(typical * high_ratio)))
+        high = min(high, maximum, cap)
+        low = min(low, high)
+        return low, high
 
     def _strength(self, preferences, training, role: str, intensity: str) -> PlannedSession:
         focus = training.strength.next_focus if training.strength else None
         focus = focus or "FULL_BODY"
-        title, focus_text, steps = self._strength_steps(focus, intensity)
+        prior = next(
+            (
+                item for item in (training.strength.recent_sessions if training.strength else [])
+                if item.focus == focus and item.explicit_exercises
+            ),
+            None,
+        )
+        title, focus_text, steps = (
+            self._strength_from_prior(prior, intensity)
+            if prior else self._strength_steps(focus, intensity)
+        )
         planned_intensity = "moderate" if intensity == "high" else intensity
+        reasons = []
+        if prior:
+            reasons.append(
+                f"沿用最近一次{prior.focus_label}训练中已记录的 {len(prior.explicit_exercises)} 个动作。"
+            )
+            if prior.session_rpe is not None:
+                reasons.append(f"上次整堂训练主观用力为 {prior.session_rpe:.1f}/10。")
+        elif training.strength and training.strength.next_focus_label:
+            reasons.append(f"按已识别的训练轮换，下一项是{training.strength.next_focus_label}。")
+        else:
+            reasons.append("近期没有可复用的已确认动作，按全身动作模式安排。")
+            latest_strength = (
+                training.strength.recent_sessions[0]
+                if training.strength and training.strength.recent_sessions else None
+            )
+            if latest_strength and latest_strength.estimated_work_bouts is not None:
+                planned_sets = sum(step.sets or 0 for step in steps)
+                reasons.append(
+                    f"最近一次力量训练约有 {latest_strength.estimated_work_bouts} 个工作段；"
+                    f"心率无法识别动作，本次明确安排 {planned_sets} 个工作组。"
+                )
         return PlannedSession(
             role=role,
             role_label=ROLE_LABELS[role],
@@ -423,9 +565,57 @@ class DecisionEngine:
                     else "训练分化证据不足，本次采用全身基础动作模式。"
                 ),
             ],
-            progression=["所有工作组达到次数上限且仍满足余力要求时，下次增加 2.5%–5% 重量或每组 1 次。"],
+            evidence_ref_ids=[
+                "ACSM_RESISTANCE_TRAINING_2026",
+                "CONCURRENT_TRAINING_2022",
+                "RIR_RPE_SCALE_2016",
+                "RIR_ACCURACY_REVIEW_2026",
+            ],
+            personalization_reasons=reasons,
+            progression=["所有工作组达到次数上限且仍满足余力要求时，下次增加少量重量或每组 1–2 次。"],
             stop_conditions=["出现尖锐疼痛、动作失控、异常头晕或胸闷时立即停止。", "无法保持目标余力时减少重量或结束该动作。"],
         )
+
+    @staticmethod
+    def _strength_from_prior(prior, intensity: str):
+        target_rir = "每组保留 2 次余力" if intensity in {"high", "moderate"} else "每组保留 3–4 次余力"
+        title = f"{prior.focus_label}训练"
+        steps = [
+            TrainingStep(
+                order=1,
+                name="动态热身",
+                duration_minutes=(6, 8),
+                intensity="轻松",
+                instructions=["为第一个主动作做 2 组逐步加重的热身"],
+            )
+        ]
+        seen = set()
+        for exercise in prior.explicit_exercises:
+            key = (exercise.exercise_id or exercise.exercise_name).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            instructions = []
+            previous_effort = exercise.rir
+            if previous_effort is not None:
+                instructions.append(f"上次记录还可做 {previous_effort:g} 次")
+            elif exercise.rpe is not None:
+                instructions.append(f"上次记录主观用力 {exercise.rpe:g}/10")
+            if exercise.rir is not None and exercise.rir <= 1 or exercise.rpe is not None and exercise.rpe >= 9:
+                instructions.append("本次保持或略降重量，不做进阶")
+            elif exercise.rir is not None and exercise.rir >= 3 or exercise.rpe is not None and exercise.rpe <= 7:
+                instructions.append("动作稳定时可增加少量重量或每组 1 次")
+            steps.append(TrainingStep(
+                order=len(steps) + 1,
+                name=exercise.exercise_name,
+                sets=exercise.sets or 3,
+                repetitions=exercise.repetitions or "6–12 次",
+                load_kg=exercise.weight_kg,
+                rest_seconds=(exercise.rest_seconds, exercise.rest_seconds) if exercise.rest_seconds is not None else (90, 150),
+                intensity=target_rir,
+                instructions=instructions,
+            ))
+        return title, f"沿用上次已确认的{prior.focus_label}动作和剂量", steps
 
     @staticmethod
     def _strength_steps(focus: str, intensity: str):

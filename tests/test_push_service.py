@@ -226,7 +226,7 @@ def test_morning_push_renders_actionable_coach_brief_without_audit_noise():
     assert message.title == "Vitalis 晨报 · 2026-08-28 · 轻松跑"
     assert message.body.startswith("> **数据日期：2026-08-28** · 数据完整")
     assert "\n## 今日结论\n" in message.body
-    assert "恢复良好，今天按正常强度训练。" in message.body
+    assert "恢复良好，今天做轻松跑，按低强度执行。" in message.body
     assert "\n## 今天做什么\n" in message.body
     assert "### 主要：轻松跑 · 30–45 分钟 · 低强度" in message.body
     assert "1. **热身**：6–8 分钟 · 轻松。先快走，再逐渐过渡到慢跑" in message.body
@@ -332,6 +332,43 @@ def test_morning_push_mentions_device_disagreement_only_when_consequential():
     assert "两台设备的夜间心率变异性方向不一致" in received[0].body
     assert "心率变异性持续回到个人正常范围" not in received[0].body
     assert "Amazfit Helio Strap" not in received[0].body
+
+
+def test_morning_push_explains_nocturnal_pattern_and_personalized_session():
+    received = []
+    payload = _profile_payload()
+    payload["features"]["hrv"].update({
+        "recent_7d_direction": "above",
+        "recent_7d_change_percent": 12.5,
+        "nocturnal_heart_rate": {
+            "status": "AVAILABLE",
+            "device_label": "Amazfit Helio Strap",
+            "median_bpm": 50,
+            "low_5m_bpm": 46,
+            "deviation_percent": 2.0,
+            "direction": "near",
+            "second_minus_first_bpm": -1,
+        },
+    })
+    payload["decision"]["action_plan"]["primary_session"]["personalization_reasons"] = [
+        "最近一次跑步为稳定跑，33 分钟，平均配速 6:39/公里，自然步频约 185 步/分钟。",
+        "最近一次可解释的心率漂移为 +8.1%。",
+    ]
+    service = PushService(pushplus_token="")
+    service.add_handler(received.append)
+
+    service.push_daily_profile("test-user", payload, period="morning")
+
+    body = received[0].body
+    assert "近 7 天中位数较此前 7 天上升 12.5%" in body
+    assert "睡眠中心率中位数 50 次/分钟" in body
+    assert "稳定 5 分钟低点 46 次/分钟" in body
+    assert "后半夜较前半夜回落 1 次/分钟" in body
+    assert "接近近 28 晚个人水平（+2.0%）" in body
+    assert "最近一次跑步为稳定跑，33 分钟" in body
+    assert "Amazfit Helio Strap" not in body
+    reasons = body.split("## 为什么", 1)[1].split("## 最近最值得注意", 1)[0]
+    assert reasons.count("\n-") <= 4
 
 
 def test_pushplus_delivery_keeps_token_in_json_body(monkeypatch):

@@ -43,10 +43,10 @@ def test_daily_profile_after_sync(client):
     resp = client.get("/api/v1/intelligence/daily", headers={"X-User-Id": "001"})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["schema_version"] == "5.0"
-    assert body["intelligence_version"] == "5.0"
-    assert body["decision_policy_version"] == "5.0"
-    assert body["evidence_version"] == "2026-08b"
+    assert body["schema_version"] == "6.0"
+    assert body["intelligence_version"] == "6.0"
+    assert body["decision_policy_version"] == "6.0"
+    assert body["evidence_version"] == "2026-08c"
     assert body["analysis_run_id"]
     assert body["decision"]["action"] in {
         "TRAIN_HARD", "TRAIN_NORMAL", "TRAIN_LIGHT", "RECOVERY", "REST", "INSUFFICIENT_DATA"

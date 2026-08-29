@@ -146,7 +146,7 @@ def _render_morning(payload: dict) -> tuple[str, list[str]]:
         "",
         "## 今日结论",
         "",
-        _daily_conclusion(decision, states),
+        _daily_conclusion(decision, states, action_plan),
         "",
         "## 今天做什么",
         "",
@@ -259,13 +259,16 @@ def _metadata(payload: dict) -> list[str]:
     return [f"> **数据日期：{payload['date']}** · {quality}"]
 
 
-def _daily_conclusion(decision: dict, states: dict) -> str:
+def _daily_conclusion(decision: dict, states: dict, action_plan: dict) -> str:
     action = decision["action"]
     recovery = states.get("recovery_label") or "恢复状态暂不明确"
+    primary = action_plan.get("primary_session")
+    if action in {"TRAIN_HARD", "TRAIN_NORMAL", "TRAIN_LIGHT"} and primary:
+        return (
+            f"{recovery}，今天做{primary['title']}，"
+            f"按{primary['intensity_label']}执行。"
+        )
     conclusions = {
-        "TRAIN_HARD": f"{recovery}，今天可以完成计划训练。",
-        "TRAIN_NORMAL": f"{recovery}，今天按正常强度训练。",
-        "TRAIN_LIGHT": f"{recovery}，今天主动减量，不追加高强度内容。",
         "RECOVERY": f"{recovery}，今天以恢复活动为主。",
         "REST": f"{recovery}，今天休息，不安排正式训练。",
         "INSUFFICIENT_DATA": "恢复数据还不足，今天不根据设备数据安排强度训练。",
@@ -313,6 +316,8 @@ def _render_coach_session(session: dict, role: str) -> list[str]:
             details.append(f"{step['sets']} 组")
         if step.get("repetitions"):
             details.append(step["repetitions"])
+        if step.get("load_kg") is not None:
+            details.append(f"{step['load_kg']:g} 千克")
         if step.get("rest_seconds"):
             low, high = step["rest_seconds"]
             details.append(f"休息 {low}–{high} 秒")
@@ -351,28 +356,55 @@ def _render_coach_reasons(
     recovery_parts = []
     if _interpretable_deviation(hrv.get("deviation")):
         recovery_parts.append(_plain_deviation(hrv["deviation"], "夜间心率变异性"))
-    if _interpretable_deviation(hrv.get("rhr_deviation")):
-        recovery_parts.append(_plain_deviation(hrv["rhr_deviation"], "静息心率"))
+    if hrv.get("recent_7d_direction") != "unknown" and hrv.get("recent_7d_change_percent") is not None:
+        change = hrv["recent_7d_change_percent"]
+        trend = "上升" if change > 0 else "下降" if change < 0 else "持平"
+        recovery_parts.append(f"近 7 天中位数较此前 7 天{trend} {abs(change):.1f}%")
     if recovery_parts:
         lines.append(f"- {'；'.join(recovery_parts)}。")
+
+    night = hrv.get("nocturnal_heart_rate") or {}
+    if night.get("status") == "AVAILABLE":
+        night_parts = [
+            f"睡眠中心率中位数 {night['median_bpm']:g} 次/分钟",
+            f"稳定 5 分钟低点 {night['low_5m_bpm']:g} 次/分钟",
+        ]
+        if night.get("deviation_percent") is not None:
+            change = night["deviation_percent"]
+            baseline_nights = night.get("baseline_nights") or 28
+            if night.get("direction") == "near":
+                night_parts.append(
+                    f"接近近 {baseline_nights} 晚个人水平（{change:+.1f}%）"
+                )
+            else:
+                relation = "高" if change > 0 else "低" if change < 0 else "一致"
+                amount = f" {abs(change):.1f}%" if change else ""
+                night_parts.append(f"比近 {baseline_nights} 晚个人水平{relation}{amount}")
+        if night.get("second_minus_first_bpm") is not None:
+            delta = night["second_minus_first_bpm"]
+            movement = "回落" if delta < 0 else "升高" if delta > 0 else "基本不变"
+            amount = f" {abs(delta):g} 次/分钟" if delta else ""
+            night_parts.append(f"后半夜较前半夜{movement}{amount}")
+        lines.append(f"- {'；'.join(night_parts)}。")
 
     balance = action_plan["weekly_balance"]
     primary = action_plan.get("primary_session")
     optional = action_plan.get("optional_session")
-    plan_text = (
-        f"近 7 天跑步 {balance['running_completed_7d']}/{balance['running_target_7d']} 次、"
-        f"力量 {balance['strength_completed_7d']}/{balance['strength_target_7d']} 次"
-    )
-    if primary:
-        plan_text += f"；今天先做{primary['title']}"
-    if optional:
-        plan_text += f"，{optional['title']}只作为可选"
-    lines.append(f"- {plan_text}。")
-
-    load = training.get("load_state_label")
-    if load and load != "数据不足":
-        lines.append(f"- {load}，不需要为了补齐次数临时加量。")
-    return lines
+    for reason in (primary or {}).get("personalization_reasons", []):
+        if len(lines) >= 4:
+            break
+        lines.append(f"- {reason}")
+    if len(lines) < 4:
+        plan_text = (
+            f"近 7 天跑步 {balance['running_completed_7d']}/{balance['running_target_7d']} 次、"
+            f"力量 {balance['strength_completed_7d']}/{balance['strength_target_7d']} 次"
+        )
+        if primary:
+            plan_text += f"；因此今天先做{primary['title']}"
+        if optional:
+            plan_text += f"，{optional['title']}只作为可选"
+        lines.append(f"- {plan_text}。")
+    return lines[:4]
 
 
 def _render_notable_event(payload: dict) -> str | None:

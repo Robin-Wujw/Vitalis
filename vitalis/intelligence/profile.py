@@ -53,6 +53,7 @@ class RawDailyProfile:
     user_id: str
     day: date
     series: dict[str, list[SeriesPoint]] = field(default_factory=dict)
+    heart_rate_samples: list[SeriesPoint] = field(default_factory=list)
     sleep_by_day: dict[date, dict] = field(default_factory=dict)
     activity_by_day: dict[date, dict] = field(default_factory=dict)
     training_by_day: dict[date, dict] = field(default_factory=dict)
@@ -87,6 +88,7 @@ class ProfileLoader:
         self._add_record_series(raw)
         self._add_daily_metrics(raw, start)
         self._add_sample_metrics(raw, start)
+        self._add_heart_rate_samples(raw, start)
         self._add_device_context(raw)
         workout_rows = [
             row
@@ -244,6 +246,32 @@ class ProfileLoader:
                     observed_at=row.timestamp,
                     positive=False,
                 )
+
+    def _add_heart_rate_samples(self, raw: RawDailyProfile, start: date) -> None:
+        heart_rate_start = max(start, raw.day - timedelta(days=34))
+        start_at, _ = local_day_utc_bounds(heart_rate_start)
+        _, end_at = local_day_utc_bounds(raw.day)
+        end_at -= timedelta(microseconds=1)
+        raw.heart_rate_samples = [
+            SeriesPoint(
+                metric=row.metric,
+                value=float(row.value),
+                unit=row.unit,
+                day=local_day(row.timestamp),
+                observed_at=row.timestamp,
+                source=row.source,
+                source_scope=row.source_scope,
+                device_id=row.device_id or None,
+            )
+            for row in self.repo.metric_samples(
+                raw.user_id,
+                "heart_rate",
+                start_at,
+                end_at,
+                limit=MAX_SAMPLES_PER_METRIC,
+            )
+            if isinstance(row.value, (int, float)) and 25 <= float(row.value) <= 240
+        ]
 
     @staticmethod
     def _facts_for_day(raw: RawDailyProfile) -> dict[str, list[MeasurementFact]]:

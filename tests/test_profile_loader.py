@@ -167,3 +167,30 @@ def test_profile_loader_attaches_device_identity_and_dense_hr_coverage():
     assert validity.measurement_site == "upper_arm"
     assert validity.status == "LIMITED_BY_EVIDENCE"
     assert "private-file-id" not in repr(raw.data_quality)
+
+
+def test_profile_loader_keeps_timestamped_heart_rate_out_of_daily_series():
+    user_id = "intelligence-nocturnal-heart-rate"
+    day = date(2026, 8, 28)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+        repo.save_metric_samples([
+            MetricSample(
+                user_id=user_id,
+                metric="heart_rate",
+                timestamp=datetime(2026, 8, 27, 18, minute, tzinfo=timezone.utc),
+                value=55 + minute % 2,
+                unit="bpm",
+                source_scope="device",
+                device_id="helio",
+            )
+            for minute in range(20)
+        ])
+        raw = ProfileLoader(repo).load(user_id, day)
+
+    assert len(raw.heart_rate_samples) == 20
+    assert {item.device_id for item in raw.heart_rate_samples} == {"helio"}
+    assert "heart_rate" not in raw.series
+    assert "heart_rate" not in raw.facts

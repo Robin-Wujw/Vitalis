@@ -106,14 +106,14 @@ study was found in this pass, so `device_validity.status` should remain
 
 ### Product Implications
 
-- Add exercise-prescription evidence references before tightening training-plan
-  rules. Candidate ids: `ACSM_RT_2026`, `CONCURRENT_TRAINING_2022`,
-  `RIR_RPE_VALIDITY_2024`, and `RIR_ACCURACY_2026`.
+- Bind exercise-prescription rules to the implemented `ACSM_RESISTANCE_TRAINING_2026`,
+  `CONCURRENT_TRAINING_2022`, `RIR_RPE_SCALE_2016`, and
+  `RIR_ACCURACY_REVIEW_2026` evidence records.
 - Keep exact same-day spacing, 48-hour lower-body conflict windows, and threshold
   interval templates as versioned product policy unless future evidence justifies
   more specific claims.
-- Extend `ActionPlan` later with structured evidence ids per planned session,
-  rather than relying only on prose evidence strings.
+- Keep the structured evidence ids on each planned session synchronized with rule
+  changes rather than relying only on prose evidence strings.
 - Add a user-facing RIR familiarization path before using RIR to raise plan
   confidence or prescribe higher effort.
 - Preserve current device boundaries: manufacturer capability claims may inform
@@ -121,18 +121,17 @@ study was found in this pass, so `device_validity.status` should remain
 - Continue treating dense `SEC_HR` files as coverage metadata until decoded and
   validated against known sample semantics.
 
-### Candidate Next Work
+### Implemented In Intelligence 6.0
 
-1. Evidence Library 2026-08b: add the exercise-prescription evidence refs to
-   `EVIDENCE_REFS`, `skills/vitalis/knowledge/evidence.md`, and Architecture.
-2. ActionPlan Evidence v1.1: add `evidence_ref_ids` or rule/evidence bindings to
-   planned sessions while keeping existing Chinese strings for rendering.
-3. RIR Feedback UX: add a guided feedback command for RPE/RIR, soreness, and
-   completion quality, with experience-aware limitations.
-4. Concurrent Policy Audit: turn the current 6-hour and 48-hour scheduling
-   numbers into explicit named policy constants with tests and documentation.
-5. Zepp Capability Monitor: periodically re-check official Zepp OS docs and
-   product pages for changed API_LEVEL, heart-rate, workout, and device claims.
+- `PlannedSession.evidence_ref_ids` now binds running and resistance prescriptions to
+  the evidence library instead of leaving the sources as detached metadata.
+- Running dose uses recent personal session duration, personal threshold HR, recent
+  hard-session timing, cardiac drift, cadence context, and concurrent lower-body load.
+- Strength dose reuses explicit exercise, set, repetition, load, rest, and RPE/RIR facts
+  when available. Heart-rate structure still cannot identify a specific exercise.
+- Ordinary minute heart rate is analyzed only inside recorded sleep windows, with
+  coverage gates, same-device 28-night comparison, and a separate same-device HRV
+  seven-day comparison. It is not used to reconstruct beat-to-beat HRV.
 
 ## 2026-08-30: Multi-device HRV Fusion And Daily Reporting
 

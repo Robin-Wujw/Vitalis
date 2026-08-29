@@ -10,12 +10,12 @@ from pydantic import BaseModel, Field, model_validator
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "5.0"
+DAILY_SCHEMA_VERSION = "6.0"
 WEEKLY_SCHEMA_VERSION = "2.0"
 MONTHLY_SCHEMA_VERSION = "1.0"
-INTELLIGENCE_VERSION = "5.0"
-DECISION_POLICY_VERSION = "5.0"
-EVIDENCE_VERSION = "2026-08b"
+INTELLIGENCE_VERSION = "6.0"
+DECISION_POLICY_VERSION = "6.0"
+EVIDENCE_VERSION = "2026-08c"
 TRAINING_RESPONSE_SCHEMA_VERSION = "1.0"
 PERSONAL_MODEL_SCHEMA_VERSION = "2.0"
 ASSOCIATION_SCHEMA_VERSION = "1.0"
@@ -303,6 +303,25 @@ class HeartRateCoverageFeature(BaseModel):
     payload_decoded: bool = False
 
 
+class NocturnalHeartRateFeature(BaseModel):
+    status: Availability
+    status_label: str = ""
+    device_id: str | None = None
+    device_label: str | None = None
+    measurement_site: Literal["upper_arm", "wrist", "unknown"] = "unknown"
+    median_bpm: float | None = Field(default=None, ge=1)
+    low_5m_bpm: float | None = Field(default=None, ge=1)
+    first_half_median_bpm: float | None = Field(default=None, ge=1)
+    second_half_median_bpm: float | None = Field(default=None, ge=1)
+    second_minus_first_bpm: float | None = None
+    sample_count: int = Field(default=0, ge=0)
+    coverage_ratio: float = Field(default=0, ge=0, le=1)
+    baseline_median_bpm: float | None = Field(default=None, ge=1)
+    baseline_nights: int = Field(default=0, ge=0, le=28)
+    deviation_percent: float | None = None
+    direction: Literal["above", "near", "below", "unknown"] = "unknown"
+
+
 class HrvFeatures(BaseModel):
     status: Availability
     status_label: str = ""
@@ -312,6 +331,12 @@ class HrvFeatures(BaseModel):
     value_ms: float | None = None
     ln_rmssd: float | None = None
     deviation: Deviation | None = None
+    recent_7d_median_ms: float | None = Field(default=None, ge=0)
+    previous_7d_median_ms: float | None = Field(default=None, ge=0)
+    recent_7d_change_percent: float | None = None
+    recent_7d_direction: Literal["above", "near", "below", "unknown"] = "unknown"
+    recent_7d_days: int = Field(default=0, ge=0, le=7)
+    previous_7d_days: int = Field(default=0, ge=0, le=7)
     fusion_method: Literal["canonical_device_with_corroboration"] | None = None
     fusion_direction: Literal["above", "near", "below", "unknown"] = "unknown"
     fusion_confidence: ConfidenceBand = ConfidenceBand.NONE
@@ -324,6 +349,7 @@ class HrvFeatures(BaseModel):
     corroboration_affects_decision: bool = False
     rhr_bpm: float | None = None
     rhr_deviation: Deviation | None = None
+    nocturnal_heart_rate: NocturnalHeartRateFeature | None = None
     streams: list[HrvStreamFeature] = Field(default_factory=list)
     heart_rate_coverage: list[HeartRateCoverageFeature] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
@@ -605,6 +631,7 @@ class TrainingStep(BaseModel):
     duration_minutes: tuple[int, int] | None = None
     sets: int | None = Field(default=None, ge=1)
     repetitions: str | None = None
+    load_kg: float | None = Field(default=None, ge=0)
     rest_seconds: tuple[int, int] | None = None
     intensity: str | None = None
     instructions: list[str] = Field(default_factory=list)
@@ -655,6 +682,8 @@ class PlannedSession(BaseModel):
     total_duration_minutes: tuple[int, int] | None = None
     steps: list[TrainingStep] = Field(default_factory=list)
     evidence: list[str] = Field(default_factory=list)
+    evidence_ref_ids: list[str] = Field(default_factory=list)
+    personalization_reasons: list[str] = Field(default_factory=list)
     progression: list[str] = Field(default_factory=list)
     stop_conditions: list[str] = Field(default_factory=list)
 
@@ -673,7 +702,7 @@ class ConcurrentWeeklyBalance(BaseModel):
 
 
 class ActionPlan(BaseModel):
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["2.0"] = "2.0"
     goal: Literal["HEALTH_FIRST_CONCURRENT"] = "HEALTH_FIRST_CONCURRENT"
     goal_label: str = "综合健康优先，跑步与力量并行"
     valid_for_date: DateValue
@@ -1022,11 +1051,11 @@ class SubjectiveFeedback(BaseModel):
 
 
 class DailyProfile(BaseModel):
-    schema_version: str = DAILY_SCHEMA_VERSION
+    schema_version: Literal["6.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
-    intelligence_version: str = INTELLIGENCE_VERSION
-    decision_policy_version: str = DECISION_POLICY_VERSION
-    evidence_version: str = EVIDENCE_VERSION
+    intelligence_version: Literal["6.0"] = INTELLIGENCE_VERSION
+    decision_policy_version: Literal["6.0"] = DECISION_POLICY_VERSION
+    evidence_version: Literal["2026-08c"] = EVIDENCE_VERSION
     user_id: str
     date: DateValue
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

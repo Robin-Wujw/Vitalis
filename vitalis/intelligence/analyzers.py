@@ -1,7 +1,8 @@
 """Deterministic feature analyzers over normalized profile data."""
 
+from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from math import log
 from statistics import median
 
@@ -10,10 +11,12 @@ from .contracts import (
     Availability,
     BaselineStats,
     ConfidenceBand,
+    Deviation,
     HeartRateCoverageFeature,
     HrvFeatures,
     HrvStreamFeature,
     LoadState,
+    NocturnalHeartRateFeature,
     ProfileStates,
     RecoveryFeatures,
     RecoveryState,
@@ -30,6 +33,7 @@ from .profile import (
 )
 from .running import RunningAnalyzer
 from .strength import StrengthAnalyzer
+from vitalis.time import local_timezone, utc_to_local
 from vitalis.connectors.zepp.sport_types import CATEGORY_LABELS, FAMILY_LABELS
 from .localization import (
     AVAILABILITY_LABELS,
@@ -166,9 +170,14 @@ class HrvAnalyzer:
                     baseline=baseline,
                 ))
         if not candidates:
+            nocturnal_hr = _analyze_nocturnal_heart_rate(raw, None)
+            nocturnal_deviation = _nocturnal_deviation(nocturnal_hr)
             return HrvFeatures(
                 status=Availability.INSUFFICIENT_DATA,
                 status_label=AVAILABILITY_LABELS[Availability.INSUFFICIENT_DATA.value],
+                rhr_bpm=nocturnal_hr.median_bpm,
+                rhr_deviation=nocturnal_deviation,
+                nocturnal_heart_rate=nocturnal_hr,
                 limitations=["target_day_hrv_missing"],
                 limitation_labels=[LIMITATION_LABELS["target_day_hrv_missing"]],
             )
@@ -178,6 +187,14 @@ class HrvAnalyzer:
         value = selected.value
         baseline = selected.baseline
         deviation = BaselineEngine.deviation(value, baseline) if baseline else None
+        (
+            recent_7d_median,
+            previous_7d_median,
+            recent_7d_change,
+            recent_7d_direction,
+            recent_7d_days,
+            previous_7d_days,
+        ) = _same_stream_hrv_change(raw, selected)
         metric_candidates = [item for item in candidates if item.metric == metric]
         streams = [
             HrvStreamFeature(
@@ -215,6 +232,7 @@ class HrvAnalyzer:
             corroboration_affects_decision,
         ) = _corroborate_hrv_streams(selected, metric_candidates)
 
+        nocturnal_hr = _analyze_nocturnal_heart_rate(raw, device_id)
         rhr_candidates = []
         for rhr_metric in ("sleep_rhr", "resting_hr"):
             for stream, rhr in daily_stream_values(raw.series.get(rhr_metric, []), raw.day).items():
@@ -224,7 +242,14 @@ class HrvAnalyzer:
                 rhr_candidates.append((same_device, available, rhr_metric == "sleep_rhr", rhr, rhr_baseline))
         rhr_value = None
         rhr_deviation = None
-        if rhr_candidates:
+        if (
+            nocturnal_hr.status == Availability.AVAILABLE
+            and nocturnal_hr.median_bpm is not None
+            and nocturnal_hr.direction != "unknown"
+        ):
+            rhr_value = nocturnal_hr.median_bpm
+            rhr_deviation = _nocturnal_deviation(nocturnal_hr)
+        elif rhr_candidates:
             _, _, _, rhr_value, rhr_baseline = max(rhr_candidates, key=lambda item: item[:3])
             rhr_deviation = BaselineEngine.deviation(rhr_value, rhr_baseline) if rhr_baseline else None
 
@@ -269,6 +294,12 @@ class HrvAnalyzer:
             value_ms=round(value, 2),
             ln_rmssd=round(log(value), 4) if metric == "hrv_rmssd" and value > 0 else None,
             deviation=deviation,
+            recent_7d_median_ms=recent_7d_median,
+            previous_7d_median_ms=previous_7d_median,
+            recent_7d_change_percent=recent_7d_change,
+            recent_7d_direction=recent_7d_direction,
+            recent_7d_days=recent_7d_days,
+            previous_7d_days=previous_7d_days,
             fusion_method="canonical_device_with_corroboration",
             fusion_direction=fusion_direction,
             fusion_confidence=fusion_confidence,
@@ -279,11 +310,198 @@ class HrvAnalyzer:
             corroboration_affects_decision=corroboration_affects_decision,
             rhr_bpm=round(rhr_value, 1) if rhr_value is not None else None,
             rhr_deviation=rhr_deviation,
+            nocturnal_heart_rate=nocturnal_hr,
             streams=streams,
             heart_rate_coverage=heart_rate_coverage,
             limitations=limitations,
             limitation_labels=labels(limitations, LIMITATION_LABELS),
         )
+
+
+def _same_stream_hrv_change(raw: RawDailyProfile, selected: _HrvCandidate):
+    points = [
+        point
+        for point in raw.series.get(selected.metric, [])
+        if point.source == selected.source
+        and point.source_scope == selected.scope
+        and point.device_id == selected.device_id
+    ]
+    by_day: dict[date, list[float]] = defaultdict(list)
+    for point in points:
+        by_day[point.day].append(point.value)
+    daily = {day: median(values) for day, values in by_day.items()}
+    recent = [
+        value for day, value in daily.items()
+        if raw.day - timedelta(days=6) <= day <= raw.day
+    ]
+    previous = [
+        value for day, value in daily.items()
+        if raw.day - timedelta(days=13) <= day <= raw.day - timedelta(days=7)
+    ]
+    if len(recent) < 3 or len(previous) < 3:
+        return None, None, None, "unknown", len(recent), len(previous)
+    recent_median = float(median(recent))
+    previous_median = float(median(previous))
+    if previous_median <= 0:
+        return round(recent_median, 2), round(previous_median, 2), None, "unknown", len(recent), len(previous)
+    change = (recent_median - previous_median) / previous_median * 100
+    direction = "above" if change > 5 else "below" if change < -5 else "near"
+    return (
+        round(recent_median, 2),
+        round(previous_median, 2),
+        round(change, 1),
+        direction,
+        len(recent),
+        len(previous),
+    )
+
+
+def _nocturnal_deviation(feature: NocturnalHeartRateFeature) -> Deviation | None:
+    if feature.direction == "unknown":
+        return None
+    return Deviation(
+        metric="nocturnal_heart_rate",
+        baseline_window_days=28,
+        percent=feature.deviation_percent,
+        direction=feature.direction,
+    )
+
+
+def _analyze_nocturnal_heart_rate(
+    raw: RawDailyProfile,
+    preferred_hrv_device: str | None,
+) -> NocturnalHeartRateFeature:
+    summaries: dict[date, dict[str | None, dict]] = {}
+    for sleep_day, record in raw.sleep_by_day.items():
+        window = _sleep_window(sleep_day, record)
+        if window is None:
+            continue
+        start, end = window
+        by_device: dict[str | None, list[SeriesPoint]] = defaultdict(list)
+        for point in raw.heart_rate_samples:
+            if not isinstance(point.observed_at, datetime):
+                continue
+            if start <= utc_to_local(point.observed_at) <= end:
+                by_device[point.device_id].append(point)
+        for device_id, points in by_device.items():
+            summary = _night_heart_rate_summary(points, start, end)
+            if summary is not None:
+                summaries.setdefault(sleep_day, {})[device_id] = summary
+
+    target = summaries.get(raw.day, {})
+    if not target:
+        return NocturnalHeartRateFeature(
+            status=Availability.INSUFFICIENT_DATA,
+            status_label=AVAILABILITY_LABELS[Availability.INSUFFICIENT_DATA.value],
+        )
+    history_counts = {
+        device_id: sum(
+            device_id in values
+            for day, values in summaries.items()
+            if raw.day - timedelta(days=28) <= day < raw.day
+        )
+        for device_id in target
+    }
+    device_id, current = max(
+        target.items(),
+        key=lambda item: (
+            2 if item[1]["coverage_ratio"] >= 0.8 else 1,
+            history_counts[item[0]],
+            item[1]["coverage_ratio"],
+            int(item[0] == preferred_hrv_device and item[0] is not None),
+        ),
+    )
+    historical = [
+        values[device_id]["median_bpm"]
+        for day, values in summaries.items()
+        if raw.day - timedelta(days=28) <= day < raw.day and device_id in values
+    ]
+    baseline = float(median(historical)) if len(historical) >= 7 else None
+    change = (
+        (current["median_bpm"] - baseline) / baseline * 100
+        if baseline and baseline > 0 else None
+    )
+    direction = "unknown"
+    if change is not None:
+        mad = median(abs(value - baseline) for value in historical)
+        robust_z = (
+            0.6745 * (current["median_bpm"] - baseline) / mad if mad else None
+        )
+        comparison = robust_z if robust_z is not None else change / 3
+        direction = "above" if comparison > 0.75 else "below" if comparison < -0.75 else "near"
+    return NocturnalHeartRateFeature(
+        status=Availability.AVAILABLE,
+        status_label=AVAILABILITY_LABELS[Availability.AVAILABLE.value],
+        device_id=device_id,
+        device_label=device_label(raw, device_id),
+        measurement_site=device_measurement_site(raw, device_id),
+        baseline_median_bpm=round(baseline, 1) if baseline is not None else None,
+        baseline_nights=len(historical),
+        deviation_percent=round(change, 1) if change is not None else None,
+        direction=direction,
+        **current,
+    )
+
+
+def _sleep_window(sleep_day: date, record: dict):
+    bedtime = _as_time(record.get("bedtime"))
+    wake_time = _as_time(record.get("wake_time"))
+    if bedtime is None or wake_time is None:
+        return None
+    wake = datetime.combine(sleep_day, wake_time, tzinfo=local_timezone())
+    start_day = sleep_day - timedelta(days=1) if bedtime >= wake_time else sleep_day
+    start = datetime.combine(start_day, bedtime, tzinfo=local_timezone())
+    if not 120 <= (wake - start).total_seconds() / 60 <= 960:
+        return None
+    return start, wake
+
+
+def _as_time(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        for pattern in ("%H:%M:%S", "%H:%M"):
+            try:
+                return datetime.strptime(value, pattern).time()
+            except ValueError:
+                continue
+        return None
+    return value
+
+
+def _night_heart_rate_summary(points, start: datetime, end: datetime):
+    by_minute: dict[datetime, list[float]] = defaultdict(list)
+    for point in points:
+        observed = utc_to_local(point.observed_at).replace(second=0, microsecond=0)
+        by_minute[observed].append(point.value)
+    expected = max(int((end - start).total_seconds() // 60), 1)
+    coverage = min(len(by_minute) / expected, 1.0)
+    if len(by_minute) < 120 or coverage < 0.5:
+        return None
+    minute_values = sorted(
+        (minute, float(median(values))) for minute, values in by_minute.items()
+    )
+    midpoint = start + (end - start) / 2
+    first = [value for minute, value in minute_values if minute < midpoint]
+    second = [value for minute, value in minute_values if minute >= midpoint]
+    rolling = []
+    for index in range(4, len(minute_values)):
+        window = minute_values[index - 4:index + 1]
+        if (window[-1][0] - window[0][0]).total_seconds() <= 6 * 60:
+            rolling.append(float(median(value for _, value in window)))
+    if not first or not second or not rolling:
+        return None
+    first_median = float(median(first))
+    second_median = float(median(second))
+    return {
+        "median_bpm": round(float(median(value for _, value in minute_values)), 1),
+        "low_5m_bpm": round(min(rolling), 1),
+        "first_half_median_bpm": round(first_median, 1),
+        "second_half_median_bpm": round(second_median, 1),
+        "second_minus_first_bpm": round(second_median - first_median, 1),
+        "sample_count": len(points),
+        "coverage_ratio": round(coverage, 3),
+    }
 
 
 def _corroborate_hrv_streams(

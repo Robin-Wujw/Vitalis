@@ -1,4 +1,4 @@
-# Vitalis Health Intelligence Architecture v5.0
+# Vitalis Health Intelligence Architecture v6.0
 
 ## 1. System Boundary
 
@@ -91,7 +91,7 @@ The implementation lives in `vitalis/intelligence`:
 
 ### 3.1 DailyProfile
 
-The wire contract is `schema_version=5.0`. Every result carries `analysis_run_id`,
+The wire contract is `schema_version=6.0`. Every result carries `analysis_run_id`,
 `intelligence_version`, `decision_policy_version`, and `evidence_version` separately:
 
 ```text
@@ -260,7 +260,7 @@ weekly context but does not replace load, completed sets/reps/weight, or reliabl
 individualized aerobic-intensity classification.
 
 Training content is deterministic engine output, not model-generated advice. Decision
-Policy 5.0 returns an `ActionPlan` with one primary session and at most one optional
+Policy 6.0 returns an `ActionPlan` with one primary session and at most one optional
 compatible addition or alternative. Every session includes dose, evidence, progression,
 stop conditions, and a local-day expiry. The current session library includes:
 
@@ -285,7 +285,7 @@ another conflicting high-load lower-body session.
 
 ### 3.10 Running Analysis
 
-DailyProfile 5.0 embeds `TrainingFeatures.running` with Running Analysis v1. Each
+DailyProfile 6.0 embeds `TrainingFeatures.running` with Running Analysis v1. Each
 session preserves distance, duration, derived average pace, median speed, median cadence,
 cadence variability, HR, threshold-based HR-zone duration, cardiac drift, detected
 work/recovery segments, classification evidence, confidence, and limitations.
@@ -298,9 +298,16 @@ speed differs by more than 15%. Cadence is a personal observation; no universal
 long, or unclassified. These thresholds are versioned product policy rather than
 medical or coaching truth.
 
+The running prescription consumes those session facts. It chooses among recovery,
+easy, steady, threshold, and long-easy sessions using recent hard-session timing,
+lower-body conflicts, the latest interpretable cardiac drift, personal threshold HR,
+and the median duration of recent completed runs. Duration is bounded around personal
+history and the configured time limit. Recent cadence is repeated only as the runner's
+natural observation, never as a universal cadence target.
+
 ### 3.11 Strength Analysis
 
-DailyProfile 5.0 embeds `TrainingFeatures.strength` with Strength Analysis v1. A user
+DailyProfile 6.0 embeds `TrainingFeatures.strength` with Strength Analysis v1. A user
 can confirm exercise name, set count, repetitions, load, RPE/RIR, rest, and session
 focus against a user-owned strength workout. Vitalis normalizes known Chinese or
 English exercise names to movement patterns and muscle groups while preserving the
@@ -316,6 +323,26 @@ The last 28 days support confidence-bounded full-body, upper/lower, push-pull-le
 five-day split detection. A next focus is returned only after a recognizable rotation
 exists. Per-muscle recency and confirmed soreness/RPE remain separate observations;
 missing exercise coverage leaves muscle volume and recovery incomplete.
+
+The strength prescription first looks for the most recent explicit session matching
+the next recognized focus. When found, it reuses exercise names, sets, repetitions,
+load, and rest and lets recorded RPE/RIR decide whether to hold or allow a small
+progression. Without explicit exercises it uses concrete movement-pattern choices;
+heart-rate work/rest structure can size and explain the session but never supplies an
+exercise identity. Planned sessions carry the exact evidence-reference IDs used by the
+rule.
+
+### 3.12 Nocturnal Recovery Context
+
+DailyProfile 6.0 keeps timestamped ordinary heart rate separate from daily metric
+series. For each sleep interval, the engine isolates device streams and requires at
+least 120 covered minutes and 50% interval coverage. It derives the nightly median, a
+rolling five-minute median low point, first- and second-half medians, and coverage.
+The selected nightly stream is compared only with its own preceding 28-night history.
+
+The canonical HRV stream also reports its latest seven-day median against the preceding
+seven days. Minute heart rate is never treated as beat-to-beat HRV, and indexed `SEC_HR`
+files remain coverage metadata until their payload semantics are decoded and validated.
 
 ## 4. API and Assistant
 

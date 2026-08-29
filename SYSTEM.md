@@ -39,6 +39,8 @@ Every implementation session must follow this order:
   the delivery item unchecked and record the exact blocker without exposing secrets.
 - Existing user changes must be preserved. Unrelated cleanup is outside the task.
 - Test totals in project documentation must come from the latest full test run.
+- Documentation-only research notes do not require application test coverage, but
+  must record their scope, sources, boundaries, and verification command.
 
 ### 3.1 Pre-production New-data-only Policy
 
@@ -1575,3 +1577,96 @@ retained.
   One current-schema morning report was sent through a direct no-proxy PushPlus
   connection and accepted. Commits `5ae1b82`, `cb00e27`, `8126b91`, `57f9637`, and
   `b456839` were pushed from `main` to `origin/main` before this final record.
+
+## 22. Local Research Notes Session
+
+Date: 2026-08-29
+
+Goal: continue local research after the concurrent running and strength delivery by
+reviewing evidence gaps for exercise prescription, concurrent scheduling,
+RPE/RIR-based feedback, Zepp OS capability boundaries, and Balance 2 / Helio Strap
+device claims without changing business logic.
+
+### Detailed TODO
+
+- [x] Part 1 - Establish the local research baseline.
+  - Confirm the worktree state and latest delivery record.
+  - Identify current evidence gaps from implementation and documentation.
+- [x] Part 2 - Review current external evidence and platform documents.
+  - Check current WHO, ACSM, concurrent-training, RPE/RIR, Zepp OS, and Amazfit
+    product/support sources.
+  - Separate evidence-backed statements from manufacturer claims and product policy.
+- [x] Part 3 - Record local research output.
+  - Add a reusable research note for future implementation planning.
+  - Link it from the README documentation index.
+- [x] Part 4 - Verify documentation-only changes.
+  - Run a formatting/diff check and record any skipped application tests.
+
+### Verification Log
+
+- Part 1: the repository started clean at `d38e295`
+  (`docs: record concurrent training delivery`). The latest completed work delivered
+  DailyProfile 4.0, Decision Policy 4.0, typed workout details, running analysis,
+  strength analysis, and deterministic concurrent training plans.
+- Part 2: research found that ACSM's April 2026 resistance-training position stand
+  is the strongest current broad source for healthy-adult strength prescription; WHO
+  supports weekly aerobic plus strength context; concurrent-training evidence supports
+  caution around same-session explosive/lower-body outcomes but does not prove the
+  current exact six-hour or 48-hour policy numbers; RPE/RIR evidence supports guided
+  subjective load regulation with experience-related limits. Zepp OS docs support the
+  existing Balance 2 bridge boundary without a guaranteed callback frequency. Current
+  Amazfit pages support capability and wearing-position claims, but not independent
+  model-specific validation for Balance 2 or Helio Strap.
+- Part 3: `docs/RESEARCH_NOTES.md` now records sources, findings, implementation
+  implications, and candidate next work. `README.md` links the note from the
+  documentation table.
+- Part 4: documentation-only changes do not require application tests. `git diff
+  --check` passed with only existing Windows line-ending normalization warnings for
+  README and SYSTEM.
+
+## 23. Exercise Evidence Library Session
+
+Date: 2026-08-29
+
+Goal: convert the local research findings into the current Vitalis evidence library
+without changing Decision Policy 4.0 behavior. The immediate scope is evidence
+metadata, renderer-facing profile evidence refs, and documentation; exact plan rules
+such as six-hour same-day spacing and 48-hour lower-body conflicts remain product
+policy until a separate implementation changes them.
+
+### Detailed TODO
+
+- [x] Part 1 - Add exercise-prescription evidence references.
+  - Add current resistance-training, concurrent-training, and RPE/RIR references to
+    `EVIDENCE_REFS`.
+  - Keep applies-to labels narrow so future renderers do not overclaim causality or
+    device accuracy.
+  - Add focused tests for evidence ids and scope.
+- [x] Part 2 - Synchronize evidence documentation.
+  - Update `skills/vitalis/knowledge/evidence.md` with the new evidence boundaries.
+  - Update Architecture evidence boundaries without changing current API behavior.
+- [x] Part 3 - Verify and record the local result.
+  - Run focused tests and Markdown/diff hygiene.
+  - Leave broader application behavior unchanged and record skipped verification if
+    this remains documentation/metadata-only.
+
+### Verification Log
+
+- Part 1: `EVIDENCE_REFS` now includes narrow-scoped references for ACSM 2026
+  resistance training, concurrent aerobic/strength training, the RIR-specific RPE
+  scale, and RIR accuracy limitations. The focused contract test locks the new ids,
+  uniqueness, applies-to scopes, and non-overclaiming boundary. Command:
+  `PYTHONPATH=.codex_pydeps;. python -m pytest tests\test_intelligence_contracts.py`
+  passed 4 tests.
+- Part 2: `skills/vitalis/knowledge/evidence.md` and `docs/ARCHITECTURE.md` now
+  document resistance-training, concurrent-training, and RPE/RIR boundaries. The
+  documentation explicitly keeps six-hour same-day spacing, 48-hour lower-body
+  conflicts, and absolute resistance loads in the product-policy or missing-history
+  category rather than presenting them as directly proven evidence.
+- Part 3: focused verification with `PYTHONUTF8=1` passed 9 tests across
+  `tests\test_intelligence_contracts.py` and `tests\test_vitalis_skill.py`. Windows
+  local verification with `--ignore=tests/test_daily_push.py` passed 195 tests with
+  existing `datetime.utcnow()` warnings. The unignored full suite was not runnable on
+  this Windows host because `tests/test_daily_push.py` imports the Linux-only `fcntl`
+  module; run the complete suite on the server before live acceptance. `git diff
+  --check` passed with only Windows line-ending normalization warnings.

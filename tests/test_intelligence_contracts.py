@@ -15,6 +15,7 @@ from vitalis.intelligence.contracts import (
     ConcurrentWeeklyBalance,
     TrainingDecision,
 )
+from vitalis.intelligence.service import EVIDENCE_REFS
 
 
 def test_baseline_contract_requires_explicit_availability():
@@ -82,3 +83,25 @@ def test_decision_contract_has_no_implicit_fallback_score():
             confidence=ConfidenceBand.LOW,
             action_plan=decision.action_plan,
         )
+
+
+def test_evidence_library_covers_training_prescription_without_overclaiming():
+    refs = {item.id: item for item in EVIDENCE_REFS}
+
+    assert len(refs) == len(EVIDENCE_REFS)
+    assert {
+        "ACSM_RESISTANCE_TRAINING_2026",
+        "CONCURRENT_TRAINING_2022",
+        "RIR_RPE_SCALE_2016",
+        "RIR_ACCURACY_REVIEW_2026",
+    } <= set(refs)
+    assert "resistance_training_prescription" in refs[
+        "ACSM_RESISTANCE_TRAINING_2026"
+    ].applies_to
+    assert "aerobic_strength_scheduling" in refs[
+        "CONCURRENT_TRAINING_2022"
+    ].applies_to
+    assert "subjective_effort_feedback" in refs["RIR_RPE_SCALE_2016"].applies_to
+    assert "device_specific_accuracy" not in refs[
+        "ACSM_RESISTANCE_TRAINING_2026"
+    ].applies_to

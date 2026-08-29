@@ -381,6 +381,15 @@ PushPlus delivery. The evening report is not blocked by the morning sleep gate.
 - AASM/SRS provides a general adult sleep-duration reference.
 - IOC consensus supports integrated load/recovery/health monitoring, not a universal
   acute-to-chronic ratio threshold.
+- ACSM's 2026 resistance-training position stand supports progressive
+  major-muscle-group resistance training and adjustable prescription variables, but
+  not automatic absolute weights without individual strength history.
+- Concurrent-training evidence supports cautious aerobic/strength scheduling, while
+  exact same-day spacing and 48-hour lower-body conflict windows remain Vitalis
+  product policy.
+- RPE/RIR evidence supports guided subjective effort feedback with experience-related
+  limitations; it is not a precise replacement for load, sets, repetitions, or device
+  observations.
 
 Device-specific validity evidence for Balance 2 and Helio is not currently attached,
 so `device_validity.status` remains `UNKNOWN`.

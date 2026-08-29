@@ -111,6 +111,43 @@ EVIDENCE_REFS = [
         url="https://pubmed.ncbi.nlm.nih.gov/27535989/",
         applies_to=["integrated_load_monitoring"],
     ),
+    EvidenceRef(
+        id="ACSM_RESISTANCE_TRAINING_2026",
+        title="ACSM position stand on resistance training for health, fitness, and performance",
+        url="https://doi.org/10.1249/MSS.0000000000003897",
+        applies_to=[
+            "resistance_training_prescription",
+            "major_muscle_groups",
+            "progressive_overload",
+        ],
+    ),
+    EvidenceRef(
+        id="CONCURRENT_TRAINING_2022",
+        title="Compatibility of concurrent aerobic and strength training adaptations",
+        url="https://pmc.ncbi.nlm.nih.gov/articles/PMC8891239/",
+        applies_to=[
+            "concurrent_training_context",
+            "aerobic_strength_scheduling",
+        ],
+    ),
+    EvidenceRef(
+        id="RIR_RPE_SCALE_2016",
+        title="Novel resistance training-specific rating of perceived exertion scale",
+        url="https://pubmed.ncbi.nlm.nih.gov/26049792/",
+        applies_to=[
+            "subjective_effort_feedback",
+            "repetitions_in_reserve",
+        ],
+    ),
+    EvidenceRef(
+        id="RIR_ACCURACY_REVIEW_2026",
+        title="Systematic review of repetitions-in-reserve accuracy in resistance training",
+        url="https://doi.org/10.1080/10833196.2025.2564026",
+        applies_to=[
+            "repetitions_in_reserve_limitations",
+            "subjective_effort_feedback",
+        ],
+    ),
 ]
 
 

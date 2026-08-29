@@ -1,4 +1,5 @@
 .venv/
+.codex_pydeps/
 __pycache__/
 *.pyc
 *.db

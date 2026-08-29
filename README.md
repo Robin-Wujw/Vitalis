@@ -189,6 +189,7 @@ Vitalis 当前用于个人健康趋势与运动决策支持，不是医疗设备
 | [Zepp 数据接入](docs/ZEPP_INTEGRATION.md) | 官方登录、数据覆盖、设备来源与 Balance 2 bridge |
 | [API](docs/API.md) | 当前接口、身份要求和请求示例 |
 | [系统架构](docs/ARCHITECTURE.md) | 数据合同、分析管线、规则边界和当前范围 |
+| [调研笔记](docs/RESEARCH_NOTES.md) | 证据边界、候选产品规则和后续实现方向 |
 | [Hermes Skill](skills/vitalis/SKILL.md) | Agent 的 Read / Analyze / Act 调用边界 |
 | [开发系统](SYSTEM.md) | 计划、测试、交付与新数据开发规则 |
 

@@ -13,6 +13,19 @@ The first model version uses the following boundaries:
   duration reference, with individual context still required.
 - IOC load guidance supports integrated load, recovery, health, and wellbeing
   monitoring; it does not justify a universal acute/chronic ratio threshold.
+- The 2026 ACSM resistance-training position stand supports progressive resistance
+  training, major-muscle-group coverage, and manipulation of load, volume, range of
+  motion, power intent, and weekly sets for healthy adults. It supports movement-
+  pattern-level prescriptions; it does not let Vitalis infer absolute weight targets
+  without individual strength history.
+- Concurrent-training reviews support cautious scheduling when aerobic and strength
+  work are both due, especially around same-session explosive-strength outcomes.
+  Current six-hour spacing and 48-hour lower-body conflict windows are Vitalis product
+  policy, not directly proven universal thresholds.
+- RPE/RIR research supports guided subjective effort feedback for resistance training,
+  but accuracy depends on experience, load, exercise type, proximity to failure, and
+  user familiarization. RPE/RIR is user-reported context, not a precise substitute for
+  measured load or completed sets/reps/weight.
 - Hettiarachchi et al. (2019, DOI `10.1371/journal.pone.0217288`) found close
   agreement between an upper-arm Polar OH1 PPG sensor and ECG during moderate- to
   high-intensity exercise. A 2025 arm-versus-wrist validation study

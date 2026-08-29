@@ -121,7 +121,9 @@ class AggregationService:
             n = len(sleep_days)
             block.sleep_duration_avg = round(sum(s.sleep_duration for s in sleep_days) / n, 1)
             block.deep_sleep_avg = round(sum(s.deep_sleep for s in sleep_days) / n, 1)
-            block.rem_sleep_avg = round(sum(s.rem_sleep for s in sleep_days) / n, 1)
+            rem_values = [s.rem_sleep for s in sleep_days if s.rem_sleep is not None]
+            if rem_values:
+                block.rem_sleep_avg = round(sum(rem_values) / len(rem_values), 1)
             block.light_sleep_avg = round(sum(s.light_sleep for s in sleep_days) / n, 1)
             block.awake_avg = round(sum(s.awake for s in sleep_days) / n, 1)
             scores = [s.sleep_score for s in sleep_days if s.sleep_score is not None]

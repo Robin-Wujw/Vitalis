@@ -156,7 +156,7 @@ def test_morning_push_uses_chinese_labels_and_renders_prescription():
     assert "2 台设备相对各自 28 天基线方向一致" in message.body
     assert "近 28 日 164.5 小时/27 天 · 仅覆盖索引，数值尚未解码" in message.body
     assert "## 睡眠详情" in message.body
-    assert "深睡 92 分钟 · REM 106 分钟 · 清醒 24 分钟" in message.body
+    assert "深睡 92 分钟 · 快速眼动睡眠 106 分钟 · 清醒 24 分钟" in message.body
     assert "## 近期负荷与背景" in message.body
     assert "有氧 142 分钟 · 力量 2 次" in message.body
     assert "\n## 训练安排\n" in message.body

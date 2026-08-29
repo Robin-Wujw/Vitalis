@@ -56,7 +56,7 @@ class ZeppParser:
         """解析手环原始数据 -> {日期: SleepRecord}, {日期: ActivityRecord}。
 
         band_data.items[].summary 是 base64 编码的 JSON：
-          slp: 睡眠 {ss分数, st/ed起止, dp/lt/rm/wk分钟, rhr静息心率}
+          slp: 睡眠 {ss分数, st/ed起止, dp/lt/rm/wk分钟, stage分期, rhr静息心率}
           stp: 步数 {ttl, cal, dis(米)}
           tz:  时区偏移（秒）
         """
@@ -105,11 +105,14 @@ class ZeppParser:
                         bedtime = None
                         wake_time = None
                 if duration > 0:
+                    rem = self._first_number(sleep, ("rm", "remMinutes", "rem"))
+                    if rem is None:
+                        rem = self._sleep_stage_minutes(sleep, {8, 11})
                     sleeps[day] = SleepRecord(
                         user_id="", source=self.source, date=day,
                         sleep_duration=duration,
                         deep_sleep=int(sleep.get("dp", 0) or 0),
-                        rem_sleep=int(sleep.get("rm", 0) or 0),
+                        rem_sleep=int(rem) if rem is not None else None,
                         light_sleep=int(sleep.get("lt", 0) or 0),
                         awake=int(sleep.get("wk", 0) or 0),
                         sleep_score=int(sleep["ss"]) if sleep.get("ss") is not None else None,
@@ -885,7 +888,9 @@ class ZeppParser:
             sleep_duration=int(data["duration"]),
             deep_sleep=int(stages.get("deep", 0)),
             light_sleep=int(stages.get("light", 0)),
-            rem_sleep=int(stages.get("rem", 0)),
+            rem_sleep=(
+                int(stages["rem"]) if stages.get("rem") is not None else None
+            ),
             awake=int(data.get("awake", 0)),
             sleep_score=int(data["sleepScore"]) if data.get("sleepScore") is not None else None,
             bedtime=bedtime,
@@ -1096,6 +1101,32 @@ class ZeppParser:
                     return float(value.strip())
                 except ValueError:
                     pass
+        return None
+
+    @staticmethod
+    def _sleep_stage_minutes(sleep: dict, modes: set[int]) -> int | None:
+        stages = sleep.get("stage")
+        if not isinstance(stages, list):
+            return None
+        total = 0
+        found = False
+        valid_stage_found = False
+        for stage in stages:
+            if not isinstance(stage, dict):
+                continue
+            mode = ZeppParser._first_number(stage, ("mode",))
+            start = ZeppParser._first_number(stage, ("start",))
+            stop = ZeppParser._first_number(stage, ("stop",))
+            if mode is None or start is None or stop is None or stop < start:
+                continue
+            valid_stage_found = True
+            if int(mode) in modes:
+                found = True
+                total += int(stop) - int(start) + 1
+        if found:
+            return total
+        if valid_stage_found and sleep.get("supRem") in (True, 1, "1"):
+            return 0
         return None
 
     @staticmethod

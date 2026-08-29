@@ -176,7 +176,7 @@ def _render_morning(payload: dict) -> tuple[str, list[str]]:
         lines.append(f"- **睡眠时段**：{' · '.join(clock_parts)}")
     stage_parts = [
         f"深睡 {_display_with_unit(sleep.get('deep_minutes'), '分钟')}",
-        f"REM {_display_with_unit(sleep.get('rem_minutes'), '分钟')}",
+        f"快速眼动睡眠 {_display_with_unit(sleep.get('rem_minutes'), '分钟')}",
         f"清醒 {_display_with_unit(sleep.get('awake_minutes'), '分钟')}",
     ]
     if any(sleep.get(key) is not None for key in ("deep_minutes", "rem_minutes", "awake_minutes")):

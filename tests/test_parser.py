@@ -397,6 +397,58 @@ def test_parse_band_sleep_renders_vendor_local_clock_time():
     sleep = sleeps[date(2026, 8, 28)]
     assert sleep.bedtime.isoformat() == "00:58:00"
     assert sleep.wake_time.isoformat() == "08:36:00"
+    assert sleep.rem_sleep is None
+
+
+def test_parse_band_sleep_recovers_rem_from_stage_modes():
+    start = datetime(2026, 8, 28, 18, 8, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 29, 1, 39, tzinfo=timezone.utc)
+    summary = base64.b64encode(json.dumps({
+        "tz": 8 * 60 * 60,
+        "slp": {
+            "st": int(start.timestamp()),
+            "ed": int(end.timestamp()),
+            "wk": 6,
+            "dp": 64,
+            "lt": 282,
+            "ss": 81,
+            "supRem": 1,
+            "stage": [
+                {"mode": 4, "start": 120, "stop": 401},
+                {"mode": 5, "start": 402, "stop": 465},
+                {"mode": 8, "start": 466, "stop": 514},
+                {"mode": 11, "start": 515, "stop": 564},
+                {"mode": 7, "start": 565, "stop": 570},
+            ],
+        },
+    }).encode()).decode()
+
+    sleeps, _ = ZeppParser().parse_band({"data": {"items": [{
+        "date_time": "2026-08-29",
+        "summary": summary,
+    }]}})
+
+    assert sleeps[date(2026, 8, 29)].rem_sleep == 99
+
+
+def test_parse_band_sleep_preserves_explicit_zero_rem():
+    start = datetime(2026, 8, 28, 18, 8, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 29, 1, 39, tzinfo=timezone.utc)
+    summary = base64.b64encode(json.dumps({
+        "tz": 8 * 60 * 60,
+        "slp": {
+            "st": int(start.timestamp()),
+            "ed": int(end.timestamp()),
+            "rm": 0,
+        },
+    }).encode()).decode()
+
+    sleeps, _ = ZeppParser().parse_band({"data": {"items": [{
+        "date_time": "2026-08-29",
+        "summary": summary,
+    }]}})
+
+    assert sleeps[date(2026, 8, 29)].rem_sleep == 0
 
 
 def test_parse_charge_daily_and_timestamped_samples():

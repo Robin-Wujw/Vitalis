@@ -131,7 +131,7 @@ def _mock_authorize_html(agree_url: str) -> str:
   <h1>Zepp 授权申请（<span class="app">模拟演示</span>）</h1>
   <div class="desc">Vitalis Health Agent 请求访问你的健康数据</div>
   <ul>
-    <li>✓ 睡眠数据（时长 / 深睡 / REM / 评分）</li>
+    <li>✓ 睡眠数据（时长 / 深睡 / 快速眼动睡眠 / 评分）</li>
     <li>✓ 日常活动（步数 / 活动时长 / 静息心率）</li>
     <li>✓ 训练记录（类型 / 时长 / 负荷）</li>
     <li>✓ 心率数据（HRV 趋势分析）</li>

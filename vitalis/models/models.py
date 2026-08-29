@@ -45,7 +45,9 @@ class SleepRecord(BaseModel):
 
     sleep_duration: int = Field(ge=0, description="总睡眠时长（分钟）")
     deep_sleep: int = Field(default=0, ge=0, description="深睡时长（分钟）")
-    rem_sleep: int = Field(default=0, ge=0, description="REM 睡眠（分钟）")
+    rem_sleep: int | None = Field(
+        default=None, ge=0, description="快速眼动睡眠时长（分钟）"
+    )
     light_sleep: int = Field(default=0, ge=0, description="浅睡时长（分钟）")
     awake: int = Field(default=0, ge=0, description="清醒时长（分钟）")
     sleep_score: int | None = Field(default=None, ge=0, le=100, description="睡眠评分")

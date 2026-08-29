@@ -115,6 +115,7 @@ class SleepAnalyzer:
             limitations.append("sleep_28d_baseline_insufficient")
         if regularity is None:
             limitations.append("sleep_regularity_history_insufficient")
+        rem_sleep = record.get("rem_sleep")
         return SleepFeatures(
             status=Availability.AVAILABLE,
             status_label=AVAILABILITY_LABELS[Availability.AVAILABLE.value],
@@ -122,7 +123,7 @@ class SleepAnalyzer:
             bedtime=str(record["bedtime"]) if record.get("bedtime") else None,
             wake_time=str(record["wake_time"]) if record.get("wake_time") else None,
             deep_minutes=int(record.get("deep_sleep", 0)),
-            rem_minutes=int(record.get("rem_sleep", 0)),
+            rem_minutes=int(rem_sleep) if rem_sleep is not None else None,
             awake_minutes=int(record.get("awake", 0)),
             vendor_sleep_score=record.get("sleep_score"),
             duration_deviation=deviation,

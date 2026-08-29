@@ -41,6 +41,8 @@ semantics.
 | POST | `/intelligence/recommendations/{id}/complete` | Explicitly link a recommendation to a completed workout |
 | POST | `/intelligence/feedback` | Record RPE, fatigue, mental state, soreness, or notes |
 | GET | `/intelligence/feedback?start=&end=` | Read subjective feedback |
+| GET | `/intelligence/training-preferences` | Read health-first running/strength targets and constraints |
+| PUT | `/intelligence/training-preferences` | Replace weekly availability, experience, equipment, and pain/injury state |
 | POST | `/intelligence/workouts/{workout_id}/strength-exercises` | Replace confirmed exercises and session focus for a user-owned strength workout |
 | POST | `/intelligence/events/{id}/acknowledge` | Acknowledge a user-scoped event |
 
@@ -128,6 +130,10 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/st
   sample shape is not retained as an alias.
 - Exact strength exercises come only from explicit vendor sets or user confirmation.
   Heart rate can estimate work/rest structure but not exercise identity or load.
+- `decision.action_plan` contains one primary session and at most one optional addition
+  or alternative. It includes 7/28-day balance, safety state, conflict checks, evidence,
+  dose, stop conditions, missing-input gates, and local-day expiry. Removed generic
+  prescription-list fields are not retained.
 - Internal enum codes are for program control; Chinese `*_label` fields are the
   presentation contract.
 - Association responses are observational and always carry `association_only=true`.

@@ -13,6 +13,7 @@ from vitalis.intelligence.contracts import (
     Provenance,
     QualityFlag,
     QualityStatus,
+    TrainingPreferences,
 )
 from vitalis.storage import HealthRepository
 from vitalis.time import local_day, local_day_utc_bounds
@@ -57,6 +58,7 @@ class RawDailyProfile:
     training_by_day: dict[date, dict] = field(default_factory=dict)
     workouts: list[dict] = field(default_factory=list)
     feedback_by_workout: dict[str, list] = field(default_factory=dict)
+    training_preferences: TrainingPreferences | None = None
     device_models: dict[str, str] = field(default_factory=dict)
     dense_heart_rate_coverage: dict[str, dict] = field(default_factory=dict)
     facts: dict[str, list[MeasurementFact]] = field(default_factory=dict)
@@ -77,6 +79,7 @@ class ProfileLoader:
     ) -> RawDailyProfile:
         start = day - timedelta(days=history_days - 1)
         raw = RawDailyProfile(user_id=user_id, day=day)
+        raw.training_preferences = self.repo.training_preferences(user_id)
         raw.sleep_by_day = _records_by_day(self.repo.sleep_range(user_id, start, day))
         raw.activity_by_day = _records_by_day(self.repo.activity_range(user_id, start, day))
         raw.training_by_day = _records_by_day(self.repo.training_range(user_id, start, day))

@@ -14,7 +14,7 @@ DAILY_SCHEMA_VERSION = "4.0"
 WEEKLY_SCHEMA_VERSION = "2.0"
 MONTHLY_SCHEMA_VERSION = "1.0"
 INTELLIGENCE_VERSION = "4.0"
-DECISION_POLICY_VERSION = "3.0"
+DECISION_POLICY_VERSION = "4.0"
 EVIDENCE_VERSION = "2026-08"
 TRAINING_RESPONSE_SCHEMA_VERSION = "1.0"
 PERSONAL_MODEL_SCHEMA_VERSION = "2.0"
@@ -606,14 +606,83 @@ class TrainingStep(BaseModel):
     instructions: list[str] = Field(default_factory=list)
 
 
-class TrainingPrescription(BaseModel):
+class TrainingPreferenceInput(BaseModel):
+    weekly_running_target: int = Field(default=3, ge=1, le=7)
+    weekly_strength_target: int = Field(default=3, ge=1, le=7)
+    available_weekdays: list[int] = Field(default_factory=list, max_length=7)
+    max_session_minutes: int | None = Field(default=None, ge=20, le=180)
+    running_experience: Literal["BEGINNER", "INTERMEDIATE", "ADVANCED"] | None = None
+    strength_experience: Literal["BEGINNER", "INTERMEDIATE", "ADVANCED"] | None = None
+    equipment: list[str] = Field(default_factory=list, max_length=30)
+    pain_or_injury_status: Literal["NONE", "PRESENT", "UNKNOWN"] = "UNKNOWN"
+    pain_or_injury_notes: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_preferences(self):
+        if len(set(self.available_weekdays)) != len(self.available_weekdays):
+            raise ValueError("available_weekdays must not contain duplicates")
+        if any(day < 1 or day > 7 for day in self.available_weekdays):
+            raise ValueError("available_weekdays must use ISO weekday values 1 through 7")
+        if self.pain_or_injury_status == "PRESENT" and not self.pain_or_injury_notes:
+            raise ValueError("pain_or_injury_notes is required when pain or injury is present")
+        return self
+
+
+class TrainingPreferences(TrainingPreferenceInput):
+    user_id: str
+    primary_goal: Literal["HEALTH"] = "HEALTH"
+    primary_goal_label: str = "综合健康优先"
+    running_required: Literal[True] = True
+    strength_required: Literal[True] = True
+    updated_at: datetime | None = None
+
+
+class PlannedSession(BaseModel):
+    role: Literal["PRIMARY", "OPTIONAL"]
+    role_label: str
+    session_type: Literal["RUNNING", "STRENGTH", "RECOVERY", "REST"]
+    session_type_label: str
     code: str
     title: str
+    focus: str
     goal: str
+    intensity: Literal["high", "moderate", "low", "none"]
+    intensity_label: str
     total_duration_minutes: tuple[int, int] | None = None
     steps: list[TrainingStep] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
     progression: list[str] = Field(default_factory=list)
-    cautions: list[str] = Field(default_factory=list)
+    stop_conditions: list[str] = Field(default_factory=list)
+
+
+class ConcurrentWeeklyBalance(BaseModel):
+    running_completed_7d: int = Field(ge=0)
+    running_target_7d: int = Field(ge=1)
+    running_completed_28d: int = Field(ge=0)
+    running_target_28d: int = Field(ge=4)
+    strength_completed_7d: int = Field(ge=0)
+    strength_target_7d: int = Field(ge=1)
+    strength_completed_28d: int = Field(ge=0)
+    strength_target_28d: int = Field(ge=4)
+    running_due: bool
+    strength_due: bool
+
+
+class ActionPlan(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    goal: Literal["HEALTH_FIRST_CONCURRENT"] = "HEALTH_FIRST_CONCURRENT"
+    goal_label: str = "综合健康优先，跑步与力量并行"
+    valid_for_date: DateValue
+    expires_at: datetime
+    safety_status: Literal["CLEAR", "LIMITED", "UNKNOWN"]
+    safety_status_label: str
+    weekly_balance: ConcurrentWeeklyBalance
+    primary_session: PlannedSession | None = None
+    optional_session: PlannedSession | None = None
+    session_relationship: Literal["ADDITION", "ALTERNATIVE", "NONE"] = "NONE"
+    session_relationship_label: str
+    conflict_checks: list[str] = Field(default_factory=list)
+    missing_input_gates: list[str] = Field(default_factory=list)
 
 
 class TrainingDecision(BaseModel):
@@ -627,13 +696,7 @@ class TrainingDecision(BaseModel):
     limitations: list[str] = Field(default_factory=list)
     limitation_labels: list[str] = Field(default_factory=list)
     rule_ids: list[str] = Field(default_factory=list)
-    suggested_types: list[str] = Field(default_factory=list)
-    suggested_type_labels: list[str] = Field(default_factory=list)
-    intensity: Literal["high", "moderate", "low", "none", "undetermined"] = "undetermined"
-    intensity_label: str = ""
-    duration_minutes: tuple[int, int] | None = None
-    prescription_guidance: str = ""
-    prescriptions: list[TrainingPrescription] = Field(default_factory=list)
+    action_plan: ActionPlan
 
 
 class EvidenceRef(BaseModel):
@@ -1026,7 +1089,8 @@ class ContextCurrent(BaseModel):
     confidence: ConfidenceBand
     confidence_label: str
     recommendation_id: str
-    suggested_type_labels: list[str] = Field(default_factory=list, max_length=3)
+    primary_session_title: str | None = None
+    optional_session_title: str | None = None
     driver_labels: list[str] = Field(default_factory=list, max_length=5)
     limitation_labels: list[str] = Field(default_factory=list, max_length=5)
 

@@ -1488,7 +1488,7 @@ retained.
     claiming an exact exercise from heart rate alone.
   - Support full-body, upper/lower, push-pull-legs, and five-day rotation state with
     confidence-aware next-session selection.
-- [ ] Part 4 - Replace the daily decision with a health-first concurrent planner.
+- [x] Part 4 - Replace the daily decision with a health-first concurrent planner.
   - Apply recovery and safety gates first, then balance running and strength across
     7/28-day history and avoid high-intensity running/heavy-leg conflicts.
   - Return one primary session and one optional compatible addition or alternative,
@@ -1540,3 +1540,16 @@ retained.
   records confirmed exercises. The focused strength, API, loader, feature, storage, and
   Skill suite passed all 73 tests; compilation, JSON schema parsing, and
   `git diff --check` passed.
+- Part 4: Decision Policy 4.0 directly replaces the generic prescription list with a
+  dated health-first `ActionPlan`: one primary session and at most one compatible
+  addition or alternative, each with evidence, dose, progression, stop conditions,
+  and expiry. User-scoped preferences record running/strength weekly targets,
+  availability, session time, experience, equipment, and pain/injury state while both
+  running and strength remain mandatory product goals. The planner balances 7/28-day
+  deficits, follows recognized strength rotations, alternates tied modalities, and
+  prevents quality running and lower-body strength from stacking within 48 hours.
+  Explicit pain/injury blocks planned training; unknown inputs remain visible gates
+  instead of fabricated assumptions. The focused planner, API, context, storage,
+  running, and strength suite passed all 80 tests; the broader suite excluding only the
+  not-yet-replaced Hermes push/Skill modules passed all 181 tests. Compilation, JSON
+  schema parsing, and `git diff --check` passed.

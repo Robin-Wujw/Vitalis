@@ -24,6 +24,8 @@ from vitalis.intelligence.contracts import (
     RecommendationStatus,
     StrengthExerciseRecord,
     SubjectiveFeedback,
+    TrainingPreferenceInput,
+    TrainingPreferences,
 )
 
 from . import models as orm
@@ -581,6 +583,41 @@ class HealthRepository:
             ))
         return output
 
+    def save_training_preferences(
+        self, user_id: str, preferences: TrainingPreferenceInput
+    ) -> TrainingPreferences:
+        row = self.db.get(orm.TrainingPreference, user_id)
+        values = preferences.model_dump(mode="python")
+        if row is None:
+            row = orm.TrainingPreference(user_id=user_id, **values)
+            self.db.add(row)
+        else:
+            for field, value in values.items():
+                setattr(row, field, value)
+            row.updated_at = datetime.utcnow()
+        self.db.flush()
+        return self.training_preferences(user_id)
+
+    def training_preferences(self, user_id: str) -> TrainingPreferences:
+        row = self.db.get(orm.TrainingPreference, user_id)
+        if row is None:
+            return TrainingPreferences(user_id=user_id)
+        return TrainingPreferences(
+            user_id=row.user_id,
+            weekly_running_target=row.weekly_running_target,
+            weekly_strength_target=row.weekly_strength_target,
+            available_weekdays=list(row.available_weekdays or []),
+            max_session_minutes=row.max_session_minutes,
+            running_experience=row.running_experience,
+            strength_experience=row.strength_experience,
+            equipment=list(row.equipment or []),
+            pain_or_injury_status=row.pain_or_injury_status,
+            pain_or_injury_notes=row.pain_or_injury_notes,
+            updated_at=(
+                row.updated_at.replace(tzinfo=timezone.utc) if row.updated_at else None
+            ),
+        )
+
     # ---- 健康智能事件 ----
 
     def active_health_events(self, user_id: str) -> list[HealthEvent]:
@@ -1116,6 +1153,7 @@ class HealthRepository:
             orm.Device, orm.SleepRecord, orm.ActivityRecord, orm.TrainingRecord,
             orm.MetricSample, orm.DailyMetric, orm.DenseDataFile,
             orm.WorkoutMetricSample, orm.StrengthExercise, orm.Workout,
+            orm.TrainingPreference,
             orm.HealthEventObservation, orm.HealthEventRecord, orm.AnalysisSnapshot,
             orm.RecommendationInstance,
             orm.AnalysisRun,

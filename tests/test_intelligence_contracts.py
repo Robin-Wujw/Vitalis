@@ -11,6 +11,8 @@ from vitalis.intelligence.contracts import (
     DecisionAction,
     DeviceValidity,
     QualityStatus,
+    ActionPlan,
+    ConcurrentWeeklyBalance,
     TrainingDecision,
 )
 
@@ -52,6 +54,25 @@ def test_decision_contract_has_no_implicit_fallback_score():
         action=DecisionAction.INSUFFICIENT_DATA,
         confidence=ConfidenceBand.NONE,
         limitations=["missing recovery signals"],
+        action_plan=ActionPlan(
+            valid_for_date=date(2026, 8, 29),
+            expires_at="2026-08-30T00:00:00+08:00",
+            safety_status="UNKNOWN",
+            safety_status_label="伤病与疼痛状态未确认",
+            weekly_balance=ConcurrentWeeklyBalance(
+                running_completed_7d=0,
+                running_target_7d=3,
+                running_completed_28d=0,
+                running_target_28d=12,
+                strength_completed_7d=0,
+                strength_target_7d=3,
+                strength_completed_28d=0,
+                strength_target_28d=12,
+                running_due=True,
+                strength_due=True,
+            ),
+            session_relationship_label="没有附加训练",
+        ),
     )
     assert "score" not in decision.model_dump()
     with pytest.raises(ValidationError):
@@ -59,4 +80,5 @@ def test_decision_contract_has_no_implicit_fallback_score():
             recommendation_id="contract-recommendation",
             action="MAYBE",
             confidence=ConfidenceBand.LOW,
+            action_plan=decision.action_plan,
         )

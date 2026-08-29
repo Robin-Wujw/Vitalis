@@ -66,7 +66,14 @@ class HealthTimelineEngine:
                 details={
                     "completion_status": recommendation.completion_status.value,
                     "confidence_label": recommendation.decision.confidence_label,
-                    "suggested_type_labels": recommendation.decision.suggested_type_labels[:3],
+                    "primary_session_title": (
+                        recommendation.decision.action_plan.primary_session.title
+                        if recommendation.decision.action_plan.primary_session else None
+                    ),
+                    "optional_session_title": (
+                        recommendation.decision.action_plan.optional_session.title
+                        if recommendation.decision.action_plan.optional_session else None
+                    ),
                 },
             ))
         for workout in repo.workouts(user_id, start, end):

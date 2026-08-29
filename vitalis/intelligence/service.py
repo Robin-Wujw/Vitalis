@@ -30,6 +30,8 @@ from .contracts import (
     SubjectiveFeedback,
     SubjectiveFeedbackInput,
     TrendResponse,
+    TrainingPreferenceInput,
+    TrainingPreferences,
     TrainingResponseProfile,
     WeeklyProfile,
 )
@@ -296,7 +298,13 @@ class IntelligenceCommand:
         training = TrainingAnalyzer().analyze(raw, baselines)
         recovery = RecoveryAnalyzer().analyze(raw, sleep, sleep_state, hrv, training)
         decision = DecisionEngine().decide(
-            uuid4().hex, sleep_state, hrv, recovery, training
+            uuid4().hex,
+            target,
+            sleep_state,
+            hrv,
+            recovery,
+            training,
+            raw.training_preferences,
         )
         trends = TrendEngine().calculate(raw)
         events = HealthEventEngine().detect(raw, baselines, trends, hrv, recovery)
@@ -472,6 +480,10 @@ class IntelligenceQuery:
         with session_scope() as db:
             return HealthRepository(db).subjective_feedback(user_id, start, end)
 
+    def training_preferences(self, user_id: str) -> TrainingPreferences:
+        with session_scope() as db:
+            return HealthRepository(db).training_preferences(user_id)
+
     def recommendation(
         self, user_id: str, recommendation_id: str
     ) -> RecommendationInstance | None:
@@ -576,6 +588,14 @@ class IntelligenceAction:
                 for order, item in enumerate(confirmation.exercises, start=1)
             ]
             return repo.replace_strength_exercises(user_id, workout_id, exercises)
+
+    def set_training_preferences(
+        self, user_id: str, preferences: TrainingPreferenceInput
+    ) -> TrainingPreferences:
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user_id)
+            return repo.save_training_preferences(user_id, preferences)
 
 def _run_from_row(row) -> AnalysisRun:
     return AnalysisRun(

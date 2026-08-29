@@ -45,7 +45,7 @@ def test_daily_profile_after_sync(client):
     body = resp.json()
     assert body["schema_version"] == "4.0"
     assert body["intelligence_version"] == "4.0"
-    assert body["decision_policy_version"] == "3.0"
+    assert body["decision_policy_version"] == "4.0"
     assert body["evidence_version"] == "2026-08"
     assert body["analysis_run_id"]
     assert body["decision"]["action"] in {
@@ -53,7 +53,7 @@ def test_daily_profile_after_sync(client):
     }
     assert body["decision"]["action_label"]
     assert body["decision"]["confidence_label"]
-    assert body["decision"]["intensity_label"]
+    assert body["decision"]["action_plan"]["goal"] == "HEALTH_FIRST_CONCURRENT"
     assert "score" not in body["decision"]
 
 
@@ -151,7 +151,7 @@ def test_daily_profile_api_runs_device_baseline_to_decision(client):
     assert payload["decision"]["action"] == "REST"
     assert payload["decision"]["action_label"] == "休息"
     assert payload["decision"]["confidence_label"] in {"中等", "较高"}
-    assert payload["decision"]["prescriptions"][0]["title"] == "完全休息"
+    assert payload["decision"]["action_plan"]["primary_session"]["title"] == "完全休息"
     assert payload["decision"]["rule_ids"] == ["DECISION.MULTISIGNAL_SUPPRESSION_REST"]
 
 
@@ -354,6 +354,41 @@ def test_strength_exercise_confirmation_is_user_scoped(client):
             "exercises": [{"exercise_name": "卧推"}],
         },
     ).status_code == 422
+
+
+def test_training_preferences_are_health_first_and_user_scoped(client):
+    response = client.request(
+        "PUT",
+        "/api/v1/intelligence/training-preferences",
+        headers={"X-User-Id": "training-preferences-owner"},
+        json={
+            "weekly_running_target": 3,
+            "weekly_strength_target": 3,
+            "available_weekdays": [1, 2, 4, 5, 6],
+            "max_session_minutes": 75,
+            "running_experience": "INTERMEDIATE",
+            "strength_experience": "INTERMEDIATE",
+            "equipment": ["杠铃", "哑铃"],
+            "pain_or_injury_status": "NONE",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["primary_goal"] == "HEALTH"
+    assert payload["running_required"] is True
+    assert payload["strength_required"] is True
+    assert payload["available_weekdays"] == [1, 2, 4, 5, 6]
+    assert client.get(
+        "/api/v1/intelligence/training-preferences",
+        headers={"X-User-Id": "training-preferences-owner"},
+    ).json()["equipment"] == ["杠铃", "哑铃"]
+    other = client.get(
+        "/api/v1/intelligence/training-preferences",
+        headers={"X-User-Id": "training-preferences-other"},
+    ).json()
+    assert other["equipment"] == []
+    assert other["pain_or_injury_status"] == "UNKNOWN"
 
 
 def test_health_event_acknowledgement_api_is_user_scoped(client):

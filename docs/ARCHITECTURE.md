@@ -1,4 +1,4 @@
-# Vitalis Health Intelligence Architecture v3.1
+# Vitalis Health Intelligence Architecture v4.0
 
 ## 1. System Boundary
 
@@ -14,7 +14,7 @@ Intelligence                  v
                               |
   Quality -> Baseline -> Features -> Trends -> Event Lifecycle -> Monthly
                               |
-  Decision -> Recommendation -> Workout -> Response -> Association -> Personal Model
+  Concurrent Planner -> Recommendation -> Workout -> Response -> Association -> Personal Model
                               |
 Data                          v
   Zepp connector -> normalized records -> SQLite/PostgreSQL
@@ -76,7 +76,7 @@ The implementation lives in `vitalis/intelligence`:
 | `analyzers.py` | Sleep, HRV/RHR, recovery, and training feature extraction |
 | `running.py` | Individual-threshold zones, cadence, pace/HR drift, segments, session type, and 7/28-day running structure |
 | `strength.py` | Confirmed exercises, movement and muscle knowledge, work/rest structure, split state, and muscle recovery context |
-| `decision.py` | Explainable training action policy with abstention |
+| `decision.py` | Health-first running/strength planner, safety gates, scheduling conflicts, and abstention |
 | `trend.py` | Device-isolated 7/28/90-day trends and variability |
 | `events.py` | Persistent deviations and period-change event detection |
 | `lifecycle.py` | Event observations and DETECTED/PERSISTING/IMPROVING/RESOLVED transitions |
@@ -103,7 +103,7 @@ DailyProfile
 |- trends: device-isolated 7/28/90-day period features
 |- events: persistent or period-change observations
 |- states: sleep, recovery, training load, Chinese labels
-|- decision: action, confidence, drivers, limitations, prescriptions, Chinese labels
+|- decision: state action, evidence, and a dated concurrent ActionPlan
 |- evidence_refs
 `- metadata: identity and product-policy versions
 ```
@@ -257,8 +257,10 @@ Sleep stages remain trend-only. Training load is vendor-derived; recorded RPE au
 weekly context but does not replace load, completed sets/reps/weight, or reliable
 individualized aerobic-intensity classification.
 
-Training content is deterministic engine output, not model-generated advice. The
-current prescription library includes:
+Training content is deterministic engine output, not model-generated advice. Decision
+Policy 4.0 returns an `ActionPlan` with one primary session and at most one optional
+compatible addition or alternative. Every session includes dose, evidence, progression,
+stop conditions, and a local-day expiry. The current session library includes:
 
 - Zone 2 running: warm-up, talk-test-controlled main work, cool-down, progression, and
   stop conditions. Until an individual heart-rate zone is validated, no numeric Zone 2
@@ -267,9 +269,17 @@ current prescription library includes:
   repetitions, rest, repetitions-in-reserve, substitutions, and load progression.
 - Recovery activity and full rest with explicit intensity constraints.
 
-When both aerobic and strength targets are due, the decision marks the returned
-prescriptions as alternatives rather than a combined session. Strength is not selected
-when a recorded strength workout occurred within the previous two local days.
+The planner's fixed product goal is health first with both running and strength
+required. User constraints specify weekly targets, available weekdays, session time,
+experience, equipment, and pain/injury state. Missing constraints remain explicit and
+reduce prescription specificity; recorded pain or injury blocks planned training.
+
+Running and strength completion are compared against both 7-day and 28-day targets.
+When both are due, the larger relative deficit becomes primary; ties alternate from the
+latest training family. Easy running and upper-body strength may be separate same-day
+additions with at least six hours between them. Quality running and lower-body strength
+are alternatives, and a quality/long run or leg session in the previous 48 hours blocks
+another conflicting high-load lower-body session.
 
 ### 3.10 Running Analysis
 
@@ -326,6 +336,8 @@ GET  /api/v1/intelligence/recommendations/{recommendation_id}
 POST /api/v1/intelligence/recommendations/{recommendation_id}/complete
 POST /api/v1/intelligence/feedback
 GET  /api/v1/intelligence/feedback
+GET  /api/v1/intelligence/training-preferences
+PUT  /api/v1/intelligence/training-preferences
 POST /api/v1/intelligence/workouts/{workout_id}/strength-exercises
 POST /api/v1/intelligence/events/{event_id}/acknowledge
 ```

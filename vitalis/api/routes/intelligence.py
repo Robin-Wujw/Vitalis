@@ -23,6 +23,8 @@ from vitalis.intelligence.contracts import (
     SubjectiveFeedback,
     SubjectiveFeedbackInput,
     TrendResponse,
+    TrainingPreferenceInput,
+    TrainingPreferences,
     TrainingResponseProfile,
     WeeklyProfile,
 )
@@ -227,6 +229,29 @@ def feedback(
     if period_start > period_end:
         raise HTTPException(status_code=422, detail="开始日期不能晚于结束日期")
     return IntelligenceQuery().feedback(user_id, period_start, period_end)
+
+
+@router.get(
+    "/training-preferences",
+    response_model=TrainingPreferences,
+    summary="Read health-first concurrent training constraints",
+)
+def training_preferences(
+    user_id: str = Depends(require_user_id),
+) -> TrainingPreferences:
+    return IntelligenceQuery().training_preferences(user_id)
+
+
+@router.put(
+    "/training-preferences",
+    response_model=TrainingPreferences,
+    summary="Replace health-first concurrent training constraints",
+)
+def set_training_preferences(
+    payload: TrainingPreferenceInput,
+    user_id: str = Depends(require_user_id),
+) -> TrainingPreferences:
+    return IntelligenceAction().set_training_preferences(user_id, payload)
 
 
 @router.post(

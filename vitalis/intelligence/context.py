@@ -36,7 +36,14 @@ class AgentContextEngine:
             confidence=daily.decision.confidence,
             confidence_label=daily.decision.confidence_label,
             recommendation_id=daily.decision.recommendation_id,
-            suggested_type_labels=daily.decision.suggested_type_labels[:3],
+            primary_session_title=(
+                daily.decision.action_plan.primary_session.title
+                if daily.decision.action_plan.primary_session else None
+            ),
+            optional_session_title=(
+                daily.decision.action_plan.optional_session.title
+                if daily.decision.action_plan.optional_session else None
+            ),
             driver_labels=daily.decision.driver_labels[:5],
             limitation_labels=daily.decision.limitation_labels[:5],
         )

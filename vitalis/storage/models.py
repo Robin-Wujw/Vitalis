@@ -217,6 +217,24 @@ class StrengthExercise(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class TrainingPreference(Base):
+    """Current health-first concurrent training constraints for one local user."""
+
+    __tablename__ = "training_preferences"
+
+    user_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    weekly_running_target: Mapped[int] = mapped_column(Integer)
+    weekly_strength_target: Mapped[int] = mapped_column(Integer)
+    available_weekdays: Mapped[list] = mapped_column(JSON, default=list)
+    max_session_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    running_experience: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    strength_experience: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    equipment: Mapped[list] = mapped_column(JSON, default=list)
+    pain_or_injury_status: Mapped[str] = mapped_column(String(16))
+    pain_or_injury_notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class HealthEventRecord(Base):
     """A deterministic, explainable event emitted by the intelligence engine."""
 

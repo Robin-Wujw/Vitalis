@@ -8,7 +8,7 @@
     "schema_version": {"const": "4.0"},
     "analysis_run_id": {"type": "string"},
     "intelligence_version": {"const": "4.0"},
-    "decision_policy_version": {"const": "3.0"},
+    "decision_policy_version": {"const": "4.0"},
     "evidence_version": {"const": "2026-08"},
     "user_id": {"type": "string"},
     "date": {"type": "string", "format": "date"},
@@ -164,7 +164,7 @@
     },
     "decision": {
       "type": "object",
-      "required": ["recommendation_id", "action", "action_label", "confidence", "confidence_label", "drivers", "driver_labels", "limitations", "limitation_labels", "rule_ids", "suggested_types", "suggested_type_labels", "intensity", "intensity_label", "prescription_guidance", "prescriptions"],
+      "required": ["recommendation_id", "action", "action_label", "confidence", "confidence_label", "drivers", "driver_labels", "limitations", "limitation_labels", "rule_ids", "action_plan"],
       "properties": {
         "recommendation_id": {"type": "string"},
         "action": {"enum": ["TRAIN_HARD", "TRAIN_NORMAL", "TRAIN_LIGHT", "RECOVERY", "REST", "INSUFFICIENT_DATA"]},
@@ -176,46 +176,27 @@
         "limitations": {"type": "array", "items": {"type": "string"}},
         "limitation_labels": {"type": "array", "items": {"type": "string"}},
         "rule_ids": {"type": "array", "items": {"type": "string"}},
-        "suggested_types": {"type": "array", "items": {"type": "string"}},
-        "suggested_type_labels": {"type": "array", "items": {"type": "string"}},
-        "intensity": {"enum": ["high", "moderate", "low", "none", "undetermined"]},
-        "intensity_label": {"type": "string"},
-        "prescription_guidance": {"type": "string"},
-        "prescriptions": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["code", "title", "goal", "steps", "progression", "cautions"],
-            "properties": {
-              "code": {"type": "string"},
-              "title": {"type": "string"},
-              "goal": {"type": "string"},
-              "total_duration_minutes": {
-                "type": ["array", "null"],
-                "prefixItems": [{"type": "integer"}, {"type": "integer"}],
-                "minItems": 2,
-                "maxItems": 2
-              },
-              "steps": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "required": ["order", "name", "instructions"],
-                  "properties": {
-                    "order": {"type": "integer", "minimum": 1},
-                    "name": {"type": "string"},
-                    "duration_minutes": {"type": ["array", "null"]},
-                    "sets": {"type": ["integer", "null"], "minimum": 1},
-                    "repetitions": {"type": ["string", "null"]},
-                    "rest_seconds": {"type": ["array", "null"]},
-                    "intensity": {"type": ["string", "null"]},
-                    "instructions": {"type": "array", "items": {"type": "string"}}
-                  }
-                }
-              },
-              "progression": {"type": "array", "items": {"type": "string"}},
-              "cautions": {"type": "array", "items": {"type": "string"}}
-            }
+        "action_plan": {
+          "type": "object",
+          "required": ["schema_version", "goal", "goal_label", "valid_for_date", "expires_at", "safety_status", "safety_status_label", "weekly_balance", "primary_session", "optional_session", "session_relationship", "session_relationship_label", "conflict_checks", "missing_input_gates"],
+          "properties": {
+            "schema_version": {"const": "1.0"},
+            "goal": {"const": "HEALTH_FIRST_CONCURRENT"},
+            "goal_label": {"type": "string"},
+            "valid_for_date": {"type": "string", "format": "date"},
+            "expires_at": {"type": "string", "format": "date-time"},
+            "safety_status": {"enum": ["CLEAR", "LIMITED", "UNKNOWN"]},
+            "safety_status_label": {"type": "string"},
+            "weekly_balance": {
+              "type": "object",
+              "required": ["running_completed_7d", "running_target_7d", "running_completed_28d", "running_target_28d", "strength_completed_7d", "strength_target_7d", "strength_completed_28d", "strength_target_28d", "running_due", "strength_due"]
+            },
+            "primary_session": {"type": ["object", "null"]},
+            "optional_session": {"type": ["object", "null"]},
+            "session_relationship": {"enum": ["ADDITION", "ALTERNATIVE", "NONE"]},
+            "session_relationship_label": {"type": "string"},
+            "conflict_checks": {"type": "array", "items": {"type": "string"}},
+            "missing_input_gates": {"type": "array", "items": {"type": "string"}}
           }
         }
       }

@@ -1780,7 +1780,7 @@ mostly fixed weekly-frequency templates.
     plan; retain the concise action-first presentation.
   - Add renderer tests for personalized running and strength plans and absent-data
     behavior.
-- [ ] Part 4 - Rebuild current intelligence output, verify, and publish.
+- [x] Part 4 - Rebuild current intelligence output, verify, and publish.
   - Update current schemas, evidence/workflow/architecture documentation, and version
     constants directly with no legacy contract or fallback path.
   - Run focused and complete tests, validate real stored data privately, restart both
@@ -1813,3 +1813,6 @@ mostly fixed weekly-frequency templates.
   restarted and are active; `/healthz` returns 200 without a proxy. Both Hermes cron
   jobs are active, their latest executions are `ok`, and the next morning run is
   scheduled for 2026-08-30 09:30 Asia/Shanghai.
+- Part 4 (delivery): feature commit `7b40fd4` (`feat: deepen recovery and training
+  prescriptions`) was pushed to `origin/main`. The delivery record was then committed
+  and pushed on the same branch, followed by a local/remote revision equality check.

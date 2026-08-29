@@ -94,6 +94,18 @@ EVIDENCE_REFS = [
         applies_to=["ppg_hrv_limitations", "device_fusion"],
     ),
     EvidenceRef(
+        id="NOCTURNAL_WEARABLE_HRV_2025",
+        title="Validation of nocturnal resting heart rate and heart rate variability in consumer wearables",
+        url="https://pubmed.ncbi.nlm.nih.gov/40834291/",
+        applies_to=["nocturnal_hrv", "device_specific_accuracy", "device_fusion"],
+    ),
+    EvidenceRef(
+        id="MEASUREMENT_AGREEMENT_1986",
+        title="Statistical methods for assessing agreement between two methods of clinical measurement",
+        url="https://doi.org/10.1016/S0140-6736(86)90837-8",
+        applies_to=["measurement_agreement", "device_interchangeability"],
+    ),
+    EvidenceRef(
         id="WSS_WEARABLE_SLEEP_2025",
         title="World Sleep Society recommendations for consumer sleep trackers",
         url="https://pubmed.ncbi.nlm.nih.gov/40300398/",

@@ -92,6 +92,8 @@ def test_evidence_library_covers_training_prescription_without_overclaiming():
     assert {
         "ACSM_RESISTANCE_TRAINING_2026",
         "CONCURRENT_TRAINING_2022",
+        "MEASUREMENT_AGREEMENT_1986",
+        "NOCTURNAL_WEARABLE_HRV_2025",
         "RIR_RPE_SCALE_2016",
         "RIR_ACCURACY_REVIEW_2026",
     } <= set(refs)
@@ -102,6 +104,12 @@ def test_evidence_library_covers_training_prescription_without_overclaiming():
         "CONCURRENT_TRAINING_2022"
     ].applies_to
     assert "subjective_effort_feedback" in refs["RIR_RPE_SCALE_2016"].applies_to
+    assert "device_interchangeability" in refs[
+        "MEASUREMENT_AGREEMENT_1986"
+    ].applies_to
+    assert "device_specific_accuracy" in refs[
+        "NOCTURNAL_WEARABLE_HRV_2025"
+    ].applies_to
     assert "device_specific_accuracy" not in refs[
         "ACSM_RESISTANCE_TRAINING_2026"
     ].applies_to

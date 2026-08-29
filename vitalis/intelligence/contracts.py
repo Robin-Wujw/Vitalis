@@ -10,12 +10,12 @@ from pydantic import BaseModel, Field, model_validator
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "4.0"
+DAILY_SCHEMA_VERSION = "5.0"
 WEEKLY_SCHEMA_VERSION = "2.0"
 MONTHLY_SCHEMA_VERSION = "1.0"
-INTELLIGENCE_VERSION = "4.0"
-DECISION_POLICY_VERSION = "4.0"
-EVIDENCE_VERSION = "2026-08"
+INTELLIGENCE_VERSION = "5.0"
+DECISION_POLICY_VERSION = "5.0"
+EVIDENCE_VERSION = "2026-08b"
 TRAINING_RESPONSE_SCHEMA_VERSION = "1.0"
 PERSONAL_MODEL_SCHEMA_VERSION = "2.0"
 ASSOCIATION_SCHEMA_VERSION = "1.0"
@@ -312,12 +312,16 @@ class HrvFeatures(BaseModel):
     value_ms: float | None = None
     ln_rmssd: float | None = None
     deviation: Deviation | None = None
-    fusion_method: Literal["device_specific_baseline_consensus"] | None = None
-    fusion_direction: Literal["above", "near", "below", "mixed", "unknown"] = "unknown"
+    fusion_method: Literal["canonical_device_with_corroboration"] | None = None
+    fusion_direction: Literal["above", "near", "below", "unknown"] = "unknown"
     fusion_confidence: ConfidenceBand = ConfidenceBand.NONE
     fusion_confidence_label: str = ""
     fusion_summary: str = ""
-    fused_device_count: int = Field(default=0, ge=0)
+    corroboration_status: Literal[
+        "not_available", "consistent", "conflicting", "insufficient"
+    ] = "not_available"
+    corroborating_stream_count: int = Field(default=0, ge=0)
+    corroboration_affects_decision: bool = False
     rhr_bpm: float | None = None
     rhr_deviation: Deviation | None = None
     streams: list[HrvStreamFeature] = Field(default_factory=list)

@@ -7,9 +7,9 @@
   "properties": {
     "schema_version": {"const": "1.0"},
     "analysis_run_id": {"type": "string"},
-    "intelligence_version": {"const": "4.0"},
-    "decision_policy_version": {"const": "4.0"},
-    "evidence_version": {"const": "2026-08"},
+    "intelligence_version": {"const": "5.0"},
+    "decision_policy_version": {"const": "5.0"},
+    "evidence_version": {"const": "2026-08b"},
     "user_id": {"type": "string"},
     "date": {"type": "string", "format": "date"},
     "generated_at": {"type": "string", "format": "date-time"},

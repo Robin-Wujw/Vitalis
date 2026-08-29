@@ -1,6 +1,5 @@
 """Deterministic feature analyzers over normalized profile data."""
 
-from collections import Counter
 from dataclasses import dataclass
 from datetime import date, timedelta
 from math import log
@@ -67,9 +66,9 @@ class _HrvCandidate:
         return (
             baseline_available,
             self.metric_priority,
-            arm_worn,
-            min(self.sample_count_today, 1_440),
             baseline_days,
+            min(self.sample_count_today, 1_440),
+            arm_worn,
             self.source,
             self.scope,
             self.device_id or "",
@@ -211,8 +210,10 @@ class HrvAnalyzer:
             fusion_direction,
             fusion_confidence,
             fusion_summary,
-            fused_device_count,
-        ) = _fuse_hrv_streams(metric_candidates)
+            corroboration_status,
+            corroborating_stream_count,
+            corroboration_affects_decision,
+        ) = _corroborate_hrv_streams(selected, metric_candidates)
 
         rhr_candidates = []
         for rhr_metric in ("sleep_rhr", "resting_hr"):
@@ -230,7 +231,7 @@ class HrvAnalyzer:
         limitations = []
         if baseline is None or baseline.status == Availability.INSUFFICIENT_DATA:
             limitations.append("hrv_28d_baseline_insufficient")
-        if fusion_direction == "mixed":
+        if corroboration_status == "conflicting":
             limitations.append("multi_device_hrv_disagreement")
         if rhr_value is None:
             limitations.append("target_day_rhr_missing")
@@ -268,12 +269,14 @@ class HrvAnalyzer:
             value_ms=round(value, 2),
             ln_rmssd=round(log(value), 4) if metric == "hrv_rmssd" and value > 0 else None,
             deviation=deviation,
-            fusion_method="device_specific_baseline_consensus",
+            fusion_method="canonical_device_with_corroboration",
             fusion_direction=fusion_direction,
             fusion_confidence=fusion_confidence,
             fusion_confidence_label=CONFIDENCE_LABELS[fusion_confidence.value],
             fusion_summary=fusion_summary,
-            fused_device_count=fused_device_count,
+            corroboration_status=corroboration_status,
+            corroborating_stream_count=corroborating_stream_count,
+            corroboration_affects_decision=corroboration_affects_decision,
             rhr_bpm=round(rhr_value, 1) if rhr_value is not None else None,
             rhr_deviation=rhr_deviation,
             streams=streams,
@@ -283,47 +286,67 @@ class HrvAnalyzer:
         )
 
 
-def _fuse_hrv_streams(
+def _corroborate_hrv_streams(
+    selected: _HrvCandidate,
     candidates: list[_HrvCandidate],
-) -> tuple[str, ConfidenceBand, str, int]:
-    interpreted = []
-    for item in candidates:
-        if not item.baseline or item.baseline.status != Availability.AVAILABLE:
-            continue
-        deviation = BaselineEngine.deviation(item.value, item.baseline)
-        if deviation.direction != "unknown":
-            interpreted.append((item, deviation.direction))
-    if not interpreted:
-        return "unknown", ConfidenceBand.NONE, "没有足够的设备内基线用于融合", 0
+) -> tuple[str, ConfidenceBand, str, str, int, bool]:
+    if not selected.baseline or selected.baseline.status != Availability.AVAILABLE:
+        return (
+            "unknown",
+            ConfidenceBand.NONE,
+            "主设备缺少可解释的个人基线",
+            "insufficient",
+            0,
+            False,
+        )
+    selected_direction = BaselineEngine.deviation(
+        selected.value, selected.baseline
+    ).direction
+    if selected_direction == "unknown":
+        return (
+            "unknown",
+            ConfidenceBand.NONE,
+            "主设备暂时无法与个人基线比较",
+            "insufficient",
+            0,
+            False,
+        )
 
-    counts = Counter(direction for _, direction in interpreted)
-    direction, count = counts.most_common(1)[0]
-    device_count = len({item.device_id or item.device_label for item, _ in interpreted})
-    direction_label = {"above": "高于", "near": "接近", "below": "低于"}[direction]
-    labels_text = "、".join(item.device_label for item, _ in interpreted)
-    if len(counts) == 1:
-        confidence = (
-            ConfidenceBand.HIGH if device_count >= 2 else ConfidenceBand.MODERATE
-        )
+    secondary_directions = []
+    for item in candidates:
+        if item == selected or not item.baseline:
+            continue
+        if item.baseline.status != Availability.AVAILABLE:
+            continue
+        direction = BaselineEngine.deviation(item.value, item.baseline).direction
+        if direction != "unknown":
+            secondary_directions.append(direction)
+
+    if not secondary_directions:
         return (
-            direction,
-            confidence,
-            f"{device_count} 台设备相对各自 28 天基线方向一致：{direction_label}基线"
-            f"（{labels_text}）",
-            device_count,
-        )
-    if count / len(interpreted) >= 2 / 3:
-        return (
-            direction,
+            selected_direction,
             ConfidenceBand.MODERATE,
-            f"多数设备指向{direction_label}基线，但仍有设备不一致（{labels_text}）",
-            device_count,
+            "按连续主设备的个人基线判断",
+            "not_available",
+            0,
+            False,
+        )
+    if all(direction == selected_direction for direction in secondary_directions):
+        return (
+            selected_direction,
+            ConfidenceBand.MODERATE,
+            "次设备方向一致",
+            "consistent",
+            len(secondary_directions),
+            False,
         )
     return (
-        "mixed",
+        selected_direction,
         ConfidenceBand.LOW,
-        f"设备间方向不一致，HRV 不参与强化恢复结论（{labels_text}）",
-        device_count,
+        "次设备方向不一致，已降低结论把握",
+        "conflicting",
+        len(secondary_directions),
+        True,
     )
 
 

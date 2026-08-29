@@ -1,4 +1,4 @@
-# Vitalis Health Intelligence Architecture v4.0
+# Vitalis Health Intelligence Architecture v5.0
 
 ## 1. System Boundary
 
@@ -91,7 +91,7 @@ The implementation lives in `vitalis/intelligence`:
 
 ### 3.1 DailyProfile
 
-The wire contract is `schema_version=4.0`. Every result carries `analysis_run_id`,
+The wire contract is `schema_version=5.0`. Every result carries `analysis_run_id`,
 `intelligence_version`, `decision_policy_version`, and `evidence_version` separately:
 
 ```text
@@ -111,12 +111,14 @@ DailyProfile
 There is no uncalibrated Vitalis 0-100 recovery score. Vendor readiness, Charge, and
 sleep scores are labeled as vendor context and do not become the Vitalis result.
 
-HRV fusion never averages raw milliseconds across devices. Each RMSSD stream is first
-compared with that device's own robust 28-day baseline. Matching directions strengthen
-the recovery evidence; disagreement is reported as `mixed` and contributes no positive
-or negative HRV driver. When equivalent streams are available, an identified upper-arm
-Helio stream is preferred for display, while its evidence remains form-factor-level
-rather than a claim of model-specific ECG validation.
+HRV handling never averages raw milliseconds across devices. Vitalis selects one
+canonical same-metric stream using an interpretable personal baseline, baseline-day
+coverage, current observation density, and continuity; measurement site is only a final
+tie-breaker for nocturnal HRV. The selected stream is compared only with its own robust
+28-day baseline. Secondary streams remain audit evidence: agreement is silent and does
+not inflate confidence, while comparable disagreement lowers confidence without
+replacing the canonical conclusion. This differs from exercise heart rate, where an
+explicitly attributed and decoded upper-arm stream has stronger form-factor evidence.
 
 `second_heart_rate` contributes per-device coverage hours and days only while its
 `SEC_HR` payload remains indexed rather than decoded. Coverage can explain wear and data
@@ -258,7 +260,7 @@ weekly context but does not replace load, completed sets/reps/weight, or reliabl
 individualized aerobic-intensity classification.
 
 Training content is deterministic engine output, not model-generated advice. Decision
-Policy 4.0 returns an `ActionPlan` with one primary session and at most one optional
+Policy 5.0 returns an `ActionPlan` with one primary session and at most one optional
 compatible addition or alternative. Every session includes dose, evidence, progression,
 stop conditions, and a local-day expiry. The current session library includes:
 
@@ -283,7 +285,7 @@ another conflicting high-load lower-body session.
 
 ### 3.10 Running Analysis
 
-DailyProfile 4.0 embeds `TrainingFeatures.running` with Running Analysis v1. Each
+DailyProfile 5.0 embeds `TrainingFeatures.running` with Running Analysis v1. Each
 session preserves distance, duration, derived average pace, median speed, median cadence,
 cadence variability, HR, threshold-based HR-zone duration, cardiac drift, detected
 work/recovery segments, classification evidence, confidence, and limitations.
@@ -298,7 +300,7 @@ medical or coaching truth.
 
 ### 3.11 Strength Analysis
 
-DailyProfile 4.0 embeds `TrainingFeatures.strength` with Strength Analysis v1. A user
+DailyProfile 5.0 embeds `TrainingFeatures.strength` with Strength Analysis v1. A user
 can confirm exercise name, set count, repetitions, load, RPE/RIR, rest, and session
 focus against a user-owned strength workout. Vitalis normalizes known Chinese or
 English exercise names to movement patterns and muscle groups while preserving the
@@ -372,6 +374,13 @@ substitutes stale health results. Morning and evening use separate per-user, per
 delivery markers, so retries and overlapping invocations do not duplicate a successful
 PushPlus delivery. The evening report is not blocked by the morning sleep gate.
 
+The morning renderer is a deterministic presentation-selection layer over the complete
+DailyProfile. It emits one conclusion, concrete primary/optional actions, short reasons,
+at most one actionable event, and only consequential cautions. Per-device streams,
+raw trend windows, empty signal groups, unknown safety inputs, passed checks, planning
+gates, and generic limitations stay in the structured profile instead of being copied
+into the daily push.
+
 ## 6. Evidence Boundaries
 
 - WHO activity guidance supplies population-level weekly context, not readiness rules.
@@ -391,8 +400,10 @@ PushPlus delivery. The evening report is not blocked by the morning sleep gate.
   limitations; it is not a precise replacement for load, sets, repetitions, or device
   observations.
 
-Device-specific validity evidence for Balance 2 and Helio is not currently attached,
-so `device_validity.status` remains `UNKNOWN`.
+No independent model-specific validation was found for Balance 2 or Helio Strap, so
+their `device_validity.status` remains evidence-limited. Upper-arm exercise studies do
+not establish Helio's nocturnal-HRV accuracy, and every-second manufacturer claims do
+not become accuracy weights.
 
 ## 7. Current Scope
 

@@ -31,6 +31,9 @@ def _profile_payload():
                 "preferred_device_label": "Amazfit Helio Strap",
                 "fusion_confidence_label": "较高",
                 "fusion_summary": "2 台设备相对各自 28 天基线方向一致：高于基线",
+                "corroboration_status": "consistent",
+                "corroborating_stream_count": 1,
+                "corroboration_affects_decision": False,
                 "streams": [{
                     "device_label": "Amazfit Helio Strap",
                     "measurement_site": "upper_arm",
@@ -132,6 +135,7 @@ def _profile_payload():
             "confidence_label": "中等",
         }],
         "events": [{
+            "type": "TRAINING_LOAD_SPIKE",
             "type_label": "训练负荷上升",
             "summary": "近 7 日训练负荷持续上升。",
             "severity_label": "提醒",
@@ -150,6 +154,7 @@ def _profile_payload():
             "action_plan": {
                 "goal_label": "综合健康优先，跑步与力量并行",
                 "expires_at": "2026-08-29T00:00:00+08:00",
+                "safety_status": "UNKNOWN",
                 "safety_status_label": "未记录疼痛或伤病限制",
                 "weekly_balance": {
                     "running_completed_7d": 2,
@@ -202,6 +207,7 @@ def _profile_payload():
                     "stop_conditions": ["动作失控或疼痛时停止。"],
                 },
                 "session_relationship_label": "可分开完成，至少间隔 6 小时",
+                "session_relationship": "ADDITION",
                 "conflict_checks": ["未发现高强度跑与腿部力量在 48 小时内冲突。"],
                 "missing_input_gates": ["未设置单次可用时长。"],
             },
@@ -209,7 +215,7 @@ def _profile_payload():
     }
 
 
-def test_morning_push_renders_concurrent_action_plan_and_workout_analysis():
+def test_morning_push_renders_actionable_coach_brief_without_audit_noise():
     received = []
     service = PushService(pushplus_token="")
     service.add_handler(received.append)
@@ -217,40 +223,38 @@ def test_morning_push_renders_concurrent_action_plan_and_workout_analysis():
     service.push_daily_profile("test-user", _profile_payload(), period="morning")
 
     message = received[0]
-    assert message.title == "Vitalis 晨报 · 2026-08-28 · 正常训练"
+    assert message.title == "Vitalis 晨报 · 2026-08-28 · 轻松跑"
     assert message.body.startswith("> **数据日期：2026-08-28** · 数据完整")
-    assert "\n## 晨间结论\n" in message.body
-    assert "- **恢复判断**：恢复良好" in message.body
-    assert "- **积极信号**：HRV 高于个人基线" in message.body
-    assert "个人基线：高于 28 天基线（+6.5%）" in message.body
-    assert "HRV 个人基线：高于 28 天基线（+8.2%）" in message.body
-    assert "RHR 个人基线：接近 28 天基线（-1%）" in message.body
-    assert "## 多设备心率融合" in message.body
-    assert "Amazfit Helio Strap（上臂）" in message.body
-    assert "2 台设备相对各自 28 天基线方向一致" in message.body
-    assert "近 28 日 164.5 小时/27 天 · 仅覆盖索引，数值尚未解码" in message.body
-    assert "## 睡眠详情" in message.body
-    assert "深睡 92 分钟 · 快速眼动睡眠 106 分钟 · 清醒 24 分钟" in message.body
-    assert "## 近期负荷与背景" in message.body
-    assert "有氧 142 分钟 · 力量 2 次" in message.body
-    assert "- **今日安排**：轻松跑" in message.body
-    assert "\n## 今日行动\n" in message.body
-    assert "- **结论把握**：中等" in message.body
-    assert "\n## 判断依据\n" in message.body
-    assert "\n## 数据限制\n" in message.body
-    assert "\n## 专项训练分析\n" in message.body
-    assert "最近跑步**：节奏跑 · 35 分钟 · 6.4 公里 · 平均配速 5:28/公里" in message.body
-    assert "推、拉、腿三分化 · 下一重点 拉类" in message.body
-    assert "已确认动作**：卧推、肩推" in message.body
-    assert "### 主要训练：轻松跑 · 30–45 分钟 · 低强度" in message.body
-    assert "### 可选训练：拉类力量训练 · 40–60 分钟 · 中等强度" in message.body
-    assert "可分开完成，至少间隔 6 小时" in message.body
-    assert "跑步 2/3 次（7 日）、9/12 次（28 日）" in message.body
-    assert "**停止条件**" in message.body
-    assert "**规划边界**" in message.body
-    assert "1. **热身** · 6–8 分钟 · 轻松" in message.body
-    assert message.body.rfind("## 数据限制") > message.body.rfind("## 判断依据")
-    assert message.body.rstrip().endswith("- 尚未记录主观用力程度")
+    assert "\n## 今日结论\n" in message.body
+    assert "恢复良好，今天按正常强度训练。" in message.body
+    assert "\n## 今天做什么\n" in message.body
+    assert "### 主要：轻松跑 · 30–45 分钟 · 低强度" in message.body
+    assert "1. **热身**：6–8 分钟 · 轻松。先快走，再逐渐过渡到慢跑" in message.body
+    assert "有余力时，晚些时候可再做拉类力量训练；不做也不影响今天的主要安排。" in message.body
+    assert "### 可选：拉类力量训练 · 40–60 分钟 · 中等强度" in message.body
+    assert "昨晚睡了 7 小时 27 分钟" in message.body
+    assert "夜间心率变异性高于你的个人基线" in message.body
+    assert "近 7 天跑步 2/3 次、力量 2/3 次" in message.body
+    assert "最近一周训练负荷明显增加。完成今天的计划即可，不再追加训练。" in message.body
+    for audit_text in (
+        "安全状态",
+        "积极信号",
+        "需关注信号",
+        "多设备心率融合",
+        "Amazfit Helio Strap",
+        "厂商准备度",
+        "身体电量",
+        "睡眠结构",
+        "趋势与事件",
+        "进阶条件",
+        "停止条件",
+        "专项依据",
+        "冲突检查",
+        "规划边界",
+        "数据限制",
+        "至少间隔 6 小时",
+    ):
+        assert audit_text not in message.body
     for internal_code in ("TRAIN_NORMAL", "MODERATE", "RECOVERY_NORMAL", "session_rpe_unavailable"):
         assert internal_code not in message.title + message.body
 
@@ -268,10 +272,8 @@ def test_push_report_discloses_degraded_fresh_sync():
 
     service.push_daily_profile("test-user", payload, period="morning")
 
-    assert (
-        "> **同步提醒**：本次新同步未完整完成，报告使用已存储且通过完整性校验的当天数据。"
-        in received[0].body
-    )
+    assert "## 必要提醒" in received[0].body
+    assert "本次同步未完整完成，结论使用的是已经保存的当天数据。" in received[0].body
 
 
 def test_evening_push_names_exact_workout_mode_in_chinese():
@@ -309,11 +311,27 @@ def test_missing_values_do_not_render_dangling_units():
     service.push_daily_profile("test-user", payload, period="morning")
 
     body = received[0].body
-    assert "- **睡眠**：暂无" in body
-    assert "- **心率变异性（HRV）**：暂无" in body
-    assert "静息心率（RHR）" not in body
     for dangling in ("暂无 分钟", "暂无 毫秒", "暂无 次/分钟"):
         assert dangling not in body
+
+
+def test_morning_push_mentions_device_disagreement_only_when_consequential():
+    received = []
+    payload = _profile_payload()
+    payload["features"]["hrv"]["corroboration_status"] = "conflicting"
+    payload["features"]["hrv"]["corroboration_affects_decision"] = True
+    payload["events"] = [{
+        "type": "HRV_RECOVERY",
+        "lifecycle": "PERSISTING",
+    }]
+    service = PushService(pushplus_token="")
+    service.add_handler(received.append)
+
+    service.push_daily_profile("test-user", payload, period="morning")
+
+    assert "两台设备的夜间心率变异性方向不一致" in received[0].body
+    assert "心率变异性持续回到个人正常范围" not in received[0].body
+    assert "Amazfit Helio Strap" not in received[0].body
 
 
 def test_pushplus_delivery_keeps_token_in_json_body(monkeypatch):

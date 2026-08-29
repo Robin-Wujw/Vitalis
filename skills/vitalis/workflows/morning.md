@@ -2,28 +2,22 @@
 
 Use the requested date, or today's date when none is given.
 
-全程使用中文，按以下顺序渲染：
+全程使用普通中文，像教练给用户说明今天怎么做。按以下顺序渲染：
 
 1. 仅在当天 `features.sleep.status` 为 `AVAILABLE` 且 `wake_time` 存在时推送；
    否则延后重试，不得改用昨天的数据。
-2. 使用 `decision.action_label`、`states.recovery_label` 和
-   `decision.confidence_label` 展示综合结论。
-3. 展示睡眠时长、时段、结构、规律性、厂商评分及可用的 28 天偏差。
-4. 展示 `fusion_summary`、融合把握，以及所选 HRV 指标的每个当天设备流、样本数、
-   设备内 28 天偏差和基线天数；仅在有值时展示静息心率（RHR）。设备冲突时不得
-   平均原始毫秒值或选边站队。
-5. 展示 `heart_rate_coverage`，但 `payload_decoded=false` 时必须明确它只是秒级文件
-   覆盖索引，不能把覆盖时长当成已解码的心率或准确率。
-6. 使用 `positive_signal_labels`、`negative_signal_labels`、厂商准备度和身体电量
-   解释恢复判断；厂商分数只能标为参考。
-7. 展示 7/28 日训练负荷、训练结构、可用趋势和未解决事件。
-8. 先展示 `action_plan.primary_session`，再展示 `optional_session` 和
-   `session_relationship_label`；逐项完整渲染剂量、步骤、组次、休息、专项依据、进阶、
-   停止条件和有效期，不得把二选一改成同日叠加。
-9. 展示 `weekly_balance`、`conflict_checks`、`missing_input_gates`，并从
-   `features.training.running` 和 `features.training.strength` 提取最近专项分析；不要重新
-   计算配速、心率区间、分化或训练量。
-10. 使用 `driver_labels` 展示依据，并把 `limitation_labels` 作为最后一节。
+2. `今日结论` 只用一句话说明恢复状态及今天的训练方向，不展示内部置信度标签。
+3. `今天做什么` 展示主要训练的时长、强度和实际步骤。可选训练用自然语言说明是
+   晚些时候有余力再做，还是与主要训练二选一；不得展示内部关系标签或固定六小时间隔。
+4. `为什么` 最多使用三条：睡眠时长和时段、主设备 HRV/RHR 相对个人基线的含义、
+   近 7 天跑步/力量完成情况与今天安排的关系。不得列出设备名或多个设备值。
+5. `最近最值得注意` 最多展示一个会影响训练或恢复的未解决事件，并解释今天应如何
+   应对。活动分钟或步数变化若不改变今天安排则不展示，也不得逐项罗列趋势窗口。
+6. `必要提醒` 只在真实疼痛/伤病限制、同步降级、缺少决策必需数据，或多设备 HRV
+   分歧确实降低本次结论把握时出现。
+7. 不展示空的积极/关注信号、未知安全状态、厂商准备度/身体电量、睡眠分期、设备
+   覆盖索引、已通过的冲突检查、规划边界、专项依据、进阶条件、通用停止条件、有效期
+   或数据限制清单。这些内容留在结构化档案中供查询和审计。
 
 当内部动作是 `INSUFFICIENT_DATA` 时，仅使用 `data_quality.status_label`、
 `missing_required_signal_labels` 和中文限制说明，不得用通用训练建议代替缺失结论。

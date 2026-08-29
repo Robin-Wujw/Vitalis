@@ -1670,3 +1670,71 @@ policy until a separate implementation changes them.
   this Windows host because `tests/test_daily_push.py` imports the Linux-only `fcntl`
   module; run the complete suite on the server before live acceptance. `git diff
   --check` passed with only Windows line-ending normalization warnings.
+
+## 24. Actionable Daily Brief And Device Fusion Session
+
+Date: 2026-08-30
+
+Goal: replace the audit-style Hermes morning report with a concise, actionable health-
+first brief and make multi-device heart-rate/HRV handling evidence-bounded. Each metric
+must produce one user-facing conclusion; secondary devices corroborate silently unless
+their disagreement materially changes today's recommendation.
+
+### Detailed TODO
+
+- [x] Part 1 - Complete the targeted evidence review and define the fusion policy.
+  - Review validation evidence for upper-arm and wrist optical heart rate, nocturnal
+    PPG-derived variability, cross-device interchangeability, and actionable reporting.
+  - Distinguish independent evidence from manufacturer claims and record the absence of
+    model-specific validation where applicable.
+  - Define one canonical source per metric and measurement context; never average raw
+    values from devices whose interchangeability has not been demonstrated.
+- [x] Part 2 - Implement consequence-aware multi-device fusion.
+  - Select the primary HRV stream using metric suitability, current/baseline coverage,
+    measurement context, and stable device continuity instead of presenting two devices.
+  - Use secondary streams only as corroboration and reduce confidence on consequential
+    disagreement; keep complete per-device evidence in the structured profile.
+  - Add focused tests for selection, silent agreement, and consequential disagreement.
+- [x] Part 3 - Replace the morning push with an actionable coach brief.
+  - Present today's conclusion, the concrete primary and optional actions, a short
+    explanation, at most one meaningful recent change, and only applicable cautions.
+  - Omit empty signals, unknown safety status, passed conflict checks, planning gates,
+    generic limitations, raw multi-window trend lists, and repeated audit metadata.
+  - Translate retained metrics and relationships into ordinary Chinese and add focused
+    renderer regression tests.
+- [ ] Part 4 - Synchronize documentation and complete delivery.
+  - Update evidence, architecture, workflow, and product documentation for the current
+    contract only, with no compatibility or fallback path.
+  - Run focused and complete tests, compilation and diff checks; generate a private
+    real-data preview and verify the result contains no secrets or device identifiers.
+  - Restart the relevant services, commit the completed change, push `main`, and record
+    the remote commit and verification results.
+
+### Verification Log
+
+- Part 1: PubMed and primary-source review found strong form-factor evidence for
+  upper-arm exercise heart rate but no independent model-specific validation for
+  Helio Strap or Balance 2. Nocturnal wearable HRV accuracy varies materially by
+  device, and measurement-method agreement must be established before streams are
+  interchangeable. The evidence-contract test passed all 4 tests.
+- Part 2: nocturnal HRV now selects one canonical stream by same-metric baseline
+  availability, baseline days, current coverage, and continuity; measurement site is
+  only a final tie-breaker. Secondary agreement no longer inflates confidence, while
+  disagreement lowers confidence without averaging or replacing the canonical value.
+  The analyzer, evidence-contract, and Skill schema run passed all 21 tests.
+- Part 3: the morning renderer now emits one conclusion, concrete primary/optional
+  actions, short reasons, at most one actionable event, and consequential cautions.
+  It omits empty signals, unknown safety state, vendor scores, sleep stages, per-device
+  values, raw trend windows, passed checks, planning gates, and generic limitations.
+  The push, analyzer, and Skill focused run passed all 25 tests. A private real-data
+  preview produced a short normal-training brief without identifiers or device names.
+- Part 4 (verification): the final full suite passed all 212 tests with 224 existing
+  Python 3.14 `datetime.utcnow()` deprecation warnings. Python compilation, all Skill
+  JSON parsing, OpenAPI generation with 41 paths, both browser-extension syntax checks,
+  and `git diff --check` passed. After restarting both services, a real stored-data
+  analysis produced DailyProfile 5.0 with the canonical-device contract. The private
+  renderer acceptance rejected all superseded audit headings, device names, empty
+  signals, unknown comparisons, and contradictory HRV event text. `vitalis.service`
+  and `hermes-gateway.service` are active, and the loopback health endpoint returns 200.
+  A misleading manual 502 was traced to this terminal's `ALL_PROXY`; a no-proxy check
+  reached Vitalis directly, while the system services themselves have no proxy setting.

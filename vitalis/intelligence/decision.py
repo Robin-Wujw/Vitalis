@@ -191,6 +191,8 @@ class DecisionEngine:
         signal_count = len(recovery.positive_signals) + len(recovery.negative_signals)
         if recovery.state == RecoveryState.INSUFFICIENT_DATA:
             return ConfidenceBand.NONE
+        if "multi_device_hrv_disagreement" in limitations:
+            return ConfidenceBand.LOW
         if signal_count >= 3 and not any(
             "baseline_insufficient" in item for item in limitations
         ):

@@ -280,9 +280,10 @@ def test_hrv_exposes_all_device_streams_without_merging_them():
     assert sum(stream.selected for stream in hrv.streams) == 1
     assert hrv.preferred_device_label == "Amazfit Helio Strap"
     assert hrv.fusion_direction == "above"
-    assert hrv.fusion_confidence.value == "HIGH"
-    assert hrv.fused_device_count == 2
-    assert "方向一致" in hrv.fusion_summary
+    assert hrv.fusion_confidence.value == "MODERATE"
+    assert hrv.corroboration_status == "consistent"
+    assert hrv.corroborating_stream_count == 1
+    assert not hrv.corroboration_affects_decision
     assert not hrv.limitations
 
 
@@ -306,9 +307,45 @@ def test_hrv_device_disagreement_is_not_averaged_into_a_recovery_signal():
     recovery = RecoveryAnalyzer().analyze(
         raw, sleep, sleep_state, hrv, training
     )
+    decision = DecisionEngine().decide(
+        "disagreement-recommendation",
+        TARGET,
+        sleep_state,
+        hrv,
+        recovery,
+        training,
+        raw.training_preferences,
+    )
 
-    assert hrv.fusion_direction == "mixed"
+    assert hrv.fusion_direction == "above"
     assert hrv.fusion_confidence.value == "LOW"
+    assert hrv.corroboration_status == "conflicting"
+    assert hrv.corroboration_affects_decision
     assert "multi_device_hrv_disagreement" in hrv.limitations
-    assert "HRV_ABOVE_BASELINE" not in recovery.positive_signals
+    assert "HRV_ABOVE_BASELINE" in recovery.positive_signals
     assert "HRV_BELOW_BASELINE" not in recovery.negative_signals
+    assert decision.confidence.value == "LOW"
+
+
+def test_hrv_prefers_longer_baseline_over_wearing_position():
+    raw = _profile(hrv_today=62)
+    raw.device_models = {
+        "HELIO": "Amazfit Helio Strap",
+        "BALANCE": "Amazfit Balance 2",
+    }
+    raw.series["hrv_rmssd"] = _series(
+        "hrv_rmssd",
+        [62] + [50 + (i % 3) for i in range(1, 16)],
+        device="helio",
+        scope="device",
+    ) + _series(
+        "hrv_rmssd",
+        [58] + [48 + (i % 3) for i in range(1, 24)],
+        device="balance",
+        scope="device",
+    )
+
+    hrv = HrvAnalyzer().analyze(raw, BaselineEngine().build(raw.series, raw.day))
+
+    assert hrv.preferred_device_label == "Amazfit Balance 2"
+    assert next(stream for stream in hrv.streams if stream.selected).baseline_distinct_days == 23

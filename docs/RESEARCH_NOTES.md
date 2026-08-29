@@ -134,3 +134,46 @@ study was found in this pass, so `device_validity.status` should remain
 5. Zepp Capability Monitor: periodically re-check official Zepp OS docs and
    product pages for changed API_LEVEL, heart-rate, workout, and device claims.
 
+## 2026-08-30: Multi-device HRV Fusion And Daily Reporting
+
+### Sources Reviewed
+
+- Task Force HRV measurement standards (1996):
+  <https://pubmed.ncbi.nlm.nih.gov/8737210/>
+- Schäfer and Vagedes review of PPG pulse-rate variability versus ECG HRV (2013):
+  <https://doi.org/10.1016/j.ijcard.2012.03.119>
+- Hettiarachchi et al. upper-arm Polar OH1 exercise validation (2019):
+  <https://pubmed.ncbi.nlm.nih.gov/31120968/>
+- Schweizer and Gilgen-Ammann arm-versus-wrist exercise validation (2025):
+  <https://pubmed.ncbi.nlm.nih.gov/40116771/>
+- Dial et al. five-device nocturnal RHR/HRV validation (2025):
+  <https://pubmed.ncbi.nlm.nih.gov/40834291/>
+- Bland and Altman measurement-agreement method (1986):
+  <https://doi.org/10.1016/S0140-6736(86)90837-8>
+- PubMed searches for `Amazfit Helio Strap` and `Amazfit Balance 2`, completed
+  2026-08-30, returned no model-specific validation records.
+
+### Findings And Policy
+
+The exercise-heart-rate and nocturnal-HRV questions require different source policies.
+Upper-arm PPG performed better than wrist PPG in the reviewed exercise studies, but
+those results belong to the tested Polar models. They support a form-factor preference
+for decoded, explicitly attributed exercise heart rate; they do not independently
+validate Helio Strap or prove that every-second recording is more accurate.
+
+Nocturnal HRV performance varied materially across tested consumer models even under
+low-motion sleep conditions. Consequently, wearing position alone is not an adequate
+selection rule for sleep HRV. Vitalis should select one canonical same-metric stream by
+usable 28-day coverage, current observation density, and continuity. It should compare
+that stream only with its own baseline.
+
+Different devices and proprietary algorithms have not demonstrated interchangeability.
+Raw HRV milliseconds must not be averaged. Secondary devices remain audit evidence and
+silent corroboration: agreement does not inflate confidence, while a comparable
+directional disagreement can reduce confidence. The report should mention such a
+disagreement only when it weakens a recovery-dependent recommendation.
+
+The daily report is a presentation layer, not an audit dump. Full per-device streams,
+multi-window trends, limitations, and rule evidence remain in DailyProfile. The push
+should select only facts that explain or change today's action, omit empty/unknown
+sections, and translate any retained event into its practical implication.

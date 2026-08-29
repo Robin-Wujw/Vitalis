@@ -37,9 +37,25 @@ The first model version uses the following boundaries:
   wearing position alone must not be converted into a universal accuracy claim.
 - Schäfer and Vagedes (2013, DOI `10.1016/j.ijcard.2012.03.119`) found pulse-rate
   variability is not interchangeable with ECG-derived HRV in every setting. Vitalis
-  therefore compares the same HRV metric within each device baseline and fuses only
-  normalized directions; it never averages raw RMSSD/SDNN across devices.
+  therefore compares the same HRV metric within each device baseline and never averages
+  raw RMSSD/SDNN across devices.
+- Dial et al. (2025, DOI `10.14814/phy2.70527`) found materially different nocturnal
+  HRV agreement across five consumer devices measured against ECG. This supports
+  model-specific validation and stable within-device baselines, not choosing a sleep
+  HRV source from wearing position alone.
+- Bland and Altman's method-comparison guidance (1986, DOI
+  `10.1016/S0140-6736(86)90837-8`) requires demonstrated agreement before measurement
+  methods are treated as interchangeable. A secondary wearable can corroborate the
+  canonical stream, but agreement does not turn two unvalidated streams into a more
+  accurate synthetic value.
 
 Device validity remains `LIMITED_BY_EVIDENCE` when only form-factor research exists.
 Never convert missing model-specific validation or indexed-but-undecoded second-heart-
 rate files into a synthetic quality probability.
+
+For exercise heart rate, a decoded and explicitly attributed upper-arm stream is the
+preferred context when available because the form factor has stronger activity evidence.
+For nocturnal HRV, Vitalis instead selects one canonical same-metric stream by usable
+baseline coverage and continuity. Secondary streams are retained for audit and silent
+corroboration. They reduce confidence only when a comparable within-device direction
+disagrees; they do not replace the canonical conclusion.

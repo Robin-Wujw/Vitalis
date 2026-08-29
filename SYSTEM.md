@@ -1473,7 +1473,7 @@ retained.
   - Parse heart rate, pace, cadence, stride, altitude, distance, and vendor exercise
     fields only when explicitly present; keep missing observations missing.
   - Replace the workout-detail HTTP contract and focused parser/storage/API tests.
-- [ ] Part 2 - Add deterministic running analysis and knowledge.
+- [x] Part 2 - Add deterministic running analysis and knowledge.
   - Classify recovery/easy/steady/tempo/interval/long running from explicit workout
     facts, individual history, heart-rate structure, and user effort without universal
     cadence or invented heart-rate-zone targets.
@@ -1522,3 +1522,11 @@ retained.
   carries verified laps, pauses, and explicit strength sets. Empty or undocumented
   fields remain absent. The focused parser, sync, storage, and health API suite passed
   all 53 tests; compilation and `git diff --check` passed.
+- Part 2: DailyProfile 4.0 and intelligence version 4.0 now embed Running Analysis v1.
+  The deterministic engine reports 7/28-day volume, individual lactate-threshold zones,
+  pace, median cadence and variability, overlapping pace/HR drift, work/recovery
+  segments, and evidence-bounded recovery/easy/steady/tempo/interval/long session
+  classes. Missing threshold, distance, cadence, or continuous detail suppresses only
+  the affected calculation. No age-derived maximum HR or universal cadence target is
+  used. The focused running, feature, loader, API, storage, and Skill suite passed all
+  72 tests; compilation, all JSON schema parsing, and `git diff --check` passed.

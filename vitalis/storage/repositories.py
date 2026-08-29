@@ -486,6 +486,25 @@ class HealthRepository:
             ).limit(limit)
         ).scalars().all())
 
+    def workout_metric_samples_for_workouts(
+        self,
+        user_id: str,
+        workout_ids: list[str],
+        limit: int = 2_000_000,
+    ) -> list[orm.WorkoutMetricSample]:
+        if not workout_ids:
+            return []
+        return list(self.db.execute(
+            select(orm.WorkoutMetricSample).where(
+                orm.WorkoutMetricSample.user_id == user_id,
+                orm.WorkoutMetricSample.workout_id.in_(workout_ids),
+            ).order_by(
+                orm.WorkoutMetricSample.workout_id,
+                orm.WorkoutMetricSample.timestamp,
+                orm.WorkoutMetricSample.metric,
+            ).limit(limit)
+        ).scalars().all())
+
     def workouts(self, user_id: str, start: date, end: date, limit: int = 500) -> list[orm.Workout]:
         start_dt = datetime.combine(start, datetime.min.time())
         end_dt = datetime.combine(end + timedelta(days=1), datetime.min.time())

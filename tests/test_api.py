@@ -35,8 +35,8 @@ def test_daily_profile_after_sync(client):
     resp = client.get("/api/v1/intelligence/daily", headers={"X-User-Id": "001"})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["schema_version"] == "3.0"
-    assert body["intelligence_version"] == "3.0"
+    assert body["schema_version"] == "4.0"
+    assert body["intelligence_version"] == "4.0"
     assert body["decision_policy_version"] == "3.0"
     assert body["evidence_version"] == "2026-08"
     assert body["analysis_run_id"]

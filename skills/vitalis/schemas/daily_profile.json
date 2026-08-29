@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/daily-profile-3.0.json",
-  "title": "Vitalis DailyProfile 3.0",
+  "$id": "https://vitalis.local/schemas/daily-profile-4.0.json",
+  "title": "Vitalis DailyProfile 4.0",
   "type": "object",
   "required": ["schema_version", "analysis_run_id", "intelligence_version", "decision_policy_version", "evidence_version", "user_id", "date", "generated_at", "data_quality", "facts", "baselines", "features", "trends", "events", "states", "decision", "evidence_refs", "metadata"],
   "properties": {
-    "schema_version": {"const": "3.0"},
+    "schema_version": {"const": "4.0"},
     "analysis_run_id": {"type": "string"},
-    "intelligence_version": {"const": "3.0"},
+    "intelligence_version": {"const": "4.0"},
     "decision_policy_version": {"const": "3.0"},
     "evidence_version": {"const": "2026-08"},
     "user_id": {"type": "string"},
@@ -86,7 +86,7 @@
         },
         "training": {
           "type": "object",
-          "required": ["status", "status_label", "load_state", "load_state_label", "sport_mode_counts_7d", "recent_workouts", "limitation_labels"],
+          "required": ["status", "status_label", "load_state", "load_state_label", "sport_mode_counts_7d", "recent_workouts", "running", "limitation_labels"],
           "properties": {
             "status": {"enum": ["AVAILABLE", "INSUFFICIENT_DATA"]},
             "status_label": {"type": "string"},
@@ -99,6 +99,16 @@
             "sport_mode_counts_7d": {
               "type": "object",
               "additionalProperties": {"type": "integer", "minimum": 0}
+            },
+            "running": {
+              "type": ["object", "null"],
+              "properties": {
+                "schema_version": {"const": "1.0"},
+                "status": {"enum": ["AVAILABLE", "INSUFFICIENT_DATA"]},
+                "zone_method": {"enum": ["lactate_threshold", "unavailable"]},
+                "recent_sessions": {"type": "array", "items": {"type": "object"}},
+                "limitations": {"type": "array", "items": {"type": "string"}}
+              }
             },
             "limitation_labels": {"type": "array", "items": {"type": "string"}},
             "recent_workouts": {

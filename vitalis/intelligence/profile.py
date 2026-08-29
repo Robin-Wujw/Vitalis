@@ -1,5 +1,6 @@
 """Load normalized records into an analysis-ready, identity-isolated profile."""
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from statistics import median
@@ -83,6 +84,21 @@ class ProfileLoader:
         self._add_daily_metrics(raw, start)
         self._add_sample_metrics(raw, start)
         self._add_device_context(raw)
+        workout_rows = [
+            row
+            for row in self.repo.workouts(user_id, start - timedelta(days=1), day)
+            if row.started_at and start <= local_day(row.started_at) <= day
+        ]
+        detail_ids = [
+            row.workout_id
+            for row in workout_rows
+            if row.detail_synced
+            and row.started_at
+            and local_day(row.started_at) >= day - timedelta(days=27)
+        ]
+        samples_by_workout: dict[str, list] = defaultdict(list)
+        for sample in self.repo.workout_metric_samples_for_workouts(user_id, detail_ids):
+            samples_by_workout[sample.workout_id].append(sample)
         raw.workouts = [
             {
                 "workout_id": row.workout_id,
@@ -91,10 +107,11 @@ class ProfileLoader:
                 "vendor_source": row.vendor_source,
                 "local_day": local_day(row.started_at) if row.started_at else None,
                 "detail_available": row.detail_synced,
+                "detail": row.detail or None,
+                "samples": samples_by_workout.get(row.workout_id, []),
                 "data": row.data or {},
             }
-            for row in self.repo.workouts(user_id, start - timedelta(days=1), day)
-            if row.started_at and start <= local_day(row.started_at) <= day
+            for row in workout_rows
         ]
         raw.facts = self._facts_for_day(raw)
         raw.data_quality = self._quality(raw)

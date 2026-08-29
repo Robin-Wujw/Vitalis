@@ -10,10 +10,10 @@ from pydantic import BaseModel, Field, model_validator
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "3.0"
+DAILY_SCHEMA_VERSION = "4.0"
 WEEKLY_SCHEMA_VERSION = "2.0"
 MONTHLY_SCHEMA_VERSION = "1.0"
-INTELLIGENCE_VERSION = "3.0"
+INTELLIGENCE_VERSION = "4.0"
 DECISION_POLICY_VERSION = "3.0"
 EVIDENCE_VERSION = "2026-08"
 TRAINING_RESPONSE_SCHEMA_VERSION = "1.0"
@@ -361,6 +361,74 @@ class WorkoutFeature(BaseModel):
     detail_available: bool = False
 
 
+class RunningHeartRateZone(BaseModel):
+    zone: Literal[1, 2, 3, 4, 5]
+    label: str
+    lower_bpm: int | None = Field(default=None, ge=1)
+    upper_bpm: int | None = Field(default=None, ge=1)
+    duration_seconds: int = Field(ge=0)
+    share_percent: float = Field(ge=0, le=100)
+
+
+class RunningSegment(BaseModel):
+    kind: Literal["work", "recovery"]
+    kind_label: str
+    start_offset_seconds: int = Field(ge=0)
+    end_offset_seconds: int = Field(ge=0)
+    duration_seconds: int = Field(ge=1)
+    average_speed_mps: float | None = Field(default=None, ge=0)
+    average_pace_seconds_per_km: float | None = Field(default=None, ge=0)
+    average_heart_rate_bpm: float | None = Field(default=None, ge=1)
+
+
+class RunningSessionAnalysis(BaseModel):
+    workout_id: str
+    date: DateValue
+    classification: Literal[
+        "RECOVERY_RUN",
+        "EASY_RUN",
+        "STEADY_RUN",
+        "TEMPO_RUN",
+        "INTERVAL_RUN",
+        "LONG_RUN",
+        "UNCLASSIFIED",
+    ]
+    classification_label: str
+    confidence: ConfidenceBand
+    confidence_label: str
+    duration_minutes: int = Field(ge=0)
+    distance_km: float | None = Field(default=None, ge=0)
+    average_pace_seconds_per_km: float | None = Field(default=None, ge=0)
+    median_speed_mps: float | None = Field(default=None, ge=0)
+    median_cadence_spm: float | None = Field(default=None, ge=0)
+    cadence_variability_percent: float | None = Field(default=None, ge=0)
+    average_heart_rate_bpm: float | None = Field(default=None, ge=1)
+    maximum_heart_rate_bpm: float | None = Field(default=None, ge=1)
+    heart_rate_zones: list[RunningHeartRateZone] = Field(default_factory=list)
+    cardiac_drift_percent: float | None = None
+    segments: list[RunningSegment] = Field(default_factory=list, max_length=20)
+    evidence: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class RunningAnalysis(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    status: Availability
+    status_label: str
+    zone_method: Literal["lactate_threshold", "unavailable"] = "unavailable"
+    lactate_threshold_bpm: float | None = Field(default=None, ge=1)
+    sessions_7d: int = Field(ge=0)
+    duration_minutes_7d: int = Field(ge=0)
+    distance_km_7d: float | None = Field(default=None, ge=0)
+    sessions_28d: int = Field(ge=0)
+    duration_minutes_28d: int = Field(ge=0)
+    distance_km_28d: float | None = Field(default=None, ge=0)
+    distance_change_percent: float | None = None
+    session_type_counts_28d: dict[str, int] = Field(default_factory=dict)
+    recent_sessions: list[RunningSessionAnalysis] = Field(default_factory=list, max_length=8)
+    limitations: list[str] = Field(default_factory=list)
+
+
 class TrainingFeatures(BaseModel):
     status: Availability
     status_label: str = ""
@@ -377,6 +445,7 @@ class TrainingFeatures(BaseModel):
     workout_type_labels_7d: dict[str, str] = Field(default_factory=dict)
     sport_mode_counts_7d: dict[str, int] = Field(default_factory=dict)
     recent_workouts: list[WorkoutFeature] = Field(default_factory=list)
+    running: RunningAnalysis | None = None
     load_deviation: Deviation | None = None
     load_state: LoadState = LoadState.INSUFFICIENT_DATA
     load_state_label: str = ""

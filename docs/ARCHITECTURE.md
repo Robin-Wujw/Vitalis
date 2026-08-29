@@ -74,6 +74,7 @@ The implementation lives in `vitalis/intelligence`:
 | `profile.py` | One-local-user loader, provenance, target-day facts, and deterministic quality flags |
 | `baseline.py` | Device/metric-specific 7-day and 28-day robust statistics |
 | `analyzers.py` | Sleep, HRV/RHR, recovery, and training feature extraction |
+| `running.py` | Individual-threshold zones, cadence, pace/HR drift, segments, session type, and 7/28-day running structure |
 | `decision.py` | Explainable training action policy with abstention |
 | `trend.py` | Device-isolated 7/28/90-day trends and variability |
 | `events.py` | Persistent deviations and period-change event detection |
@@ -89,7 +90,7 @@ The implementation lives in `vitalis/intelligence`:
 
 ### 3.1 DailyProfile
 
-The wire contract is `schema_version=3.0`. Every result carries `analysis_run_id`,
+The wire contract is `schema_version=4.0`. Every result carries `analysis_run_id`,
 `intelligence_version`, `decision_policy_version`, and `evidence_version` separately:
 
 ```text
@@ -269,6 +270,21 @@ When both aerobic and strength targets are due, the decision marks the returned
 prescriptions as alternatives rather than a combined session. Strength is not selected
 when a recorded strength workout occurred within the previous two local days.
 
+### 3.10 Running Analysis
+
+DailyProfile 4.0 embeds `TrainingFeatures.running` with Running Analysis v1. Each
+session preserves distance, duration, derived average pace, median speed, median cadence,
+cadence variability, HR, threshold-based HR-zone duration, cardiac drift, detected
+work/recovery segments, classification evidence, confidence, and limitations.
+
+Five HR zones are calculated only when a personal vendor lactate-threshold HR is
+available. Vitalis does not estimate maximum HR from age. Cardiac drift requires at
+least 20 minutes of overlapping speed/HR detail and is withheld when first/second-half
+speed differs by more than 15%. Cadence is a personal observation; no universal
+180-spm target is applied. Session types are recovery, easy, steady, tempo, interval,
+long, or unclassified. These thresholds are versioned product policy rather than
+medical or coaching truth.
+
 ## 4. API and Assistant
 
 The Health Intelligence API is:
@@ -346,8 +362,8 @@ baselines, 7/28/90-day trends, explainable decisions, 122 public workout IDs, Ch
 presentation contracts, structured running/strength prescriptions, scheduled analysis,
 and thin Hermes Read/Analyze/Act tools.
 
-Not implemented: running/strength interpretation over the newly normalized workout
-metrics, unrestricted exploratory correlation discovery, minute-level stress load,
+Not implemented: strength interpretation over the newly normalized workout metrics,
+unrestricted exploratory correlation discovery, minute-level stress load,
 Energy Dynamics, body composition/BP intelligence, forecasts,
 or medical alerts. These require explicit new contracts and validation rather than LLM
 inference.

@@ -17,7 +17,11 @@ from vitalis.models import (
     SleepRecord,
     TrainingRecord,
     Workout,
-    WorkoutSample,
+    WorkoutDetail,
+    WorkoutLap,
+    WorkoutMetricSample,
+    WorkoutPause,
+    StrengthSetObservation,
     WorkoutType,
 )
 from .sport_types import resolve_sport_mode
@@ -230,29 +234,96 @@ class ZeppParser:
         return workouts
 
     @staticmethod
-    def parse_workout_heart_rate(
+    def parse_workout_detail(
         raw: dict, summary_end: datetime | None = None
-    ) -> list[WorkoutSample]:
-        """Decode Zepp workout heart-rate deltas into per-second samples.
+    ) -> WorkoutDetail | None:
+        """Normalize the current Zepp workout-detail payload.
 
-        Each entry is ``seconds_since_previous_change,heart_rate_delta``. The first
-        heart-rate delta is the absolute value because accumulation starts at zero.
-        Zepp does not include per-sample sensor provenance in this payload, so these
-        samples deliberately remain ``source_scope=unknown``.
+        Only fields with verified semantics are emitted. Empty vendor fields and
+        malformed series remain absent instead of being replaced with zeros.
         """
         if not isinstance(raw, dict):
-            return []
+            return None
         nested = raw.get("data")
         data = nested if isinstance(nested, dict) else raw
-        encoded = data.get("heart_rate")
         start = ZeppParser._parse_datetime_value(data.get("trackid"))
-        if not isinstance(encoded, str) or start is None:
-            return []
-        if start.tzinfo is None:
-            start = start.replace(tzinfo=timezone.utc)
-        else:
-            start = start.astimezone(timezone.utc)
+        if start is None:
+            return None
+        start = ZeppParser._utc(start)
+        workout_id = str(data.get("trackid") or "")
+        end = ZeppParser._workout_end(data, start, summary_end)
 
+        samples = ZeppParser._workout_heart_rate_samples(
+            workout_id, start, end, data.get("heart_rate")
+        )
+        series_specs = (
+            ("speed", "speed", "m/s", 1.0, 0.0, 20.0),
+            ("equivPace", "equivalent_pace", "s/km", 1.0, 60.0, 3600.0),
+            ("currentDistance", "distance", "m", 0.01, 0.0, 1_000_000.0),
+            ("time_delta_altitude", "altitude", "m", 0.1, -1000.0, 10_000.0),
+            ("power_meter", "running_power", "W", 1.0, 0.0, 5000.0),
+        )
+        for vendor_field, metric, unit, scale, minimum, maximum in series_specs:
+            samples.extend(ZeppParser._absolute_workout_series(
+                workout_id,
+                start,
+                data.get(vendor_field),
+                metric,
+                unit,
+                scale,
+                minimum,
+                maximum,
+            ))
+        samples.extend(ZeppParser._cadence_samples(
+            workout_id, start, data.get("gait")
+        ))
+        samples = ZeppParser._deduplicate_workout_samples(samples)
+        counts: dict[str, int] = {}
+        for sample in samples:
+            counts[sample.metric] = counts.get(sample.metric, 0) + 1
+
+        return WorkoutDetail(
+            workout_id=workout_id,
+            metrics_present=sorted(counts),
+            metric_sample_counts=dict(sorted(counts.items())),
+            laps=ZeppParser._workout_laps(data.get("lap")),
+            pauses=ZeppParser._workout_pauses(data.get("pause")),
+            strength_sets=ZeppParser._strength_sets(data.get("strengthSets")),
+            samples=samples,
+        )
+
+    @staticmethod
+    def _utc(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    @staticmethod
+    def _workout_end(
+        data: dict, start: datetime, summary_end: datetime | None
+    ) -> datetime:
+        time_span = 0
+        raw_time = data.get("time")
+        if isinstance(raw_time, str):
+            for part in raw_time.split(";"):
+                try:
+                    time_span += max(int(part), 0)
+                except ValueError:
+                    continue
+        end = start + timedelta(seconds=min(time_span, MAX_WORKOUT_SECONDS))
+        if summary_end is not None:
+            end = max(end, ZeppParser._utc(summary_end))
+        return min(max(end, start + timedelta(seconds=1)), start + timedelta(seconds=MAX_WORKOUT_SECONDS))
+
+    @staticmethod
+    def _workout_heart_rate_samples(
+        workout_id: str,
+        start: datetime,
+        end: datetime,
+        encoded: object,
+    ) -> list[WorkoutMetricSample]:
+        if not isinstance(encoded, str) or not encoded:
+            return []
         pairs: list[tuple[int, int]] = []
         for part in encoded.split(";"):
             if not part:
@@ -269,58 +340,218 @@ class ZeppParser:
         if not pairs:
             return []
 
-        time_span = 0
-        raw_time = data.get("time")
-        if isinstance(raw_time, str):
-            for part in raw_time.split(";"):
-                try:
-                    time_span += max(int(part), 0)
-                except ValueError:
-                    continue
-        if time_span <= 0:
-            time_span = sum(seconds for seconds, _ in pairs)
-
-        end = start + timedelta(seconds=min(time_span, MAX_WORKOUT_SECONDS))
-        if summary_end is not None:
-            normalized_end = summary_end
-            if normalized_end.tzinfo is None:
-                normalized_end = normalized_end.replace(tzinfo=timezone.utc)
-            else:
-                normalized_end = normalized_end.astimezone(timezone.utc)
-            end = max(end, normalized_end)
-        max_end = start + timedelta(seconds=MAX_WORKOUT_SECONDS)
-        end = min(max(end, start + timedelta(seconds=1)), max_end)
-
-        workout_id = str(data.get("trackid") or "")
-        samples: list[WorkoutSample] = []
+        samples: list[WorkoutMetricSample] = []
         working = start
         heart_rate = 0
         for index, (seconds, delta) in enumerate(pairs):
             heart_rate += delta
             first_second = 0 if index == 0 else 1
-            if seconds < first_second:
-                continue
             for _ in range(first_second, seconds + 1):
                 if working > end:
                     break
                 if 1 <= heart_rate <= 300:
-                    samples.append(WorkoutSample(
+                    samples.append(WorkoutMetricSample(
                         workout_id=workout_id,
                         timestamp=working,
-                        heart_rate=heart_rate,
-                        source_scope="unknown",
+                        metric="heart_rate",
+                        value=float(heart_rate),
+                        unit="bpm",
                     ))
                 working += timedelta(seconds=1)
         while working <= end:
             if 1 <= heart_rate <= 300:
-                samples.append(WorkoutSample(
+                samples.append(WorkoutMetricSample(
                     workout_id=workout_id,
                     timestamp=working,
-                    heart_rate=heart_rate,
-                    source_scope="unknown",
+                    metric="heart_rate",
+                    value=float(heart_rate),
+                    unit="bpm",
                 ))
             working += timedelta(seconds=1)
         return samples
+
+    @staticmethod
+    def _absolute_workout_series(
+        workout_id: str,
+        start: datetime,
+        encoded: object,
+        metric: str,
+        unit: str,
+        scale: float,
+        minimum: float,
+        maximum: float,
+    ) -> list[WorkoutMetricSample]:
+        if not isinstance(encoded, str) or not encoded:
+            return []
+        elapsed = 0
+        samples = []
+        for part in encoded.split(";"):
+            if not part:
+                continue
+            raw_seconds, separator, raw_value = part.partition(",")
+            if not separator:
+                continue
+            try:
+                elapsed += max(int(raw_seconds or 1), 0)
+                value = float(raw_value) * scale
+            except ValueError:
+                continue
+            if elapsed > MAX_WORKOUT_SECONDS or not minimum <= value <= maximum:
+                continue
+            samples.append(WorkoutMetricSample(
+                workout_id=workout_id,
+                timestamp=start + timedelta(seconds=elapsed),
+                metric=metric,
+                value=round(value, 4),
+                unit=unit,
+            ))
+        return samples
+
+    @staticmethod
+    def _cadence_samples(
+        workout_id: str, start: datetime, encoded: object
+    ) -> list[WorkoutMetricSample]:
+        if not isinstance(encoded, str) or not encoded:
+            return []
+        elapsed = 0
+        samples = []
+        for part in encoded.split(";"):
+            fields = part.split(",")
+            if len(fields) < 4:
+                continue
+            try:
+                elapsed += max(int(fields[0] or 1), 0)
+                cadence = float(fields[-1])
+            except ValueError:
+                continue
+            if elapsed <= MAX_WORKOUT_SECONDS and 30 <= cadence <= 300:
+                samples.append(WorkoutMetricSample(
+                    workout_id=workout_id,
+                    timestamp=start + timedelta(seconds=elapsed),
+                    metric="cadence",
+                    value=cadence,
+                    unit="spm",
+                ))
+        return samples
+
+    @staticmethod
+    def _workout_laps(encoded: object) -> list[WorkoutLap]:
+        if not isinstance(encoded, str) or not encoded:
+            return []
+        output = []
+        for part in encoded.split(";"):
+            fields = part.split(",")
+            if len(fields) < 3:
+                continue
+            try:
+                index = int(fields[0])
+                duration = int(float(fields[1]))
+                distance = float(fields[2])
+            except ValueError:
+                continue
+            if index >= 0 and duration >= 0 and distance >= 0:
+                output.append(WorkoutLap(
+                    index=index,
+                    duration_seconds=duration,
+                    distance_meters=distance,
+                ))
+        return output
+
+    @staticmethod
+    def _workout_pauses(encoded: object) -> list[WorkoutPause]:
+        if not isinstance(encoded, str) or not encoded:
+            return []
+        output = []
+        for part in encoded.split(";"):
+            fields = part.split(",")
+            if len(fields) < 2:
+                continue
+            started = ZeppParser._parse_datetime_value(fields[0])
+            try:
+                duration = int(fields[1])
+            except ValueError:
+                continue
+            if started is not None and duration >= 0:
+                output.append(WorkoutPause(
+                    started_at=ZeppParser._utc(started),
+                    duration_seconds=duration,
+                ))
+        return output
+
+    @staticmethod
+    def _strength_sets(encoded: object) -> list[StrengthSetObservation]:
+        if not isinstance(encoded, str) or not encoded:
+            return []
+        try:
+            items = json.loads(encoded)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+        if not isinstance(items, list):
+            return []
+        output = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            started = ZeppParser._parse_datetime_value(
+                item.get("startTime") or item.get("startedAt") or item.get("timestamp")
+            )
+            ended = ZeppParser._parse_datetime_value(
+                item.get("endTime") or item.get("endedAt")
+            )
+            output.append(StrengthSetObservation(
+                started_at=ZeppParser._utc(started) if started else None,
+                ended_at=ZeppParser._utc(ended) if ended else None,
+                exercise_id=ZeppParser._first_text(
+                    item, ("exerciseId", "exercise_id", "actionId", "movementId")
+                ),
+                exercise_name=ZeppParser._first_text(
+                    item, ("exerciseName", "exercise_name", "name")
+                ),
+                repetitions=ZeppParser._bounded_int(
+                    item, ("repetitions", "reps", "count"), 1, 1000
+                ),
+                weight_kg=ZeppParser._bounded_float(
+                    item, ("weightKg", "weight_kg", "weight"), 0, 2000
+                ),
+                duration_seconds=ZeppParser._bounded_int(
+                    item, ("durationSeconds", "duration", "workTime"), 0, MAX_WORKOUT_SECONDS
+                ),
+                rest_seconds=ZeppParser._bounded_int(
+                    item, ("restSeconds", "rest", "restTime"), 0, MAX_WORKOUT_SECONDS
+                ),
+            ))
+        return output
+
+    @staticmethod
+    def _deduplicate_workout_samples(
+        samples: list[WorkoutMetricSample],
+    ) -> list[WorkoutMetricSample]:
+        unique = {(item.metric, item.timestamp): item for item in samples}
+        return sorted(unique.values(), key=lambda item: (item.timestamp, item.metric))
+
+    @staticmethod
+    def _first_text(data: dict, keys: tuple[str, ...]) -> str | None:
+        for key in keys:
+            value = data.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+        return None
+
+    @staticmethod
+    def _bounded_float(
+        data: dict, keys: tuple[str, ...], minimum: float, maximum: float
+    ) -> float | None:
+        value = ZeppParser._first_number(data, keys)
+        if value is None or not minimum <= value <= maximum:
+            return None
+        return float(value)
+
+    @staticmethod
+    def _bounded_int(
+        data: dict, keys: tuple[str, ...], minimum: int, maximum: int
+    ) -> int | None:
+        value = ZeppParser._bounded_float(data, keys, minimum, maximum)
+        return int(value) if value is not None else None
 
     # ================= 通用指标（时序 + 每日） =================
 

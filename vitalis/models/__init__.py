@@ -22,7 +22,11 @@ from .models import (
     TrainingRecord,
     User,
     Workout,
-    WorkoutSample,
+    WorkoutDetail,
+    WorkoutLap,
+    WorkoutMetricSample,
+    WorkoutPause,
+    StrengthSetObservation,
 )
 
 __all__ = [
@@ -39,6 +43,10 @@ __all__ = [
     "TrainingRecord",
     "User",
     "Workout",
-    "WorkoutSample",
+    "WorkoutDetail",
+    "WorkoutLap",
+    "WorkoutMetricSample",
+    "WorkoutPause",
+    "StrengthSetObservation",
     "WorkoutType",
 ]

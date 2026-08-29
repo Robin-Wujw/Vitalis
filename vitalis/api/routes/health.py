@@ -358,12 +358,14 @@ def health_workout_detail(workout_id: str, user_id: str = Depends(require_user_i
         if row is None:
             raise HTTPException(status_code=404, detail="运动记录不存在")
         detail = dict(row.detail or {})
-        samples = repo.workout_samples(user_id, workout_id)
+        samples = repo.workout_metric_samples(user_id, workout_id)
         if samples:
             detail["samples"] = [
                 {
                     "timestamp": _iso_utc(sample.timestamp),
-                    "heart_rate": sample.heart_rate,
+                    "metric": sample.metric,
+                    "value": sample.value,
+                    "unit": sample.unit,
                     "source_scope": sample.source_scope,
                     "device_id": sample.device_id,
                 }

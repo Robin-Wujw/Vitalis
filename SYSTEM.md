@@ -1451,3 +1451,74 @@ substantially more informative.
 - Part 5 (delivery): implementation commit `35bff84`
   (`feat: fuse multi-device health signals`) was pushed from local `main` to
   `origin/main` together with this anonymized acceptance record.
+
+## 21. Concurrent Running and Strength Intelligence Session
+
+Date: 2026-08-29
+
+Goal: directly replace the summary-only workout intelligence with current-contract
+running and strength analysis, inferred-but-auditable exercise structure, and a
+health-first planner that alternates running and strength without allowing either to
+disappear from the weekly plan. This is a pre-production contract replacement: no old
+sample schema, API shape, aliases, dual reads, migrations, backfills, or adapters are
+retained.
+
+### Detailed TODO
+
+- [x] Part 1 - Replace the workout-detail normalization contract.
+  - Inspect real Zepp running and strength detail payload capabilities without exposing
+    private identifiers or measurements.
+  - Replace heart-rate-only workout samples with typed metric samples and normalized
+    laps/segments where the source provides them.
+  - Parse heart rate, pace, cadence, stride, altitude, distance, and vendor exercise
+    fields only when explicitly present; keep missing observations missing.
+  - Replace the workout-detail HTTP contract and focused parser/storage/API tests.
+- [ ] Part 2 - Add deterministic running analysis and knowledge.
+  - Classify recovery/easy/steady/tempo/interval/long running from explicit workout
+    facts, individual history, heart-rate structure, and user effort without universal
+    cadence or invented heart-rate-zone targets.
+  - Analyze pace, cadence, heart-rate zones, cardiac drift, work/recovery segments,
+    weekly volume, intensity distribution, and progression only when inputs support it.
+  - Add a versioned RunningAnalysis contract, tests, and documentation.
+- [ ] Part 3 - Add strength analysis, exercise hypotheses, and split state.
+  - Model movement patterns, muscle groups, sets, repetitions, load, RPE/RIR, rest,
+    training density, and per-muscle recovery.
+  - Use vendor exercise identifiers and confirmed plans as primary evidence; infer only
+    work/rest structure from heart rate and emit auditable hypotheses rather than
+    claiming an exact exercise from heart rate alone.
+  - Support full-body, upper/lower, push-pull-legs, and five-day rotation state with
+    confidence-aware next-session selection.
+- [ ] Part 4 - Replace the daily decision with a health-first concurrent planner.
+  - Apply recovery and safety gates first, then balance running and strength across
+    7/28-day history and avoid high-intensity running/heavy-leg conflicts.
+  - Return one primary session and one optional compatible addition or alternative,
+    including evidence, dose, stop conditions, expiry, and missing-input gates.
+  - Replace the existing DailyProfile decision/context contracts and add focused
+    concurrent-planning coverage.
+- [ ] Part 5 - Update Hermes delivery, verify, re-ingest, and publish.
+  - Replace Hermes schemas/workflows and deterministic PushPlus rendering with the new
+    running/strength plan; do not add model-generated exercise content.
+  - Update architecture, API, integration, setup, and product documentation for the
+    current contract only.
+  - Run focused and complete tests, compilation, schema validation, and diff checks.
+  - Stop the local service, clear only superseded workout-derived and intelligence
+    records, recreate the current schema, re-sync/re-analyze, perform private live
+    renderer checks, restart services, then commit and push every completed part.
+
+### Verification Log
+
+- Planning: repository `main` was clean at `ca0e4e0`, aligned with `origin/main`.
+  Current workout summaries contain mode, duration, distance, calories, average/max
+  heart rate, and vendor load; normalized detail contains second-level heart rate only.
+  The latest real strength record has enough heart-rate samples for work/rest analysis
+  but no normalized exercise, set, repetition, or load facts, so exact movement names
+  cannot be inferred from the existing contract.
+- Part 1: private shape-only inspection of real Zepp details confirmed populated running
+  series for heart rate, speed, equivalent pace, gait/cadence, cumulative distance,
+  altitude, power, laps, and pauses. The real strength detail exposed second-level HR
+  and vendor assessment data but an empty explicit set list. `WorkoutSample` and the
+  `workout_samples` table were removed from current code and replaced by typed
+  `WorkoutMetricSample` records in `workout_metric_samples`; normalized detail v2 also
+  carries verified laps, pauses, and explicit strength sets. Empty or undocumented
+  fields remain absent. The focused parser, sync, storage, and health API suite passed
+  all 53 tests; compilation and `git diff --check` passed.

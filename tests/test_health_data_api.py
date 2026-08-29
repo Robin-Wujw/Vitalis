@@ -7,7 +7,7 @@ from vitalis.models import (
     DenseDataFile,
     MetricSample,
     Workout,
-    WorkoutSample,
+    WorkoutMetricSample,
     WorkoutType,
 )
 from vitalis.storage import HealthRepository, session_scope
@@ -184,7 +184,7 @@ def test_dense_file_coverage_withholds_file_ids_and_reports_indexed_state(client
     assert "private-opaque-file-id" not in response.text
 
 
-def test_normalized_workout_samples_are_isolated_and_returned_in_order(client):
+def test_normalized_workout_metric_samples_are_isolated_and_returned_in_order(client):
     workout_id = "second-level-run"
     start = datetime(2026, 8, 26, 6, 0, tzinfo=timezone.utc)
     with session_scope() as db:
@@ -202,10 +202,18 @@ def test_normalized_workout_samples_are_isolated_and_returned_in_order(client):
         assert repo.save_workout_detail(
             "sample-user",
             workout_id,
-            {"sample_count": 2, "heart_rate_source": "unknown"},
+            {
+                "schema_version": "2.0",
+                "workout_id": workout_id,
+                "metrics_present": ["heart_rate"],
+                "metric_sample_counts": {"heart_rate": 2},
+                "laps": [],
+                "pauses": [],
+                "strength_sets": [],
+            },
             samples=[
-                WorkoutSample(workout_id=workout_id, timestamp=start.replace(second=1), heart_rate=121),
-                WorkoutSample(workout_id=workout_id, timestamp=start, heart_rate=120),
+                WorkoutMetricSample(workout_id=workout_id, timestamp=start.replace(second=1), metric="heart_rate", value=121, unit="bpm"),
+                WorkoutMetricSample(workout_id=workout_id, timestamp=start, metric="heart_rate", value=120, unit="bpm"),
             ],
         )
 
@@ -215,10 +223,11 @@ def test_normalized_workout_samples_are_isolated_and_returned_in_order(client):
     )
     assert detail.status_code == 200
     payload = detail.json()["detail"]
-    assert payload["sample_count"] == 2
-    assert payload["heart_rate_source"] == "unknown"
-    assert [sample["heart_rate"] for sample in payload["samples"]] == [120, 121]
-    assert {sample["source_scope"] for sample in payload["samples"]} == {"unknown"}
+    assert payload["metric_sample_counts"] == {"heart_rate": 2}
+    assert [sample["metric"] for sample in payload["samples"]] == ["heart_rate", "heart_rate"]
+    assert [sample["value"] for sample in payload["samples"]] == [120, 121]
+    assert {sample["unit"] for sample in payload["samples"]} == {"bpm"}
+    assert {sample["source_scope"] for sample in payload["samples"]} == {"workout_detail"}
 
     other = client.get(
         f"/api/v1/health/workouts/{workout_id}",

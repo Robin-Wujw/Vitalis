@@ -226,29 +226,71 @@ def test_sport_history_normalizes_vendor_negative_sentinels():
     assert rows[0].distance_km == 0
 
 
-def test_decode_workout_heart_rate_to_second_level_samples():
+def test_decode_workout_detail_to_typed_metric_samples():
     start = datetime(2023, 11, 14, 22, 13, 20, tzinfo=timezone.utc)
-    rows = ZeppParser.parse_workout_heart_rate({
+    detail = ZeppParser.parse_workout_detail({
         "data": {
             "trackid": int(start.timestamp()),
             "time": "1;1;1;",
             "heart_rate": "1,80;1,2;1,-1;",
+            "speed": "0,2.5;1,2.6;1,2.7;",
+            "equivPace": "0,400;1,390;",
+            "currentDistance": "0,0;1,250;1,520;",
+            "time_delta_altitude": "0,967;1,972;",
+            "power_meter": "0,210;1,215;",
+            "gait": "0,0,0,176;1,1,4,178;",
+            "lap": "0,371,1000,s00000000000;1,376,1000,s00000000000",
+            "pause": f"{int(start.timestamp())},37,-1,-1,2",
+            "strengthSets": "[]",
         }
     }, summary_end=start + timedelta(seconds=3))
 
-    assert [row.timestamp for row in rows] == [
+    assert detail is not None
+    heart_rate = [row for row in detail.samples if row.metric == "heart_rate"]
+    assert [row.timestamp for row in heart_rate] == [
         start,
         start + timedelta(seconds=1),
         start + timedelta(seconds=2),
         start + timedelta(seconds=3),
     ]
-    assert [row.heart_rate for row in rows] == [80, 80, 82, 81]
-    assert {row.source_scope for row in rows} == {"unknown"}
-    assert {row.device_id for row in rows} == {None}
+    assert [row.value for row in heart_rate] == [80, 80, 82, 81]
+    assert detail.metrics_present == [
+        "altitude", "cadence", "distance", "equivalent_pace",
+        "heart_rate", "running_power", "speed",
+    ]
+    assert detail.metric_sample_counts["cadence"] == 2
+    assert [lap.distance_meters for lap in detail.laps] == [1000, 1000]
+    assert detail.pauses[0].duration_seconds == 37
+    assert {row.source_scope for row in detail.samples} == {"workout_detail"}
+    assert {row.device_id for row in detail.samples} == {None}
 
 
-def test_decode_workout_heart_rate_rejects_missing_series():
-    assert ZeppParser.parse_workout_heart_rate({"data": {"trackid": 1_700_000_000}}) == []
+def test_workout_detail_keeps_missing_series_missing():
+    detail = ZeppParser.parse_workout_detail({"data": {"trackid": 1_700_000_000}})
+    assert detail is not None
+    assert detail.metrics_present == []
+    assert detail.samples == []
+
+
+def test_workout_detail_parses_only_explicit_strength_sets():
+    detail = ZeppParser.parse_workout_detail({"data": {
+        "trackid": 1_700_000_000,
+        "strengthSets": json.dumps([{
+            "exerciseId": "bench_press",
+            "exerciseName": "卧推",
+            "reps": 8,
+            "weightKg": 60,
+            "durationSeconds": 35,
+            "restSeconds": 120,
+        }]),
+        "strengthAssess": '[{"bcId":[61680]}]',
+    }})
+
+    assert detail is not None
+    assert detail.strength_sets[0].exercise_id == "bench_press"
+    assert detail.strength_sets[0].repetitions == 8
+    assert detail.strength_sets[0].weight_kg == 60
+    assert len(detail.strength_sets) == 1
 
 
 def test_parse_heart_rate_samples():

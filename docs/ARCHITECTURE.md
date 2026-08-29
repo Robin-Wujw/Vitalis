@@ -35,7 +35,9 @@ analysis layer reads only normalized records:
   Charge, SpO2, and other supported measurements.
 - `daily_metrics`: sparse vendor facts such as readiness, stress, respiratory rate,
   PAI, ODI, and lactate-threshold fields.
-- `workouts` and `workout_samples`: normalized workout summaries and detail HR.
+- `workouts` and `workout_metric_samples`: normalized workout summaries, versioned
+  detail metadata, and typed workout HR, speed, equivalent pace, cadence, distance,
+  altitude, and running-power observations.
 - `dense_data_files`: metadata for opaque `SEC_HR` payloads; indexed files are not
   represented as decoded measurements.
 
@@ -54,6 +56,13 @@ Timestamped measurements remain stored in UTC. Daily intelligence groups them by
 configured application timezone (`VITALIS_TIMEZONE`, currently `Asia/Shanghai`). Sleep
 clock times use the vendor-provided offset, and workout summaries are assigned to the
 local date on which the session started.
+
+Workout detail is current-contract-only (`schema_version=2.0`). Zepp delta/time series
+are decoded into typed metric samples. Laps retain only verified index, duration, and
+distance semantics; pauses retain start and duration. Explicit vendor strength sets may
+carry exercise identity, repetitions, weight, work duration, and rest. Empty or
+undocumented vendor fields remain absent, and strength assessment payloads are not
+reinterpreted as exercise names.
 
 ## 3. Intelligence Layer
 
@@ -337,7 +346,8 @@ baselines, 7/28/90-day trends, explainable decisions, 122 public workout IDs, Ch
 presentation contracts, structured running/strength prescriptions, scheduled analysis,
 and thin Hermes Read/Analyze/Act tools.
 
-Not implemented: unrestricted exploratory correlation discovery, minute-level stress
-load, Energy Dynamics, body composition/BP intelligence, forecasts,
+Not implemented: running/strength interpretation over the newly normalized workout
+metrics, unrestricted exploratory correlation discovery, minute-level stress load,
+Energy Dynamics, body composition/BP intelligence, forecasts,
 or medical alerts. These require explicit new contracts and validation rather than LLM
 inference.

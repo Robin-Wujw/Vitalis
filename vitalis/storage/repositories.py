@@ -15,7 +15,7 @@ from vitalis.models import (
     DenseDataFile,
     MetricSample,
     Workout,
-    WorkoutSample,
+    WorkoutMetricSample,
 )
 from vitalis.intelligence.contracts import (
     HealthEvent,
@@ -433,7 +433,7 @@ class HealthRepository:
         user_id: str,
         workout_id: str,
         detail: dict,
-        samples: list[WorkoutSample] | None = None,
+        samples: list[WorkoutMetricSample] | None = None,
     ) -> bool:
         row = self.db.execute(
             select(orm.Workout).where(
@@ -446,16 +446,18 @@ class HealthRepository:
         row.detail = detail
         row.detail_synced = True
         if samples is not None:
-            self.db.execute(delete(orm.WorkoutSample).where(
-                orm.WorkoutSample.user_id == user_id,
-                orm.WorkoutSample.workout_id == workout_id,
+            self.db.execute(delete(orm.WorkoutMetricSample).where(
+                orm.WorkoutMetricSample.user_id == user_id,
+                orm.WorkoutMetricSample.workout_id == workout_id,
             ))
             self.db.add_all([
-                orm.WorkoutSample(
+                orm.WorkoutMetricSample(
                     user_id=user_id,
                     workout_id=workout_id,
                     timestamp=_naive_utc(sample.timestamp),
-                    heart_rate=sample.heart_rate,
+                    metric=sample.metric,
+                    value=sample.value,
+                    unit=sample.unit,
                     source_scope=sample.source_scope,
                     device_id=sample.device_id,
                 )
@@ -464,14 +466,24 @@ class HealthRepository:
         self.db.flush()
         return True
 
-    def workout_samples(
-        self, user_id: str, workout_id: str, limit: int = 50_000
-    ) -> list[orm.WorkoutSample]:
+    def workout_metric_samples(
+        self,
+        user_id: str,
+        workout_id: str,
+        metric: str | None = None,
+        limit: int = 250_000,
+    ) -> list[orm.WorkoutMetricSample]:
+        query = select(orm.WorkoutMetricSample).where(
+            orm.WorkoutMetricSample.user_id == user_id,
+            orm.WorkoutMetricSample.workout_id == workout_id,
+        )
+        if metric:
+            query = query.where(orm.WorkoutMetricSample.metric == metric)
         return list(self.db.execute(
-            select(orm.WorkoutSample).where(
-                orm.WorkoutSample.user_id == user_id,
-                orm.WorkoutSample.workout_id == workout_id,
-            ).order_by(orm.WorkoutSample.timestamp).limit(limit)
+            query.order_by(
+                orm.WorkoutMetricSample.timestamp,
+                orm.WorkoutMetricSample.metric,
+            ).limit(limit)
         ).scalars().all())
 
     def workouts(self, user_id: str, start: date, end: date, limit: int = 500) -> list[orm.Workout]:

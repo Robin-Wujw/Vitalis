@@ -58,7 +58,8 @@ Vitalis currently normalizes:
 - sleep duration, timing, stages, awakenings, scores, respiration, and other available
   vendor sleep fields;
 - daily activity, resting heart rate, steps, active minutes, and training summaries;
-- workout summaries and workout-detail heart-rate samples;
+- workout summaries plus typed workout-detail heart rate, speed, equivalent pace,
+  cadence, distance, altitude, running power, laps, pauses, and explicit strength sets;
 - dense `SEC_HR` file coverage metadata when the payload itself is not decoded.
 
 UTC measurements are assigned to local days using `VITALIS_TIMEZONE` (default
@@ -70,18 +71,23 @@ its vendor ID, stable mode, exact Chinese label, training family, mapping source
 recognition confidence. Unknown or missing IDs remain explicit and are never inferred
 from an endpoint name or descriptive text.
 
-## Workout Heart Rate
+## Workout Detail
 
 Zepp workout history is returned by `/v1/sport/run/history.json`; the response may mix
 multiple activities, so each record's numeric `type` is authoritative. Workout detail
-comes from `/v1/sport/run/detail.json`. Its `data.heart_rate` field is a compressed
-sequence of elapsed-time and heart-rate deltas that Vitalis expands into ordered UTC
-samples in `workout_samples`.
+comes from `/v1/sport/run/detail.json`. Vitalis normalizes its compressed series into
+typed UTC observations in `workout_metric_samples`. The current contract supports
+heart rate, speed, equivalent pace, cadence, cumulative distance, altitude, running
+power, laps, pauses, and explicit vendor strength sets when present.
 
 This is a workout-only stream, not continuous all-day high-frequency heart rate. The
 detail response does not identify the sensor for each sample, so normalized detail
-samples retain `source_scope=unknown` and `device_id=null`. A workout summary associated
+samples retain `source_scope=workout_detail` and `device_id=null`. A workout summary associated
 with Balance 2 is not sufficient evidence to label its samples as Balance 2 or Helio.
+
+Empty fields remain absent. In particular, a strength workout may contain second-level
+heart rate and vendor assessment data while providing no explicit exercise sets. In
+that case Vitalis does not infer an exercise name at the connector boundary.
 
 `second_heart_rate/real_data` currently stores only opaque `SEC_HR` coverage metadata.
 `sample_count=0` and `parse_status=indexed` explicitly mean that no measurement samples

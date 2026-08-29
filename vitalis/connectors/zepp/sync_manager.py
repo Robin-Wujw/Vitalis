@@ -374,14 +374,12 @@ class SyncManager:
             summary_end = None
             if workout and isinstance(workout.data, dict):
                 summary_end = parser._parse_datetime_value(workout.data.get("ended_at"))
-            samples = parser.parse_workout_heart_rate(payload, summary_end=summary_end)
-            detail = {
-                "sample_count": len(samples),
-                "sampling": "second_level" if samples else "unavailable",
-                "heart_rate_source": "unknown",
-            }
-            written = int(bool(workout_id) and repo.save_workout_detail(
-                user.id, workout_id, detail, samples=samples
+            detail = parser.parse_workout_detail(payload, summary_end=summary_end)
+            written = int(bool(workout_id) and detail is not None and repo.save_workout_detail(
+                user.id,
+                workout_id,
+                detail.model_dump(mode="json", exclude={"samples"}),
+                samples=detail.samples,
             ))
 
         elif stream == "heart_rate":

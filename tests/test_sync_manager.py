@@ -213,16 +213,21 @@ class TestSyncManager:
             )), repo, user)
 
             workout = repo.workout(user.id, "detail-run")
-            samples = repo.workout_samples(user.id, "detail-run")
+            samples = repo.workout_metric_samples(user.id, "detail-run")
 
         assert written == 1
         assert workout is not None and workout.detail_synced is True
         assert workout.detail == {
-            "sample_count": 4,
-            "sampling": "second_level",
-            "heart_rate_source": "unknown",
+            "schema_version": "2.0",
+            "workout_id": str(int(start.timestamp())),
+            "metrics_present": ["heart_rate"],
+            "metric_sample_counts": {"heart_rate": 4},
+            "laps": [],
+            "pauses": [],
+            "strength_sets": [],
         }
-        assert [sample.heart_rate for sample in samples] == [80, 80, 82, 81]
+        assert [sample.metric for sample in samples] == ["heart_rate"] * 4
+        assert [sample.value for sample in samples] == [80, 80, 82, 81]
 
     def test_workout_training_record_uses_shanghai_start_day(self, mock_fetcher, setup_db):
         manager = SyncManager(mock_fetcher)

@@ -3,7 +3,7 @@
 import uuid
 from datetime import date as DateType, datetime, timedelta, time, timezone
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -104,17 +104,68 @@ class Workout(BaseModel):
     )
 
 
-class WorkoutSample(BaseModel):
-    """One normalized heart-rate sample within a workout."""
+class WorkoutMetricSample(BaseModel):
+    """One typed metric observation within a workout."""
 
     workout_id: str = ""
     timestamp: datetime
-    heart_rate: int = Field(ge=1, le=300, description="Heart rate in bpm")
+    metric: Literal[
+        "heart_rate",
+        "speed",
+        "equivalent_pace",
+        "cadence",
+        "distance",
+        "altitude",
+        "running_power",
+    ]
+    value: float
+    unit: str
     source_scope: str = Field(
-        default="unknown",
+        default="workout_detail",
         description="Sensor provenance; unknown when the vendor detail omits it",
     )
     device_id: str | None = None
+
+
+class WorkoutLap(BaseModel):
+    """A vendor-recorded workout lap with only semantically verified fields."""
+
+    index: int = Field(ge=0)
+    duration_seconds: int = Field(ge=0)
+    distance_meters: float = Field(ge=0)
+
+
+class WorkoutPause(BaseModel):
+    """A vendor-recorded pause interval."""
+
+    started_at: datetime
+    duration_seconds: int = Field(ge=0)
+
+
+class StrengthSetObservation(BaseModel):
+    """One explicit vendor strength set; absent fields remain absent."""
+
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    exercise_id: str | None = None
+    exercise_name: str | None = None
+    repetitions: int | None = Field(default=None, ge=1)
+    weight_kg: float | None = Field(default=None, ge=0)
+    duration_seconds: int | None = Field(default=None, ge=0)
+    rest_seconds: int | None = Field(default=None, ge=0)
+
+
+class WorkoutDetail(BaseModel):
+    """Current normalized workout-detail contract."""
+
+    schema_version: Literal["2.0"] = "2.0"
+    workout_id: str
+    metrics_present: list[str] = Field(default_factory=list)
+    metric_sample_counts: dict[str, int] = Field(default_factory=dict)
+    laps: list[WorkoutLap] = Field(default_factory=list)
+    pauses: list[WorkoutPause] = Field(default_factory=list)
+    strength_sets: list[StrengthSetObservation] = Field(default_factory=list)
+    samples: list[WorkoutMetricSample] = Field(default_factory=list, exclude=True)
 
 
 class MetricSample(BaseModel):

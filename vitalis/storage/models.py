@@ -161,12 +161,15 @@ class Workout(Base):
     detail_synced: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
-class WorkoutSample(Base):
-    """High-frequency samples normalized from one workout detail payload."""
+class WorkoutMetricSample(Base):
+    """Typed high-frequency observations from one workout detail payload."""
 
-    __tablename__ = "workout_samples"
+    __tablename__ = "workout_metric_samples"
     __table_args__ = (
-        UniqueConstraint("user_id", "workout_id", "timestamp", name="uq_workout_sample"),
+        UniqueConstraint(
+            "user_id", "workout_id", "metric", "timestamp",
+            name="uq_workout_metric_sample",
+        ),
         {"info": {"timescale": True}},
     )
 
@@ -174,7 +177,9 @@ class WorkoutSample(Base):
     user_id: Mapped[str] = mapped_column(String(64), index=True)
     workout_id: Mapped[str] = mapped_column(String(128), index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime, index=True)
-    heart_rate: Mapped[int] = mapped_column(Integer)
+    metric: Mapped[str] = mapped_column(String(48), index=True)
+    value: Mapped[float] = mapped_column(Float)
+    unit: Mapped[str] = mapped_column(String(24))
     source_scope: Mapped[str] = mapped_column(String(32), default="unknown")
     device_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 

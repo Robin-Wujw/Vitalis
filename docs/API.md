@@ -51,7 +51,7 @@ semantics.
 | GET | `/health/token-status` | Read credential state and next synchronization time |
 | GET | `/health/range?from=&to=&granularity=` | Read 180d/90d/30d/7d/1d aggregate blocks |
 | GET | `/health/workouts?from=&to=` | List workout summaries and detail availability |
-| GET | `/health/workouts/{workout_id}` | Read workout detail and ordered heart-rate samples |
+| GET | `/health/workouts/{workout_id}` | Read current v2 workout detail and ordered typed metric samples |
 | GET | `/health/metrics/{metric}?from=&to=` | Read timestamped measurements and provenance |
 | GET | `/health/daily-metrics?metric=&from=&to=` | Read sparse daily metrics |
 | GET | `/health/dense-files/second_heart_rate?from=&to=` | Read high-frequency file coverage without file IDs |
@@ -103,6 +103,8 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/feedback' \
   snapshots share one AnalysisRun identity.
 - Facts, inferences, and actions remain distinct in period profiles.
 - Missing measurements remain null or produce explicit insufficient-data state.
+- Workout-detail samples use `metric`, `value`, and `unit`; the removed heart-rate-only
+  sample shape is not retained as an alias.
 - Internal enum codes are for program control; Chinese `*_label` fields are the
   presentation contract.
 - Association responses are observational and always carry `association_only=true`.

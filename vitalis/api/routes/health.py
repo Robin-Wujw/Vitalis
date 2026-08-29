@@ -36,6 +36,11 @@ def health_sync(
             report = connector.sync_with_report(
                 User(id=user_id), days=days, repo=repo
             )
+        if any(stream.needs_reauth for stream in report.streams):
+            raise ZeppAuthError(
+                "Zepp 数据流返回凭据失效",
+                needs_reauth=True,
+            )
         return {
             "user_id": user_id,
             "status": "synced",
@@ -45,6 +50,7 @@ def health_sync(
                     "stream": s.stream,
                     "status": s.status,
                     "records_written": s.records_written,
+                    "needs_reauth": s.needs_reauth,
                     "message": s.message,
                 }
                 for s in report.streams
@@ -53,6 +59,14 @@ def health_sync(
             "message": report.message,
         }
     except ZeppAuthError as exc:
+        if not exc.needs_reauth:
+            return {
+                "user_id": user_id,
+                "status": "transient_error",
+                "retryable": True,
+                "detail": str(exc),
+                "hint": "Zepp 暂时不可用，稍后会自动重试",
+            }
         with session_scope() as db:
             HealthRepository(db).mark_user_browser_links_reauth(
                 user_id, "Zepp 登录已失效，请重新登录"

@@ -101,6 +101,8 @@ def test_morning_push_syncs_current_day_and_sends_exactly_once(monkeypatch, tmp_
         "period": "morning",
         "date": "2026-08-29",
         "quality": "SUFFICIENT",
+        "sync_degraded": False,
+        "sync_status": "synced",
     }
     marker = next(tmp_path.glob("*.sent"))
     assert "explicit-user" not in marker.name
@@ -160,6 +162,8 @@ def test_morning_push_defers_without_complete_sleep(
         "period": "morning",
         "date": "2026-08-29",
         "reason": "sleep_incomplete",
+        "sync_degraded": False,
+        "sync_status": "synced",
     }
     assert not list(tmp_path.glob("*.sent"))
 
@@ -373,3 +377,162 @@ def test_daily_push_does_not_analyze_or_send_after_failed_sync(monkeypatch, tmp_
             state_dir=tmp_path,
         )
     assert requests == ["/api/v1/health/sync"]
+
+
+def test_daily_push_does_not_fallback_when_stream_reports_reauth(
+    monkeypatch, tmp_path
+):
+    requests = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def post(self, path, **kwargs):
+            requests.append(path)
+            return Response({
+                "status": "synced",
+                "success": False,
+                "streams": [{"stream": "heart_rate", "needs_reauth": True}],
+            })
+
+    monkeypatch.setattr(daily_push.httpx, "Client", Client)
+    monkeypatch.setattr(
+        daily_push,
+        "PushService",
+        lambda **kwargs: pytest.fail("push service must not be created"),
+    )
+
+    with pytest.raises(RuntimeError, match="synced"):
+        daily_push.run_daily_push(
+            "explicit-user",
+            "private-token",
+            period="morning",
+            state_dir=tmp_path,
+        )
+    assert requests == ["/api/v1/health/sync"]
+
+
+@pytest.mark.parametrize(
+    "sync_payload",
+    [
+        {"status": "synced", "success": False, "message": "1 个数据流超时"},
+        {
+            "status": "transient_error",
+            "retryable": True,
+            "detail": "同步超时",
+        },
+    ],
+)
+def test_daily_push_uses_complete_stored_profile_after_retryable_sync_failure(
+    monkeypatch, tmp_path, sync_payload
+):
+    sent = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def post(self, path, **kwargs):
+            if path.endswith("/sync"):
+                return Response(sync_payload)
+            return Response({"daily": _daily()})
+
+    class Service:
+        def __init__(self, pushplus_token):
+            pass
+
+        def push_daily_profile(self, user_id, profile, period):
+            sent.append(profile)
+            return {"_pushplus_handler": "ok"}
+
+    monkeypatch.setattr(daily_push.httpx, "Client", Client)
+    monkeypatch.setattr(daily_push, "PushService", Service)
+
+    result = daily_push.run_daily_push(
+        "explicit-user",
+        "private-token",
+        period="morning",
+        target_date=date(2026, 8, 29),
+        state_dir=tmp_path,
+    )
+
+    assert result["status"] == "sent"
+    assert result["sync_degraded"] is True
+    assert result["sync_status"] == sync_payload["status"]
+    assert sent[0]["delivery_metadata"]["sync_degraded"] is True
+    assert sent[0]["delivery_metadata"]["sync_status"] == sync_payload["status"]
+    assert len(list(tmp_path.glob("*.sent"))) == 1
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        _daily(wake_time=None),
+        {
+            "date": "2026-08-29",
+            "data_quality": {"status": "INSUFFICIENT"},
+            "features": {
+                "sleep": {"status": "AVAILABLE", "wake_time": "08:15:00"}
+            },
+        },
+        {
+            **_daily(),
+            "date": "2026-08-28",
+        },
+    ],
+)
+def test_degraded_sync_defers_when_stored_profile_is_not_current_and_complete(
+    monkeypatch, tmp_path, profile
+):
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def post(self, path, **kwargs):
+            if path.endswith("/sync"):
+                return Response({"status": "synced", "success": False})
+            return Response({"daily": profile})
+
+    monkeypatch.setattr(daily_push.httpx, "Client", Client)
+    monkeypatch.setattr(
+        daily_push,
+        "PushService",
+        lambda **kwargs: pytest.fail("incomplete stored data must not be sent"),
+    )
+
+    result = daily_push.run_daily_push(
+        "explicit-user",
+        "private-token",
+        period="morning",
+        target_date=date(2026, 8, 29),
+        state_dir=tmp_path,
+    )
+
+    assert result == {
+        "status": "deferred",
+        "period": "morning",
+        "date": "2026-08-29",
+        "reason": "stored_data_incomplete",
+        "sync_degraded": True,
+        "sync_status": "synced",
+    }
+    assert not list(tmp_path.glob("*.sent"))

@@ -172,6 +172,25 @@ def test_morning_push_uses_chinese_labels_and_renders_prescription():
         assert internal_code not in message.title + message.body
 
 
+def test_push_report_discloses_degraded_fresh_sync():
+    received = []
+    payload = _profile_payload()
+    payload["delivery_metadata"] = {
+        "sync_degraded": True,
+        "sync_status": "transient_error",
+        "sync_detail": "同步超时",
+    }
+    service = PushService(pushplus_token="")
+    service.add_handler(received.append)
+
+    service.push_daily_profile("test-user", payload, period="morning")
+
+    assert (
+        "> **同步提醒**：本次新同步未完整完成，报告使用已存储且通过完整性校验的当天数据。"
+        in received[0].body
+    )
+
+
 def test_evening_push_names_exact_workout_mode_in_chinese():
     received = []
     service = PushService(pushplus_token="")

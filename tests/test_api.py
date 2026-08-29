@@ -389,6 +389,83 @@ def test_health_sync(client):
     assert body["success"] is True
 
 
+def test_health_sync_transient_zepp_failure_keeps_browser_link_connected(
+    client, monkeypatch
+):
+    from vitalis.api.routes import health
+    from vitalis.connectors.zepp import ZeppAuthError
+
+    user_id = "sync-transient-user"
+    code = client.post(
+        "/api/v1/connect/zepp/pair?sync_days=1",
+        headers={"X-User-Id": user_id},
+    ).json()["pairing_code"]
+    client.post(
+        f"/api/v1/connect/zepp/pair/{code}/credentials",
+        json={"cookie": '{"userid":"vendor-transient","apptoken":"saved-token"}'},
+    )
+
+    class TransientConnector:
+        def load_token(self, repo, requested_user_id):
+            assert requested_user_id == user_id
+            return object()
+
+        def sync_with_report(self, *args, **kwargs):
+            raise ZeppAuthError("同步超时，已停止后续请求")
+
+    monkeypatch.setattr(health, "get_connector", lambda _source: TransientConnector())
+    response = client.post(
+        "/api/v1/health/sync?days=2", headers={"X-User-Id": user_id}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "transient_error"
+    assert response.json()["retryable"] is True
+    link = client.get(
+        "/api/v1/connect/zepp/token", headers={"X-User-Id": user_id}
+    ).json()
+    assert link["connection_status"] == "connected"
+    assert link["needs_login"] is False
+
+
+def test_health_sync_real_auth_failure_marks_browser_link_for_login(
+    client, monkeypatch
+):
+    from vitalis.api.routes import health
+    from vitalis.connectors.zepp import ZeppAuthError
+
+    user_id = "sync-reauth-user"
+    code = client.post(
+        "/api/v1/connect/zepp/pair?sync_days=1",
+        headers={"X-User-Id": user_id},
+    ).json()["pairing_code"]
+    client.post(
+        f"/api/v1/connect/zepp/pair/{code}/credentials",
+        json={"cookie": '{"userid":"vendor-reauth","apptoken":"saved-token"}'},
+    )
+
+    class ReauthConnector:
+        def load_token(self, repo, requested_user_id):
+            assert requested_user_id == user_id
+            return object()
+
+        def sync_with_report(self, *args, **kwargs):
+            raise ZeppAuthError("凭据已失效", needs_reauth=True)
+
+    monkeypatch.setattr(health, "get_connector", lambda _source: ReauthConnector())
+    response = client.post(
+        "/api/v1/health/sync?days=2", headers={"X-User-Id": user_id}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "needs_reauth"
+    link = client.get(
+        "/api/v1/connect/zepp/token", headers={"X-User-Id": user_id}
+    ).json()
+    assert link["connection_status"] == "needs_login"
+    assert link["needs_login"] is True
+
+
 def test_health_token_status_authorized(client):
     """GET /health/token-status 已授权用户。"""
     # 先扫码授权保存 mock token

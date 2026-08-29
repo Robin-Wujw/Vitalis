@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from copy import deepcopy
 from datetime import date
 import fcntl
 import hashlib
@@ -58,15 +59,22 @@ def run_daily_push(
             timeout=180.0,
             trust_env=not _is_loopback(api),
         ) as client:
-            sync_response = client.post("/api/v1/health/sync", params={"days": days})
-            sync_response.raise_for_status()
-            sync = sync_response.json()
-            if sync.get("status") != "synced" or sync.get("success") is not True:
-                raise RuntimeError(
-                    f"Vitalis sync did not complete: {sync.get('status', 'unknown')}"
-                )
+            sync = _sync_health(client, days)
+            sync_degraded, sync_status, sync_detail = _assess_sync(sync)
 
             daily = _analyze(client, current_date)
+
+        if sync_degraded and not _stored_profile_is_usable(
+            daily, current_date, period
+        ):
+            return {
+                "status": "deferred",
+                "period": period,
+                "date": current_date.isoformat(),
+                "reason": "stored_data_incomplete",
+                "sync_degraded": True,
+                "sync_status": sync_status,
+            }
 
         if period == "morning" and not _sleep_is_complete(daily):
             return {
@@ -74,8 +82,17 @@ def run_daily_push(
                 "period": period,
                 "date": current_date.isoformat(),
                 "reason": "sleep_incomplete",
+                "sync_degraded": sync_degraded,
+                "sync_status": sync_status,
             }
 
+        if sync_degraded:
+            daily = deepcopy(daily)
+            daily["delivery_metadata"] = {
+                "sync_degraded": True,
+                "sync_status": sync_status,
+                "sync_detail": sync_detail,
+            }
         results = PushService(pushplus_token=pushplus_token).push_daily_profile(
             user_id, daily, period=period
         )
@@ -87,7 +104,46 @@ def run_daily_push(
             "period": period,
             "date": daily["date"],
             "quality": daily["data_quality"]["status"],
+            "sync_degraded": sync_degraded,
+            "sync_status": sync_status,
         }
+
+
+def _sync_health(client: httpx.Client, days: int) -> dict:
+    try:
+        response = client.post("/api/v1/health/sync", params={"days": days})
+        response.raise_for_status()
+        return response.json()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code < 500:
+            raise
+        return {
+            "status": "transport_error",
+            "retryable": True,
+            "detail": str(exc),
+        }
+    except httpx.RequestError as exc:
+        return {
+            "status": "transport_error",
+            "retryable": True,
+            "detail": str(exc),
+        }
+
+
+def _assess_sync(sync: dict) -> tuple[bool, str, str | None]:
+    status = str(sync.get("status", "unknown"))
+    stream_needs_reauth = any(
+        stream.get("needs_reauth") is True
+        for stream in sync.get("streams", [])
+        if isinstance(stream, dict)
+    )
+    if status in {"needs_reauth", "token_required"} or stream_needs_reauth:
+        raise RuntimeError(f"Vitalis sync did not complete: {status}")
+    if status == "synced" and sync.get("success") is True:
+        return False, status, None
+    if status == "synced" or sync.get("retryable") is True:
+        return True, status, sync.get("detail") or sync.get("message")
+    raise RuntimeError(f"Vitalis sync did not complete: {status}")
 
 
 def _analyze(client: httpx.Client, day: date) -> dict:
@@ -101,6 +157,16 @@ def _analyze(client: httpx.Client, day: date) -> dict:
 def _sleep_is_complete(daily: dict) -> bool:
     sleep = daily.get("features", {}).get("sleep", {})
     return sleep.get("status") == "AVAILABLE" and bool(sleep.get("wake_time"))
+
+
+def _stored_profile_is_usable(
+    daily: dict, day: date, period: ReportPeriod
+) -> bool:
+    if daily.get("date") != day.isoformat():
+        return False
+    if daily.get("data_quality", {}).get("status") != "SUFFICIENT":
+        return False
+    return period != "morning" or _sleep_is_complete(daily)
 
 
 def _is_loopback(api: str) -> bool:

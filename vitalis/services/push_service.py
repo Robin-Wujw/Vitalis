@@ -346,7 +346,13 @@ def _render_evening(payload: dict) -> tuple[str, list[str]]:
 
 def _metadata(payload: dict) -> list[str]:
     quality = payload.get("data_quality", {}).get("status_label", "数据状态未知")
-    return [f"> **数据日期：{payload['date']}** · {quality}"]
+    lines = [f"> **数据日期：{payload['date']}** · {quality}"]
+    delivery = payload.get("delivery_metadata", {})
+    if delivery.get("sync_degraded"):
+        lines.append(
+            "> **同步提醒**：本次新同步未完整完成，报告使用已存储且通过完整性校验的当天数据。"
+        )
+    return lines
 
 
 def _render_hrv_fusion(hrv: dict) -> list[str]:

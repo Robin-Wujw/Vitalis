@@ -1702,7 +1702,7 @@ their disagreement materially changes today's recommendation.
     generic limitations, raw multi-window trend lists, and repeated audit metadata.
   - Translate retained metrics and relationships into ordinary Chinese and add focused
     renderer regression tests.
-- [ ] Part 4 - Synchronize documentation and complete delivery.
+- [x] Part 4 - Synchronize documentation and complete delivery.
   - Update evidence, architecture, workflow, and product documentation for the current
     contract only, with no compatibility or fallback path.
   - Run focused and complete tests, compilation and diff checks; generate a private
@@ -1738,3 +1738,6 @@ their disagreement materially changes today's recommendation.
   and `hermes-gateway.service` are active, and the loopback health endpoint returns 200.
   A misleading manual 502 was traced to this terminal's `ALL_PROXY`; a no-proxy check
   reached Vitalis directly, while the system services themselves have no proxy setting.
+- Part 4 (delivery): feature commit `f440d14` (`feat: deliver actionable health brief`)
+  was pushed to `origin/main`. The delivery record was then committed and pushed on the
+  same branch; local and remote `main` were verified synchronized.

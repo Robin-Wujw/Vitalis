@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vitalis.local/schemas/strength-exercises-1.0.json",
+  "title": "Vitalis StrengthExerciseRecord list 1.0",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["id", "user_id", "workout_id", "order", "exercise_name", "movement_pattern", "movement_pattern_label", "muscle_groups", "muscle_group_labels", "source", "confidence", "confidence_label"],
+    "properties": {
+      "id": {"type": "string"},
+      "user_id": {"type": "string"},
+      "workout_id": {"type": "string"},
+      "order": {"type": "integer", "minimum": 1},
+      "exercise_name": {"type": "string"},
+      "movement_pattern": {"type": "string"},
+      "movement_pattern_label": {"type": "string"},
+      "muscle_groups": {"type": "array", "items": {"type": "string"}},
+      "muscle_group_labels": {"type": "array", "items": {"type": "string"}},
+      "source": {"enum": ["user_confirmed", "vendor_explicit"]},
+      "confidence": {"enum": ["NONE", "LOW", "MODERATE", "HIGH"]},
+      "confidence_label": {"type": "string"}
+    }
+  }
+}

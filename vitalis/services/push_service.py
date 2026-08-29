@@ -130,6 +130,8 @@ class PushService:
 
 def _render_morning(payload: dict) -> tuple[str, list[str]]:
     decision = payload["decision"]
+    action_plan = decision["action_plan"]
+    primary = action_plan.get("primary_session")
     features = payload["features"]
     states = payload.get("states", {})
     sleep = features["sleep"]
@@ -145,7 +147,8 @@ def _render_morning(payload: dict) -> tuple[str, list[str]]:
         f"- **恢复判断**：{states.get('recovery_label') or recovery.get('state_label', '数据不足')}",
         f"- **睡眠判断**：{states.get('sleep_label') or sleep.get('status_label', '数据不足')}",
         f"- **负荷判断**：{states.get('training_load_label') or features['training'].get('load_state_label', '数据不足')}",
-        f"- **今日安排**：{decision['action_label']} · {decision['intensity_label']}",
+        f"- **今日安排**：{primary['title'] if primary else decision['action_label']}",
+        f"- **安全状态**：{action_plan['safety_status_label']}",
         f"- **结论把握**：{decision['confidence_label']}",
         "",
         "## 恢复解读",
@@ -224,29 +227,15 @@ def _render_morning(payload: dict) -> tuple[str, list[str]]:
         ),
     ])
     lines.extend(_render_trends_and_events(payload))
+    lines.extend(_render_workout_intelligence(training))
     lines.extend(
         [
             "",
-            "## 训练安排",
+            "## 今日行动",
             "",
-            f"**{decision['action_label']} · {decision['intensity_label']}**",
         ]
     )
-    if decision.get("suggested_type_labels"):
-        lines.extend(
-            [
-                "",
-                f"- **建议类型**：{_join_labels(decision['suggested_type_labels'])}",
-            ]
-        )
-    if decision.get("duration_minutes"):
-        low, high = decision["duration_minutes"]
-        lines.append(f"- **建议时长**：{low}–{high} 分钟")
-    if decision.get("prescription_guidance"):
-        lines.extend(["", decision["prescription_guidance"]])
-    if decision.get("prescriptions"):
-        lines.extend(["", "## 具体方案", ""])
-        lines.extend(_render_prescriptions(decision["prescriptions"]))
+    lines.extend(_render_action_plan(action_plan))
     lines.extend(_render_drivers(decision))
     return title, lines
 
@@ -278,7 +267,7 @@ def _render_evening(payload: dict) -> tuple[str, list[str]]:
             f"{states.get('training_load_label') or training.get('load_state_label', '数据不足')}"
         ),
         f"- **恢复判断**：{states.get('recovery_label') or recovery.get('state_label', '数据不足')}",
-        f"- **今晚安排**：{decision['action_label']} · {decision['intensity_label']}",
+        f"- **今日状态结论**：{decision['action_label']}",
         "",
         "## 今日训练",
         "",
@@ -337,9 +326,7 @@ def _render_evening(payload: dict) -> tuple[str, list[str]]:
     lines.extend(["", "## 趋势与事件", ""])
     lines.extend(trend_lines or ["- 暂无可用趋势"])
     lines.extend(event_lines or ["- 暂无进行中的健康事件"])
-    if decision.get("prescriptions"):
-        lines.extend(["", "## 今晚安排", ""])
-        lines.extend(_render_prescriptions(decision["prescriptions"]))
+    lines.extend(_render_workout_intelligence(training))
     lines.extend(_render_drivers(decision))
     return title, lines
 
@@ -467,39 +454,143 @@ def _unique(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
 
 
-def _render_prescriptions(prescriptions: list[dict]) -> list[str]:
-    lines: list[str] = []
-    for prescription in prescriptions:
-        duration = prescription.get("total_duration_minutes")
-        duration_text = f" · {duration[0]}–{duration[1]} 分钟" if duration else ""
-        lines.append(f"### {prescription['title']}{duration_text}")
-        lines.extend(["", f"**目标**：{prescription['goal']}", ""])
-        for step in prescription.get("steps", []):
-            details = []
-            if step.get("duration_minutes"):
-                low, high = step["duration_minutes"]
-                details.append(f"{low}–{high} 分钟")
-            if step.get("sets"):
-                details.append(f"{step['sets']} 组")
-            if step.get("repetitions"):
-                details.append(step["repetitions"])
-            if step.get("rest_seconds"):
-                low, high = step["rest_seconds"]
-                details.append(f"组间休息 {low}–{high} 秒")
-            if step.get("intensity"):
-                details.append(step["intensity"])
-            suffix = " · ".join(details)
-            summary = f"{step['order']}. **{step['name']}**"
-            lines.append(f"{summary} · {suffix}" if suffix else summary)
-            lines.extend(
-                f"   - {instruction}"
-                for instruction in step.get("instructions", [])
-            )
-        if prescription.get("progression"):
-            lines.extend(["", "**进阶条件**"])
-            lines.extend(f"- {item}" for item in prescription["progression"])
-        if prescription.get("cautions"):
-            lines.extend(["", "**注意事项**"])
-            lines.extend(f"- {item}" for item in prescription["cautions"])
-        lines.append("")
+def _render_action_plan(action_plan: dict) -> list[str]:
+    balance = action_plan["weekly_balance"]
+    lines = [
+        (
+            "- **训练平衡**："
+            f"跑步 {balance['running_completed_7d']}/{balance['running_target_7d']} 次（7 日）、"
+            f"{balance['running_completed_28d']}/{balance['running_target_28d']} 次（28 日） · "
+            f"力量 {balance['strength_completed_7d']}/{balance['strength_target_7d']} 次（7 日）、"
+            f"{balance['strength_completed_28d']}/{balance['strength_target_28d']} 次（28 日）"
+        ),
+        f"- **有效期**：{action_plan['expires_at']}",
+    ]
+    primary = action_plan.get("primary_session")
+    optional = action_plan.get("optional_session")
+    if primary is None:
+        lines.append("- 恢复数据不足，本日不生成训练内容。")
+    else:
+        lines.extend(["", *_render_session(primary)])
+    if optional is not None:
+        lines.extend([
+            "",
+            f"**与可选项关系**：{action_plan['session_relationship_label']}",
+            "",
+            *_render_session(optional),
+        ])
+    if action_plan.get("conflict_checks"):
+        lines.extend(["", "**冲突检查**"])
+        lines.extend(f"- {item}" for item in action_plan["conflict_checks"])
+    if action_plan.get("missing_input_gates"):
+        lines.extend(["", "**规划边界**"])
+        lines.extend(f"- {item}" for item in action_plan["missing_input_gates"])
     return lines
+
+
+def _render_session(session: dict) -> list[str]:
+    lines: list[str] = []
+    duration = session.get("total_duration_minutes")
+    duration_text = f" · {duration[0]}–{duration[1]} 分钟" if duration else ""
+    lines.append(
+        f"### {session['role_label']}：{session['title']}{duration_text} · {session['intensity_label']}"
+    )
+    lines.extend([
+        "",
+        f"- **训练重点**：{session['focus']}",
+        f"- **目标**：{session['goal']}",
+        "",
+    ])
+    for step in session.get("steps", []):
+        details = []
+        if step.get("duration_minutes"):
+            low, high = step["duration_minutes"]
+            details.append(f"{low}–{high} 分钟")
+        if step.get("sets"):
+            details.append(f"{step['sets']} 组")
+        if step.get("repetitions"):
+            details.append(step["repetitions"])
+        if step.get("rest_seconds"):
+            low, high = step["rest_seconds"]
+            details.append(f"组间休息 {low}–{high} 秒")
+        if step.get("intensity"):
+            details.append(step["intensity"])
+        suffix = " · ".join(details)
+        summary = f"{step['order']}. **{step['name']}**"
+        lines.append(f"{summary} · {suffix}" if suffix else summary)
+        lines.extend(f"   - {item}" for item in step.get("instructions", []))
+    if session.get("evidence"):
+        lines.extend(["", "**专项依据**"])
+        lines.extend(f"- {item}" for item in session["evidence"])
+    if session.get("progression"):
+        lines.extend(["", "**进阶条件**"])
+        lines.extend(f"- {item}" for item in session["progression"])
+    if session.get("stop_conditions"):
+        lines.extend(["", "**停止条件**"])
+        lines.extend(f"- {item}" for item in session["stop_conditions"])
+    return lines
+
+
+def _render_workout_intelligence(training: dict) -> list[str]:
+    lines = ["", "## 专项训练分析", ""]
+    running = training.get("running")
+    if running:
+        lines.append(
+            "- **跑步量**："
+            f"7 日 {running.get('sessions_7d', 0)} 次 / {running.get('duration_minutes_7d', 0)} 分钟"
+            f"；28 日 {running.get('sessions_28d', 0)} 次 / {running.get('duration_minutes_28d', 0)} 分钟"
+        )
+        if running.get("distance_km_7d") is not None:
+            lines.append(
+                f"- **跑步距离**：7 日 {running['distance_km_7d']} 公里 · "
+                f"28 日 {_display_with_unit(running.get('distance_km_28d'), '公里')}"
+            )
+        if running.get("recent_sessions"):
+            latest = running["recent_sessions"][0]
+            metrics = [latest["classification_label"], f"{latest['duration_minutes']} 分钟"]
+            if latest.get("distance_km") is not None:
+                metrics.append(f"{latest['distance_km']} 公里")
+            if latest.get("average_pace_seconds_per_km") is not None:
+                metrics.append(f"平均配速 {_pace(latest['average_pace_seconds_per_km'])}/公里")
+            if latest.get("median_cadence_spm") is not None:
+                metrics.append(f"步频中位数 {latest['median_cadence_spm']} 步/分钟")
+            if latest.get("cardiac_drift_percent") is not None:
+                metrics.append(f"心率漂移 {latest['cardiac_drift_percent']:+g}%")
+            lines.append(f"- **最近跑步**：{' · '.join(metrics)}")
+    else:
+        lines.append("- **跑步**：暂无分析")
+
+    strength = training.get("strength")
+    if strength:
+        split = strength.get("detected_split_label") or "尚未识别训练分化"
+        next_focus = strength.get("next_focus_label") or "待更多已确认动作"
+        lines.append(
+            f"- **力量结构**：7 日 {strength.get('sessions_7d', 0)} 次 · "
+            f"28 日 {strength.get('sessions_28d', 0)} 次 · {split} · 下一重点 {next_focus}"
+        )
+        lines.append(
+            f"- **动作覆盖**：{strength.get('explicit_session_coverage', 0) * 100:g}% 的力量训练含明确动作"
+        )
+        if strength.get("recent_sessions"):
+            latest = strength["recent_sessions"][0]
+            metrics = [latest["focus_label"], f"{latest['duration_minutes']} 分钟"]
+            if latest.get("total_sets") is not None:
+                metrics.append(f"{latest['total_sets']} 组")
+            if latest.get("estimated_work_bouts") is not None:
+                metrics.append(f"约 {latest['estimated_work_bouts']} 个工作段")
+            if latest.get("median_rest_seconds") is not None:
+                metrics.append(f"休息中位数 {latest['median_rest_seconds']:g} 秒")
+            if latest.get("session_rpe") is not None:
+                metrics.append(f"主观用力 {latest['session_rpe']}/10")
+            lines.append(f"- **最近力量训练**：{' · '.join(metrics)}")
+            names = [item["exercise_name"] for item in latest.get("explicit_exercises", [])]
+            if names:
+                lines.append(f"- **已确认动作**：{'、'.join(names)}")
+    else:
+        lines.append("- **力量训练**：暂无分析")
+    return lines
+
+
+def _pace(seconds: float) -> str:
+    rounded = max(int(round(seconds)), 0)
+    return f"{rounded // 60}:{rounded % 60:02d}"

@@ -392,7 +392,7 @@ Daily/Weekly/Monthly, recommendation/workout/feedback identity, device-isolated 
 Response v1, Personal Model v2 robust distributions and supported personal associations, event lifecycle observations,
 typed Timeline, bounded layered Context, deterministic quality/provenance, 7/28-day
 baselines, 7/28/90-day trends, explainable decisions, 122 public workout IDs, Chinese
-presentation contracts, running and strength workout analysis, structured prescriptions, scheduled analysis,
+presentation contracts, running and strength workout analysis, structured action plans, scheduled analysis,
 and thin Hermes Read/Analyze/Act tools.
 
 Not implemented: unrestricted exploratory correlation discovery, minute-level stress load,

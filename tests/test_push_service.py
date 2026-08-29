@@ -74,6 +74,41 @@ def _profile_payload():
                 "aerobic_minutes_7d": 142,
                 "strength_sessions_7d": 2,
                 "load_state_label": "近期负荷正常",
+                "running": {
+                    "sessions_7d": 2,
+                    "duration_minutes_7d": 82,
+                    "distance_km_7d": 14.2,
+                    "sessions_28d": 9,
+                    "duration_minutes_28d": 375,
+                    "distance_km_28d": 63.8,
+                    "recent_sessions": [{
+                        "classification_label": "节奏跑",
+                        "duration_minutes": 35,
+                        "distance_km": 6.4,
+                        "average_pace_seconds_per_km": 328,
+                        "median_cadence_spm": 174,
+                        "cardiac_drift_percent": 3.2,
+                    }],
+                },
+                "strength": {
+                    "sessions_7d": 2,
+                    "sessions_28d": 8,
+                    "explicit_session_coverage": 0.75,
+                    "detected_split_label": "推、拉、腿三分化",
+                    "next_focus_label": "拉类",
+                    "recent_sessions": [{
+                        "focus_label": "推类",
+                        "duration_minutes": 52,
+                        "total_sets": 9,
+                        "estimated_work_bouts": 9,
+                        "median_rest_seconds": 105,
+                        "session_rpe": 7,
+                        "explicit_exercises": [
+                            {"exercise_name": "卧推"},
+                            {"exercise_name": "肩推"},
+                        ],
+                    }],
+                },
                 "recent_workouts": [{
                     "date": "2026-08-28",
                     "sport_mode_label": "户外跑",
@@ -108,34 +143,73 @@ def _profile_payload():
             "action_label": "正常训练",
             "confidence": "MODERATE",
             "confidence_label": "中等",
-            "intensity": "moderate",
-            "intensity_label": "中等强度",
-            "suggested_type_labels": ["有氧训练"],
-            "duration_minutes": [45, 60],
             "drivers": ["RECOVERY_NORMAL"],
             "driver_labels": ["恢复状态一般"],
             "limitations": ["session_rpe_unavailable"],
             "limitation_labels": ["尚未记录主观用力程度"],
-            "prescription_guidance": "按以下结构完成本次训练。",
-            "prescriptions": [{
-                "title": "二区有氧跑",
-                "goal": "补充有氧基础训练",
-                "total_duration_minutes": [45, 60],
-                "steps": [{
+            "action_plan": {
+                "goal_label": "综合健康优先，跑步与力量并行",
+                "expires_at": "2026-08-29T00:00:00+08:00",
+                "safety_status_label": "未记录疼痛或伤病限制",
+                "weekly_balance": {
+                    "running_completed_7d": 2,
+                    "running_target_7d": 3,
+                    "running_completed_28d": 9,
+                    "running_target_28d": 12,
+                    "strength_completed_7d": 2,
+                    "strength_target_7d": 3,
+                    "strength_completed_28d": 8,
+                    "strength_target_28d": 12,
+                },
+                "primary_session": {
+                    "role_label": "主要训练",
+                    "session_type": "RUNNING",
+                    "title": "轻松跑",
+                    "focus": "补足有氧频次并控制恢复成本",
+                    "goal": "维持跑步连续性",
+                    "intensity_label": "低强度",
+                    "total_duration_minutes": [30, 45],
+                    "steps": [{
                     "order": 1,
                     "name": "热身",
-                    "duration_minutes": [8, 10],
+                    "duration_minutes": [6, 8],
                     "intensity": "轻松",
                     "instructions": ["先快走，再逐渐过渡到慢跑"],
-                }],
-                "progression": [],
-                "cautions": ["出现胸闷或头晕时停止训练"],
-            }],
+                    }],
+                    "evidence": ["近 7 天完成跑步 2 次。"],
+                    "progression": ["恢复稳定后增加 5 分钟。"],
+                    "stop_conditions": ["出现胸闷、头晕或疼痛时停止。"],
+                },
+                "optional_session": {
+                    "role_label": "可选训练",
+                    "session_type": "STRENGTH",
+                    "title": "拉类力量训练",
+                    "focus": "背部和肱二头肌",
+                    "goal": "维持力量训练频次",
+                    "intensity_label": "中等强度",
+                    "total_duration_minutes": [40, 60],
+                    "steps": [{
+                        "order": 1,
+                        "name": "水平拉",
+                        "sets": 3,
+                        "repetitions": "6–10 次",
+                        "rest_seconds": [120, 120],
+                        "intensity": "每组保留 2 次余力",
+                        "instructions": ["选择无痛、可控制的动作"],
+                    }],
+                    "evidence": ["下一训练重点为拉类。"],
+                    "progression": [],
+                    "stop_conditions": ["动作失控或疼痛时停止。"],
+                },
+                "session_relationship_label": "可分开完成，至少间隔 6 小时",
+                "conflict_checks": ["未发现高强度跑与腿部力量在 48 小时内冲突。"],
+                "missing_input_gates": ["未设置单次可用时长。"],
+            },
         },
     }
 
 
-def test_morning_push_uses_chinese_labels_and_renders_prescription():
+def test_morning_push_renders_concurrent_action_plan_and_workout_analysis():
     received = []
     service = PushService(pushplus_token="")
     service.add_handler(received.append)
@@ -159,13 +233,22 @@ def test_morning_push_uses_chinese_labels_and_renders_prescription():
     assert "深睡 92 分钟 · 快速眼动睡眠 106 分钟 · 清醒 24 分钟" in message.body
     assert "## 近期负荷与背景" in message.body
     assert "有氧 142 分钟 · 力量 2 次" in message.body
-    assert "\n## 训练安排\n" in message.body
+    assert "- **今日安排**：轻松跑" in message.body
+    assert "\n## 今日行动\n" in message.body
     assert "- **结论把握**：中等" in message.body
     assert "\n## 判断依据\n" in message.body
     assert "\n## 数据限制\n" in message.body
-    assert "\n## 具体方案\n" in message.body
-    assert "### 二区有氧跑 · 45–60 分钟" in message.body
-    assert "1. **热身** · 8–10 分钟 · 轻松" in message.body
+    assert "\n## 专项训练分析\n" in message.body
+    assert "最近跑步**：节奏跑 · 35 分钟 · 6.4 公里 · 平均配速 5:28/公里" in message.body
+    assert "推、拉、腿三分化 · 下一重点 拉类" in message.body
+    assert "已确认动作**：卧推、肩推" in message.body
+    assert "### 主要训练：轻松跑 · 30–45 分钟 · 低强度" in message.body
+    assert "### 可选训练：拉类力量训练 · 40–60 分钟 · 中等强度" in message.body
+    assert "可分开完成，至少间隔 6 小时" in message.body
+    assert "跑步 2/3 次（7 日）、9/12 次（28 日）" in message.body
+    assert "**停止条件**" in message.body
+    assert "**规划边界**" in message.body
+    assert "1. **热身** · 6–8 分钟 · 轻松" in message.body
     assert message.body.rfind("## 数据限制") > message.body.rfind("## 判断依据")
     assert message.body.rstrip().endswith("- 尚未记录主观用力程度")
     for internal_code in ("TRAIN_NORMAL", "MODERATE", "RECOVERY_NORMAL", "session_rpe_unavailable"):

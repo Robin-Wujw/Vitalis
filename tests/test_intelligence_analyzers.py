@@ -86,6 +86,18 @@ def test_good_recovery_and_low_load_can_produce_hard_training():
     assert decision.action == DecisionAction.TRAIN_HARD
 
 
+def test_near_baseline_signals_are_interpretable_normal_recovery():
+    *_, recovery, decision = _analyze(
+        _profile(hrv_today=51, rhr_today=56, sleep_today=452, load_today=31)
+    )
+
+    assert recovery.state == RecoveryState.NORMAL
+    assert recovery.positive_signals == []
+    assert recovery.negative_signals == []
+    assert decision.action == DecisionAction.TRAIN_NORMAL
+    assert decision.action_plan.primary_session is not None
+
+
 def test_decision_abstains_when_baselines_are_not_interpretable():
     raw = RawDailyProfile(user_id="u", day=TARGET)
     raw.training_preferences = TrainingPreferences(user_id="u")

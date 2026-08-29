@@ -9,7 +9,8 @@
    恢复状态及今晚是否继续活动。
 4. 使用可用趋势的 `metric_label`、`direction_label`、`confidence_label`，以及未解决
    事件的 `summary`、严重程度和生命周期标签展示近期背景。
-5. 如有进一步活动处方，完整渲染引擎返回的 `prescriptions`，不得自行增加动作。
+5. 晚间不重新安排当天训练；可回顾 `features.training.running` 和
+   `features.training.strength` 的已返回专项分析，但不得自行计算或增加动作。
 6. 使用中文依据说明判断，把数据限制固定为最后一节。
 7. 训练完成后，可简短询问一次 RPE、身体疲劳、精神状态或肌肉酸痛；收到回答后用
    `tools/feedback.py add` 原样记录，不得替用户推测评分。

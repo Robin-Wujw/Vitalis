@@ -1553,3 +1553,20 @@ retained.
   running, and strength suite passed all 80 tests; the broader suite excluding only the
   not-yet-replaced Hermes push/Skill modules passed all 181 tests. Compilation, JSON
   schema parsing, and `git diff --check` passed.
+- Part 5 (implementation and re-ingestion): Hermes workflows and the deterministic
+  PushPlus renderer now consume `decision.action_plan`, preserve primary/optional
+  relationships, and include 7/28-day balance, running metrics, strength split/detail,
+  evidence, conflict checks, dose, progression, stop conditions, missing-input gates,
+  and expiry. Hermes has user-scoped tools and schemas for training preferences and
+  confirmed strength exercises. A real-data acceptance run exposed and fixed that
+  neutral baseline directions were incorrectly excluded from recovery signal coverage;
+  neutral observations now count as interpretable without becoming positive or
+  negative evidence. The old `workout_samples` table and workout/intelligence-derived
+  rows were removed while authentication and browser-link state were retained. A fresh
+  30-day synchronization stored 24 current-contract workout details across heart rate,
+  speed, equivalent pace, cadence, distance, altitude, and running power. Real Daily
+  4.0 / Decision Policy 4.0 analysis and JSON Schema validation passed, and the private
+  morning renderer contained the action plan plus running and strength detail without
+  internal codes. The complete suite passed all 209 tests; compilation, extension
+  syntax, all JSON Schemas, and `git diff --check` passed. Runtime restart, live delivery,
+  GitHub publication, and final recording remain pending.

@@ -471,7 +471,15 @@ class RecoveryAnalyzer:
         if training.load_state == LoadState.ELEVATED:
             negative.append("TRAINING_LOAD_ELEVATED")
 
-        interpreted = len(positive) + len(negative)
+        interpreted = sum((
+            hrv_direction in {"above", "near", "below"},
+            bool(
+                hrv.rhr_deviation
+                and hrv.rhr_deviation.direction in {"above", "near", "below"}
+            ),
+            sleep_state != SleepState.INSUFFICIENT_DATA,
+            training.load_state != LoadState.INSUFFICIENT_DATA,
+        ))
         if interpreted < 2:
             state = RecoveryState.INSUFFICIENT_DATA
             status = Availability.INSUFFICIENT_DATA

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vitalis.local/schemas/training-preferences-1.0.json",
+  "title": "Vitalis TrainingPreferences 1.0",
+  "type": "object",
+  "required": ["user_id", "primary_goal", "primary_goal_label", "running_required", "strength_required", "weekly_running_target", "weekly_strength_target", "available_weekdays", "equipment", "pain_or_injury_status"],
+  "properties": {
+    "user_id": {"type": "string"},
+    "primary_goal": {"const": "HEALTH"},
+    "primary_goal_label": {"type": "string"},
+    "running_required": {"const": true},
+    "strength_required": {"const": true},
+    "weekly_running_target": {"type": "integer", "minimum": 1, "maximum": 7},
+    "weekly_strength_target": {"type": "integer", "minimum": 1, "maximum": 7},
+    "available_weekdays": {"type": "array", "uniqueItems": true, "items": {"type": "integer", "minimum": 1, "maximum": 7}},
+    "max_session_minutes": {"type": ["integer", "null"], "minimum": 20, "maximum": 180},
+    "running_experience": {"enum": ["BEGINNER", "INTERMEDIATE", "ADVANCED", null]},
+    "strength_experience": {"enum": ["BEGINNER", "INTERMEDIATE", "ADVANCED", null]},
+    "equipment": {"type": "array", "items": {"type": "string"}},
+    "pain_or_injury_status": {"enum": ["NONE", "PRESENT", "UNKNOWN"]},
+    "pain_or_injury_notes": {"type": ["string", "null"]}
+  }
+}

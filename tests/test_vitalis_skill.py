@@ -24,7 +24,7 @@ def test_skill_is_renderer_only_and_uses_current_intelligence_contracts():
     assert "request(" in analyze and '"POST"' in analyze and '"analyze"' in analyze
     assert not (SKILL / "tools" / "health_query.py").exists()
     assert "All user-visible content must be Chinese" in skill
-    assert "decision.prescriptions" in skill
+    assert "decision.action_plan" in skill
 
 
 def test_skill_has_all_workflows_and_valid_schema():
@@ -37,7 +37,8 @@ def test_skill_has_all_workflows_and_valid_schema():
     actions = schema["properties"]["decision"]["properties"]["action"]["enum"]
     assert "INSUFFICIENT_DATA" in actions
     decision_required = schema["properties"]["decision"]["required"]
-    assert {"action_label", "confidence_label", "prescriptions"} <= set(decision_required)
+    assert {"action_label", "confidence_label", "action_plan"} <= set(decision_required)
+    assert "prescriptions" not in decision_required
     workout_required = (
         schema["properties"]["features"]["properties"]["training"]["properties"]
         ["recent_workouts"]["items"]["required"]
@@ -51,7 +52,7 @@ def test_skill_has_all_workflows_and_valid_schema():
     for name in (
         "trends.json", "health_events.json", "context.json",
         "training_responses.json", "personal_model.json", "personal_associations.json",
-        "timeline.json",
+        "timeline.json", "training_preferences.json", "strength_exercises.json",
     ):
         json.loads((SKILL / "schemas" / name).read_text())
 
@@ -62,6 +63,7 @@ def test_skill_exposes_read_analyze_and_act_tools():
         "sync.py", "analyze.py", "feedback.py", "acknowledge_event.py",
         "training_responses.py", "personal_model.py", "personal_associations.py", "timeline.py",
         "complete_recommendation.py",
+        "training_preferences.py", "strength_exercises.py",
         "daily_push.py",
     }
     assert expected <= {path.name for path in (SKILL / "tools").glob("*.py")}

@@ -82,7 +82,10 @@ runs skip the date using private atomic state under `~/.hermes/vitalis_push/`. I
 substitutes yesterday's profile.
 
 A separate job runs at 22:30, synchronizes one day, and sends one Evening report for the
-current date. The Morning report interprets recovery and presents the training plan.
+current date. The Morning report interprets recovery and presents the health-first
+concurrent action plan: 7/28-day running and strength balance, one primary session, one
+optional addition or alternative, exact dose, evidence, conflict checks, stop
+conditions, and expiry.
 The Evening report instead reviews actual workouts, current and seven-day load,
 recovery signals, trends, and active events. Both put data limitations last.
 
@@ -171,7 +174,7 @@ Run the complete suite:
 .venv/bin/python -m pytest -q
 ```
 
-Current verified result: 184 tests passed. The suite covers connector parsing and
+The current verified result is recorded in `SYSTEM.md`. The suite covers connector parsing and
 synchronization, browser pairing, health-data APIs, device isolation, baselines,
 Daily/Weekly/Monthly intelligence, health-event lifecycle, training response,
 personal associations, immutable snapshots, bounded Context, Timeline, push rendering,

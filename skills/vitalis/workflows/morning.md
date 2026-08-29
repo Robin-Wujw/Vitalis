@@ -17,10 +17,13 @@ Use the requested date, or today's date when none is given.
 6. 使用 `positive_signal_labels`、`negative_signal_labels`、厂商准备度和身体电量
    解释恢复判断；厂商分数只能标为参考。
 7. 展示 7/28 日训练负荷、训练结构、可用趋势和未解决事件。
-8. 使用 `suggested_type_labels`、`intensity_label`、时长和
-   `prescription_guidance` 展示建议，再逐项完整渲染 `prescriptions` 的目标、步骤、
-   组次、休息、进阶和注意事项。
-9. 使用 `driver_labels` 展示依据，并把 `limitation_labels` 作为最后一节。
+8. 先展示 `action_plan.primary_session`，再展示 `optional_session` 和
+   `session_relationship_label`；逐项完整渲染剂量、步骤、组次、休息、专项依据、进阶、
+   停止条件和有效期，不得把二选一改成同日叠加。
+9. 展示 `weekly_balance`、`conflict_checks`、`missing_input_gates`，并从
+   `features.training.running` 和 `features.training.strength` 提取最近专项分析；不要重新
+   计算配速、心率区间、分化或训练量。
+10. 使用 `driver_labels` 展示依据，并把 `limitation_labels` 作为最后一节。
 
 当内部动作是 `INSUFFICIENT_DATA` 时，仅使用 `data_quality.status_label`、
 `missing_required_signal_labels` 和中文限制说明，不得用通用训练建议代替缺失结论。

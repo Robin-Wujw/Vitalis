@@ -865,17 +865,17 @@ class TrainingAnalyzer:
         today = raw.training_by_day.get(raw.day)
         recent_7 = [
             item for day, item in raw.training_by_day.items()
-            if raw.day - timedelta(days=7) <= day < raw.day
+            if raw.day - timedelta(days=6) <= day <= raw.day
         ]
         recent_28 = [
             item for day, item in raw.training_by_day.items()
-            if raw.day - timedelta(days=28) <= day < raw.day
+            if raw.day - timedelta(days=27) <= day <= raw.day
         ]
         today_load = float(today.get("total_load", 0)) if today else 0.0
         load_7d = sum(float(item.get("total_load", 0)) for item in recent_7)
         prior_week_loads = []
         for week in range(1, 4):
-            week_end = raw.day - timedelta(days=week * 7 + 1)
+            week_end = raw.day - timedelta(days=week * 7)
             week_start = week_end - timedelta(days=6)
             prior_week_loads.append(sum(
                 float(item.get("total_load", 0))

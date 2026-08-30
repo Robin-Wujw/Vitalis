@@ -86,13 +86,14 @@ current date. The Morning report interprets recovery and presents the health-fir
 concurrent action plan: fused overnight health, recent running and strength balance,
 one primary session, and an optional addition or alternative with a concrete dose and
 plain-language reasons. The Evening report instead reviews completed workouts, daily
-activity and stress, recent training rhythm and load, then gives a practical recovery
-action and leaves tomorrow's intensity to the next complete overnight assessment. Both
-reports are sent with PushPlus' HTML template using portable inline styling; report
+activity and stress, a seven-day SDNN trend, and rolling training load through today,
+then gives a practical recovery action and leaves tomorrow's intensity to the next
+complete overnight assessment. Both reports are sent with PushPlus' HTML template using
+portable inline styling; report
 values are escaped before HTML generation. The HTML root has its own high-contrast light
 background so PushPlus dark mode cannot place dark report text directly on black. The
-Evening report includes a gap-aware, descriptive RMSSD fluctuation line when timestamped
-samples are available; it does not infer stress or emotion from that line.
+Evening report does not show the sleep-only RMSSD curve or infer continuous daytime
+HRV, stress, or emotion from sparse samples.
 
 Add the PushPlus token to Hermes' private `~/.hermes/.env`:
 

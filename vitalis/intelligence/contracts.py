@@ -872,6 +872,8 @@ class WeeklyRecoveryFacts(BaseModel):
     hrv_median_ms: float | None = None
     hrv_previous_median_ms: float | None = None
     hrv_change_percent: float | None = None
+    sdnn_device_id: str | None = None
+    sdnn_daily: list[DailySdnnPoint] = Field(default_factory=list, max_length=7)
     rhr_available_days: int = Field(ge=0, le=7)
     rhr_metric: str | None = None
     rhr_median_bpm: float | None = None

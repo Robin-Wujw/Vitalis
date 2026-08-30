@@ -325,9 +325,7 @@ def _render_evening_daily_state(payload: dict, training: dict) -> list[str]:
         lines.append(f"- **压力分布**：{'；'.join(stress_parts)}。")
 
     features = payload.get("features", {})
-    lines.extend(_render_daily_hrv_curve(
-        features.get("hrv") or {}, features.get("sleep") or {}
-    ))
+    lines.extend(_render_weekly_sdnn_trend(features.get("hrv") or {}))
 
     running = training.get("running") or {}
     strength = training.get("strength") or {}
@@ -345,114 +343,87 @@ def _render_evening_daily_state(payload: dict, training: dict) -> list[str]:
     reference = training.get("load_7d_reference")
     change = training.get("load_7d_change_percent")
     if load is not None:
-        text = f"截至昨天的 7 个完整日，设备训练负荷为 {load:g}"
+        text = f"截至今天的 7 天，设备训练负荷为 {load:g}"
         meaning = "这是训练刺激，不直接代表恢复好坏"
         if reference is not None and change is not None:
-            relation = "高" if change > 0 else "低" if change < 0 else "相同"
-            amount = f" {abs(change):.1f}%" if change else ""
-            text += f"，比此前 3 周周均（{reference:g}）{relation}{amount}"
-            if change > 0:
+            if abs(change) < 5:
+                text += f"，与此前 3 周周均（{reference:g}）基本相同（{change:+.1f}%）"
+                meaning = "近期训练节奏总体稳定"
+            elif change > 0:
+                text += (
+                    f"，比此前 3 周周均（{reference:g}）高 {abs(change):.1f}%"
+                )
                 meaning = "这表示近期训练刺激增加，不代表恢复变差"
-            elif change < 0:
-                meaning = "这表示近期训练刺激减少，不代表恢复变差"
             else:
-                meaning = "这表示近期训练刺激与此前接近，不代表恢复好坏"
+                text += (
+                    f"，比此前 3 周周均（{reference:g}）低 {abs(change):.1f}%"
+                )
+                meaning = "这表示近期训练刺激减少，不代表恢复变差"
         lines.append(
             f"- **近期负荷**：{text}。{meaning}。"
         )
     return lines
 
 
-def _render_daily_hrv_curve(
-    hrv: dict, sleep: dict
-) -> list[str | _ReportHtmlBlock]:
-    curve = hrv.get("daily_curve") or {}
-    points = curve.get("points") or []
+def _render_weekly_sdnn_trend(hrv: dict) -> list[str | _ReportHtmlBlock]:
+    trend = hrv.get("sdnn_daily_trend") or {}
+    points = [
+        item for item in (trend.get("points") or [])
+        if isinstance(item, dict)
+        and isinstance(item.get("date"), str)
+        and isinstance(item.get("average_ms"), (int, float))
+    ]
     if not points:
         return []
-    bin_minutes = curve.get("bin_minutes")
-    if bin_minutes not in {1, 5, 10, 15, 30}:
-        return []
-    all_values = {
-        _time_bin_index(item.get("time"), bin_minutes): float(item["median_ms"])
-        for item in points
-        if _time_bin_index(item.get("time"), bin_minutes) is not None
-        and isinstance(item.get("median_ms"), (int, float))
-    }
-    if not all_values:
-        return []
-    values = _sleep_hrv_values(
-        all_values,
-        bin_minutes=bin_minutes,
-        bedtime=sleep.get("bedtime"),
-        wake_time=sleep.get("wake_time"),
-    )
-    if not values:
-        return []
-    first_index, last_index = min(values), max(values)
-    average = sum(values.values()) / len(values)
     return [
         "",
-        "### 睡眠 HRV 时间线",
+        "### 近 7 天 HRV（SDNN）",
         "",
-        _ReportHtmlBlock(_render_hrv_chart_html(
-            values,
-            bin_minutes=bin_minutes,
-            start_index=first_index,
-            end_index=last_index,
-        )),
+        _ReportHtmlBlock(_render_weekly_sdnn_chart_html(points)),
         "",
-        f"睡眠期记录 {_format_hrv_range(sorted(values), bin_minutes)}，"
-        f"平均 {average:.1f} 毫秒，共 {len(values)} 个分钟读数。"
-        "短采样间隔连线，超过 5 分钟没有读数时断开；这条曲线用于观察睡眠中的波动，"
-        "不单独判断压力或情绪。",
+        f"近 7 天有 {len(points)} 天记录。"
+        f"今天日均 {trend['today_average_ms']:g} 毫秒，"
+        f"来自 {trend['today_sample_count']} 次 SDNN 读数。",
         "",
     ]
 
 
-def _render_hrv_chart_html(
-    values: dict[int, float], *, bin_minutes: int, start_index: int, end_index: int
-) -> str:
-    low_value = min(values.values())
-    high_value = max(values.values())
-    axis_low = max(0.0, float(int(low_value // 10) * 10))
-    axis_high = float(int((high_value + 9) // 10) * 10)
+def _render_weekly_sdnn_chart_html(points: list[dict]) -> str:
+    values = [float(item["average_ms"]) for item in points]
+    low_value = min(values)
+    high_value = max(values)
+    axis_low = max(0.0, float(int(low_value // 10) * 10 - 10))
+    axis_high = float(int((high_value + 9) // 10) * 10 + 10)
     if axis_high <= axis_low:
-        axis_high = axis_low + 10
-    left, right, top, bottom = 52.0, 576.0, 24.0, 128.0
-    span = max(end_index - start_index, 1)
+        axis_high = axis_low + 20
+    left, right, top, bottom = 48.0, 576.0, 28.0, 128.0
+    span = max(len(points) - 1, 1)
 
     def coordinate(index: int) -> tuple[float, float]:
-        x = left + (index - start_index) / span * (right - left)
+        x = left + index / span * (right - left)
         ratio = (values[index] - axis_low) / (axis_high - axis_low)
         return x, bottom - ratio * (bottom - top)
 
-    segments: list[list[int]] = []
-    for index in sorted(values):
-        if not segments or index - segments[-1][-1] > max(1, 5 // bin_minutes):
-            segments.append([index])
-        else:
-            segments[-1].append(index)
-
-    lines = []
-    for segment in segments:
-        if len(segment) < 2:
-            continue
-        points = " ".join(
-            f"{x:.1f},{y:.1f}" for x, y in (coordinate(index) for index in segment)
-        )
-        lines.append(
-            f'<polyline points="{points}" fill="none" stroke="#ef5b56" '
+    coordinates = [coordinate(index) for index in range(len(points))]
+    polyline = ""
+    if len(points) >= 2:
+        encoded = " ".join(f"{x:.1f},{y:.1f}" for x, y in coordinates)
+        polyline = (
+            f'<polyline points="{encoded}" fill="none" stroke="#2f9e44" '
             'stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>'
         )
-    low_index = min(values, key=values.get)
-    high_index = max(values, key=values.get)
-    extrema = "".join(
-        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4" fill="#ef5b56"/>'
-        for x, y in (coordinate(index) for index in (low_index, high_index))
+    markers = "".join(
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="#ffffff" '
+        'stroke="#2f9e44" stroke-width="3"/>'
+        f'<text x="{x:.1f}" y="{max(y - 11, 14):.1f}" text-anchor="middle" '
+        f'fill="#237a35" font-size="12" font-weight="600">{values[index]:g}</text>'
+        for index, (x, y) in enumerate(coordinates)
     )
-    middle = (axis_low + axis_high) / 2
-    y_ticks = (axis_high, middle, axis_low)
+    dates = "".join(
+        f'<text x="{x:.1f}" y="154" text-anchor="middle" fill="#64748b" font-size="11">'
+        f'{item["date"][5:].replace("-", "/")}</text>'
+        for item, (x, _) in zip(points, coordinates)
+    )
     grid = "".join(
         f'<line x1="{left:.0f}" y1="{top + offset * (bottom - top) / 2:.1f}" '
         f'x2="{right:.0f}" y2="{top + offset * (bottom - top) / 2:.1f}" '
@@ -460,81 +431,19 @@ def _render_hrv_chart_html(
         for offset in range(3)
     )
     labels = "".join(
-        f'<text x="43" y="{top + offset * (bottom - top) / 2 + 4:.1f}" '
-        'text-anchor="end" fill="#94a3b8" font-size="12">'
-        f'{value:g}</text>'
-        for offset, value in enumerate(y_ticks)
+        f'<text x="40" y="{top + offset * (bottom - top) / 2 + 4:.1f}" '
+        f'text-anchor="end" fill="#94a3b8" font-size="11">{value:g}</text>'
+        for offset, value in enumerate((axis_high, (axis_low + axis_high) / 2, axis_low))
     )
-    average = sum(values.values()) / len(values)
     return (
-        '<div style="margin:6px 0 10px;padding:10px 8px 4px;border:1px solid #dbe4e8;'
+        '<div style="margin:6px 0 10px;padding:8px;border:1px solid #dbe4e8;'
         'border-radius:6px;background:#ffffff;overflow:hidden">'
-        '<div style="display:flex;justify-content:flex-end;gap:14px;padding:0 10px 4px;'
-        'color:#475569;font-size:12px">'
-        f'<span>平均 {average:.1f}</span><span>最低 {low_value:g}</span>'
-        f'<span>最高 {high_value:g} 毫秒</span></div>'
-        '<svg viewBox="0 0 600 175" width="100%" role="img" '
-        'aria-label="睡眠心率变异性时间线" '
+        '<svg viewBox="0 0 600 170" width="100%" role="img" '
+        'aria-label="近七天心率变异性 SDNN 逐日趋势" '
         'style="display:block;width:100%;height:auto;background:#ffffff">'
-        f'{grid}{labels}{"".join(lines)}{extrema}'
-        f'{_render_hrv_time_axis(left, right, start_index, end_index, bin_minutes)}'
+        f'{grid}{labels}{polyline}{markers}{dates}'
         '</svg></div>'
     )
-
-
-def _render_hrv_time_axis(
-    left: float, right: float, start_index: int, end_index: int, bin_minutes: int
-) -> str:
-    middle_index = (start_index + end_index) // 2
-    ticks = ((left, start_index), ((left + right) / 2, middle_index), (right, end_index))
-    return "".join(
-        f'<text x="{x:.1f}" y="158" text-anchor="middle" fill="#64748b" font-size="12">'
-        f'{_format_hrv_range([index], bin_minutes)}</text>'
-        for x, index in ticks
-    )
-
-
-def _sleep_hrv_values(
-    values: dict[int, float], *, bin_minutes: int,
-    bedtime: str | None, wake_time: str | None,
-) -> dict[int, float]:
-    bedtime_index = _time_bin_index(bedtime, bin_minutes)
-    wake_index = _time_bin_index(wake_time, bin_minutes)
-    if bedtime_index is None or wake_index is None:
-        return values
-    if bedtime_index <= wake_index:
-        return {
-            index: value for index, value in values.items()
-            if bedtime_index <= index <= wake_index
-        }
-    bins_per_day = 24 * 60 // bin_minutes
-    return {
-        (index + bins_per_day if index <= wake_index else index): value
-        for index, value in values.items()
-        if index >= bedtime_index or index <= wake_index
-    }
-
-
-def _format_hrv_range(indexes: list[int], bin_minutes: int) -> str:
-    def clock(index: int) -> str:
-        minute = index * bin_minutes % (24 * 60)
-        return f"{minute // 60:02d}:{minute % 60:02d}"
-
-    first = clock(indexes[0])
-    last = clock(indexes[-1])
-    return first if first == last else f"{first}–{last}"
-
-
-def _time_bin_index(value: str | None, bin_minutes: int) -> int | None:
-    if not isinstance(value, str):
-        return None
-    try:
-        hour, minute = (int(part) for part in value.split(":")[:2])
-    except (TypeError, ValueError):
-        return None
-    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
-        return None
-    return (hour * 60 + minute) // bin_minutes
 
 
 def _evening_recovery_action(
@@ -796,13 +705,6 @@ def _render_overnight_summary(
         if hrv_deviation.get("percent") is not None:
             text += f"（较个人基线 {hrv_deviation['percent']:+.1f}%）"
         cardiovascular.append(text)
-    sdnn = hrv.get("sdnn_daily_trend") or {}
-    if sdnn.get("today_average_ms") is not None:
-        cardiovascular.append(
-            f"SDNN 日均 {sdnn['today_average_ms']:g} 毫秒"
-            f"（{sdnn['today_sample_count']} 次读数，"
-            f"区间 {sdnn['today_minimum_ms']:g}–{sdnn['today_maximum_ms']:g}）"
-        )
     if hrv.get("recent_7d_change_percent") is not None:
         cardiovascular.append(
             f"近 7 天较此前 7 天 {hrv['recent_7d_change_percent']:+.1f}%"

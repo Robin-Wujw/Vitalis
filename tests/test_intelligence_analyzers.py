@@ -128,6 +128,18 @@ def test_empty_morning_load_does_not_make_the_recent_week_low():
     assert training.load_7d_reference is not None
 
 
+def test_rolling_training_load_includes_target_day():
+    raw = _profile(load_today=100)
+
+    training = TrainingAnalyzer().analyze(
+        raw, BaselineEngine().build(raw.series, raw.day)
+    )
+
+    assert training.today_load == 100
+    assert training.load_7d == 286
+    assert training.duration_7d == 210
+
+
 def test_near_baseline_signals_are_interpretable_normal_recovery():
     *_, recovery, decision = _analyze(
         _profile(hrv_today=51, rhr_today=56, sleep_today=452, load_today=31)

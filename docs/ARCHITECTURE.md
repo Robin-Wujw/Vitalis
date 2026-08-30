@@ -453,14 +453,17 @@ coverage gates in `RESEARCH_NOTES.md` can be satisfied.
 `HrvFeatures` keeps Zepp's algorithms separate. The recovery value prefers the nightly
 `sleepHRV` summary, then sleep-oriented SDNN when available. `hrv_sdnn/real_data` is also
 aggregated into one mean/min/max point per local calendar day, matching ZeppBridge's
-daily trend contract without merging device values. The sleep timeline uses only
-`HRVRMSSD/real_data`, binned into one-minute local-time medians. Curve-source selection
-chooses the single target-day RMSSD stream with the most populated minute bins. PushPlus
-crops the chart to the validated main-sleep window, connects observations separated by
-no more than five minutes, and breaks longer gaps. This matches the useful shape of the
-Zepp sleep timeline without claiming beat-to-beat or ECG equivalence. RMSSD records
-outside the main-sleep window are retained but not relabeled as all-day stress or
-emotion.
+daily trend contract without merging device values. The evening PushPlus report renders
+these canonical SDNN daily means as a seven-day chart. Timestamped
+`HRVRMSSD/real_data` remains available in the structured profile for inspection, but its
+sleep-only timeline is not included in the evening summary because it adds no useful
+all-day information. Neither sparse daytime RMSSD observations nor vendor stress are
+relabeled as a continuous all-day HRV curve.
+
+Training `load_7d`, duration, and comparison windows are rolling local-day windows ending
+on the analysis date. The evening report therefore includes today's completed training;
+the three comparison weeks are the immediately preceding non-overlapping seven-day
+windows.
 
 ## 6. Evidence Boundaries
 

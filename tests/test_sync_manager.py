@@ -3,6 +3,7 @@
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 import threading
+from types import SimpleNamespace
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
@@ -138,6 +139,7 @@ class TestSyncManager:
             repo = HealthRepository(db)
             repo.upsert_user("test-001", name="Test", source="zepp")
             report = manager.sync_report(user, days=7, repo=repo)
+            states = {row.stream: row for row in repo.sync_stream_states(user.id)}
 
         assert report.success is True
         stream_names = [s.stream for s in report.streams]
@@ -149,6 +151,56 @@ class TestSyncManager:
         assert "wellness" in stream_names
         assert "dense_files" in stream_names
         assert report.records_written >= 0
+        assert states["heart_rate"].fetch_status == "success"
+        assert states["heart_rate"].parse_status == "success"
+        assert states["heart_rate"].write_status == "success"
+        assert states["heart_rate"].last_sample_at == datetime(1970, 1, 1, 0, 0, 1)
+        assert states["wellness"].fetch_status == "unavailable"
+
+    def test_valid_duplicate_upsert_remains_successful(self, mock_fetcher, setup_db):
+        manager = SyncManager(mock_fetcher)
+        user = User(id="duplicate-heart-rate-user")
+        record = mock_fetcher.fetch_heart_rate_records(FetchWindow.days_back(1))[0]
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            first = manager._persist_record(record, repo, user)
+            duplicate = manager._persist_record(record, repo, user)
+
+        assert first.write_status == "success"
+        assert duplicate.status == "success"
+        assert duplicate.parse_status == "success"
+        assert duplicate.write_status == "success"
+        assert duplicate.error_kind is None
+
+    def test_aggregate_success_is_not_overwritten_by_unrecognized_child(
+        self, mock_fetcher, setup_db
+    ):
+        manager = SyncManager(mock_fetcher)
+        user = User(id="mixed-heart-rate-user")
+        window = FetchWindow.days_back(1)
+        valid = mock_fetcher.fetch_heart_rate_records(window)[0]
+        unknown = FetchedRecord(raw=RawRecord(
+            stream="heart_rate",
+            source_key="hr:unknown",
+            start_utc=window.start,
+            end_utc=window.end,
+            payload={"items": [{"unknown": "shape"}]},
+        ))
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            aggregate = manager._persist_records(
+                "heart_rate", [valid, unknown], repo, user
+            )
+            manager._save_stream_health(repo, user, [aggregate])
+            state = repo.sync_stream_states(user.id)[0]
+
+        assert aggregate.status == "success"
+        assert aggregate.parse_status == "success"
+        assert state.stream == "heart_rate"
+        assert state.parse_status == "success"
+        assert state.write_status == "success"
 
     def test_sync_refreshes_device_inventory_for_analysis_labels(
         self, mock_fetcher, setup_db
@@ -239,7 +291,7 @@ class TestSyncManager:
         assert written == 1
         assert workout is not None and workout.detail_synced is True
         assert workout.detail == {
-            "schema_version": "2.0",
+            "schema_version": "3.0",
             "workout_id": str(int(start.timestamp())),
             "metrics_present": ["heart_rate"],
             "metric_sample_counts": {"heart_rate": 4},
@@ -249,6 +301,75 @@ class TestSyncManager:
         }
         assert [sample.metric for sample in samples] == ["heart_rate"] * 4
         assert [sample.value for sample in samples] == [80, 80, 82, 81]
+
+    def test_pending_workout_detail_batch_is_capped_at_four(self, mock_fetcher):
+        requested_limits = []
+        fetched_ids = []
+
+        class Repository:
+            @staticmethod
+            def pending_workout_details(_user_id, _start, _end, limit):
+                requested_limits.append(limit)
+                return [
+                    SimpleNamespace(
+                        workout_id=f"run-{index}",
+                        vendor_source="device-source",
+                        started_at=datetime.now(timezone.utc),
+                    )
+                    for index in range(limit)
+                ]
+
+        def fetch_detail(workout_id, source, start, end):
+            fetched_ids.append(workout_id)
+            return FetchedRecord(raw=RawRecord(
+                stream="workout_detail",
+                source_key=f"workout_detail:{workout_id}:{source}",
+                start_utc=start,
+                end_utc=end,
+                payload={"data": {"trackid": int(start.timestamp())}},
+            ))
+
+        mock_fetcher.fetch_workout_detail = fetch_detail
+        records = SyncManager(mock_fetcher)._fetch_pending_workout_details(
+            FetchWindow.days_back(7), Repository(), User(id="batch-user")
+        )
+
+        assert requested_limits == [4]
+        assert fetched_ids == ["run-0", "run-1", "run-2", "run-3"]
+        assert len(records) == 4
+
+    def test_workout_detail_timeout_does_not_fail_core_health_sync(
+        self, mock_fetcher, setup_db
+    ):
+        mock_fetcher.fetch_workout_detail = lambda *_args: (_ for _ in ()).throw(
+            ZeppAuthError("同步超时，已停止后续请求")
+        )
+        user = User(id="detail-timeout-user")
+        started_at = datetime.now(timezone.utc) - timedelta(days=1)
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            repo.save_workout(Workout(
+                user_id=user.id,
+                workout_id="slow-detail",
+                started_at=started_at,
+                ended_at=started_at + timedelta(minutes=30),
+                duration=30,
+                type=WorkoutType.RUNNING,
+                vendor_source="device-source",
+            ))
+            report = SyncManager(mock_fetcher).sync_report(user, days=7, repo=repo)
+            states = {row.stream: row for row in repo.sync_stream_states(user.id)}
+
+        assert report.success is True
+        assert mock_fetcher.calls == [
+            "heart_rate", "daily_summary", "workouts", "sleep", "hrv",
+            "wellness", "dense_files",
+        ]
+        detail = next(item for item in report.streams if item.stream == "workout_detail")
+        assert detail.status == "failed"
+        assert states["workout_detail"].fetch_status == "failed"
+        assert states["heart_rate"].write_status == "success"
 
     def test_workout_training_record_uses_shanghai_start_day(self, mock_fetcher, setup_db):
         manager = SyncManager(mock_fetcher)

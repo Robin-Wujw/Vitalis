@@ -508,6 +508,12 @@ def test_health_sync_transient_zepp_failure_keeps_browser_link_connected(
     assert response.status_code == 200
     assert response.json()["status"] == "transient_error"
     assert response.json()["retryable"] is True
+    diagnostic = client.get(
+        "/api/v1/health/data-health", headers={"X-User-Id": user_id}
+    ).json()["streams"]
+    sync_state = next(item for item in diagnostic if item["stream"] == "sync")
+    assert sync_state["fetch"]["status"] == "failed"
+    assert sync_state["error_kind"] == "network"
     link = client.get(
         "/api/v1/connect/zepp/token", headers={"X-User-Id": user_id}
     ).json()

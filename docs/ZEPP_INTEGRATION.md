@@ -52,6 +52,9 @@ vendor risk controls may require a new official login.
 
 Vitalis currently normalizes:
 
+- type-2 `/users/{id}/heartRate` measurements encoded as `generatedTime` plus a
+  single-byte base64 `heartRateData` value; multi-byte payloads remain unrecognized
+  until their sampling interval and timestamp direction can be verified;
 - minute heart rate from `band_data.data_hr`, up to 1,440 local-day slots;
 - RMSSD, SDNN, sleep HRV/RHR, readiness components, skin-temperature delta, Charge,
   stress, SpO2/ODI, PAI, respiratory rate, and lactate-threshold fields when present;
@@ -62,6 +65,11 @@ Vitalis currently normalizes:
   cadence, distance, altitude, running power, laps, pauses, and explicit strength sets;
 - decoded second-level heart rate from dense `SEC_HR` cloud files, with per-device
   coverage and decode status retained alongside the samples.
+
+Dense indexes are fetched on every sync, but an archive is downloaded only when its
+index gains an unseen interval. Intervals checked against a valid archive without a
+matching sample block are retained as `no_data`, preventing an open-ended vendor
+placeholder from forcing the same daily archive to be downloaded repeatedly.
 
 HRV sources are not interchangeable:
 
@@ -95,7 +103,10 @@ multiple activities, so each record's numeric `type` is authoritative. Workout d
 comes from `/v1/sport/run/detail.json`. Vitalis normalizes its compressed series into
 typed UTC observations in `workout_metric_samples`. The current contract supports
 heart rate, speed, equivalent pace, cadence, cumulative distance, altitude, running
-power, laps, pauses, and explicit vendor strength sets when present.
+power, ground-contact time, vertical oscillation, vertical stride ratio, laps, pauses,
+and explicit vendor strength sets when present. The three `runPosture` sentinels are
+discarded rather than stored as zero. Workout summaries retain a valid six-boundary
+`heart_range` and `heartrate_setting_type` for device-aligned zone analysis.
 
 This is a workout-only stream, not continuous all-day high-frequency heart rate. The
 detail response does not identify the sensor for each sample, so normalized detail

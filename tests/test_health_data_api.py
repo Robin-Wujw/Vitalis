@@ -77,6 +77,48 @@ def test_metric_writes_deduplicate_same_batch(client):
     assert [metric["value"] for metric in daily.json()["metrics"]] == [75]
 
 
+def test_data_health_exposes_fetch_parse_write_and_sample_time(client):
+    user_id = "data-health-user"
+    observed = datetime(2026, 8, 25, 8, 5, tzinfo=timezone.utc)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        repo.save_metric_samples([
+            MetricSample(
+                user_id=user_id,
+                metric="hrv_rmssd",
+                timestamp=observed,
+                value=58,
+                unit="ms",
+            )
+        ])
+        repo.save_sync_stream_state(
+            user_id,
+            "wellness/hrv_rmssd",
+            fetch_status="success",
+            parse_status="success",
+            write_status="success",
+            fetched_at=observed,
+            parsed_at=observed,
+            written_at=observed,
+            raw_records=1,
+            records_written=1,
+        )
+
+    response = client.get(
+        "/api/v1/health/data-health",
+        headers={"X-User-Id": user_id},
+    )
+
+    assert response.status_code == 200
+    stream = response.json()["streams"][0]
+    assert stream["stream"] == "wellness/hrv_rmssd"
+    assert stream["fetch"]["status"] == "success"
+    assert stream["parse"]["status"] == "success"
+    assert stream["write"]["status"] == "success"
+    assert stream["last_sample_at"] == "2026-08-25T08:05:00Z"
+
+
 def test_metric_writes_preserve_two_devices_at_same_timestamp(client):
     user_id = "multi-device-metrics-user"
     timestamp = datetime(2026, 8, 25, 8, 5, tzinfo=timezone.utc)
@@ -203,7 +245,7 @@ def test_normalized_workout_metric_samples_are_isolated_and_returned_in_order(cl
             "sample-user",
             workout_id,
             {
-                "schema_version": "2.0",
+                "schema_version": "3.0",
                 "workout_id": workout_id,
                 "metrics_present": ["heart_rate"],
                 "metric_sample_counts": {"heart_rate": 2},

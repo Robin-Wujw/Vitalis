@@ -87,6 +87,24 @@ def test_decode_sec_hr_archive_maps_devices_and_ignores_missing_values():
     ]
 
 
+def test_decode_sec_hr_archive_marks_unmatched_index_as_checked_no_data():
+    start = 1_777_334_400
+    archive = make_archive({"heart.pb": [(start, [50, 51], False)]})
+    open_ended = _indexed("DEVICE-A", start + 100, 1).model_copy(
+        update={"end_utc": None}
+    )
+
+    decoded = decode_sec_hr_archive(
+        archive,
+        [_indexed("DEVICE-A", start, 2), open_ended],
+    )
+
+    assert [(item.parse_status, item.sample_count) for item in decoded.files] == [
+        ("decoded", 2),
+        ("no_data", 0),
+    ]
+
+
 def test_decode_sec_hr_archive_rejects_ambiguous_device_mapping():
     start = 1_777_334_400
     archive = make_archive({"heart.pb": [(start, [50, 51], False)]})

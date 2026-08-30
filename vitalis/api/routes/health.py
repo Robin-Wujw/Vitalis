@@ -16,6 +16,30 @@ from vitalis.storage import HealthRepository, session_scope
 router = APIRouter(prefix="/health", tags=["health"])
 
 
+@router.get("/data-health")
+def health_data_health(user_id: str = Depends(require_user_id)) -> dict:
+    """Explain the latest Zepp fetch, parse and write state per stream."""
+    with session_scope() as db:
+        rows = HealthRepository(db).sync_stream_states(user_id)
+    return {
+        "user_id": user_id,
+        "streams": [
+            {
+                "stream": row.stream,
+                "fetch": {"status": row.fetch_status, "at": _iso_utc(row.fetched_at) if row.fetched_at else None},
+                "parse": {"status": row.parse_status, "at": _iso_utc(row.parsed_at) if row.parsed_at else None},
+                "write": {"status": row.write_status, "at": _iso_utc(row.written_at) if row.written_at else None},
+                "last_sample_at": _iso_utc(row.last_sample_at) if row.last_sample_at else None,
+                "raw_records": row.raw_records,
+                "records_written": row.records_written,
+                "error_kind": row.error_kind,
+                "message": row.message,
+            }
+            for row in rows
+        ],
+    }
+
+
 @router.post("/sync")
 def health_sync(
     days: int = Query(7, ge=1, le=730, description="同步天数"),
@@ -50,6 +74,9 @@ def health_sync(
                     "stream": s.stream,
                     "status": s.status,
                     "records_written": s.records_written,
+                    "fetch_status": s.fetch_status,
+                    "parse_status": s.parse_status,
+                    "write_status": s.write_status,
                     "needs_reauth": s.needs_reauth,
                     "message": s.message,
                 }
@@ -59,6 +86,21 @@ def health_sync(
             "message": report.message,
         }
     except ZeppAuthError as exc:
+        with session_scope() as db:
+            HealthRepository(db).save_sync_stream_state(
+                user_id,
+                "sync",
+                fetch_status="failed",
+                parse_status="not_run",
+                write_status="not_run",
+                fetched_at=datetime.now(timezone.utc),
+                parsed_at=None,
+                written_at=None,
+                raw_records=0,
+                records_written=0,
+                error_kind="auth" if exc.needs_reauth else "network",
+                message=str(exc),
+            )
         if not exc.needs_reauth:
             return {
                 "user_id": user_id,

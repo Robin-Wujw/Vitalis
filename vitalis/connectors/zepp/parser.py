@@ -5,6 +5,8 @@ TrainingRecord / Workout。此处是「厂商格式隔离」的关键边界 —�
 上层模块永远看不到 Zepp 的字段名（sleepScore/stages 等）。
 """
 
+from base64 import b64decode
+from binascii import Error as BinasciiError
 from datetime import date, datetime, time, timedelta, timezone
 import json
 
@@ -230,6 +232,10 @@ class ZeppParser:
                 ),
                 vendor_source=str(it.get("source")) if it.get("source") else None,
                 vendor_type_id=numeric_type,
+                heart_rate_zone_setting_type=self._bounded_int(
+                    it, ("heartrate_setting_type", "heartRateSettingType"), 0, 20
+                ),
+                heart_rate_zone_boundaries_bpm=self._heart_rate_zone_boundaries(it),
             ))
         return workouts
 
@@ -276,6 +282,9 @@ class ZeppParser:
             ))
         samples.extend(ZeppParser._cadence_samples(
             workout_id, start, data.get("gait")
+        ))
+        samples.extend(ZeppParser._run_posture_samples(
+            workout_id, start, data.get("runPosture")
         ))
         samples = ZeppParser._deduplicate_workout_samples(samples)
         counts: dict[str, int] = {}
@@ -435,6 +444,75 @@ class ZeppParser:
         return samples
 
     @staticmethod
+    def _run_posture_samples(
+        workout_id: str, start: datetime, encoded: object
+    ) -> list[WorkoutMetricSample]:
+        if not isinstance(encoded, str) or not encoded:
+            return []
+        elapsed = 0
+        samples = []
+        for part in encoded.split(";"):
+            fields = part.split(",")
+            if len(fields) < 4:
+                continue
+            try:
+                elapsed += max(int(fields[0] or 1), 0)
+                contact = int(fields[1])
+                oscillation = int(fields[2])
+                ratio_raw = int(fields[3])
+            except ValueError:
+                continue
+            if elapsed > MAX_WORKOUT_SECONDS:
+                continue
+            readings = (
+                ("ground_contact_time", contact, "ms", contact != 65535 and 50 <= contact <= 1000),
+                ("vertical_oscillation", oscillation, "mm", oscillation != 65535 and 1 <= oscillation <= 500),
+                (
+                    "vertical_stride_ratio",
+                    ratio_raw / 10,
+                    "%",
+                    ratio_raw != 255 and 1 <= ratio_raw <= 1000,
+                ),
+            )
+            for metric, value, unit, valid in readings:
+                if valid:
+                    samples.append(WorkoutMetricSample(
+                        workout_id=workout_id,
+                        timestamp=start + timedelta(seconds=elapsed),
+                        metric=metric,
+                        value=round(float(value), 2),
+                        unit=unit,
+                    ))
+        return samples
+
+    @staticmethod
+    def _heart_rate_zone_boundaries(data: dict) -> list[int]:
+        raw = data.get("heart_range")
+        if raw is None:
+            raw = data.get("heartRange")
+        values: list[int] = []
+        entries = raw if isinstance(raw, list) else str(raw).split(";") if raw else []
+        for entry in entries:
+            candidate = None
+            if isinstance(entry, dict):
+                candidate = ZeppParser._first_number(
+                    entry, ("boundary", "upper", "max", "bpm", "value")
+                )
+            elif isinstance(entry, (list, tuple)) and entry:
+                candidate = ZeppParser._first_number({"value": entry[-1]}, ("value",))
+            elif isinstance(entry, (int, float)):
+                candidate = float(entry)
+            elif isinstance(entry, str):
+                fields = [field.strip() for field in entry.split(",") if field.strip()]
+                if fields:
+                    candidate = ZeppParser._first_number({"value": fields[-1]}, ("value",))
+            if candidate is not None and 30 <= candidate <= 250:
+                values.append(int(candidate))
+        if len(values) != 6 or any(left >= right for left, right in zip(values, values[1:])):
+            return []
+        return values
+
+    @staticmethod
     def _workout_laps(encoded: object) -> list[WorkoutLap]:
         if not isinstance(encoded, str) or not encoded:
             return []
@@ -560,6 +638,28 @@ class ZeppParser:
         samples: list[MetricSample] = []
         for item in ZeppParser._items(raw):
             if not isinstance(item, dict):
+                continue
+            encoded = item.get("heartRateData")
+            if isinstance(encoded, str):
+                try:
+                    decoded = b64decode(encoded, validate=True)
+                except (BinasciiError, ValueError):
+                    decoded = b""
+                # Verified against 46 real type-2 endpoint rows: one unsigned
+                # byte is one measurement at generatedTime. Multi-byte payloads
+                # remain unsupported until their sampling interval is verified.
+                timestamp = ZeppParser._parse_datetime_value(item.get("generatedTime"))
+                value = decoded[0] if len(decoded) == 1 else None
+                if timestamp is not None and value is not None and 0 <= value <= 300:
+                    device_id = ZeppParser._device_id(item)
+                    samples.append(MetricSample(
+                        metric="heart_rate",
+                        timestamp=timestamp,
+                        value=float(value),
+                        unit="bpm",
+                        source_scope="device" if device_id else "user_fused",
+                        device_id=device_id,
+                    ))
                 continue
             nested = item.get("value") if isinstance(item.get("value"), dict) else None
             obj = nested if nested and any(k in nested for k in ("timestamp", "time", "heartRate", "hr")) else item

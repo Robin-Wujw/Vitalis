@@ -1076,6 +1076,12 @@ def _render_today_workout_details(training: dict, report_date: str) -> list[str]
                 metrics.append(f"平均配速 {_pace(latest['average_pace_seconds_per_km'])}/公里")
             if latest.get("median_cadence_spm") is not None:
                 metrics.append(f"步频中位数 {latest['median_cadence_spm']:g} 步/分钟")
+            if latest.get("average_power_watts") is not None:
+                metrics.append(f"平均功率 {latest['average_power_watts']:g} 瓦")
+            if latest.get("median_equivalent_pace_seconds_per_km") is not None:
+                metrics.append(
+                    f"等效配速 {_pace(latest['median_equivalent_pace_seconds_per_km'])}/公里"
+                )
             if latest.get("average_heart_rate_bpm") is not None:
                 metrics.append(f"平均心率 {latest['average_heart_rate_bpm']:g} 次/分钟")
             if latest.get("maximum_heart_rate_bpm") is not None:
@@ -1089,6 +1095,28 @@ def _render_today_workout_details(training: dict, report_date: str) -> list[str]
             zone_text = _zone_distribution(latest.get("heart_rate_zones", []))
             if zone_text:
                 lines.append(f"- **跑步心率分布**：{zone_text}。")
+            dynamics = []
+            if latest.get("median_ground_contact_time_ms") is not None:
+                dynamics.append(f"触地时间 {latest['median_ground_contact_time_ms']:g} 毫秒")
+            if latest.get("median_vertical_oscillation_mm") is not None:
+                dynamics.append(f"垂直振幅 {latest['median_vertical_oscillation_mm']:g} 毫米")
+            if latest.get("median_vertical_stride_ratio_percent") is not None:
+                dynamics.append(f"垂直步幅比 {latest['median_vertical_stride_ratio_percent']:g}%")
+            if dynamics:
+                lines.append(f"- **跑姿记录**：{' · '.join(dynamics)}。")
+            baseline = latest.get("comparable_baseline")
+            if baseline:
+                pace_delta = float(baseline["pace_difference_percent"])
+                comparison = (
+                    f"配速快 {abs(pace_delta):.1f}%" if pace_delta < 0
+                    else f"配速慢 {pace_delta:.1f}%" if pace_delta > 0
+                    else "配速相同"
+                )
+                if baseline.get("heart_rate_difference_bpm") is not None:
+                    comparison += f"，平均心率相差 {baseline['heart_rate_difference_bpm']:+g} 次/分钟"
+                lines.append(
+                    f"- **相近距离对比**：与此前 {baseline['sample_count']} 次相比，{comparison}。"
+                )
 
     strength = training.get("strength")
     if strength:

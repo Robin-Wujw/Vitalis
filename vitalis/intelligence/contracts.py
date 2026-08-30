@@ -468,6 +468,19 @@ class RunningSegment(BaseModel):
     average_heart_rate_bpm: float | None = Field(default=None, ge=1)
 
 
+class ComparableRunBaseline(BaseModel):
+    sample_count: int = Field(ge=3, le=10)
+    window_days: Literal[180] = 180
+    distance_tolerance_percent: Literal[20] = 20
+    workout_ids: list[str] = Field(min_length=3, max_length=10)
+    median_pace_seconds_per_km: float = Field(gt=0)
+    pace_difference_percent: float
+    median_heart_rate_bpm: float | None = Field(default=None, ge=1)
+    heart_rate_difference_bpm: float | None = None
+    median_power_watts: float | None = Field(default=None, ge=0)
+    power_difference_percent: float | None = None
+
+
 class RunningSessionAnalysis(BaseModel):
     workout_id: str
     date: DateValue
@@ -489,20 +502,28 @@ class RunningSessionAnalysis(BaseModel):
     median_speed_mps: float | None = Field(default=None, ge=0)
     median_cadence_spm: float | None = Field(default=None, ge=0)
     cadence_variability_percent: float | None = Field(default=None, ge=0)
+    average_power_watts: float | None = Field(default=None, ge=0)
+    median_equivalent_pace_seconds_per_km: float | None = Field(default=None, ge=0)
+    median_ground_contact_time_ms: float | None = Field(default=None, ge=0)
+    median_vertical_oscillation_mm: float | None = Field(default=None, ge=0)
+    median_vertical_stride_ratio_percent: float | None = Field(default=None, ge=0)
     average_heart_rate_bpm: float | None = Field(default=None, ge=1)
     maximum_heart_rate_bpm: float | None = Field(default=None, ge=1)
+    heart_rate_zone_source: Literal["device_workout", "lactate_threshold", "unavailable"] = "unavailable"
+    heart_rate_zone_boundaries_bpm: list[int] = Field(default_factory=list)
     heart_rate_zones: list[RunningHeartRateZone] = Field(default_factory=list)
     cardiac_drift_percent: float | None = None
+    comparable_baseline: ComparableRunBaseline | None = None
     segments: list[RunningSegment] = Field(default_factory=list, max_length=20)
     evidence: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
 
 
 class RunningAnalysis(BaseModel):
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["2.0"] = "2.0"
     status: Availability
     status_label: str
-    zone_method: Literal["lactate_threshold", "unavailable"] = "unavailable"
+    zone_method: Literal["device_workout", "lactate_threshold", "mixed", "unavailable"] = "unavailable"
     lactate_threshold_bpm: float | None = Field(default=None, ge=1)
     sessions_7d: int = Field(ge=0)
     duration_minutes_7d: int = Field(ge=0)

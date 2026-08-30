@@ -13,7 +13,7 @@
 
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
 
@@ -79,6 +79,12 @@ class MetricSample(Base):
         UniqueConstraint(
             "user_id", "source", "metric", "timestamp", "device_id",
             name="uq_metric_sample",
+        ),
+        Index(
+            "ix_metric_samples_user_metric_timestamp",
+            "user_id",
+            "metric",
+            "timestamp",
         ),
         {"info": {"timescale": True}},
     )
@@ -182,6 +188,32 @@ class WorkoutMetricSample(Base):
     unit: Mapped[str] = mapped_column(String(24))
     source_scope: Mapped[str] = mapped_column(String(32), default="unknown")
     device_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class SyncStreamState(Base):
+    """Latest fetch/parse/write state for one user-owned source stream."""
+
+    __tablename__ = "sync_stream_states"
+    __table_args__ = (
+        UniqueConstraint("user_id", "source", "stream", name="uq_sync_stream_state"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    source: Mapped[str] = mapped_column(String(32), default="zepp")
+    stream: Mapped[str] = mapped_column(String(96), index=True)
+    fetch_status: Mapped[str] = mapped_column(String(24), default="never")
+    parse_status: Mapped[str] = mapped_column(String(24), default="never")
+    write_status: Mapped[str] = mapped_column(String(24), default="never")
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    parsed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    written_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_sample_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    raw_records: Mapped[int] = mapped_column(Integer, default=0)
+    records_written: Mapped[int] = mapped_column(Integer, default=0)
+    error_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class StrengthExercise(Base):

@@ -39,6 +39,14 @@ def init_db() -> None:
     from . import models as _  # noqa: F401
 
     Base.metadata.create_all(bind=_engine)
+    # `create_all` does not add indexes declared after an existing table was
+    # created, so apply the current high-volume query index explicitly.
+    metric_samples = Base.metadata.tables["metric_samples"]
+    next(
+        index
+        for index in metric_samples.indexes
+        if index.name == "ix_metric_samples_user_metric_timestamp"
+    ).create(bind=_engine, checkfirst=True)
 
 
 def get_session() -> Iterator[Session]:

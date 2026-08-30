@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime, timedelta
-from statistics import median
+from statistics import mean, median
 
 from .contracts import (
     Availability,
     ConfidenceBand,
     RunningAnalysis,
+    ComparableRunBaseline,
     RunningHeartRateZone,
     RunningSegment,
     RunningSessionAnalysis,
@@ -27,11 +28,11 @@ CLASSIFICATION_LABELS = {
     "UNCLASSIFIED": "暂未分类",
 }
 ZONE_LABELS = {
-    1: "一区：轻松恢复",
-    2: "二区：低强度有氧",
-    3: "三区：中等强度",
-    4: "四区：阈值附近",
-    5: "五区：阈值以上",
+    1: "一区：轻松",
+    2: "二区：耐力",
+    3: "三区：节奏",
+    4: "四区：阈值",
+    5: "五区：无氧",
 }
 
 
@@ -42,6 +43,7 @@ class RunningAnalyzer:
         current_start = raw.day - timedelta(days=27)
         previous_start = raw.day - timedelta(days=55)
         current = self._runs(raw.workouts, current_start, raw.day)
+        history = self._runs(raw.workouts, raw.day - timedelta(days=179), raw.day)
         previous = self._runs(
             raw.workouts, previous_start, current_start - timedelta(days=1)
         )
@@ -60,7 +62,13 @@ class RunningAnalyzer:
         analyses = []
         historical_durations: list[int] = []
         for workout in sorted(current, key=self._workout_date):
-            analysis = self._session(workout, threshold, historical_durations)
+            prior_runs = [
+                item for item in history
+                if self._workout_sort_key(item) < self._workout_sort_key(workout)
+            ]
+            analysis = self._session(
+                workout, threshold, historical_durations, prior_runs
+            )
             analyses.append(analysis)
             historical_durations.append(analysis.duration_minutes)
 
@@ -85,10 +93,20 @@ class RunningAnalyzer:
         type_counts: dict[str, int] = {}
         for item in analyses:
             type_counts[item.classification] = type_counts.get(item.classification, 0) + 1
+        zone_sources = {
+            item.heart_rate_zone_source
+            for item in analyses
+            if item.heart_rate_zone_source != "unavailable"
+        }
+        zone_method = (
+            "mixed" if len(zone_sources) > 1
+            else next(iter(zone_sources)) if zone_sources
+            else "unavailable"
+        )
         return RunningAnalysis(
             status=Availability.AVAILABLE,
             status_label=AVAILABILITY_LABELS[Availability.AVAILABLE.value],
-            zone_method="lactate_threshold" if threshold is not None else "unavailable",
+            zone_method=zone_method,
             lactate_threshold_bpm=threshold,
             sessions_7d=len(recent_7),
             duration_minutes_7d=sum(self._duration(item) for item in recent_7),
@@ -107,6 +125,7 @@ class RunningAnalyzer:
         workout: dict,
         threshold: float | None,
         historical_durations: list[int],
+        prior_runs: list[dict],
     ) -> RunningSessionAnalysis:
         data = workout.get("data") or {}
         samples = workout.get("samples") or []
@@ -114,6 +133,11 @@ class RunningAnalyzer:
         heart_rate = grouped.get("heart_rate", [])
         speed = [item for item in grouped.get("speed", []) if item.value > 0]
         cadence = grouped.get("cadence", [])
+        power = grouped.get("running_power", [])
+        equivalent_pace = grouped.get("equivalent_pace", [])
+        ground_contact = grouped.get("ground_contact_time", [])
+        vertical_oscillation = grouped.get("vertical_oscillation", [])
+        vertical_ratio = grouped.get("vertical_stride_ratio", [])
         duration = self._duration(workout)
         distance = self._distance(workout)
         median_speed = self._median_value(speed)
@@ -127,7 +151,13 @@ class RunningAnalyzer:
         if cadence_median:
             cadence_mad = median(abs(item.value - cadence_median) for item in cadence)
             cadence_variability = round(cadence_mad / cadence_median * 100, 1)
-        zones = self._zones(heart_rate, threshold)
+        device_boundaries = self._device_zone_boundaries(workout)
+        zones = self._zones(heart_rate, threshold, device_boundaries)
+        zone_source = (
+            "device_workout" if device_boundaries
+            else "lactate_threshold" if threshold is not None and heart_rate
+            else "unavailable"
+        )
         segments = self._segments(speed, heart_rate)
         classification, confidence, evidence = self._classify(
             duration,
@@ -148,6 +178,17 @@ class RunningAnalyzer:
             limitations.append("本次缺少步频明细。")
         if drift_limitation:
             limitations.append(drift_limitation)
+        average_power = mean(item.value for item in power) if power else None
+        comparable = self._comparable_baseline(
+            workout,
+            prior_runs,
+            average_pace,
+            (
+                mean(item.value for item in heart_rate)
+                if heart_rate else self._positive(data.get("heart_rate_avg"))
+            ),
+            average_power,
+        )
         return RunningSessionAnalysis(
             workout_id=str(workout.get("workout_id") or ""),
             date=self._workout_date(workout),
@@ -161,6 +202,19 @@ class RunningAnalyzer:
             median_speed_mps=round(median_speed, 3) if median_speed else None,
             median_cadence_spm=round(cadence_median, 1) if cadence_median else None,
             cadence_variability_percent=cadence_variability,
+            average_power_watts=round(average_power, 1) if average_power is not None else None,
+            median_equivalent_pace_seconds_per_km=(
+                round(self._median_value(equivalent_pace), 1) if equivalent_pace else None
+            ),
+            median_ground_contact_time_ms=(
+                round(self._median_value(ground_contact), 1) if ground_contact else None
+            ),
+            median_vertical_oscillation_mm=(
+                round(self._median_value(vertical_oscillation), 1) if vertical_oscillation else None
+            ),
+            median_vertical_stride_ratio_percent=(
+                round(self._median_value(vertical_ratio), 1) if vertical_ratio else None
+            ),
             average_heart_rate_bpm=(
                 round(sum(item.value for item in heart_rate) / len(heart_rate), 1)
                 if heart_rate else self._positive(data.get("heart_rate_avg"))
@@ -169,8 +223,11 @@ class RunningAnalyzer:
                 max(item.value for item in heart_rate)
                 if heart_rate else self._positive(data.get("heart_rate_max"))
             ),
+            heart_rate_zone_source=zone_source,
+            heart_rate_zone_boundaries_bpm=device_boundaries,
             heart_rate_zones=zones,
             cardiac_drift_percent=drift,
+            comparable_baseline=comparable,
             segments=segments[:20],
             evidence=evidence,
             limitations=limitations,
@@ -187,6 +244,15 @@ class RunningAnalyzer:
     @staticmethod
     def _workout_date(workout: dict) -> date:
         return workout.get("local_day") or date.min
+
+    @staticmethod
+    def _workout_sort_key(workout: dict) -> tuple[date, datetime]:
+        started = workout.get("started_at")
+        if not isinstance(started, datetime):
+            started = datetime.min
+        elif started.tzinfo is not None:
+            started = started.replace(tzinfo=None)
+        return RunningAnalyzer._workout_date(workout), started
 
     @staticmethod
     def _duration(workout: dict) -> int:
@@ -233,20 +299,34 @@ class RunningAnalyzer:
         return float(median(item.value for item in samples)) if samples else None
 
     @staticmethod
-    def _zones(samples: list, threshold: float | None) -> list[RunningHeartRateZone]:
-        if not samples or threshold is None:
+    def _zones(
+        samples: list,
+        threshold: float | None,
+        device_boundaries: list[int] | None = None,
+    ) -> list[RunningHeartRateZone]:
+        if not samples or (threshold is None and not device_boundaries):
             return []
+        cuts = (
+            list(device_boundaries[1:5])
+            if device_boundaries and len(device_boundaries) == 6
+            else [round(float(threshold) * ratio) for ratio in (0.81, 0.88, 0.93, 0.99)]
+        )
         bounds = (
-            (1, None, round(threshold * 0.85) - 1),
-            (2, round(threshold * 0.85), round(threshold * 0.90) - 1),
-            (3, round(threshold * 0.90), round(threshold * 0.95) - 1),
-            (4, round(threshold * 0.95), round(threshold) - 1),
-            (5, round(threshold), None),
+            (1, None, cuts[0] - 1),
+            (2, cuts[0], cuts[1] - 1),
+            (3, cuts[1], cuts[2] - 1),
+            (4, cuts[2], cuts[3] - 1),
+            (5, cuts[3], None),
         )
         counts = {zone: 0 for zone in range(1, 6)}
         for sample in samples:
-            ratio = sample.value / threshold
-            zone = 1 if ratio < 0.85 else 2 if ratio < 0.90 else 3 if ratio < 0.95 else 4 if ratio < 1 else 5
+            zone = (
+                1 if sample.value < cuts[0]
+                else 2 if sample.value < cuts[1]
+                else 3 if sample.value < cuts[2]
+                else 4 if sample.value < cuts[3]
+                else 5
+            )
             counts[zone] += 1
         total = len(samples)
         return [
@@ -260,6 +340,79 @@ class RunningAnalyzer:
             )
             for zone, lower, upper in bounds
         ]
+
+    @staticmethod
+    def _device_zone_boundaries(workout: dict) -> list[int]:
+        values = (workout.get("data") or {}).get("heart_rate_zone_boundaries_bpm") or []
+        if (
+            isinstance(values, list)
+            and len(values) == 6
+            and all(isinstance(value, int) and 30 <= value <= 250 for value in values)
+            and all(left < right for left, right in zip(values, values[1:]))
+        ):
+            return values
+        return []
+
+    def _comparable_baseline(
+        self,
+        workout: dict,
+        prior_runs: list[dict],
+        current_pace: float | None,
+        current_hr: float | None,
+        current_power: float | None,
+    ) -> ComparableRunBaseline | None:
+        distance = self._distance(workout)
+        if not distance or not current_pace:
+            return None
+        comparable = [
+            item for item in reversed(sorted(prior_runs, key=self._workout_sort_key))
+            if (candidate_distance := self._distance(item)) is not None
+            and distance * 0.8 <= candidate_distance <= distance * 1.2
+            and self._workout_pace(item) is not None
+        ][:10]
+        if len(comparable) < 3:
+            return None
+        paces = [self._workout_pace(item) for item in comparable]
+        baseline_pace = float(median(value for value in paces if value is not None))
+        heart_rates = [self._workout_average_hr(item) for item in comparable]
+        valid_heart_rates = [value for value in heart_rates if value is not None]
+        baseline_hr = float(median(valid_heart_rates)) if len(valid_heart_rates) >= 3 else None
+        powers = [self._workout_average_power(item) for item in comparable]
+        valid_powers = [value for value in powers if value is not None]
+        baseline_power = float(median(valid_powers)) if len(valid_powers) >= 3 else None
+        return ComparableRunBaseline(
+            sample_count=len(comparable),
+            workout_ids=[str(item.get("workout_id") or "") for item in comparable],
+            median_pace_seconds_per_km=round(baseline_pace, 1),
+            pace_difference_percent=round((current_pace - baseline_pace) / baseline_pace * 100, 1),
+            median_heart_rate_bpm=round(baseline_hr, 1) if baseline_hr is not None else None,
+            heart_rate_difference_bpm=(
+                round(current_hr - baseline_hr, 1)
+                if current_hr is not None and baseline_hr is not None else None
+            ),
+            median_power_watts=round(baseline_power, 1) if baseline_power is not None else None,
+            power_difference_percent=(
+                round((current_power - baseline_power) / baseline_power * 100, 1)
+                if current_power is not None and baseline_power not in (None, 0) else None
+            ),
+        )
+
+    def _workout_pace(self, workout: dict) -> float | None:
+        distance = self._distance(workout)
+        duration = self._duration(workout)
+        return duration * 60 / distance if distance and duration > 0 else None
+
+    @staticmethod
+    def _workout_average_hr(workout: dict) -> float | None:
+        samples = [item.value for item in workout.get("samples", []) if item.metric == "heart_rate"]
+        if samples:
+            return float(mean(samples))
+        return RunningAnalyzer._positive((workout.get("data") or {}).get("heart_rate_avg"))
+
+    @staticmethod
+    def _workout_average_power(workout: dict) -> float | None:
+        values = [item.value for item in workout.get("samples", []) if item.metric == "running_power"]
+        return float(mean(values)) if values else None
 
     def _segments(self, speed: list, heart_rate: list) -> list[RunningSegment]:
         speed_bins = self._bins(speed, 30)

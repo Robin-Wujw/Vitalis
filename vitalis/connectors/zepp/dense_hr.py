@@ -262,7 +262,10 @@ def decode_sec_hr_archive(
             _overlap_seconds(block.start_second, block.end_second, start, end) > 0
             for block in blocks
         ):
-            decoded_files.append(item)
+            decoded_files.append(item.model_copy(update={
+                "parse_status": "no_data",
+                "sample_count": 0,
+            }))
             continue
         count = sum(
             1

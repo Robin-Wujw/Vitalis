@@ -102,6 +102,14 @@ class Workout(BaseModel):
         default=None,
         description="Original numeric vendor workout type retained for mapping audits",
     )
+    heart_rate_zone_setting_type: int | None = Field(
+        default=None,
+        description="Vendor heart-rate-zone model identifier from the workout summary",
+    )
+    heart_rate_zone_boundaries_bpm: list[int] = Field(
+        default_factory=list,
+        description="Six strictly increasing device boundaries from heart_range",
+    )
 
 
 class WorkoutMetricSample(BaseModel):
@@ -117,6 +125,9 @@ class WorkoutMetricSample(BaseModel):
         "distance",
         "altitude",
         "running_power",
+        "ground_contact_time",
+        "vertical_oscillation",
+        "vertical_stride_ratio",
     ]
     value: float
     unit: str
@@ -158,7 +169,7 @@ class StrengthSetObservation(BaseModel):
 class WorkoutDetail(BaseModel):
     """Current normalized workout-detail contract."""
 
-    schema_version: Literal["2.0"] = "2.0"
+    schema_version: Literal["3.0"] = "3.0"
     workout_id: str
     metrics_present: list[str] = Field(default_factory=list)
     metric_sample_counts: dict[str, int] = Field(default_factory=dict)

@@ -51,10 +51,11 @@ semantics.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | POST | `/health/sync?days=7` | Run an incremental source synchronization |
+| GET | `/health/data-health` | Read per-stream fetch, parse, write, and sample freshness state |
 | GET | `/health/token-status` | Read credential state and next synchronization time |
 | GET | `/health/range?from=&to=&granularity=` | Read 180d/90d/30d/7d/1d aggregate blocks |
 | GET | `/health/workouts?from=&to=` | List workout summaries and detail availability |
-| GET | `/health/workouts/{workout_id}` | Read current v2 workout detail and ordered typed metric samples |
+| GET | `/health/workouts/{workout_id}` | Read current v3 workout detail and ordered typed metric samples |
 | GET | `/health/metrics/{metric}?from=&to=` | Read timestamped measurements and provenance |
 | GET | `/health/daily-metrics?metric=&from=&to=` | Read sparse daily metrics |
 | GET | `/health/dense-files/second_heart_rate?from=&to=` | Read high-frequency file coverage without file IDs |

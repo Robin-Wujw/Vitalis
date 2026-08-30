@@ -35,7 +35,6 @@ SAMPLE_METRICS = (
     "spo2_apnea_low",
 )
 MAX_SAMPLES_PER_METRIC = 1_000_000
-MAX_HEART_RATE_SAMPLES_PER_NIGHT = 200_000
 PROFILE_HISTORY_DAYS = 180
 
 
@@ -253,8 +252,8 @@ class ProfileLoader:
     def _add_heart_rate_samples(self, raw: RawDailyProfile, start: date) -> None:
         heart_rate_start = max(start, raw.day - timedelta(days=34))
         minute_values: dict[
-            tuple[datetime, str, str, str | None, str], list[float]
-        ] = defaultdict(list)
+            tuple[datetime, str, str, str | None, str], float
+        ] = {}
         for sleep_day, record in raw.sleep_by_day.items():
             if not heart_rate_start <= sleep_day <= raw.day:
                 continue
@@ -266,27 +265,22 @@ class ProfileLoader:
             start_at, end_at = (
                 value.astimezone(timezone.utc) for value in window
             )
-            for row in self.repo.metric_samples(
-                raw.user_id,
-                "heart_rate",
-                start_at,
-                end_at,
-                limit=MAX_HEART_RATE_SAMPLES_PER_NIGHT,
+            for minute, value, source, source_scope, device_id, unit in (
+                self.repo.heart_rate_minute_medians(
+                    raw.user_id, start_at, end_at
+                )
             ):
-                if not isinstance(row.value, (int, float)) or not 25 <= float(row.value) <= 240:
-                    continue
-                minute = row.timestamp.replace(second=0, microsecond=0)
                 minute_values[(
                     minute,
-                    row.source,
-                    row.source_scope,
-                    row.device_id or None,
-                    row.unit,
-                )].append(float(row.value))
+                    source,
+                    source_scope,
+                    device_id,
+                    unit,
+                )] = value
         raw.heart_rate_samples = [
             SeriesPoint(
                 metric="heart_rate",
-                value=float(median(values)),
+                value=float(value),
                 unit=unit,
                 day=local_day(minute),
                 observed_at=minute,
@@ -294,7 +288,7 @@ class ProfileLoader:
                 source_scope=source_scope,
                 device_id=device_id,
             )
-            for (minute, source, source_scope, device_id, unit), values
+            for (minute, source, source_scope, device_id, unit), value
             in sorted(
                 minute_values.items(),
                 key=lambda item: (

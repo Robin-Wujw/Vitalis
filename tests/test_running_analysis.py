@@ -151,3 +151,60 @@ def test_running_volume_keeps_incomplete_distance_explicit():
     assert analysis.distance_km_28d is None
     assert analysis.distance_change_percent is None
     assert any("总距离不可计算" in item for item in analysis.limitations)
+
+
+def test_running_analysis_uses_device_zones_dynamics_and_comparable_runs():
+    target_samples = []
+    for second in range(60):
+        target_samples.extend([
+            _sample(second, "heart_rate", 165, "bpm"),
+            _sample(second, "speed", 3.2, "m/s"),
+            _sample(second, "running_power", 250, "W"),
+            _sample(second, "equivalent_pace", 350, "s/km"),
+            _sample(second, "ground_contact_time", 263, "ms"),
+            _sample(second, "vertical_oscillation", 88, "mm"),
+            _sample(second, "vertical_stride_ratio", 8.7, "%"),
+        ])
+    target = _run(target_samples, duration=29, distance=5.0)
+    target["data"]["heart_rate_zone_setting_type"] = 3
+    target["data"]["heart_rate_zone_boundaries_bpm"] = [113, 141, 154, 162, 173, 190]
+
+    history = []
+    for index, (days_ago, duration, heart_rate, power) in enumerate([
+        (20, 30, 148, 230),
+        (14, 31, 150, 235),
+        (7, 32, 152, 240),
+    ]):
+        samples = [
+            _sample(second, "running_power", power, "W")
+            for second in range(10)
+        ]
+        run = _run(
+            samples,
+            duration=duration,
+            distance=5.0,
+            day=TARGET - timedelta(days=days_ago),
+            workout_id=f"run-history-{index}",
+        )
+        run["data"]["heart_rate_avg"] = heart_rate
+        history.append(run)
+
+    analysis = RunningAnalyzer().analyze(_raw([*history, target], threshold=200))
+    session = analysis.recent_sessions[0]
+
+    assert analysis.schema_version == "2.0"
+    assert analysis.zone_method == "device_workout"
+    assert session.heart_rate_zone_source == "device_workout"
+    assert session.heart_rate_zones[3].lower_bpm == 162
+    assert session.heart_rate_zones[3].duration_seconds == 60
+    assert session.average_power_watts == 250
+    assert session.median_equivalent_pace_seconds_per_km == 350
+    assert session.median_ground_contact_time_ms == 263
+    assert session.median_vertical_oscillation_mm == 88
+    assert session.median_vertical_stride_ratio_percent == 8.7
+    assert session.comparable_baseline is not None
+    assert session.comparable_baseline.sample_count == 3
+    assert session.comparable_baseline.median_pace_seconds_per_km == 372
+    assert session.comparable_baseline.pace_difference_percent == -6.5
+    assert session.comparable_baseline.heart_rate_difference_bpm == 15
+    assert session.comparable_baseline.power_difference_percent == 6.4

@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 import hashlib
 from uuid import uuid4
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from vitalis.models import (
@@ -263,6 +263,73 @@ class HealthRepository:
             ).order_by(orm.MetricSample.timestamp).limit(limit)
         ).scalars().all())
 
+    def heart_rate_minute_medians(
+        self, user_id: str, start: datetime, end: datetime
+    ) -> list[tuple[datetime, float, str, str, str | None, str]]:
+        """Aggregate a dense heart-rate window before rows leave the database."""
+        params = {
+            "user_id": user_id,
+            "start": _naive_utc(start),
+            "end": _naive_utc(end),
+        }
+        if self.db.get_bind().dialect.name == "postgresql":
+            statement = text("""
+                SELECT date_trunc('minute', timestamp) AS minute,
+                       source, source_scope, device_id, unit,
+                       percentile_cont(0.5) WITHIN GROUP (ORDER BY value) AS median_value
+                FROM metric_samples
+                WHERE user_id = :user_id
+                  AND metric = 'heart_rate'
+                  AND timestamp BETWEEN :start AND :end
+                  AND value BETWEEN 25 AND 240
+                GROUP BY minute, source, source_scope, device_id, unit
+                ORDER BY minute, source, source_scope, device_id, unit
+            """)
+        else:
+            statement = text("""
+                WITH ranked AS (
+                    SELECT strftime('%Y-%m-%d %H:%M:00', timestamp) AS minute,
+                           source, source_scope, device_id, unit, value,
+                           row_number() OVER (
+                               PARTITION BY strftime('%Y-%m-%d %H:%M:00', timestamp),
+                                            source, source_scope, device_id, unit
+                               ORDER BY value
+                           ) AS sample_rank,
+                           count(*) OVER (
+                               PARTITION BY strftime('%Y-%m-%d %H:%M:00', timestamp),
+                                            source, source_scope, device_id, unit
+                           ) AS sample_count
+                    FROM metric_samples
+                    WHERE user_id = :user_id
+                      AND metric = 'heart_rate'
+                      AND timestamp BETWEEN :start AND :end
+                      AND value BETWEEN 25 AND 240
+                )
+                SELECT minute, source, source_scope, device_id, unit,
+                       avg(value) AS median_value
+                FROM ranked
+                WHERE sample_rank IN (
+                    (sample_count + 1) / 2,
+                    (sample_count + 2) / 2
+                )
+                GROUP BY minute, source, source_scope, device_id, unit
+                ORDER BY minute, source, source_scope, device_id, unit
+            """)
+        output = []
+        for row in self.db.execute(statement, params).mappings():
+            minute = row["minute"]
+            if isinstance(minute, str):
+                minute = datetime.fromisoformat(minute)
+            output.append((
+                minute,
+                float(row["median_value"]),
+                row["source"],
+                row["source_scope"],
+                row["device_id"] or None,
+                row["unit"],
+            ))
+        return output
+
     def save_daily_metrics(self, metrics: list[DailyMetric]) -> int:
         """Idempotently upsert sparse daily vendor metrics."""
         deduplicated: dict[tuple[str, str, date, str], DailyMetric] = {}
@@ -433,14 +500,19 @@ class HealthRepository:
     def pending_workout_details(
         self, user_id: str, start: datetime, end: datetime, limit: int = 100
     ) -> list[orm.Workout]:
-        return list(self.db.execute(
+        rows = list(self.db.execute(
             select(orm.Workout).where(
                 orm.Workout.user_id == user_id,
                 orm.Workout.started_at.between(_naive_utc(start), _naive_utc(end)),
                 orm.Workout.vendor_source.is_not(None),
-                orm.Workout.detail_synced.is_(False),
-            ).order_by(orm.Workout.started_at).limit(limit)
+            ).order_by(orm.Workout.started_at)
         ).scalars().all())
+        return [
+            row for row in rows
+            if not row.detail_synced
+            or not isinstance(row.detail, dict)
+            or row.detail.get("schema_version") != "3.0"
+        ][:limit]
 
     def save_workout_detail(
         self,
@@ -537,6 +609,102 @@ class HealthRepository:
                 orm.Workout.workout_id == workout_id,
             )
         ).scalar_one_or_none()
+
+    # ---- 同步数据健康 ----
+
+    def save_sync_stream_state(
+        self,
+        user_id: str,
+        stream: str,
+        *,
+        fetch_status: str,
+        parse_status: str,
+        write_status: str,
+        fetched_at: datetime | None,
+        parsed_at: datetime | None,
+        written_at: datetime | None,
+        raw_records: int,
+        records_written: int,
+        error_kind: str | None = None,
+        message: str | None = None,
+        source: str = "zepp",
+    ) -> orm.SyncStreamState:
+        row = self.db.execute(select(orm.SyncStreamState).where(
+            orm.SyncStreamState.user_id == user_id,
+            orm.SyncStreamState.source == source,
+            orm.SyncStreamState.stream == stream,
+        )).scalar_one_or_none()
+        if row is None:
+            row = orm.SyncStreamState(user_id=user_id, source=source, stream=stream)
+            self.db.add(row)
+        row.fetch_status = fetch_status
+        row.parse_status = parse_status
+        row.write_status = write_status
+        row.fetched_at = _naive_utc(fetched_at) if fetched_at else None
+        row.parsed_at = _naive_utc(parsed_at) if parsed_at else None
+        row.written_at = _naive_utc(written_at) if written_at else None
+        row.last_sample_at = self.latest_stream_sample_at(user_id, stream)
+        row.raw_records = raw_records
+        row.records_written = records_written
+        row.error_kind = error_kind
+        row.message = message[:1000] if message else None
+        row.updated_at = datetime.utcnow()
+        self.db.flush()
+        return row
+
+    def sync_stream_states(self, user_id: str) -> list[orm.SyncStreamState]:
+        return list(self.db.execute(
+            select(orm.SyncStreamState).where(
+                orm.SyncStreamState.user_id == user_id
+            ).order_by(orm.SyncStreamState.stream)
+        ).scalars().all())
+
+    def latest_stream_sample_at(self, user_id: str, stream: str) -> datetime | None:
+        metric_by_stream = {
+            "heart_rate": "heart_rate",
+            "hrv": "hrv_sdnn",
+            "wellness/hrv_rmssd": "hrv_rmssd",
+            "wellness/spo2": "spo2",
+            "wellness/respiratory_rate": "respiratory_rate",
+            "wellness/all_day_stress": "stress",
+            "wellness/pai": "pai_daily",
+            "wellness/lactate_threshold": "lactate_threshold_hr",
+        }
+        metric = metric_by_stream.get(stream)
+        if metric in {"heart_rate", "hrv_sdnn", "hrv_rmssd", "spo2"}:
+            return self.db.execute(select(func.max(orm.MetricSample.timestamp)).where(
+                orm.MetricSample.user_id == user_id,
+                orm.MetricSample.metric == metric,
+            )).scalar_one_or_none()
+        if metric:
+            value = self.db.execute(select(func.max(orm.DailyMetric.date)).where(
+                orm.DailyMetric.user_id == user_id,
+                orm.DailyMetric.metric == metric,
+            )).scalar_one_or_none()
+            return datetime.combine(value, datetime.min.time()) if value else None
+        if stream == "workout_detail":
+            return self.db.execute(select(func.max(orm.WorkoutMetricSample.timestamp)).where(
+                orm.WorkoutMetricSample.user_id == user_id
+            )).scalar_one_or_none()
+        if stream == "workouts":
+            return self.db.execute(select(func.max(orm.Workout.started_at)).where(
+                orm.Workout.user_id == user_id
+            )).scalar_one_or_none()
+        if stream == "sleep":
+            value = self.db.execute(select(func.max(orm.SleepRecord.date)).where(
+                orm.SleepRecord.user_id == user_id
+            )).scalar_one_or_none()
+            return datetime.combine(value, datetime.min.time()) if value else None
+        if stream == "daily_summary":
+            value = self.db.execute(select(func.max(orm.DailyMetric.date)).where(
+                orm.DailyMetric.user_id == user_id
+            )).scalar_one_or_none()
+            return datetime.combine(value, datetime.min.time()) if value else None
+        if stream == "dense_files":
+            return self.db.execute(select(func.max(orm.DenseDataFile.end_utc)).where(
+                orm.DenseDataFile.user_id == user_id
+            )).scalar_one_or_none()
+        return None
 
     def replace_strength_exercises(
         self,

@@ -110,6 +110,8 @@ def test_parse_real_sport_history_summary():
                 "calorie": "312.0",
                 "dis": 5_100,
                 "source": "opaque-detail-source",
+                "heartrate_setting_type": 3,
+                "heart_range": "100,113;200,141;300,154;400,162;500,173;600,190;",
             }]
         },
     }, sport_hint="run")
@@ -123,6 +125,8 @@ def test_parse_real_sport_history_summary():
     assert rows[0].calories == 312
     assert rows[0].distance_km == 5.1
     assert rows[0].vendor_source == "opaque-detail-source"
+    assert rows[0].heart_rate_zone_setting_type == 3
+    assert rows[0].heart_rate_zone_boundaries_bpm == [113, 141, 154, 162, 173, 190]
 
 
 def test_verified_zepp_strength_type_is_preserved_and_normalized():
@@ -239,6 +243,7 @@ def test_decode_workout_detail_to_typed_metric_samples():
             "time_delta_altitude": "0,967;1,972;",
             "power_meter": "0,210;1,215;",
             "gait": "0,0,0,176;1,1,4,178;",
+            "runPosture": "0,263,88,87;1,65535,95,255;2,270,65535,91;",
             "lap": "0,371,1000,s00000000000;1,376,1000,s00000000000",
             "pause": f"{int(start.timestamp())},37,-1,-1,2",
             "strengthSets": "[]",
@@ -256,9 +261,14 @@ def test_decode_workout_detail_to_typed_metric_samples():
     assert [row.value for row in heart_rate] == [80, 80, 82, 81]
     assert detail.metrics_present == [
         "altitude", "cadence", "distance", "equivalent_pace",
-        "heart_rate", "running_power", "speed",
+        "ground_contact_time", "heart_rate", "running_power", "speed",
+        "vertical_oscillation", "vertical_stride_ratio",
     ]
     assert detail.metric_sample_counts["cadence"] == 2
+    assert detail.metric_sample_counts["ground_contact_time"] == 2
+    assert detail.metric_sample_counts["vertical_oscillation"] == 2
+    assert detail.metric_sample_counts["vertical_stride_ratio"] == 2
+    assert [row.value for row in detail.samples if row.metric == "vertical_stride_ratio"] == [8.7, 9.1]
     assert [lap.distance_meters for lap in detail.laps] == [1000, 1000]
     assert detail.pauses[0].duration_seconds == 37
     assert {row.source_scope for row in detail.samples} == {"workout_detail"}
@@ -304,6 +314,25 @@ def test_parse_heart_rate_samples():
     assert [row.value for row in rows] == [72, 75]
     assert rows[0].unit == "bpm"
     assert rows[0].device_id == "A1B2C3D4E5F60708"
+
+
+def test_parse_single_byte_base64_heart_rate_measurement():
+    rows = ZeppParser.parse_heart_rate_samples({"items": [
+        {
+            "generatedTime": 1_787_498_851,
+            "heartRateData": "Ng==",
+            "deviceId": "D8803CFFFED54471",
+            "type": 2,
+        },
+        {"generatedTime": 1_787_498_852, "heartRateData": "not-base64"},
+        {"generatedTime": 1_787_498_853, "heartRateData": "Njc="},
+    ]})
+
+    assert len(rows) == 1
+    assert rows[0].timestamp == datetime(2026, 8, 23, 15, 27, 31, tzinfo=timezone.utc)
+    assert rows[0].value == 54
+    assert rows[0].device_id == "D8803CFFFED54471"
+    assert rows[0].source_scope == "device"
 
 
 def test_parse_daily_metrics():

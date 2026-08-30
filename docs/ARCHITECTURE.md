@@ -36,8 +36,9 @@ analysis layer reads only normalized records:
 - `daily_metrics`: sparse vendor facts such as readiness, stress, respiratory rate,
   PAI, ODI, and lactate-threshold fields.
 - `workouts` and `workout_metric_samples`: normalized workout summaries, versioned
-  detail metadata, and typed workout HR, speed, equivalent pace, cadence, distance,
-  altitude, and running-power observations.
+  detail metadata, device zone boundaries, and typed workout HR, speed, equivalent
+  pace, cadence, distance, altitude, running power, ground-contact time, vertical
+  oscillation, and vertical-stride-ratio observations.
 - `dense_data_files`: per-device `SEC_HR` file indexes, decode state, and sample count.
   Decoded second-level values are stored as ordinary device-scoped `heart_rate`
   metric samples.
@@ -58,7 +59,9 @@ configured application timezone (`VITALIS_TIMEZONE`, currently `Asia/Shanghai`).
 clock times use the vendor-provided offset, and workout summaries are assigned to the
 local date on which the session started.
 
-Workout detail is current-contract-only (`schema_version=2.0`). Zepp delta/time series
+Workout detail is current-contract-only (`schema_version=3.0`). Rows from older detail
+contracts are fetched and replaced in bounded batches during subsequent synchronization
+windows so a historical upgrade cannot consume the whole health-sync budget. Zepp delta/time series
 are decoded into typed metric samples. Laps retain only verified index, duration, and
 distance semantics; pauses retain start and duration. Explicit vendor strength sets may
 carry exercise identity, repetitions, weight, work duration, and rest. Empty or
@@ -75,7 +78,7 @@ The implementation lives in `vitalis/intelligence`:
 | `profile.py` | One-local-user loader, provenance, target-day facts, and deterministic quality flags |
 | `baseline.py` | Device/metric-specific 7-day and 28-day robust statistics |
 | `analyzers.py` | Sleep, HRV/RHR, recovery, and training feature extraction |
-| `running.py` | Individual-threshold zones, cadence, pace/HR drift, segments, session type, and 7/28-day running structure |
+| `running.py` | Device/threshold zones, cadence, power, running dynamics, comparable-run baselines, pace/HR drift, segments, session type, and 7/28-day structure |
 | `strength.py` | Confirmed exercises, movement and muscle knowledge, work/rest structure, split state, and muscle recovery context |
 | `decision.py` | Health-first running/strength planner, safety gates, scheduling conflicts, and abstention |
 | `trend.py` | Device-isolated 7/28/90-day trends and variability |
@@ -292,18 +295,34 @@ another conflicting high-load lower-body session.
 
 ### 3.10 Running Analysis
 
-DailyProfile 7.0 embeds `TrainingFeatures.running` with Running Analysis v1. Each
-session preserves distance, duration, derived average pace, median speed, median cadence,
-cadence variability, HR, threshold-based HR-zone duration, cardiac drift, detected
-work/recovery segments, classification evidence, confidence, and limitations.
+DailyProfile 7.0 embeds `TrainingFeatures.running` with Running Analysis v2. Each
+session preserves distance, duration, derived and equivalent pace, median speed and cadence,
+cadence variability, power, ground-contact time, vertical oscillation, vertical stride
+ratio, HR-zone duration, cardiac drift, detected work/recovery segments, classification
+evidence, confidence, and limitations.
 
-Five HR zones are calculated only when a personal vendor lactate-threshold HR is
-available. Vitalis does not estimate maximum HR from age. Cardiac drift requires at
+Each workout's six valid `heart_range` boundaries take precedence. Without them, five
+zones are calculated only when a personal vendor lactate-threshold HR is available,
+using the verified Zepp threshold boundaries. Vitalis does not estimate maximum HR from
+age. Cardiac drift requires at
 least 20 minutes of overlapping speed/HR detail and is withheld when first/second-half
 speed differs by more than 15%. Cadence is a personal observation; no universal
 180-spm target is applied. Session types are recovery, easy, steady, tempo, interval,
 long, or unclassified. These thresholds are versioned product policy rather than
 medical or coaching truth.
+
+When at least three earlier runs in the prior 180 days are within 20% of the target
+distance, the session carries a baseline from up to ten recent comparable runs. Pace,
+average HR, and power comparisons remain descriptive personal facts; they are not
+automatically labeled fitness improvement or deterioration.
+
+### 3.10.1 Synchronization Data Health
+
+`sync_stream_states` records the latest fetch, parse, and write status independently
+for each user-owned source stream, together with the latest stored sample timestamp.
+An empty cloud response, an unrecognized non-empty payload, and a storage write are
+different states. `GET /health/data-health` exposes this diagnostic contract without
+measurement values or private file identifiers.
 
 The running prescription consumes those session facts. It chooses among recovery,
 easy, steady, threshold, and long-easy sessions using recent hard-session timing,

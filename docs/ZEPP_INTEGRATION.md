@@ -69,8 +69,10 @@ HRV sources are not interchangeable:
   recovery/baseline decisions;
 - `hrv_sdnn/real_data` is a separate sparse SDNN event stream and keeps an independent
   baseline;
-- `HRVRMSSD/real_data` is the timestamped all-day RMSSD stream used only for the
-  gap-aware daily curve and ambulatory context.
+- `HRVRMSSD/real_data` is a timestamped, non-continuous RMSSD event stream used only
+  for the gap-aware daily record chart. On the connected devices it may contain long
+  sleep runs and only short runs outside the main sleep interval; its first and last
+  timestamps are not coverage.
 
 The file-info endpoint returns ordinary inline events for both HRV event types on the
 connected account, not downloadable archive descriptors. Only `second_heart_rate`

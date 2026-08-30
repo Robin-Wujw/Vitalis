@@ -382,11 +382,15 @@ def _render_daily_hrv_curve(
     if not values:
         return []
 
-    first = curve.get("first_sample_time", "--:--")
-    last = curve.get("last_sample_time", "--:--")
+    record_summary = _hrv_record_summary(
+        values,
+        bin_minutes=bin_minutes,
+        bedtime=sleep.get("bedtime"),
+        wake_time=sleep.get("wake_time"),
+    )
     return [
         "",
-        "### 全天 HRV",
+        "### 当天 HRV 记录（非连续）",
         "",
         _ReportHtmlBlock(_render_hrv_chart_html(
             values,
@@ -394,7 +398,9 @@ def _render_daily_hrv_curve(
             wake_time=sleep.get("wake_time"),
         )),
         "",
-        f"今天 {first}–{last} 有记录；图上断开的时段没有同步到 RMSSD，不会补线。虚线标出醒来时间。白天 HRV 容易受活动、姿势和呼吸影响，不单独解读为压力。",
+        f"{record_summary}。空白时段是设备没有上传有效 RMSSD，不是 0，也不会补线。"
+        "虚线标出主睡眠结束时间；其他时段可能来自午睡或静止测量。"
+        "HRV 还会受活动、姿势和呼吸影响，不能单独当作压力判断。",
         "",
     ]
 
@@ -472,7 +478,7 @@ def _render_hrv_chart_html(
         'color:#475569;font-size:12px">'
         f'<span>最低 {low_value:g}</span><span>最高 {high_value:g} 毫秒</span></div>'
         '<svg viewBox="0 0 600 175" width="100%" role="img" '
-        'aria-label="全天心率变异性时间线" '
+        'aria-label="当天非连续心率变异性记录" '
         'style="display:block;width:100%;height:auto;background:#ffffff">'
         f'{grid}{labels}{wake_marker}{"".join(lines)}{extrema}'
         f'{_render_day_axis(left, right)}'
@@ -487,6 +493,69 @@ def _render_day_axis(left: float, right: float) -> str:
         f'{hour}时</text>'
         for hour in (0, 6, 12, 18, 24)
     )
+
+
+def _hrv_record_summary(
+    values: dict[int, float],
+    *,
+    bin_minutes: int,
+    bedtime: str | None,
+    wake_time: str | None,
+) -> str:
+    bedtime_index = _time_bin_index(bedtime, bin_minutes)
+    wake_index = _time_bin_index(wake_time, bin_minutes)
+
+    def is_sleep(index: int) -> bool:
+        if bedtime_index is None or wake_index is None:
+            return False
+        if bedtime_index <= wake_index:
+            return bedtime_index <= index <= wake_index
+        return index >= bedtime_index or index <= wake_index
+
+    sleep_indexes = [index for index in sorted(values) if is_sleep(index)]
+    outside_sleep_indexes = [index for index in sorted(values) if not is_sleep(index)]
+    parts = []
+    if sleep_indexes:
+        parts.append(f"主睡眠记录 {_format_hrv_range(sleep_indexes, bin_minutes)}")
+    if outside_sleep_indexes:
+        windows = _contiguous_hrv_windows(
+            outside_sleep_indexes, max_gap_minutes=5, bin_minutes=bin_minutes
+        )
+        parts.append(
+            "其他时段记录 "
+            + "、".join(_format_hrv_range(window, bin_minutes) for window in windows)
+        )
+    if parts:
+        return "；".join(parts)
+    windows = _contiguous_hrv_windows(
+        sorted(values), max_gap_minutes=5, bin_minutes=bin_minutes
+    )
+    return "设备记录 " + "、".join(
+        _format_hrv_range(window, bin_minutes) for window in windows
+    )
+
+
+def _contiguous_hrv_windows(
+    indexes: list[int], *, max_gap_minutes: int, bin_minutes: int
+) -> list[list[int]]:
+    windows: list[list[int]] = []
+    max_gap_bins = max(1, max_gap_minutes // bin_minutes)
+    for index in indexes:
+        if not windows or index - windows[-1][-1] > max_gap_bins:
+            windows.append([index])
+        else:
+            windows[-1].append(index)
+    return windows
+
+
+def _format_hrv_range(indexes: list[int], bin_minutes: int) -> str:
+    def clock(index: int) -> str:
+        minute = index * bin_minutes
+        return f"{minute // 60:02d}:{minute % 60:02d}"
+
+    first = clock(indexes[0])
+    last = clock(indexes[-1])
+    return first if first == last else f"{first}–{last}"
 
 
 def _time_bin_index(value: str | None, bin_minutes: int) -> int | None:

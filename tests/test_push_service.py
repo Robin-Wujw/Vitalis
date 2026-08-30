@@ -387,21 +387,22 @@ def test_evening_push_names_exact_workout_mode_in_chinese():
     assert "低强度 30.0% · 中等强度 30.0% · 阈值附近及以上 40.0%" in text
     assert "今天走了 8,632 步" in text
     assert "设备记录的平均压力 31；放松状态占 62%；高压力占 2%" in text
-    assert "全天 HRV" in text
+    assert "当天 HRV 记录（非连续）" in text
     assert '<svg viewBox="0 0 600 175"' in message.body
     assert "&lt;svg" not in message.body
     assert "最低 40" in text and "最高 80 毫秒" in text
     assert message.body.count('stroke="#ef5b56"') == 2
-    assert "00:31" in text and "17:58" in text
     assert "醒来 08:15" in text
     assert all(f">{hour}时</text>" in message.body for hour in (0, 6, 12, 18, 24))
     assert "近 7 天 HRV" not in text
-    assert "没有同步到 RMSSD，不会补线" in text
-    assert "不单独解读为压力" in text
+    assert "其他时段记录 00:30–00:31、17:00–17:01" in text
+    assert "其他时段可能来自午睡或静止测量" in text
+    assert "设备没有上传有效 RMSSD，不是 0，也不会补线" in text
+    assert "不能单独当作压力判断" in text
     assert "12 个样本" not in text
     assert "覆盖 10 分钟" not in text
     assert "▁" not in text
-    curve_explanation_end = message.body.index("不单独解读为压力")
+    curve_explanation_end = message.body.index("不能单独当作压力判断")
     following_html = message.body[curve_explanation_end:]
     assert "<li style=" in following_html
     assert following_html.index("<li style=") < following_html.index("最近 7 天")
@@ -432,6 +433,40 @@ def test_evening_rest_day_reports_activity_without_treating_rest_as_a_problem():
     assert "今天没有正式训练。晚上不用补训练" in message.body
     assert "今天没有训练不需要用明天加量补偿" in message.body
     assert "恢复受抑制" not in message.body
+
+
+def test_hrv_record_summary_separates_main_sleep_from_other_windows():
+    received = []
+    payload = deepcopy(_profile_payload())
+    payload["features"]["hrv"]["daily_curve"]["points"] = [
+        {"time": "02:01", "median_ms": 60, "sample_count": 1},
+        {"time": "09:22", "median_ms": 70, "sample_count": 1},
+        {"time": "09:36", "median_ms": 55, "sample_count": 1},
+        {"time": "09:39", "median_ms": 57, "sample_count": 1},
+        {"time": "09:43", "median_ms": 58, "sample_count": 1},
+        {"time": "15:19", "median_ms": 52, "sample_count": 1},
+        {"time": "15:24", "median_ms": 54, "sample_count": 1},
+        {"time": "15:29", "median_ms": 57, "sample_count": 1},
+        {"time": "15:34", "median_ms": 59, "sample_count": 1},
+        {"time": "15:39", "median_ms": 55, "sample_count": 1},
+        {"time": "15:44", "median_ms": 58, "sample_count": 1},
+        {"time": "15:49", "median_ms": 56, "sample_count": 1},
+        {"time": "15:54", "median_ms": 60, "sample_count": 1},
+        {"time": "15:59", "median_ms": 61, "sample_count": 1},
+        {"time": "16:04", "median_ms": 59, "sample_count": 1},
+        {"time": "16:06", "median_ms": 62, "sample_count": 1},
+    ]
+    payload["features"]["sleep"]["bedtime"] = "02:00:00"
+    payload["features"]["sleep"]["wake_time"] = "09:23:00"
+    service = PushService(pushplus_token="")
+    service.add_handler(received.append)
+
+    service.push_daily_profile("test-user", payload, period="evening")
+
+    text = _visible_text(received[0].body)
+    assert "主睡眠记录 02:01–09:22" in text
+    assert "其他时段记录 09:36–09:43、15:19–16:06" in text
+    assert "02:01–16:06 有记录" not in text
 
 
 def test_evening_low_confidence_run_does_not_name_workout_type_or_drift():

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from datetime import date
 import fcntl
@@ -30,8 +30,9 @@ def run_daily_push(
     sync_days: int | None = None,
     target_date: date | None = None,
     state_dir: Path | str = DEFAULT_STATE_DIR,
+    test_delivery: bool = False,
 ) -> dict:
-    """Synchronize, analyze, and deliver one idempotent report for a local day."""
+    """Synchronize, analyze, and deliver a scheduled or non-marking test report."""
     if not user_id:
         raise ValueError("VITALIS_USER is required")
     if not pushplus_token:
@@ -43,8 +44,9 @@ def run_daily_push(
     days = sync_days if sync_days is not None else (2 if period == "morning" else 1)
     marker = _delivery_marker(Path(state_dir), user_id, current_date, period)
 
-    with _delivery_lock(marker):
-        if marker.exists():
+    guard = nullcontext() if test_delivery else _delivery_lock(marker)
+    with guard:
+        if not test_delivery and marker.exists():
             return {
                 "status": "already_sent",
                 "period": period,
@@ -97,15 +99,19 @@ def run_daily_push(
         )
         if results.get("_pushplus_handler") != "ok":
             raise RuntimeError("PushPlus delivery failed")
-        _mark_delivered(marker)
-        return {
-            "status": "sent",
+        if not test_delivery:
+            _mark_delivered(marker)
+        outcome = {
+            "status": "test_sent" if test_delivery else "sent",
             "period": period,
             "date": daily["date"],
             "quality": daily["data_quality"]["status"],
             "sync_degraded": sync_degraded,
             "sync_status": sync_status,
         }
+        if test_delivery:
+            outcome["scheduled_delivery_unchanged"] = True
+        return outcome
 
 
 def _sync_health(client: httpx.Client, days: int) -> dict:

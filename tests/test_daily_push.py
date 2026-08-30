@@ -110,6 +110,58 @@ def test_morning_push_syncs_current_day_and_sends_exactly_once(monkeypatch, tmp_
     assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
 
 
+def test_manual_test_push_ignores_and_preserves_scheduled_delivery_marker(
+    monkeypatch, tmp_path
+):
+    sent = []
+    marker = daily_push._delivery_marker(
+        tmp_path, "explicit-user", date(2026, 8, 29), "evening"
+    )
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("official delivery\n", encoding="utf-8")
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def post(self, path, **kwargs):
+            if path.endswith("/sync"):
+                return Response({"status": "synced", "success": True})
+            return Response({"daily": _daily()})
+
+    class Service:
+        def __init__(self, pushplus_token):
+            pass
+
+        def push_daily_profile(self, user_id, profile, period):
+            sent.append(period)
+            return {"_pushplus_handler": "ok"}
+
+    monkeypatch.setattr(daily_push.httpx, "Client", Client)
+    monkeypatch.setattr(daily_push, "PushService", Service)
+
+    result = daily_push.run_daily_push(
+        "explicit-user",
+        "private-token",
+        period="evening",
+        target_date=date(2026, 8, 29),
+        state_dir=tmp_path,
+        test_delivery=True,
+    )
+
+    assert sent == ["evening"]
+    assert result["status"] == "test_sent"
+    assert result["scheduled_delivery_unchanged"] is True
+    assert marker.read_text(encoding="utf-8") == "official delivery\n"
+    assert list(tmp_path.glob("*.sent")) == [marker]
+
+
 @pytest.mark.parametrize(
     ("sleep_status", "wake_time"),
     [("INSUFFICIENT_DATA", None), ("AVAILABLE", None)],

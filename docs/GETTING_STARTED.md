@@ -106,12 +106,16 @@ hermes cron list
 hermes cron runs <job-id>
 ```
 
-To run either dispatcher manually after configuring the token, get its job ID from
-`hermes cron list` and run:
+To send a real manual test without reading or writing the scheduled delivery marker,
+run the report tool with `--test`:
 
 ```bash
-hermes cron run <job-id>
+/root/Vitalis/.venv/bin/python /root/Vitalis/skills/vitalis/tools/daily_push.py \
+  --period evening --test
 ```
+
+Running `hermes cron run <job-id>` is an official scheduled invocation: a successful
+delivery writes the daily marker and prevents that period from being sent twice.
 
 The tool exits before synchronization when either `VITALIS_USER` or `PUSHPLUS_TOKEN` is
 missing. The token is never passed to the model, included in a URL, or written to

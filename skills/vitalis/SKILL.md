@@ -77,7 +77,8 @@ Internal enum codes exist only for program control and must never appear in the 
   `tools/daily_push.py --period morning` for sleep-aware morning retries and
   `tools/daily_push.py --period evening` for the evening recap. It requires private
   `VITALIS_USER` and `PUSHPLUS_TOKEN` environment variables and keeps the model out of
-  token handling and report assembly.
+  token handling and report assembly. Use `--test` for a real manual delivery that must
+  not read or write the scheduled report's daily deduplication marker.
 
 Wire contracts are documented in `schemas/`. Evidence scope and interpretation limits
 are summarized in `knowledge/evidence.md`.

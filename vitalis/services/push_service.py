@@ -325,7 +325,7 @@ def _render_evening_daily_state(payload: dict, training: dict) -> list[str]:
         lines.append(f"- **压力分布**：{'；'.join(stress_parts)}。")
 
     features = payload.get("features", {})
-    lines.extend(_render_weekly_sdnn_trend(features.get("hrv") or {}))
+    lines.extend(_render_weekly_sleep_hrv_trend(features.get("hrv") or {}))
 
     running = training.get("running") or {}
     strength = training.get("strength") or {}
@@ -365,31 +365,31 @@ def _render_evening_daily_state(payload: dict, training: dict) -> list[str]:
     return lines
 
 
-def _render_weekly_sdnn_trend(hrv: dict) -> list[str | _ReportHtmlBlock]:
-    trend = hrv.get("sdnn_daily_trend") or {}
+def _render_weekly_sleep_hrv_trend(hrv: dict) -> list[str | _ReportHtmlBlock]:
+    trend = hrv.get("sleep_hrv_daily_trend") or {}
     points = [
         item for item in (trend.get("points") or [])
         if isinstance(item, dict)
         and isinstance(item.get("date"), str)
-        and isinstance(item.get("average_ms"), (int, float))
+        and isinstance(item.get("value_ms"), (int, float))
     ]
     if not points:
         return []
     return [
         "",
-        "### 近 7 天 HRV（SDNN）",
+        "### 近 7 天睡眠 HRV",
         "",
-        _ReportHtmlBlock(_render_weekly_sdnn_chart_html(points)),
+        _ReportHtmlBlock(_render_weekly_sleep_hrv_chart_html(points)),
         "",
-        f"近 7 天有 {len(points)} 天记录。"
-        f"今天日均 {trend['today_average_ms']:g} 毫秒，"
-        f"来自 {trend['today_sample_count']} 次 SDNN 读数。",
+        f"{trend['device_label']} 近 7 天有 {len(points)} 晚记录，"
+        f"昨晚 {trend['today_value_ms']:g} 毫秒。"
+        "这是每晚睡眠 HRV 的逐日趋势，用于观察恢复变化。",
         "",
     ]
 
 
-def _render_weekly_sdnn_chart_html(points: list[dict]) -> str:
-    values = [float(item["average_ms"]) for item in points]
+def _render_weekly_sleep_hrv_chart_html(points: list[dict]) -> str:
+    values = [float(item["value_ms"]) for item in points]
     low_value = min(values)
     high_value = max(values)
     axis_low = max(0.0, float(int(low_value // 10) * 10 - 10))
@@ -439,7 +439,7 @@ def _render_weekly_sdnn_chart_html(points: list[dict]) -> str:
         '<div style="margin:6px 0 10px;padding:8px;border:1px solid #dbe4e8;'
         'border-radius:6px;background:#ffffff;overflow:hidden">'
         '<svg viewBox="0 0 600 170" width="100%" role="img" '
-        'aria-label="近七天心率变异性 SDNN 逐日趋势" '
+        'aria-label="近七天睡眠心率变异性逐日趋势" '
         'style="display:block;width:100%;height:auto;background:#ffffff">'
         f'{grid}{labels}{polyline}{markers}{dates}'
         '</svg></div>'

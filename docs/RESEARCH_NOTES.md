@@ -252,10 +252,10 @@ Missing intervals are unknown coverage, not high stress.
 
 The descriptive first stage is implemented: Zepp's nightly `sleepHRV`, sleep-oriented
 `hrv_sdnn`, and timestamped `HRVRMSSD` streams remain separate. Recovery prefers the
-nightly summary. SDNN is summarized per local calendar day using the mean, measured
-minimum/maximum and sample count used by ZeppBridge's daily trend. The report plots seven
-daily SDNN means from one canonical device stream and does not merge absolute HRV values
-across devices. Timestamped RMSSD remains in the structured daily profile, but its
+nightly summary. The report plots seven nightly `sleepHRV` values from the canonical
+device stream with the strongest baseline and does not merge absolute HRV values across
+devices. Sparse SDNN remains available in storage but is omitted from the report trend.
+Timestamped RMSSD remains in the structured daily profile, but its
 sleep-only curve is omitted from the evening report. Sparse daytime RMSSD records stay
 available in storage and do not appear as an invented all-day curve. Minute data does not
 establish beat-to-beat or ECG equivalence, and neither HRV stream is converted into a

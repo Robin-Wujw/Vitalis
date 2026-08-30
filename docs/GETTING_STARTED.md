@@ -86,7 +86,7 @@ current date. The Morning report interprets recovery and presents the health-fir
 concurrent action plan: fused overnight health, recent running and strength balance,
 one primary session, and an optional addition or alternative with a concrete dose and
 plain-language reasons. The Evening report instead reviews completed workouts, daily
-activity and stress, a seven-day SDNN trend, and rolling training load through today,
+activity and stress, a seven-night sleep-HRV trend, and rolling training load through today,
 then gives a practical recovery action and leaves tomorrow's intensity to the next
 complete overnight assessment. Both reports are sent with PushPlus' HTML template using
 portable inline styling; report

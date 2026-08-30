@@ -7,7 +7,7 @@ from statistics import mean, median
 from .contracts import (
     Availability,
     ConfidenceBand,
-    DailySdnnPoint,
+    DailySleepHrvPoint,
     HealthEvent,
     QualityStatus,
     TrendDirection,
@@ -25,7 +25,7 @@ from .contracts import (
     WeeklyTrainingFacts,
 )
 from .localization import CONFIDENCE_LABELS, QUALITY_LABELS
-from .profile import RawDailyProfile, device_measurement_site
+from .profile import RawDailyProfile
 
 
 class WeeklyProfileEngine:
@@ -130,7 +130,9 @@ def _recovery_facts(
 ) -> WeeklyRecoveryFacts:
     hrv = _best_weekly_trend(trends, ("sleep_hrv", "hrv_sdnn", "hrv_rmssd"))
     rhr = _best_weekly_trend(trends, ("sleep_rhr", "resting_hr"))
-    sdnn_device_id, sdnn_daily = _weekly_sdnn_daily(raw)
+    sleep_hrv_device_id, sleep_hrv_daily = _weekly_sleep_hrv_daily(
+        raw, hrv.device_id if hrv and hrv.metric == "sleep_hrv" else None
+    )
     return WeeklyRecoveryFacts(
         hrv_available_days=hrv.current_distinct_days if hrv else 0,
         hrv_metric=hrv.metric if hrv else None,
@@ -139,8 +141,8 @@ def _recovery_facts(
         hrv_median_ms=hrv.current_median if hrv else None,
         hrv_previous_median_ms=hrv.previous_median if hrv else None,
         hrv_change_percent=hrv.change_percent if hrv else None,
-        sdnn_device_id=sdnn_device_id,
-        sdnn_daily=sdnn_daily,
+        sleep_hrv_device_id=sleep_hrv_device_id,
+        sleep_hrv_daily=sleep_hrv_daily,
         rhr_available_days=rhr.current_distinct_days if rhr else 0,
         rhr_metric=rhr.metric if rhr else None,
         rhr_median_bpm=rhr.current_median if rhr else None,
@@ -149,12 +151,12 @@ def _recovery_facts(
     )
 
 
-def _weekly_sdnn_daily(
-    raw: RawDailyProfile,
-) -> tuple[str | None, list[DailySdnnPoint]]:
+def _weekly_sleep_hrv_daily(
+    raw: RawDailyProfile, preferred_device_id: str | None
+) -> tuple[str | None, list[DailySleepHrvPoint]]:
     period_start = raw.day - timedelta(days=6)
     streams = defaultdict(list)
-    for point in raw.series.get("hrv_sdnn", []):
+    for point in raw.series.get("sleep_hrv", []):
         if period_start <= point.day <= raw.day and point.value > 0:
             streams[(point.source, point.source_scope, point.device_id)].append(point)
     if not streams:
@@ -162,8 +164,8 @@ def _weekly_sdnn_daily(
     (_, _, device_id), points = max(
         streams.items(),
         key=lambda item: (
+            int(item[0][2] == preferred_device_id and preferred_device_id is not None),
             len({point.day for point in item[1]}),
-            int(device_measurement_site(raw, item[0][2]) == "upper_arm"),
             len(item[1]),
         ),
     )
@@ -171,11 +173,9 @@ def _weekly_sdnn_daily(
     for point in points:
         by_day[point.day].append(point.value)
     return device_id, [
-        DailySdnnPoint(
+        DailySleepHrvPoint(
             date=day,
-            average_ms=round(mean(values), 1),
-            minimum_ms=round(min(values), 1),
-            maximum_ms=round(max(values), 1),
+            value_ms=round(float(median(values)), 1),
             sample_count=len(values),
         )
         for day, values in sorted(by_day.items())

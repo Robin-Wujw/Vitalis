@@ -95,7 +95,7 @@ The implementation lives in `vitalis/intelligence`:
 
 ### 3.1 DailyProfile
 
-The wire contract is `schema_version=7.0`. Every result carries `analysis_run_id`,
+The wire contract is `schema_version=8.0`. Every result carries `analysis_run_id`,
 `intelligence_version`, `decision_policy_version`, and `evidence_version` separately:
 
 ```text
@@ -451,14 +451,15 @@ daily contract until the activity, posture, respiration, circadian-reference, an
 coverage gates in `RESEARCH_NOTES.md` can be satisfied.
 
 `HrvFeatures` keeps Zepp's algorithms separate. The recovery value prefers the nightly
-`sleepHRV` summary, then sleep-oriented SDNN when available. `hrv_sdnn/real_data` is also
-aggregated into one mean/min/max point per local calendar day, matching ZeppBridge's
-daily trend contract without merging device values. The evening PushPlus report renders
-these canonical SDNN daily means as a seven-day chart. Timestamped
+`sleepHRV` summary, then sleep-oriented SDNN when available. The evening PushPlus report
+renders seven nightly `sleepHRV` values from the single device stream with the strongest
+personal baseline; it does not merge device values. On the current account this selects
+Balance 2, which has complete seven-night coverage and a 28-day baseline. Timestamped
 `HRVRMSSD/real_data` remains available in the structured profile for inspection, but its
 sleep-only timeline is not included in the evening summary because it adds no useful
 all-day information. Neither sparse daytime RMSSD observations nor vendor stress are
-relabeled as a continuous all-day HRV curve.
+relabeled as a continuous all-day HRV curve. Sparse SDNN remains stored but is not used
+for the weekly display trend.
 
 Training `load_7d`, duration, and comparison windows are rolling local-day windows ending
 on the analysis date. The evening report therefore includes today's completed training;

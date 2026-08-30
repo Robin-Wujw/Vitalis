@@ -12,8 +12,8 @@ from .contracts import (
     BaselineStats,
     ConfidenceBand,
     DailyHrvCurveFeature,
-    DailySdnnPoint,
-    DailySdnnTrendFeature,
+    DailySleepHrvPoint,
+    DailySleepHrvTrendFeature,
     Deviation,
     HeartRateCoverageFeature,
     HrvFeatures,
@@ -239,7 +239,7 @@ class HrvAnalyzer:
 
         nocturnal_hr = _analyze_nocturnal_heart_rate(raw, device_id)
         daily_curve = _daily_hrv_curve(raw)
-        sdnn_daily_trend = _daily_sdnn_trend(raw, baselines)
+        sleep_hrv_daily_trend = _daily_sleep_hrv_trend(raw, baselines)
         rhr_candidates = []
         for rhr_metric in ("sleep_rhr", "resting_hr"):
             for stream, rhr in daily_stream_values(raw.series.get(rhr_metric, []), raw.day).items():
@@ -319,7 +319,7 @@ class HrvAnalyzer:
             rhr_deviation=rhr_deviation,
             nocturnal_heart_rate=nocturnal_hr,
             daily_curve=daily_curve,
-            sdnn_daily_trend=sdnn_daily_trend,
+            sleep_hrv_daily_trend=sleep_hrv_daily_trend,
             streams=streams,
             heart_rate_coverage=heart_rate_coverage,
             limitations=limitations,
@@ -378,13 +378,13 @@ def _daily_hrv_curve(raw: RawDailyProfile) -> DailyHrvCurveFeature | None:
     )
 
 
-def _daily_sdnn_trend(
+def _daily_sleep_hrv_trend(
     raw: RawDailyProfile,
     baselines: dict[str, list[BaselineStats]],
-) -> DailySdnnTrendFeature | None:
-    """Mirror ZeppBridge's per-local-day SDNN mean without merging devices."""
+) -> DailySleepHrvTrendFeature | None:
+    """Build a seven-night sleep-HRV trend from one canonical device stream."""
     streams: dict[tuple[str, str, str | None], list[SeriesPoint]] = defaultdict(list)
-    for point in raw.series.get("hrv_sdnn", []):
+    for point in raw.series.get("sleep_hrv", []):
         if raw.day - timedelta(days=6) <= point.day <= raw.day and point.value > 0:
             streams[(point.source, point.source_scope, point.device_id)].append(point)
     candidates = [
@@ -398,13 +398,12 @@ def _daily_sdnn_trend(
     def selection_key(item):
         (source, scope, device_id), points = item
         baseline = _baseline_for(
-            baselines, "hrv_sdnn", source, scope, device_id
+            baselines, "sleep_hrv", source, scope, device_id
         )
         return (
             int(bool(baseline and baseline.status == Availability.AVAILABLE)),
             baseline.distinct_days if baseline else 0,
             len({point.day for point in points}),
-            int(device_measurement_site(raw, device_id) == "upper_arm"),
             len(points),
         )
 
@@ -413,19 +412,15 @@ def _daily_sdnn_trend(
     for point in points:
         by_day[point.day].append(point.value)
     today = by_day[raw.day]
-    return DailySdnnTrendFeature(
+    return DailySleepHrvTrendFeature(
         device_id=device_id,
         device_label=device_label(raw, device_id),
-        today_average_ms=round(mean(today), 1),
-        today_minimum_ms=round(min(today), 1),
-        today_maximum_ms=round(max(today), 1),
+        today_value_ms=round(float(median(today)), 1),
         today_sample_count=len(today),
         points=[
-            DailySdnnPoint(
+            DailySleepHrvPoint(
                 date=day,
-                average_ms=round(mean(values), 1),
-                minimum_ms=round(min(values), 1),
-                maximum_ms=round(max(values), 1),
+                value_ms=round(float(median(values)), 1),
                 sample_count=len(values),
             )
             for day, values in sorted(by_day.items())

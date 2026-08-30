@@ -31,7 +31,7 @@ def test_skill_has_all_workflows_and_valid_schema():
     for name in ("morning.md", "evening.md", "weekly.md", "monthly.md", "on_demand.md"):
         assert (SKILL / "workflows" / name).is_file()
     schema = json.loads((SKILL / "schemas" / "daily_profile.json").read_text())
-    assert schema["properties"]["schema_version"]["const"] == "7.0"
+    assert schema["properties"]["schema_version"]["const"] == "8.0"
     assert "analysis_run_id" in schema["required"]
     assert "model_version" not in schema["required"]
     actions = schema["properties"]["decision"]["properties"]["action"]["enum"]

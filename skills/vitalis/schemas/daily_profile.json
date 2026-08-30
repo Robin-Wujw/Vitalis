@@ -1,15 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/daily-profile-7.0.json",
-  "title": "Vitalis DailyProfile 7.0",
+  "$id": "https://vitalis.local/schemas/daily-profile-8.0.json",
+  "title": "Vitalis DailyProfile 8.0",
   "type": "object",
   "required": ["schema_version", "analysis_run_id", "intelligence_version", "decision_policy_version", "evidence_version", "user_id", "date", "generated_at", "data_quality", "facts", "baselines", "features", "trends", "events", "states", "decision", "evidence_refs", "metadata"],
   "properties": {
-    "schema_version": {"const": "7.0"},
+    "schema_version": {"const": "8.0"},
     "analysis_run_id": {"type": "string"},
-    "intelligence_version": {"const": "7.0"},
+    "intelligence_version": {"const": "8.0"},
     "decision_policy_version": {"const": "7.0"},
-    "evidence_version": {"const": "2026-08d"},
+    "evidence_version": {"const": "2026-08e"},
     "user_id": {"type": "string"},
     "date": {"type": "string", "format": "date"},
     "generated_at": {"type": "string", "format": "date-time"},
@@ -48,7 +48,7 @@
         },
         "hrv": {
           "type": "object",
-          "required": ["status", "status_label", "fusion_direction", "fusion_confidence", "fusion_confidence_label", "fusion_summary", "recent_7d_direction", "recent_7d_days", "previous_7d_days", "corroboration_status", "corroborating_stream_count", "corroboration_affects_decision", "daily_curve", "streams", "heart_rate_coverage", "limitations", "limitation_labels"],
+          "required": ["status", "status_label", "fusion_direction", "fusion_confidence", "fusion_confidence_label", "fusion_summary", "recent_7d_direction", "recent_7d_days", "previous_7d_days", "corroboration_status", "corroborating_stream_count", "corroboration_affects_decision", "daily_curve", "sleep_hrv_daily_trend", "streams", "heart_rate_coverage", "limitations", "limitation_labels"],
           "properties": {
             "status": {"enum": ["AVAILABLE", "INSUFFICIENT_DATA"]},
             "status_label": {"type": "string"},
@@ -63,6 +63,7 @@
             "previous_7d_days": {"type": "integer", "minimum": 0, "maximum": 7},
             "nocturnal_heart_rate": {"type": ["object", "null"]},
             "daily_curve": {"type": ["object", "null"]},
+            "sleep_hrv_daily_trend": {"type": ["object", "null"]},
             "corroboration_status": {"enum": ["not_available", "consistent", "conflicting", "insufficient"]},
             "corroborating_stream_count": {"type": "integer", "minimum": 0},
             "corroboration_affects_decision": {"type": "boolean"},

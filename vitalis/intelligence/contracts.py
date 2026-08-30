@@ -10,12 +10,12 @@ from pydantic import BaseModel, Field, model_validator
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "7.0"
-WEEKLY_SCHEMA_VERSION = "2.0"
+DAILY_SCHEMA_VERSION = "8.0"
+WEEKLY_SCHEMA_VERSION = "3.0"
 MONTHLY_SCHEMA_VERSION = "1.0"
-INTELLIGENCE_VERSION = "7.0"
+INTELLIGENCE_VERSION = "8.0"
 DECISION_POLICY_VERSION = "7.0"
-EVIDENCE_VERSION = "2026-08d"
+EVIDENCE_VERSION = "2026-08e"
 TRAINING_RESPONSE_SCHEMA_VERSION = "1.0"
 PERSONAL_MODEL_SCHEMA_VERSION = "2.0"
 ASSOCIATION_SCHEMA_VERSION = "1.0"
@@ -309,26 +309,22 @@ class DailyHrvCurveFeature(BaseModel):
     points: list[HrvCurvePoint] = Field(min_length=1, max_length=1440)
 
 
-class DailySdnnPoint(BaseModel):
+class DailySleepHrvPoint(BaseModel):
     date: DateValue
-    average_ms: float = Field(gt=0)
-    minimum_ms: float = Field(gt=0)
-    maximum_ms: float = Field(gt=0)
+    value_ms: float = Field(gt=0)
     sample_count: int = Field(ge=1)
 
 
-class DailySdnnTrendFeature(BaseModel):
-    """Zepp SDNN readings aggregated by local calendar day."""
+class DailySleepHrvTrendFeature(BaseModel):
+    """One comparable nightly sleep-HRV value per local calendar day."""
 
-    metric: Literal["hrv_sdnn"] = "hrv_sdnn"
-    aggregation: Literal["daily_mean"] = "daily_mean"
+    metric: Literal["sleep_hrv"] = "sleep_hrv"
+    aggregation: Literal["daily_median"] = "daily_median"
     device_id: str | None = None
     device_label: str
-    today_average_ms: float = Field(gt=0)
-    today_minimum_ms: float = Field(gt=0)
-    today_maximum_ms: float = Field(gt=0)
+    today_value_ms: float = Field(gt=0)
     today_sample_count: int = Field(ge=1)
-    points: list[DailySdnnPoint] = Field(min_length=1, max_length=7)
+    points: list[DailySleepHrvPoint] = Field(min_length=1, max_length=7)
 
 
 class HeartRateCoverageFeature(BaseModel):
@@ -393,7 +389,7 @@ class HrvFeatures(BaseModel):
     rhr_deviation: Deviation | None = None
     nocturnal_heart_rate: NocturnalHeartRateFeature | None = None
     daily_curve: DailyHrvCurveFeature | None = None
-    sdnn_daily_trend: DailySdnnTrendFeature | None = None
+    sleep_hrv_daily_trend: DailySleepHrvTrendFeature | None = None
     streams: list[HrvStreamFeature] = Field(default_factory=list)
     heart_rate_coverage: list[HeartRateCoverageFeature] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
@@ -872,8 +868,8 @@ class WeeklyRecoveryFacts(BaseModel):
     hrv_median_ms: float | None = None
     hrv_previous_median_ms: float | None = None
     hrv_change_percent: float | None = None
-    sdnn_device_id: str | None = None
-    sdnn_daily: list[DailySdnnPoint] = Field(default_factory=list, max_length=7)
+    sleep_hrv_device_id: str | None = None
+    sleep_hrv_daily: list[DailySleepHrvPoint] = Field(default_factory=list, max_length=7)
     rhr_available_days: int = Field(ge=0, le=7)
     rhr_metric: str | None = None
     rhr_median_bpm: float | None = None
@@ -1157,11 +1153,11 @@ class SubjectiveFeedback(BaseModel):
 
 
 class DailyProfile(BaseModel):
-    schema_version: Literal["7.0"] = DAILY_SCHEMA_VERSION
+    schema_version: Literal["8.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
-    intelligence_version: Literal["7.0"] = INTELLIGENCE_VERSION
+    intelligence_version: Literal["8.0"] = INTELLIGENCE_VERSION
     decision_policy_version: Literal["7.0"] = DECISION_POLICY_VERSION
-    evidence_version: Literal["2026-08d"] = EVIDENCE_VERSION
+    evidence_version: Literal["2026-08e"] = EVIDENCE_VERSION
     user_id: str
     date: DateValue
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

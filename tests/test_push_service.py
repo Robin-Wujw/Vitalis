@@ -85,22 +85,20 @@ def _profile_payload():
                         {"time": "17:01", "median_ms": 50, "sample_count": 3},
                     ],
                 },
-                "sdnn_daily_trend": {
-                    "metric": "hrv_sdnn",
-                    "aggregation": "daily_mean",
-                    "device_label": "Amazfit Helio Strap",
-                    "today_average_ms": 69.4,
-                    "today_minimum_ms": 61.2,
-                    "today_maximum_ms": 78.1,
-                    "today_sample_count": 4,
+                "sleep_hrv_daily_trend": {
+                    "metric": "sleep_hrv",
+                    "aggregation": "daily_median",
+                    "device_label": "Amazfit Balance 2",
+                    "today_value_ms": 73.0,
+                    "today_sample_count": 1,
                     "points": [
-                        {"date": "2026-08-22", "average_ms": 57.0, "minimum_ms": 50.0, "maximum_ms": 64.0, "sample_count": 3},
-                        {"date": "2026-08-23", "average_ms": 70.0, "minimum_ms": 62.0, "maximum_ms": 78.0, "sample_count": 3},
-                        {"date": "2026-08-24", "average_ms": 66.0, "minimum_ms": 58.0, "maximum_ms": 74.0, "sample_count": 3},
-                        {"date": "2026-08-25", "average_ms": 67.0, "minimum_ms": 60.0, "maximum_ms": 75.0, "sample_count": 3},
-                        {"date": "2026-08-26", "average_ms": 70.0, "minimum_ms": 63.0, "maximum_ms": 78.0, "sample_count": 3},
-                        {"date": "2026-08-27", "average_ms": 63.0, "minimum_ms": 55.0, "maximum_ms": 71.0, "sample_count": 3},
-                        {"date": "2026-08-28", "average_ms": 69.4, "minimum_ms": 61.2, "maximum_ms": 78.1, "sample_count": 4},
+                        {"date": "2026-08-22", "value_ms": 58.0, "sample_count": 1},
+                        {"date": "2026-08-23", "value_ms": 57.0, "sample_count": 1},
+                        {"date": "2026-08-24", "value_ms": 69.0, "sample_count": 1},
+                        {"date": "2026-08-25", "value_ms": 66.0, "sample_count": 1},
+                        {"date": "2026-08-26", "value_ms": 66.0, "sample_count": 1},
+                        {"date": "2026-08-27", "value_ms": 70.0, "sample_count": 1},
+                        {"date": "2026-08-28", "value_ms": 73.0, "sample_count": 1},
                     ],
                 },
                 "streams": [{
@@ -405,18 +403,18 @@ def test_evening_push_names_exact_workout_mode_in_chinese():
     assert "低强度 30.0% · 中等强度 30.0% · 阈值附近及以上 40.0%" in text
     assert "今天走了 8,632 步" in text
     assert "设备记录的平均压力 31；放松状态占 62%；高压力占 2%" in text
-    assert "近 7 天 HRV（SDNN）" in text
+    assert "近 7 天睡眠 HRV" in text
     assert '<svg viewBox="0 0 600 170"' in message.body
     assert "&lt;svg" not in message.body
     assert "8/22" in text and "8/28" in text
-    assert "今天日均 69.4 毫秒" in text
+    assert "Amazfit Balance 2 近 7 天有 7 晚记录，昨晚 73 毫秒" in text
     assert message.body.count('stroke="#2f9e44"') == 8
     assert "睡眠 HRV 时间线" not in text
     assert "01:00" not in text and "17:00" not in text
     assert "12 个样本" not in text
     assert "覆盖 10 分钟" not in text
     assert "▁" not in text
-    curve_explanation_end = message.body.index("今天日均 69.4 毫秒")
+    curve_explanation_end = message.body.index("昨晚 73 毫秒")
     following_html = message.body[curve_explanation_end:]
     assert "<li style=" in following_html
     assert following_html.index("<li style=") < following_html.index("最近 7 天")
@@ -470,7 +468,7 @@ def test_evening_treats_small_weekly_load_change_as_stable():
     assert "训练刺激减少" not in text
 
 
-def test_evening_ignores_rmssd_timeline_and_uses_weekly_sdnn():
+def test_evening_ignores_rmssd_timeline_and_uses_weekly_sleep_hrv():
     received = []
     payload = deepcopy(_profile_payload())
     payload["features"]["hrv"]["daily_curve"]["points"] = [
@@ -499,7 +497,7 @@ def test_evening_ignores_rmssd_timeline_and_uses_weekly_sdnn():
     service.push_daily_profile("test-user", payload, period="evening")
 
     text = _visible_text(received[0].body)
-    assert "近 7 天 HRV（SDNN）" in text
+    assert "近 7 天睡眠 HRV" in text
     assert "睡眠 HRV 时间线" not in text
     assert "02:01" not in text
     assert "15:19" not in text

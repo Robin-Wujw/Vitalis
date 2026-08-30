@@ -34,7 +34,7 @@ def _raw_week():
     raw.series = {
         "sleep_duration": _series("sleep_duration", [390] * 7 + [450] * 7, "min"),
         "hrv_rmssd": _series("hrv_rmssd", [50] * 7 + [55] * 7, "ms", device="helio"),
-        "hrv_sdnn": _series("hrv_sdnn", list(range(50, 64)), "ms", device="helio"),
+        "sleep_hrv": _series("sleep_hrv", list(range(50, 64)), "ms", device="balance"),
         "resting_hr": _series("resting_hr", [58] * 7 + [55] * 7, "bpm"),
         "training_load": _series("training_load", [20] * 7 + [30] * 7, "load"),
         "steps": _series("steps", [6000] * 7 + [8000] * 7, "steps"),
@@ -92,8 +92,9 @@ def test_weekly_profile_separates_facts_inferences_and_actions():
     assert profile.facts.training.workout_count == 2
     assert profile.facts.training.sport_mode_counts == {"力量训练": 1, "户外跑": 1}
     assert profile.facts.activity.average_steps == 8000
-    assert len(profile.facts.recovery.sdnn_daily) == 7
-    assert profile.facts.recovery.sdnn_daily[-1].average_ms == 63
+    assert profile.facts.recovery.sleep_hrv_device_id == "balance"
+    assert len(profile.facts.recovery.sleep_hrv_daily) == 7
+    assert profile.facts.recovery.sleep_hrv_daily[-1].value_ms == 63
     assert any("睡眠时长" in item for item in profile.inferences.key_changes)
     codes = {item.code for item in profile.actions.recommendations}
     assert {"ADD_AEROBIC_VOLUME", "ADD_STRENGTH_SESSIONS"} <= codes

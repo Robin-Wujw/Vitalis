@@ -240,39 +240,31 @@ def test_sleep_hrv_drives_recovery_while_rmssd_drives_all_day_curve():
     assert feature.daily_curve.device_id == "balance"
 
 
-def test_hrv_exposes_zeppbridge_style_daily_sdnn_mean():
+def test_hrv_exposes_canonical_daily_sleep_hrv_trend():
     raw = _profile(hrv_today=55)
     raw.device_models = {
         "HELIO": "Amazfit Helio Strap",
         "BALANCE": "Amazfit Balance 2",
     }
-    raw.series["hrv_sdnn"] = []
-    for offset in range(7):
-        day = TARGET - timedelta(days=offset)
-        raw.series["hrv_sdnn"].extend([
-            SeriesPoint(
-                metric="hrv_sdnn", value=60 + offset, unit="ms", day=day,
-                observed_at=datetime.combine(day, time(1), tzinfo=timezone.utc),
-                source="zepp", source_scope="device", device_id="helio",
-            ),
-            SeriesPoint(
-                metric="hrv_sdnn", value=80 + offset, unit="ms", day=day,
-                observed_at=datetime.combine(day, time(5), tzinfo=timezone.utc),
-                source="zepp", source_scope="device", device_id="helio",
-            ),
-        ])
+    raw.series["sleep_hrv"] = _series(
+        "sleep_hrv", [73] + [60 + (offset % 4) for offset in range(1, 28)],
+        device="balance", scope="device",
+    )
+    raw.series["sleep_hrv"].extend(_series(
+        "sleep_hrv", [72] + [58 + (offset % 3) for offset in range(1, 11)],
+        device="helio", scope="device",
+    ))
 
     feature = HrvAnalyzer().analyze(
         raw, BaselineEngine().build(raw.series, raw.day)
     )
 
-    trend = feature.sdnn_daily_trend
+    trend = feature.sleep_hrv_daily_trend
     assert trend is not None
-    assert trend.device_id == "helio"
-    assert trend.today_average_ms == 70
-    assert trend.today_minimum_ms == 60
-    assert trend.today_maximum_ms == 80
-    assert trend.today_sample_count == 2
+    assert trend.device_id == "balance"
+    assert trend.device_label == "Amazfit Balance 2"
+    assert trend.today_value_ms == 73
+    assert trend.today_sample_count == 1
     assert len(trend.points) == 7
 
 

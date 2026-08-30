@@ -252,14 +252,15 @@ Missing intervals are unknown coverage, not high stress.
 
 The descriptive first stage is implemented: Zepp's nightly `sleepHRV`, sleep-oriented
 `hrv_sdnn`, and timestamped `HRVRMSSD` streams remain separate. Recovery prefers the
-nightly summary; the daily record chart uses only RMSSD. Timestamped RMSSD is resampled into
-one-minute median display bins, exposed with sample coverage and first/last timestamps,
-and rendered on a real millisecond axis spanning 0–24 hours. Curve-source selection
+nightly summary. SDNN is summarized per local calendar day using the mean, measured
+minimum/maximum and sample count used by ZeppBridge's daily trend. The sleep timeline
+uses only RMSSD, resampled into one-minute median display bins and rendered on a real
+millisecond axis cropped to the validated main-sleep interval. Curve-source selection
 uses the one device stream with the most populated target-day bins; it does not merge
-absolute HRV across devices. Missing bins break the line, the main sleep boundary
-separates its records from other periods, and the report lists actual record windows
-rather than presenting first and last timestamps as continuous coverage. Minute display
-does not establish beat-to-beat or ECG equivalence. The chart explicitly makes no stress,
-recovery, or emotion claim;
+absolute HRV across devices. Observations no more than five minutes apart are connected,
+while longer gaps remain visible. Records outside main sleep stay available in storage
+but do not appear as an invented all-day curve. Minute display does not establish
+beat-to-beat or ECG equivalence. The chart explicitly makes no stress, recovery, or
+emotion claim;
 context-dependent daytime interpretation remains blocked by the activity, posture,
 respiration, and time-of-day reference requirements above.

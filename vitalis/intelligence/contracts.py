@@ -309,6 +309,28 @@ class DailyHrvCurveFeature(BaseModel):
     points: list[HrvCurvePoint] = Field(min_length=1, max_length=1440)
 
 
+class DailySdnnPoint(BaseModel):
+    date: DateValue
+    average_ms: float = Field(gt=0)
+    minimum_ms: float = Field(gt=0)
+    maximum_ms: float = Field(gt=0)
+    sample_count: int = Field(ge=1)
+
+
+class DailySdnnTrendFeature(BaseModel):
+    """Zepp SDNN readings aggregated by local calendar day."""
+
+    metric: Literal["hrv_sdnn"] = "hrv_sdnn"
+    aggregation: Literal["daily_mean"] = "daily_mean"
+    device_id: str | None = None
+    device_label: str
+    today_average_ms: float = Field(gt=0)
+    today_minimum_ms: float = Field(gt=0)
+    today_maximum_ms: float = Field(gt=0)
+    today_sample_count: int = Field(ge=1)
+    points: list[DailySdnnPoint] = Field(min_length=1, max_length=7)
+
+
 class HeartRateCoverageFeature(BaseModel):
     """Indexed high-frequency coverage; values remain unavailable until decoded."""
 
@@ -371,6 +393,7 @@ class HrvFeatures(BaseModel):
     rhr_deviation: Deviation | None = None
     nocturnal_heart_rate: NocturnalHeartRateFeature | None = None
     daily_curve: DailyHrvCurveFeature | None = None
+    sdnn_daily_trend: DailySdnnTrendFeature | None = None
     streams: list[HrvStreamFeature] = Field(default_factory=list)
     heart_rate_coverage: list[HeartRateCoverageFeature] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)

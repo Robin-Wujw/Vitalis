@@ -228,6 +228,42 @@ def test_sleep_hrv_drives_recovery_while_rmssd_drives_all_day_curve():
     assert feature.daily_curve.device_id == "balance"
 
 
+def test_hrv_exposes_zeppbridge_style_daily_sdnn_mean():
+    raw = _profile(hrv_today=55)
+    raw.device_models = {
+        "HELIO": "Amazfit Helio Strap",
+        "BALANCE": "Amazfit Balance 2",
+    }
+    raw.series["hrv_sdnn"] = []
+    for offset in range(7):
+        day = TARGET - timedelta(days=offset)
+        raw.series["hrv_sdnn"].extend([
+            SeriesPoint(
+                metric="hrv_sdnn", value=60 + offset, unit="ms", day=day,
+                observed_at=datetime.combine(day, time(1), tzinfo=timezone.utc),
+                source="zepp", source_scope="device", device_id="helio",
+            ),
+            SeriesPoint(
+                metric="hrv_sdnn", value=80 + offset, unit="ms", day=day,
+                observed_at=datetime.combine(day, time(5), tzinfo=timezone.utc),
+                source="zepp", source_scope="device", device_id="helio",
+            ),
+        ])
+
+    feature = HrvAnalyzer().analyze(
+        raw, BaselineEngine().build(raw.series, raw.day)
+    )
+
+    trend = feature.sdnn_daily_trend
+    assert trend is not None
+    assert trend.device_id == "helio"
+    assert trend.today_average_ms == 70
+    assert trend.today_minimum_ms == 60
+    assert trend.today_maximum_ms == 80
+    assert trend.today_sample_count == 2
+    assert len(trend.points) == 7
+
+
 def test_decision_abstains_when_baselines_are_not_interpretable():
     raw = RawDailyProfile(user_id="u", day=TARGET)
     raw.training_preferences = TrainingPreferences(user_id="u")

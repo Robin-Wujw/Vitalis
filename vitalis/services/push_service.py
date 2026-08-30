@@ -373,40 +373,45 @@ def _render_daily_hrv_curve(
     bin_minutes = curve.get("bin_minutes")
     if bin_minutes not in {1, 5, 10, 15, 30}:
         return []
-    values = {
+    all_values = {
         _time_bin_index(item.get("time"), bin_minutes): float(item["median_ms"])
         for item in points
         if _time_bin_index(item.get("time"), bin_minutes) is not None
         and isinstance(item.get("median_ms"), (int, float))
     }
-    if not values:
+    if not all_values:
         return []
-
-    record_summary = _hrv_record_summary(
-        values,
+    values = _sleep_hrv_values(
+        all_values,
         bin_minutes=bin_minutes,
         bedtime=sleep.get("bedtime"),
         wake_time=sleep.get("wake_time"),
     )
+    if not values:
+        return []
+    first_index, last_index = min(values), max(values)
+    average = sum(values.values()) / len(values)
     return [
         "",
-        "### 当天 HRV 记录（非连续）",
+        "### 睡眠 HRV 时间线",
         "",
         _ReportHtmlBlock(_render_hrv_chart_html(
             values,
             bin_minutes=bin_minutes,
-            wake_time=sleep.get("wake_time"),
+            start_index=first_index,
+            end_index=last_index,
         )),
         "",
-        f"{record_summary}。空白时段是设备没有上传有效 RMSSD，不是 0，也不会补线。"
-        "虚线标出主睡眠结束时间；其他时段可能来自午睡或静止测量。"
-        "HRV 还会受活动、姿势和呼吸影响，不能单独当作压力判断。",
+        f"睡眠期记录 {_format_hrv_range(sorted(values), bin_minutes)}，"
+        f"平均 {average:.1f} 毫秒，共 {len(values)} 个分钟读数。"
+        "短采样间隔连线，超过 5 分钟没有读数时断开；这条曲线用于观察睡眠中的波动，"
+        "不单独判断压力或情绪。",
         "",
     ]
 
 
 def _render_hrv_chart_html(
-    values: dict[int, float], *, bin_minutes: int, wake_time: str | None
+    values: dict[int, float], *, bin_minutes: int, start_index: int, end_index: int
 ) -> str:
     low_value = min(values.values())
     high_value = max(values.values())
@@ -415,16 +420,16 @@ def _render_hrv_chart_html(
     if axis_high <= axis_low:
         axis_high = axis_low + 10
     left, right, top, bottom = 52.0, 576.0, 24.0, 128.0
-    daily_bin_count = 24 * 60 // bin_minutes
+    span = max(end_index - start_index, 1)
 
     def coordinate(index: int) -> tuple[float, float]:
-        x = left + index / daily_bin_count * (right - left)
+        x = left + (index - start_index) / span * (right - left)
         ratio = (values[index] - axis_low) / (axis_high - axis_low)
         return x, bottom - ratio * (bottom - top)
 
     segments: list[list[int]] = []
     for index in sorted(values):
-        if not segments or index != segments[-1][-1] + 1:
+        if not segments or index - segments[-1][-1] > max(1, 5 // bin_minutes):
             segments.append([index])
         else:
             segments[-1].append(index)
@@ -460,97 +465,59 @@ def _render_hrv_chart_html(
         f'{value:g}</text>'
         for offset, value in enumerate(y_ticks)
     )
-    wake_index = _time_bin_index(wake_time, bin_minutes)
-    wake_marker = ""
-    if wake_index is not None and 0 < wake_index < daily_bin_count:
-        wake_x = left + wake_index / daily_bin_count * (right - left)
-        wake_label = wake_time[:5]
-        wake_marker = (
-            f'<line x1="{wake_x:.1f}" y1="{top}" x2="{wake_x:.1f}" y2="{bottom}" '
-            'stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 5"/>'
-            f'<text x="{wake_x:.1f}" y="17" text-anchor="middle" fill="#64748b" '
-            f'font-size="12">醒来 {wake_label}</text>'
-        )
+    average = sum(values.values()) / len(values)
     return (
         '<div style="margin:6px 0 10px;padding:10px 8px 4px;border:1px solid #dbe4e8;'
         'border-radius:6px;background:#ffffff;overflow:hidden">'
         '<div style="display:flex;justify-content:flex-end;gap:14px;padding:0 10px 4px;'
         'color:#475569;font-size:12px">'
-        f'<span>最低 {low_value:g}</span><span>最高 {high_value:g} 毫秒</span></div>'
+        f'<span>平均 {average:.1f}</span><span>最低 {low_value:g}</span>'
+        f'<span>最高 {high_value:g} 毫秒</span></div>'
         '<svg viewBox="0 0 600 175" width="100%" role="img" '
-        'aria-label="当天非连续心率变异性记录" '
+        'aria-label="睡眠心率变异性时间线" '
         'style="display:block;width:100%;height:auto;background:#ffffff">'
-        f'{grid}{labels}{wake_marker}{"".join(lines)}{extrema}'
-        f'{_render_day_axis(left, right)}'
+        f'{grid}{labels}{"".join(lines)}{extrema}'
+        f'{_render_hrv_time_axis(left, right, start_index, end_index, bin_minutes)}'
         '</svg></div>'
     )
 
 
-def _render_day_axis(left: float, right: float) -> str:
+def _render_hrv_time_axis(
+    left: float, right: float, start_index: int, end_index: int, bin_minutes: int
+) -> str:
+    middle_index = (start_index + end_index) // 2
+    ticks = ((left, start_index), ((left + right) / 2, middle_index), (right, end_index))
     return "".join(
-        f'<text x="{left + hour / 24 * (right - left):.1f}" y="158" '
-        'text-anchor="middle" fill="#64748b" font-size="12">'
-        f'{hour}时</text>'
-        for hour in (0, 6, 12, 18, 24)
+        f'<text x="{x:.1f}" y="158" text-anchor="middle" fill="#64748b" font-size="12">'
+        f'{_format_hrv_range([index], bin_minutes)}</text>'
+        for x, index in ticks
     )
 
 
-def _hrv_record_summary(
-    values: dict[int, float],
-    *,
-    bin_minutes: int,
-    bedtime: str | None,
-    wake_time: str | None,
-) -> str:
+def _sleep_hrv_values(
+    values: dict[int, float], *, bin_minutes: int,
+    bedtime: str | None, wake_time: str | None,
+) -> dict[int, float]:
     bedtime_index = _time_bin_index(bedtime, bin_minutes)
     wake_index = _time_bin_index(wake_time, bin_minutes)
-
-    def is_sleep(index: int) -> bool:
-        if bedtime_index is None or wake_index is None:
-            return False
-        if bedtime_index <= wake_index:
-            return bedtime_index <= index <= wake_index
-        return index >= bedtime_index or index <= wake_index
-
-    sleep_indexes = [index for index in sorted(values) if is_sleep(index)]
-    outside_sleep_indexes = [index for index in sorted(values) if not is_sleep(index)]
-    parts = []
-    if sleep_indexes:
-        parts.append(f"主睡眠记录 {_format_hrv_range(sleep_indexes, bin_minutes)}")
-    if outside_sleep_indexes:
-        windows = _contiguous_hrv_windows(
-            outside_sleep_indexes, max_gap_minutes=5, bin_minutes=bin_minutes
-        )
-        parts.append(
-            "其他时段记录 "
-            + "、".join(_format_hrv_range(window, bin_minutes) for window in windows)
-        )
-    if parts:
-        return "；".join(parts)
-    windows = _contiguous_hrv_windows(
-        sorted(values), max_gap_minutes=5, bin_minutes=bin_minutes
-    )
-    return "设备记录 " + "、".join(
-        _format_hrv_range(window, bin_minutes) for window in windows
-    )
-
-
-def _contiguous_hrv_windows(
-    indexes: list[int], *, max_gap_minutes: int, bin_minutes: int
-) -> list[list[int]]:
-    windows: list[list[int]] = []
-    max_gap_bins = max(1, max_gap_minutes // bin_minutes)
-    for index in indexes:
-        if not windows or index - windows[-1][-1] > max_gap_bins:
-            windows.append([index])
-        else:
-            windows[-1].append(index)
-    return windows
+    if bedtime_index is None or wake_index is None:
+        return values
+    if bedtime_index <= wake_index:
+        return {
+            index: value for index, value in values.items()
+            if bedtime_index <= index <= wake_index
+        }
+    bins_per_day = 24 * 60 // bin_minutes
+    return {
+        (index + bins_per_day if index <= wake_index else index): value
+        for index, value in values.items()
+        if index >= bedtime_index or index <= wake_index
+    }
 
 
 def _format_hrv_range(indexes: list[int], bin_minutes: int) -> str:
     def clock(index: int) -> str:
-        minute = index * bin_minutes
+        minute = index * bin_minutes % (24 * 60)
         return f"{minute // 60:02d}:{minute % 60:02d}"
 
     first = clock(indexes[0])
@@ -829,6 +796,13 @@ def _render_overnight_summary(
         if hrv_deviation.get("percent") is not None:
             text += f"（较个人基线 {hrv_deviation['percent']:+.1f}%）"
         cardiovascular.append(text)
+    sdnn = hrv.get("sdnn_daily_trend") or {}
+    if sdnn.get("today_average_ms") is not None:
+        cardiovascular.append(
+            f"SDNN 日均 {sdnn['today_average_ms']:g} 毫秒"
+            f"（{sdnn['today_sample_count']} 次读数，"
+            f"区间 {sdnn['today_minimum_ms']:g}–{sdnn['today_maximum_ms']:g}）"
+        )
     if hrv.get("recent_7d_change_percent") is not None:
         cardiovascular.append(
             f"近 7 天较此前 7 天 {hrv['recent_7d_change_percent']:+.1f}%"

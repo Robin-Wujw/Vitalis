@@ -79,11 +79,21 @@ def _profile_payload():
                     "first_sample_time": "00:31",
                     "last_sample_time": "17:58",
                     "points": [
-                        {"time": "00:30", "median_ms": 60, "sample_count": 3},
-                        {"time": "00:31", "median_ms": 40, "sample_count": 3},
+                        {"time": "01:00", "median_ms": 60, "sample_count": 3},
+                        {"time": "01:01", "median_ms": 40, "sample_count": 3},
                         {"time": "17:00", "median_ms": 80, "sample_count": 3},
                         {"time": "17:01", "median_ms": 50, "sample_count": 3},
                     ],
+                },
+                "sdnn_daily_trend": {
+                    "metric": "hrv_sdnn",
+                    "aggregation": "daily_mean",
+                    "device_label": "Amazfit Helio Strap",
+                    "today_average_ms": 69.4,
+                    "today_minimum_ms": 61.2,
+                    "today_maximum_ms": 78.1,
+                    "today_sample_count": 4,
+                    "points": [],
                 },
                 "streams": [{
                     "device_label": "Amazfit Helio Strap",
@@ -387,22 +397,21 @@ def test_evening_push_names_exact_workout_mode_in_chinese():
     assert "低强度 30.0% · 中等强度 30.0% · 阈值附近及以上 40.0%" in text
     assert "今天走了 8,632 步" in text
     assert "设备记录的平均压力 31；放松状态占 62%；高压力占 2%" in text
-    assert "当天 HRV 记录（非连续）" in text
+    assert "睡眠 HRV 时间线" in text
     assert '<svg viewBox="0 0 600 175"' in message.body
     assert "&lt;svg" not in message.body
-    assert "最低 40" in text and "最高 80 毫秒" in text
-    assert message.body.count('stroke="#ef5b56"') == 2
-    assert "醒来 08:15" in text
-    assert all(f">{hour}时</text>" in message.body for hour in (0, 6, 12, 18, 24))
+    assert "最低 40" in text and "最高 60 毫秒" in text
+    assert message.body.count('stroke="#ef5b56"') == 1
+    assert "01:00" in text and "01:01" in text
     assert "近 7 天 HRV" not in text
-    assert "其他时段记录 00:30–00:31、17:00–17:01" in text
-    assert "其他时段可能来自午睡或静止测量" in text
-    assert "设备没有上传有效 RMSSD，不是 0，也不会补线" in text
-    assert "不能单独当作压力判断" in text
+    assert "睡眠期记录 01:00–01:01" in text
+    assert "17:00" not in text and "17:01" not in text
+    assert "超过 5 分钟没有读数时断开" in text
+    assert "不单独判断压力或情绪" in text
     assert "12 个样本" not in text
     assert "覆盖 10 分钟" not in text
     assert "▁" not in text
-    curve_explanation_end = message.body.index("不能单独当作压力判断")
+    curve_explanation_end = message.body.index("不单独判断压力或情绪")
     following_html = message.body[curve_explanation_end:]
     assert "<li style=" in following_html
     assert following_html.index("<li style=") < following_html.index("最近 7 天")
@@ -435,7 +444,7 @@ def test_evening_rest_day_reports_activity_without_treating_rest_as_a_problem():
     assert "恢复受抑制" not in message.body
 
 
-def test_hrv_record_summary_separates_main_sleep_from_other_windows():
+def test_hrv_sleep_timeline_excludes_samples_outside_main_sleep():
     received = []
     payload = deepcopy(_profile_payload())
     payload["features"]["hrv"]["daily_curve"]["points"] = [
@@ -464,9 +473,9 @@ def test_hrv_record_summary_separates_main_sleep_from_other_windows():
     service.push_daily_profile("test-user", payload, period="evening")
 
     text = _visible_text(received[0].body)
-    assert "主睡眠记录 02:01–09:22" in text
-    assert "其他时段记录 09:36–09:43、15:19–16:06" in text
-    assert "02:01–16:06 有记录" not in text
+    assert "睡眠期记录 02:01–09:22" in text
+    assert "15:19" not in text
+    assert "16:06" not in text
 
 
 def test_evening_low_confidence_run_does_not_name_workout_type_or_drift():

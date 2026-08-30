@@ -172,7 +172,7 @@ class DecisionEngine:
             DecisionAction.TRAIN_NORMAL: "DECISION.CONCURRENT_BALANCE",
             DecisionAction.TRAIN_LIGHT: "DECISION.CONCURRENT_LOAD_REDUCTION",
         }[action]
-        drivers = recovery.positive_signals or ["RECOVERY_NORMAL"]
+        drivers = list(recovery.positive_signals) or ["RECOVERY_NORMAL"]
         if training.load_state == LoadState.ELEVATED:
             drivers.append("TRAINING_LOAD_ELEVATED")
         elif training.load_state == LoadState.LOW:
@@ -369,6 +369,8 @@ class DecisionEngine:
         high_drift = bool(
             latest and latest.cardiac_drift_percent is not None
             and (day - latest.date).days <= 7
+            and latest.classification in {"RECOVERY_RUN", "EASY_RUN"}
+            and latest.confidence in {ConfidenceBand.MODERATE, ConfidenceBand.HIGH}
             and latest.cardiac_drift_percent > 5
         )
         established = len(durations) >= 4

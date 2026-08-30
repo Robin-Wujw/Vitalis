@@ -103,6 +103,22 @@ def test_running_analysis_detects_repeated_work_and_recovery_segments():
     assert "快速段" in session.segments[0].kind_label
 
 
+def test_low_confidence_steady_run_does_not_report_cardiac_drift():
+    samples = []
+    for second in range(30 * 60):
+        samples.extend([
+            _sample(second, "heart_rate", 145 if second < 900 else 155, "bpm"),
+            _sample(second, "speed", 3.0, "m/s"),
+        ])
+
+    session = RunningAnalyzer().analyze(_raw([_run(samples)])).recent_sessions[0]
+
+    assert session.classification == "STEADY_RUN"
+    assert session.confidence == ConfidenceBand.LOW
+    assert session.cardiac_drift_percent is None
+    assert any("不解释心率漂移" in item for item in session.limitations)
+
+
 def test_running_analysis_does_not_invent_zones_without_threshold():
     samples = [
         _sample(second, "speed", 3.0, "m/s")

@@ -42,8 +42,8 @@ INTENSITY_LABELS = {
 
 RECOVERY_LABELS = {
     "GOOD": "恢复良好",
-    "NORMAL": "恢复一般",
-    "SUPPRESSED": "恢复受抑制",
+    "NORMAL": "状态稳定",
+    "SUPPRESSED": "恢复指标偏弱",
     "INSUFFICIENT_DATA": "恢复数据不足",
 }
 
@@ -80,7 +80,7 @@ DRIVER_LABELS = {
     "SLEEP_BELOW_BASELINE": "睡眠低于个人基线",
     "TRAINING_LOAD_ELEVATED": "近期训练负荷偏高",
     "TRAINING_LOAD_LOW": "近期训练负荷较低",
-    "RECOVERY_NORMAL": "恢复状态一般",
+    "RECOVERY_NORMAL": "恢复指标处于个人正常范围",
 }
 
 LIMITATION_LABELS = {
@@ -94,7 +94,7 @@ LIMITATION_LABELS = {
     "sleep_stages_are_trend_only": "消费级设备的睡眠分期仅用于趋势参考",
     "training_history_missing": "缺少训练历史",
     "training_load_is_vendor_derived": "训练负荷采用厂商指标",
-    "training_load_28d_baseline_insufficient": "训练负荷的 28 天基线数据不足",
+    "training_load_comparison_insufficient": "缺少完整的前三周训练负荷对照",
     "session_rpe_unavailable": "尚未记录主观用力程度",
     "aerobic_intensity_classification_unavailable": "尚未完成个体化有氧强度分区",
     "fewer_than_two_baseline_interpretable_signals": "可相对基线解释的恢复信号少于两项",

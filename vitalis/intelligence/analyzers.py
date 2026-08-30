@@ -615,20 +615,29 @@ class OvernightVitalsAnalyzer:
     @staticmethod
     def _oxygen(
         raw: RawDailyProfile,
-        baselines: dict[str, list[BaselineStats]],
+        _baselines: dict[str, list[BaselineStats]],
         sleep: SleepFeatures,
     ) -> OxygenFeatures:
+        # Zepp assigns a night's ODI summary to the preceding night date, while
+        # Vitalis sleep records use the wake date.
+        oxygen_day = raw.day - timedelta(days=1)
         candidates = []
+        source_baselines = BaselineEngine().build(
+            {"spo2_odi": raw.series.get("spo2_odi", [])}, oxygen_day
+        )
         coverage_values = daily_stream_values(
-            raw.series.get("spo2_measured_minutes", []), raw.day
+            raw.series.get("spo2_measured_minutes", []), oxygen_day
         )
         event_values = daily_stream_values(
-            raw.series.get("spo2_odi_events", []), raw.day
+            raw.series.get("spo2_odi_events", []), oxygen_day
         )
         for stream, odi in daily_stream_values(
-            raw.series.get("spo2_odi", []), raw.day
+            raw.series.get("spo2_odi", []), oxygen_day
         ).items():
-            baseline = _baseline_for(baselines, "spo2_odi", *stream)
+            source, scope, device_id = stream
+            baseline = _baseline_for(
+                source_baselines, "spo2_odi", source, scope, device_id
+            )
             measured = coverage_values.get(stream)
             candidates.append((
                 int(measured is not None),
@@ -687,7 +696,7 @@ class OvernightVitalsAnalyzer:
                 + max(2 * float(baseline.mad or 0), 1.5),
             )
         recent = _same_stream_daily_values(
-            raw.series.get("spo2_odi", []), raw.day, stream, 3
+            raw.series.get("spo2_odi", []), oxygen_day, stream, 3
         )
         elevated_nights = sum(value >= threshold for value in recent)
         repeated = odi >= threshold and len(recent) >= 2 and elevated_nights >= 2
@@ -743,22 +752,54 @@ class TrainingAnalyzer:
         today = raw.training_by_day.get(raw.day)
         recent_7 = [
             item for day, item in raw.training_by_day.items()
-            if raw.day - timedelta(days=6) <= day <= raw.day
+            if raw.day - timedelta(days=7) <= day < raw.day
         ]
         recent_28 = [
             item for day, item in raw.training_by_day.items()
-            if raw.day - timedelta(days=27) <= day <= raw.day
+            if raw.day - timedelta(days=28) <= day < raw.day
         ]
-        baseline = _baseline_for(
-            baselines, "training_load", "zepp", "normalized_daily_record", None
-        )
         today_load = float(today.get("total_load", 0)) if today else 0.0
-        deviation = BaselineEngine.deviation(today_load, baseline) if baseline else None
-        if deviation and deviation.direction == "above":
+        load_7d = sum(float(item.get("total_load", 0)) for item in recent_7)
+        prior_week_loads = []
+        for week in range(1, 4):
+            week_end = raw.day - timedelta(days=week * 7 + 1)
+            week_start = week_end - timedelta(days=6)
+            prior_week_loads.append(sum(
+                float(item.get("total_load", 0))
+                for item_day, item in raw.training_by_day.items()
+                if week_start <= item_day <= week_end
+            ))
+        has_full_comparison_window = bool(
+            raw.training_by_day
+            and min(raw.training_by_day) <= raw.day - timedelta(days=28)
+        )
+        reference = (
+            sum(prior_week_loads) / len(prior_week_loads)
+            if has_full_comparison_window and sum(prior_week_loads) > 0
+            else None
+        )
+        load_change = (
+            (load_7d - reference) / reference * 100
+            if reference and reference > 0 else None
+        )
+        direction = "unknown"
+        if load_change is not None:
+            direction = (
+                "above" if load_change > 25
+                else "below" if load_change < -25
+                else "near"
+            )
+        deviation = Deviation(
+            metric="training_load_7d",
+            baseline_window_days=21,
+            percent=round(load_change, 1) if load_change is not None else None,
+            direction=direction,
+        ) if load_change is not None else None
+        if direction == "above":
             load_state = LoadState.ELEVATED
-        elif deviation and deviation.direction == "below":
+        elif direction == "below":
             load_state = LoadState.LOW
-        elif deviation:
+        elif direction == "near":
             load_state = LoadState.NORMAL
         else:
             load_state = LoadState.INSUFFICIENT_DATA
@@ -807,8 +848,8 @@ class TrainingAnalyzer:
                 detail_available=bool(workout.get("detail_available")),
             ))
         limitations = ["training_load_is_vendor_derived"]
-        if baseline is None or baseline.status == Availability.INSUFFICIENT_DATA:
-            limitations.append("training_load_28d_baseline_insufficient")
+        if reference is None:
+            limitations.append("training_load_comparison_insufficient")
         limitations.append("session_rpe_unavailable")
         running = RunningAnalyzer().analyze(raw)
         strength = StrengthAnalyzer().analyze(raw)
@@ -821,7 +862,11 @@ class TrainingAnalyzer:
             today_load=today_load,
             today_workouts=int(today.get("workout_count", 0)) if today else 0,
             duration_7d=sum(int(item.get("total_duration", 0)) for item in recent_7),
-            load_7d=round(sum(float(item.get("total_load", 0)) for item in recent_7), 1),
+            load_7d=round(load_7d, 1),
+            load_7d_reference=round(reference, 1) if reference is not None else None,
+            load_7d_change_percent=(
+                round(load_change, 1) if load_change is not None else None
+            ),
             load_28d=round(sum(float(item.get("total_load", 0)) for item in recent_28), 1),
             aerobic_minutes_7d=aerobic_minutes,
             strength_sessions_7d=strength_sessions,

@@ -136,7 +136,9 @@ class RunningAnalyzer:
             speed,
             historical_durations,
         )
-        drift, drift_limitation = self._cardiac_drift(speed, heart_rate)
+        drift, drift_limitation = self._cardiac_drift(
+            speed, heart_rate, classification, confidence
+        )
         limitations = []
         if threshold is None:
             limitations.append("本次缺少个人乳酸阈心率，未计算心率区间。")
@@ -344,7 +346,18 @@ class RunningAnalyzer:
             ]
         return "UNCLASSIFIED", ConfidenceBand.NONE, ["跑步明细不足，未判断课型。"]
 
-    def _cardiac_drift(self, speed: list, heart_rate: list) -> tuple[float | None, str | None]:
+    def _cardiac_drift(
+        self,
+        speed: list,
+        heart_rate: list,
+        classification: str,
+        confidence: ConfidenceBand,
+    ) -> tuple[float | None, str | None]:
+        if (
+            classification not in {"RECOVERY_RUN", "EASY_RUN"}
+            or confidence not in {ConfidenceBand.MODERATE, ConfidenceBand.HIGH}
+        ):
+            return None, "本次不是明确识别的连续低强度跑，不解释心率漂移。"
         speed_bins = self._bins(speed, 30)
         hr_bins = self._bins(heart_rate, 30)
         common = [key for key in sorted(speed_bins) if key in hr_bins and speed_bins[key] > 0]

@@ -47,7 +47,11 @@ def _profile(hrv_today=40, rhr_today=64, sleep_today=360, load_today=20):
         "hrv_rmssd": _series("hrv_rmssd", [hrv_today] + [50 + (i % 3) for i in range(1, 22)], device="helio", scope="device"),
         "resting_hr": _series("resting_hr", [rhr_today] + [56 + (i % 2) for i in range(1, 22)], unit="bpm"),
         "sleep_duration": _series("sleep_duration", [sleep_today] + [450 + (i % 3) * 5 for i in range(1, 22)], unit="min"),
-        "training_load": _series("training_load", [load_today] + [30 + (i % 3) for i in range(1, 22)], unit="load"),
+        "training_load": _series(
+            "training_load",
+            [load_today] + [30 + (i % 3) for i in range(1, 36)],
+            unit="load",
+        ),
     }
     raw.sleep_by_day = {
         point.day: {"date": point.day, "sleep_duration": int(point.value), "source": "zepp"}
@@ -78,6 +82,14 @@ def _analyze(raw):
     return sleep, sleep_state, hrv, training, recovery, decision
 
 
+def _with_genuinely_low_recent_load(raw):
+    raw.training_by_day = {
+        day: value for day, value in raw.training_by_day.items()
+        if day < TARGET - timedelta(days=7)
+    }
+    return raw
+
+
 def test_multisignal_suppression_produces_rest_with_explanation():
     _, sleep_state, hrv, _, recovery, decision = _analyze(_profile())
     assert sleep_state == SleepState.BELOW_BASELINE
@@ -91,12 +103,29 @@ def test_multisignal_suppression_produces_rest_with_explanation():
 
 def test_good_recovery_and_low_load_can_produce_hard_training():
     _, sleep_state, _, training, recovery, decision = _analyze(
-        _profile(hrv_today=62, rhr_today=50, sleep_today=510, load_today=0)
+        _with_genuinely_low_recent_load(
+            _profile(hrv_today=62, rhr_today=50, sleep_today=510, load_today=0)
+        )
     )
     assert sleep_state == SleepState.ABOVE_BASELINE
     assert training.load_state == LoadState.LOW
     assert recovery.state == RecoveryState.GOOD
     assert decision.action == DecisionAction.TRAIN_HARD
+
+
+def test_empty_morning_load_does_not_make_the_recent_week_low():
+    raw = _profile(
+        hrv_today=62, rhr_today=50, sleep_today=510, load_today=0
+    )
+
+    training = TrainingAnalyzer().analyze(
+        raw, BaselineEngine().build(raw.series, raw.day)
+    )
+
+    assert training.today_load == 0
+    assert training.load_7d > 0
+    assert training.load_state == LoadState.NORMAL
+    assert training.load_7d_reference is not None
 
 
 def test_near_baseline_signals_are_interpretable_normal_recovery():
@@ -181,7 +210,9 @@ def test_training_preserves_recent_workout_types_and_details():
 
 
 def test_decision_returns_primary_running_and_optional_strength_plan():
-    raw = _profile(hrv_today=62, rhr_today=50, sleep_today=510, load_today=0)
+    raw = _with_genuinely_low_recent_load(
+        _profile(hrv_today=62, rhr_today=50, sleep_today=510, load_today=0)
+    )
     raw.workouts = []
     *_, decision = _analyze(raw)
 
@@ -302,7 +333,9 @@ def test_nocturnal_heart_rate_prefers_complete_upper_arm_stream():
 
 
 def test_recent_strength_keeps_running_primary_and_strength_as_alternative():
-    raw = _profile(hrv_today=62, rhr_today=50, sleep_today=510, load_today=0)
+    raw = _with_genuinely_low_recent_load(
+        _profile(hrv_today=62, rhr_today=50, sleep_today=510, load_today=0)
+    )
     raw.workouts = [{
         "local_day": TARGET - timedelta(days=1),
         "data": {
@@ -322,7 +355,9 @@ def test_recent_strength_keeps_running_primary_and_strength_as_alternative():
 
 
 def test_recorded_pain_blocks_planned_training():
-    raw = _profile(hrv_today=62, rhr_today=50, sleep_today=510, load_today=0)
+    raw = _with_genuinely_low_recent_load(
+        _profile(hrv_today=62, rhr_today=50, sleep_today=510, load_today=0)
+    )
     raw.training_preferences = TrainingPreferences(
         user_id="u",
         pain_or_injury_status="PRESENT",
@@ -339,7 +374,9 @@ def test_recorded_pain_blocks_planned_training():
 
 
 def test_recent_leg_session_suppresses_quality_run_conflict():
-    raw = _profile(hrv_today=62, rhr_today=50, sleep_today=510, load_today=0)
+    raw = _with_genuinely_low_recent_load(
+        _profile(hrv_today=62, rhr_today=50, sleep_today=510, load_today=0)
+    )
     workout_id = "recent-legs"
     raw.workouts = [{
         "workout_id": workout_id,
@@ -547,11 +584,11 @@ def test_overnight_vitals_gate_oxygen_and_detect_repeated_odi_elevation():
     raw = _profile(sleep_today=450)
     raw.series.update({
         "spo2_odi": _series(
-            "spo2_odi", [7, 7] + [3] * 20,
+            "spo2_odi", [3, 7, 7] + [3] * 19,
             device="balance", scope="device", unit="events/h",
         ),
         "spo2_odi_events": _series(
-            "spo2_odi_events", [52, 51] + [22] * 20,
+            "spo2_odi_events", [22, 52, 51] + [22] * 19,
             device="balance", scope="device", unit="count",
         ),
         "spo2_measured_minutes": _series(
@@ -576,6 +613,8 @@ def test_overnight_vitals_gate_oxygen_and_detect_repeated_odi_elevation():
     assert vitals.respiratory_rate == 14
     assert vitals.oxygen.status == Availability.AVAILABLE
     assert vitals.oxygen.coverage_ratio == pytest.approx(440 / 450, abs=0.001)
+    assert vitals.oxygen.odi_events_per_hour == 7
+    assert vitals.oxygen.odi_events == 52
     assert vitals.oxygen.odi_baseline == 3
     assert vitals.oxygen.repeated_elevation is True
     assert vitals.oxygen.interpretation == "repeated_elevation"

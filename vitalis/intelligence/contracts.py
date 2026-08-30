@@ -185,7 +185,7 @@ class BaselineStats(BaseModel):
 
 class Deviation(BaseModel):
     metric: str
-    baseline_window_days: Literal[7, 28]
+    baseline_window_days: Literal[7, 21, 28]
     percent: float | None = None
     robust_z: float | None = None
     direction: Literal["above", "near", "below", "unknown"] = "unknown"
@@ -629,6 +629,8 @@ class TrainingFeatures(BaseModel):
     today_workouts: int | None = None
     duration_7d: int | None = None
     load_7d: float | None = None
+    load_7d_reference: float | None = None
+    load_7d_change_percent: float | None = None
     load_28d: float | None = None
     aerobic_minutes_7d: int | None = None
     strength_sessions_7d: int | None = None

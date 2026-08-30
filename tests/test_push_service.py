@@ -70,6 +70,7 @@ def _profile_payload():
                     "status": "AVAILABLE",
                     "measured_minutes": 443,
                     "odi_events_per_hour": 2.84,
+                    "odi_baseline": 3.1,
                     "interpretation": "within_personal_range",
                 },
                 "outlier_labels": [],
@@ -86,6 +87,8 @@ def _profile_payload():
                 "today_load": 62,
                 "duration_7d": 180,
                 "load_7d": 260,
+                "load_7d_reference": 240,
+                "load_7d_change_percent": 8.3,
                 "load_28d": 945,
                 "aerobic_minutes_7d": 142,
                 "strength_sessions_7d": 2,
@@ -138,6 +141,9 @@ def _profile_payload():
             },
         },
         "states": {
+            "sleep": "ABOVE_BASELINE",
+            "recovery": "GOOD",
+            "training_load": "NORMAL",
             "sleep_label": "睡眠充足",
             "recovery_label": "恢复良好",
             "training_load_label": "近期负荷正常",
@@ -240,16 +246,22 @@ def test_morning_push_renders_actionable_coach_brief_without_audit_noise():
     message = received[0]
     assert message.title == "Vitalis 晨报 · 2026-08-28 · 轻松跑"
     assert message.body.startswith("> **数据日期：2026-08-28** · 数据完整")
-    assert "\n## 今日结论\n" in message.body
-    assert "恢复良好，今天做轻松跑，按低强度执行。" in message.body
-    assert "\n## 今天做什么\n" in message.body
+    assert "\n## 今日状态\n" in message.body
+    assert "昨夜恢复指标整体良好" in message.body
+    assert "今天安排轻松跑，按低强度完成。" in message.body
+    assert "\n## 昨夜数据\n" in message.body
+    assert "\n## 最近 7 天\n" in message.body
+    assert "\n## 今天安排\n" in message.body
     assert "### 主要：轻松跑 · 30–45 分钟 · 低强度" in message.body
     assert "1. **热身**：6–8 分钟 · 轻松。先快走，再逐渐过渡到慢跑" in message.body
     assert "有余力时，晚些时候可再做拉类力量训练；不做也不影响今天的主要安排。" in message.body
     assert "### 可选：拉类力量训练 · 40–60 分钟 · 中等强度" in message.body
-    assert "昨晚睡了 7 小时 27 分钟" in message.body
-    assert "夜间心率变异性高于你的个人基线" in message.body
-    assert "近 7 天跑步 2/3 次、力量 2/3 次" in message.body
+    assert "**睡眠**：7 小时 27 分钟；较个人基线 +6.5%" in message.body
+    assert "快速眼动睡眠 106 分钟" in message.body
+    assert "心率变异性 71 毫秒（较个人基线 +8.2%）" in message.body
+    assert "静息心率 47 次/分钟（较个人基线 -1.0%）" in message.body
+    assert "每小时下降 2.84 次" in message.body
+    assert "**构成**：跑步 2 次、82 分钟、14.2 公里；力量训练 2 次" in message.body
     assert "最近一周训练负荷明显增加。完成今天的计划即可，不再追加训练。" in message.body
     for audit_text in (
         "安全状态",
@@ -259,7 +271,6 @@ def test_morning_push_renders_actionable_coach_brief_without_audit_noise():
         "Amazfit Helio Strap",
         "厂商准备度",
         "身体电量",
-        "睡眠结构",
         "趋势与事件",
         "进阶条件",
         "停止条件",
@@ -393,14 +404,13 @@ def test_morning_push_explains_nocturnal_pattern_and_personalized_session():
     service.push_daily_profile("test-user", payload, period="morning")
 
     body = received[0].body
-    assert "近 7 天中位数较此前 7 天上升 12.5%" in body
-    assert "睡眠中心率中位数 50 次/分钟" in body
+    assert "近 7 天较此前 7 天 +12.5%" in body
+    assert "**睡眠中心率**：中位数 50 次/分钟" in body
     assert "稳定 5 分钟低点 46 次/分钟" in body
     assert "后半夜较前半夜回落 1 次/分钟" in body
-    assert "接近近 28 晚个人水平（+2.0%）" in body
     assert "最近一次跑步为稳定跑，33 分钟" in body
     assert "Amazfit Helio Strap" not in body
-    reasons = body.split("## 为什么", 1)[1].split("## 最近最值得注意", 1)[0]
+    reasons = body.split("## 为什么这样安排", 1)[1].split("## 最近最值得注意", 1)[0]
     assert reasons.count("\n-") <= 4
 
 

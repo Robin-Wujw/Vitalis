@@ -230,7 +230,7 @@ not continuous: samples occur in minute-spaced runs separated by long gaps, and 
 current day may be uploaded only through the morning even after a later synchronization.
 Missing intervals are unknown coverage, not high stress.
 
-### Proposed Analysis Policy (Not Yet Implemented)
+### Analysis Policy
 
 - Keep nocturnal recovery HRV and daytime ambulatory HRV as separate contracts.
 - Preserve one canonical same-device RMSSD stream and compare `lnRMSSD` only with that
@@ -249,3 +249,13 @@ Missing intervals are unknown coverage, not high stress.
   respiratory stream exists.
 - Require subjective mood input before learning or reporting personal emotion
   associations. Never infer happiness from HRV alone.
+
+The descriptive first stage is implemented: the canonical same-device RMSSD stream is
+resampled into 5-minute median display bins, exposed with sample coverage and first/last
+timestamps, and rendered on a real millisecond axis from the first to last observation.
+Missing bins break the line, wake time separates overnight and awake context, and a
+same-stream seven-day daily-median chart supplies the longer view. The 5-minute display
+bin does not validate the vendor's proprietary calculation as a standard 5-minute ECG
+measurement. The chart explicitly makes no stress, recovery, or emotion claim;
+context-dependent daytime interpretation remains blocked by the activity, posture,
+respiration, and time-of-day reference requirements above.

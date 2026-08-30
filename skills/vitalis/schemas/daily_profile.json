@@ -48,11 +48,12 @@
         },
         "hrv": {
           "type": "object",
-          "required": ["status", "status_label", "fusion_direction", "fusion_confidence", "fusion_confidence_label", "fusion_summary", "recent_7d_direction", "recent_7d_days", "previous_7d_days", "corroboration_status", "corroborating_stream_count", "corroboration_affects_decision", "streams", "heart_rate_coverage", "limitations", "limitation_labels"],
+          "required": ["status", "status_label", "baseline_ms", "fusion_direction", "fusion_confidence", "fusion_confidence_label", "fusion_summary", "recent_7d_direction", "recent_7d_days", "previous_7d_days", "corroboration_status", "corroborating_stream_count", "corroboration_affects_decision", "daily_curve", "recent_daily_values", "streams", "heart_rate_coverage", "limitations", "limitation_labels"],
           "properties": {
             "status": {"enum": ["AVAILABLE", "INSUFFICIENT_DATA"]},
             "status_label": {"type": "string"},
             "preferred_device_label": {"type": ["string", "null"]},
+            "baseline_ms": {"type": ["number", "null"]},
             "fusion_method": {"enum": ["canonical_device_with_corroboration", null]},
             "fusion_direction": {"enum": ["above", "near", "below", "unknown"]},
             "fusion_confidence": {"enum": ["NONE", "LOW", "MODERATE", "HIGH"]},
@@ -62,6 +63,8 @@
             "recent_7d_days": {"type": "integer", "minimum": 0, "maximum": 7},
             "previous_7d_days": {"type": "integer", "minimum": 0, "maximum": 7},
             "nocturnal_heart_rate": {"type": ["object", "null"]},
+            "daily_curve": {"type": ["object", "null"]},
+            "recent_daily_values": {"type": "array", "maxItems": 7, "items": {"type": "object"}},
             "corroboration_status": {"enum": ["not_available", "consistent", "conflicting", "insufficient"]},
             "corroborating_stream_count": {"type": "integer", "minimum": 0},
             "corroboration_affects_decision": {"type": "boolean"},

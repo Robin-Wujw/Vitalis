@@ -429,6 +429,14 @@ channel strips styling. Daytime HRV interpretation is intentionally not part of 
 daily contract until the activity, posture, respiration, circadian-reference, and
 coverage gates in `RESEARCH_NOTES.md` can be satisfied.
 
+`HrvFeatures.daily_curve` provides the non-interpretive visualization stage. It bins
+timestamped canonical-device RMSSD observations into 5-minute local-time medians. This
+is display resampling, not a claim that the vendor's proprietary observations are
+standard 5-minute ECG measurements. The PushPlus evening view plots real millisecond
+values only from the first to last observation, breaks the line across missing bins,
+marks wake time, and shows the same stream's seven daily medians. It never converts the
+daytime line into stress or emotion labels.
+
 ## 6. Evidence Boundaries
 
 - WHO activity guidance supplies population-level weekly context, not readiness rules.

@@ -140,6 +140,39 @@ def test_near_baseline_signals_are_interpretable_normal_recovery():
     assert decision.action_plan.primary_session is not None
 
 
+def test_hrv_exposes_gap_aware_half_hour_curve_without_interpretation():
+    raw = _profile(hrv_today=55)
+    raw.series["hrv_rmssd"].extend([
+        SeriesPoint(
+            metric="hrv_rmssd", value=value, unit="ms", day=TARGET,
+            observed_at=observed_at, source="zepp", source_scope="device",
+            device_id="helio",
+        )
+        for observed_at, value in (
+            (datetime(2026, 8, 27, 16, 5, tzinfo=timezone.utc), 40),
+            (datetime(2026, 8, 27, 16, 9, tzinfo=timezone.utc), 60),
+            (datetime(2026, 8, 27, 16, 35, tzinfo=timezone.utc), 70),
+            (datetime(2026, 8, 28, 4, 1, tzinfo=timezone.utc), 50),
+        )
+    ])
+
+    feature = HrvAnalyzer().analyze(
+        raw, BaselineEngine().build(raw.series, raw.day)
+    )
+
+    curve = feature.daily_curve
+    assert curve is not None
+    assert curve.sample_count == 4
+    assert curve.covered_minutes == 4
+    assert curve.first_sample_time == "00:05"
+    assert curve.last_sample_time == "12:01"
+    assert curve.bin_minutes == 5
+    assert [point.time for point in curve.points] == ["00:05", "00:35", "12:00"]
+    assert curve.points[0].median_ms == 50
+    assert len(feature.recent_daily_values) == 7
+    assert feature.baseline_ms is not None
+
+
 def test_decision_abstains_when_baselines_are_not_interpretable():
     raw = RawDailyProfile(user_id="u", day=TARGET)
     raw.training_preferences = TrainingPreferences(user_id="u")

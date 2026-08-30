@@ -1346,10 +1346,11 @@ with interpreted recovery and training context.
     completes, using private atomic delivery state to prevent duplicate sends.
 - [x] Part 2 - Separate morning and evening report contracts.
   - Keep the morning report focused on interpreted recovery and the training plan.
-  - Make the evening report summarize actual workouts, today's and seven-day load,
-    recovery signals, trends, events, and the engine's evening action.
-  - Keep deterministic interpretations ahead of measurements and place data
-    limitations at the end of both reports.
+  - Make the evening report summarize actual workouts, daily activity and stress,
+    recent running and strength rhythm, completed-day load, tonight's recovery, and
+    the next-day handoff.
+  - Keep deterministic interpretations ahead of measurements and omit internal audit
+    sections and low-confidence training claims from both reports.
 - [x] Part 3 - Configure and verify the live runtime.
   - Change the morning Hermes Cron job to hourly retries and add one no-agent 22:30
     evening job without exposing the private token or local identity.

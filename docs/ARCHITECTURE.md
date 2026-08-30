@@ -415,6 +415,13 @@ raw trend windows, empty signal groups, unknown safety inputs, passed checks, pl
 gates, and generic limitations stay in the structured profile instead of being copied
 into the daily push.
 
+The evening renderer is a separate deterministic view. It reports today's actual
+workout metrics when present, summarizes fused daily activity and device-recorded
+stress, explains the recent completed-day training load, and closes with recovery and
+next-day continuity actions. It does not turn a day without formal training into a
+problem, infer readiness from load alone, or print low-confidence workout type and
+cardiac-drift claims.
+
 ## 6. Evidence Boundaries
 
 - WHO activity guidance supplies population-level weekly context, not readiness rules.

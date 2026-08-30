@@ -83,11 +83,11 @@ substitutes yesterday's profile.
 
 A separate job runs at 22:30, synchronizes one day, and sends one Evening report for the
 current date. The Morning report interprets recovery and presents the health-first
-concurrent action plan: 7/28-day running and strength balance, one primary session, one
-optional addition or alternative, exact dose, evidence, conflict checks, stop
-conditions, and expiry.
-The Evening report instead reviews actual workouts, current and seven-day load,
-recovery signals, trends, and active events. Both put data limitations last.
+concurrent action plan: fused overnight health, recent running and strength balance,
+one primary session, and an optional addition or alternative with a concrete dose and
+plain-language reasons. The Evening report instead reviews completed workouts, daily
+activity and stress, recent training rhythm and load, then gives a practical recovery
+action and leaves tomorrow's intensity to the next complete overnight assessment.
 
 Add the PushPlus token to Hermes' private `~/.hermes/.env`:
 

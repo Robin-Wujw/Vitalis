@@ -11,6 +11,24 @@ def _profile_payload():
             "status_label": "数据完整",
             "missing_required_signal_labels": [],
         },
+        "facts": {
+            "steps": [{
+                "value": 8632,
+                "provenance": {"source_scope": "user_fused"},
+            }],
+            "stress": [{
+                "value": 31,
+                "provenance": {"source_scope": "device"},
+            }],
+            "stress_relaxed_pct": [{
+                "value": 62,
+                "provenance": {"source_scope": "device"},
+            }],
+            "stress_high_pct": [{
+                "value": 2,
+                "provenance": {"source_scope": "device"},
+            }],
+        },
         "features": {
             "sleep": {
                 "status": "AVAILABLE",
@@ -102,12 +120,23 @@ def _profile_payload():
                     "distance_km_28d": 63.8,
                     "recent_sessions": [{
                         "date": "2026-08-28",
+                        "classification": "TEMPO_RUN",
                         "classification_label": "节奏跑",
+                        "confidence": "HIGH",
                         "duration_minutes": 35,
                         "distance_km": 6.4,
                         "average_pace_seconds_per_km": 328,
                         "median_cadence_spm": 174,
+                        "average_heart_rate_bpm": 148,
+                        "maximum_heart_rate_bpm": 171,
                         "cardiac_drift_percent": 3.2,
+                        "heart_rate_zones": [
+                            {"zone": 1, "share_percent": 10},
+                            {"zone": 2, "share_percent": 20},
+                            {"zone": 3, "share_percent": 30},
+                            {"zone": 4, "share_percent": 35},
+                            {"zone": 5, "share_percent": 5},
+                        ],
                     }],
                 },
                 "strength": {
@@ -118,6 +147,7 @@ def _profile_payload():
                     "next_focus_label": "拉类",
                     "recent_sessions": [{
                         "date": "2026-08-28",
+                        "focus": "PUSH",
                         "focus_label": "推类",
                         "duration_minutes": 52,
                         "total_sets": 9,
@@ -311,19 +341,60 @@ def test_evening_push_names_exact_workout_mode_in_chinese():
 
     message = received[0]
     assert message.title == "Vitalis 晚报 · 2026-08-28 · 户外跑"
-    assert "## 今天完成了什么" in message.body
+    assert "## 今日回顾" in message.body
     assert (
-        "- **户外跑** · 35 分钟 · 厂商负荷 62 · 平均心率 148 次/分钟"
+        "- **户外跑** · 35 分钟 · 设备训练负荷 62 · 平均心率 148 次/分钟"
     ) in message.body
-    assert "## 训练质量" in message.body
+    assert "## 训练表现" in message.body
     assert "平均配速 5:28/公里" in message.body
     assert "步频中位数 174 步/分钟" in message.body
     assert "心率漂移 +3.2%" in message.body
-    assert "## 今晚怎么收尾" in message.body
-    assert "今晚不再补训练" in message.body
-    assert "主观用力（1–10 分）和主要酸痛部位" in message.body
+    assert "低强度 30.0% · 中等强度 30.0% · 阈值附近及以上 40.0%" in message.body
+    assert "## 全天状态" in message.body
+    assert "今天走了 8,632 步" in message.body
+    assert "设备记录的平均压力 31；放松状态占 62%；高压力占 2%" in message.body
+    assert "## 今晚恢复" in message.body
+    assert "今晚不再追加跑步或腿部力量" in message.body
+    assert "## 明天衔接" in message.body
+    assert "明天先按低负担方向预留" in message.body
     assert "趋势与事件" not in message.body
     assert "数据限制" not in message.body
+
+
+def test_evening_rest_day_reports_activity_without_treating_rest_as_a_problem():
+    received = []
+    payload = deepcopy(_profile_payload())
+    payload["features"]["training"]["recent_workouts"] = []
+    payload["features"]["training"]["running"]["recent_sessions"] = []
+    payload["features"]["training"]["strength"]["recent_sessions"] = []
+    service = PushService(pushplus_token="")
+    service.add_handler(received.append)
+
+    service.push_daily_profile("test-user", payload, period="evening")
+
+    message = received[0]
+    assert message.title == "Vitalis 晚报 · 2026-08-28 · 日常活动回顾"
+    assert "按正常节奏收尾即可，不需要在晚上补课" in message.body
+    assert "今天走了 8,632 步" in message.body
+    assert "今天没有正式训练。晚上不用补训练" in message.body
+    assert "今天没有训练不需要用明天加量补偿" in message.body
+    assert "恢复受抑制" not in message.body
+
+
+def test_evening_low_confidence_run_does_not_name_workout_type_or_drift():
+    received = []
+    payload = deepcopy(_profile_payload())
+    run = payload["features"]["training"]["running"]["recent_sessions"][0]
+    run["confidence"] = "LOW"
+    service = PushService(pushplus_token="")
+    service.add_handler(received.append)
+
+    service.push_daily_profile("test-user", payload, period="evening")
+
+    body = received[0].body
+    assert "课型暂不下结论" in body
+    assert "节奏跑" not in body
+    assert "心率漂移" not in body
 
 
 def test_missing_values_do_not_render_dangling_units():

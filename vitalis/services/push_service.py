@@ -171,7 +171,6 @@ def _render_morning(payload: dict) -> tuple[str, list[str]]:
 
 def _render_evening(payload: dict) -> tuple[str, list[str]]:
     features = payload["features"]
-    states = payload.get("states", {})
     training = features["training"]
     report_date = payload["date"]
     today = [
@@ -179,19 +178,24 @@ def _render_evening(payload: dict) -> tuple[str, list[str]]:
         for workout in training.get("recent_workouts", [])
         if workout.get("date") == report_date
     ]
-    title_label = today[0]["sport_mode_label"] if len(today) == 1 else "今日训练回顾"
+    if len(today) == 1:
+        title_label = today[0]["sport_mode_label"]
+    elif today:
+        title_label = "多项训练回顾"
+    else:
+        title_label = "日常活动回顾"
     title = f"Vitalis 晚报 · {report_date} · {title_label}"
     lines = _metadata(payload)
     lines.extend([
         "",
-        "## 今天完成了什么",
+        "## 今日回顾",
         "",
     ])
     if today:
         for workout in today:
             details = [
                 _display_with_unit(workout.get("duration_minutes"), "分钟"),
-                f"厂商负荷 {_display(workout.get('vendor_load'))}",
+                f"设备训练负荷 {_display(workout.get('vendor_load'))}",
             ]
             if workout.get("heart_rate_avg_bpm") is not None:
                 details.append(f"平均心率 {workout['heart_rate_avg_bpm']} 次/分钟")
@@ -199,32 +203,167 @@ def _render_evening(payload: dict) -> tuple[str, list[str]]:
                 f"- **{workout['sport_mode_label']}** · {' · '.join(details)}"
             )
     else:
-        lines.append("今天没有记录到正式训练，不需要在晚上补训练。")
+        lines.append("今天没有记录到正式训练，按正常节奏收尾即可，不需要在晚上补课。")
 
     details = _render_today_workout_details(training, report_date)
     if details:
-        lines.extend(["", "## 训练质量", "", *details])
+        lines.extend(["", "## 训练表现", "", *details])
 
-    load_label = states.get("training_load_label") or training.get(
-        "load_state_label", "负荷数据不足"
-    )
-    lines.extend(["", "## 今晚怎么收尾", ""])
-    if today:
-        if training.get("load_state") == "ELEVATED":
-            lines.append(
-                f"今天已经完成训练，当前{load_label}。今晚不再追加跑步或力量，正常进食、补水并按时睡觉。"
-            )
-        else:
-            lines.append(
-                f"今天已经完成训练，当前{load_label}。今晚不再补训练，正常进食、补水并按时睡觉。"
-            )
-        lines.extend([
-            "",
-            "训练后的主观用力（1–10 分）和主要酸痛部位还没有记录；这两项会直接用于调整下一次训练剂量。",
-        ])
-    else:
-        lines.append(f"当前{load_label}。按正常作息休息，明早再根据整夜数据安排训练。")
+    daily_state = _render_evening_daily_state(payload, training)
+    if daily_state:
+        lines.extend(["", "## 全天状态", "", *daily_state])
+
+    lines.extend([
+        "",
+        "## 今晚恢复",
+        "",
+        _evening_recovery_action(training, today, report_date),
+        "",
+        "## 明天衔接",
+        "",
+        _tomorrow_bridge(training, today, report_date),
+    ])
     return title, lines
+
+
+def _render_evening_daily_state(payload: dict, training: dict) -> list[str]:
+    lines = []
+    steps = _fact_value(payload, "steps")
+    if steps is not None:
+        lines.append(f"- **日常活动**：今天走了 {round(steps):,} 步。")
+
+    stress = _fact_value(payload, "stress")
+    relaxed = _fact_value(payload, "stress_relaxed_pct")
+    high = _fact_value(payload, "stress_high_pct")
+    stress_parts = []
+    if stress is not None:
+        stress_parts.append(f"设备记录的平均压力 {stress:g}")
+    if relaxed is not None:
+        stress_parts.append(f"放松状态占 {relaxed:g}%")
+    if high is not None:
+        stress_parts.append(f"高压力占 {high:g}%")
+    if stress_parts:
+        lines.append(f"- **压力分布**：{'；'.join(stress_parts)}。")
+
+    running = training.get("running") or {}
+    strength = training.get("strength") or {}
+    run_count = running.get("sessions_7d")
+    strength_count = strength.get("sessions_7d", training.get("strength_sessions_7d"))
+    rhythm = []
+    if run_count is not None:
+        rhythm.append(f"跑步 {run_count} 次")
+    if strength_count is not None:
+        rhythm.append(f"力量训练 {strength_count} 次")
+    if rhythm:
+        lines.append(f"- **最近 7 天**：{'；'.join(rhythm)}。")
+
+    load = training.get("load_7d")
+    reference = training.get("load_7d_reference")
+    change = training.get("load_7d_change_percent")
+    if load is not None:
+        text = f"截至昨天的 7 个完整日，设备训练负荷为 {load:g}"
+        if reference is not None and change is not None:
+            relation = "高" if change > 0 else "低" if change < 0 else "相同"
+            amount = f" {abs(change):.1f}%" if change else ""
+            text += f"，比此前 3 周周均（{reference:g}）{relation}{amount}"
+        lines.append(
+            f"- **近期负荷**：{text}。这表示训练刺激减少，不代表恢复变差。"
+        )
+    return lines
+
+
+def _evening_recovery_action(
+    training: dict, today: list[dict], report_date: str
+) -> str:
+    running_sessions = _sessions_on_day(training.get("running"), report_date)
+    strength_sessions = _sessions_on_day(training.get("strength"), report_date)
+    hard_run = any(
+        item.get("classification") in {"TEMPO_RUN", "INTERVAL_RUN", "LONG_RUN"}
+        and item.get("confidence") in {"MODERATE", "HIGH"}
+        for item in running_sessions
+    )
+    if hard_run:
+        return (
+            "今天的跑步包含明确的较高强度或长距离刺激。今晚不再追加跑步或腿部力量，"
+            "正常吃晚餐、补足水分，只保留轻松走动或舒展。"
+        )
+    if running_sessions and strength_sessions:
+        return (
+            "今天跑步和力量都已完成。今晚不再追加训练，正常吃晚餐、补足水分，"
+            "睡前只做轻松活动。"
+        )
+    if running_sessions:
+        return (
+            "今天已经完成跑步。今晚不再追加力量或补跑，正常吃晚餐、补足水分，"
+            "腿部有紧张感时只做轻松走动。"
+        )
+    if strength_sessions:
+        return (
+            "今天已经完成力量训练。今晚不再追加跑步或补组，正常吃晚餐、补足水分，"
+            "让已训练肌群休息。"
+        )
+    if today:
+        return "今天的正式活动已经完成。今晚不再追加训练，按正常饮食、补水和作息收尾。"
+    return "今天没有正式训练。晚上不用补训练，保持正常饮食、补水和入睡时间即可。"
+
+
+def _tomorrow_bridge(training: dict, today: list[dict], report_date: str) -> str:
+    running_sessions = _sessions_on_day(training.get("running"), report_date)
+    strength_sessions = _sessions_on_day(training.get("strength"), report_date)
+    hard_run = any(
+        item.get("classification") in {"TEMPO_RUN", "INTERVAL_RUN", "LONG_RUN"}
+        and item.get("confidence") in {"MODERATE", "HIGH"}
+        for item in running_sessions
+    )
+    lower_strength = any(
+        item.get("focus") in {"LEGS", "LOWER"} for item in strength_sessions
+    )
+    if hard_run or lower_strength:
+        return (
+            "明天先按低负担方向预留，不连续安排质量跑和腿部力量。"
+            "具体内容等今晚睡眠、心率变异性和静息心率到齐后再定。"
+        )
+
+    next_focus = (training.get("strength") or {}).get("next_focus_label")
+    if next_focus:
+        rest_prefix = "" if today else "今天没有训练不需要用明天加量补偿。"
+        return (
+            f"{rest_prefix}下一次力量训练的候选重点是{next_focus}。是否放在明天，"
+            "等今晚睡眠、心率变异性和静息心率到齐后再定。"
+        )
+    if today:
+        return "明天的训练强度等今晚睡眠、心率变异性和静息心率到齐后再确定。"
+    return (
+        "今天没有训练不需要用明天加量补偿。明早根据整夜睡眠、心率变异性和"
+        "静息心率正常安排。"
+    )
+
+
+def _sessions_on_day(feature: dict | None, report_date: str) -> list[dict]:
+    return [
+        item for item in (feature or {}).get("recent_sessions", [])
+        if item.get("date") == report_date
+    ]
+
+
+def _fact_value(payload: dict, metric: str) -> float | None:
+    facts = payload.get("facts", {}).get(metric, [])
+    if not facts:
+        return None
+    priority = {
+        "user_fused": 0,
+        "normalized_daily_record": 1,
+        "device": 2,
+        "unknown": 3,
+    }
+    selected = min(
+        facts,
+        key=lambda item: priority.get(
+            (item.get("provenance") or {}).get("source_scope"), 4
+        ),
+    )
+    value = selected.get("value")
+    return float(value) if isinstance(value, (int, float)) else None
 
 
 def _metadata(payload: dict) -> list[str]:
@@ -626,16 +765,32 @@ def _render_today_workout_details(training: dict, report_date: str) -> list[str]
             if item.get("date") == report_date
         ]
         for latest in sessions:
-            metrics = [latest["classification_label"], f"{latest['duration_minutes']} 分钟"]
+            confidence = latest.get("confidence")
+            classification = (
+                latest.get("classification_label", "课型暂不确定")
+                if confidence in {"MODERATE", "HIGH"}
+                else "课型暂不下结论"
+            )
+            metrics = [classification, f"{latest['duration_minutes']} 分钟"]
             if latest.get("distance_km") is not None:
-                metrics.append(f"{latest['distance_km']} 公里")
+                metrics.append(f"{round(latest['distance_km'], 2):g} 公里")
             if latest.get("average_pace_seconds_per_km") is not None:
                 metrics.append(f"平均配速 {_pace(latest['average_pace_seconds_per_km'])}/公里")
             if latest.get("median_cadence_spm") is not None:
-                metrics.append(f"步频中位数 {latest['median_cadence_spm']} 步/分钟")
-            if latest.get("cardiac_drift_percent") is not None:
+                metrics.append(f"步频中位数 {latest['median_cadence_spm']:g} 步/分钟")
+            if latest.get("average_heart_rate_bpm") is not None:
+                metrics.append(f"平均心率 {latest['average_heart_rate_bpm']:g} 次/分钟")
+            if latest.get("maximum_heart_rate_bpm") is not None:
+                metrics.append(f"最高心率 {latest['maximum_heart_rate_bpm']:g} 次/分钟")
+            if (
+                confidence in {"MODERATE", "HIGH"}
+                and latest.get("cardiac_drift_percent") is not None
+            ):
                 metrics.append(f"心率漂移 {latest['cardiac_drift_percent']:+g}%")
             lines.append(f"- **跑步**：{' · '.join(metrics)}")
+            zone_text = _zone_distribution(latest.get("heart_rate_zones", []))
+            if zone_text:
+                lines.append(f"- **跑步心率分布**：{zone_text}。")
 
     strength = training.get("strength")
     if strength:
@@ -653,11 +808,46 @@ def _render_today_workout_details(training: dict, report_date: str) -> list[str]
                 metrics.append(f"休息中位数 {latest['median_rest_seconds']:g} 秒")
             if latest.get("session_rpe") is not None:
                 metrics.append(f"主观用力 {latest['session_rpe']}/10")
+            if latest.get("average_heart_rate_bpm") is not None:
+                metrics.append(f"平均心率 {latest['average_heart_rate_bpm']:g} 次/分钟")
+            if latest.get("maximum_heart_rate_bpm") is not None:
+                metrics.append(f"最高心率 {latest['maximum_heart_rate_bpm']:g} 次/分钟")
             lines.append(f"- **力量**：{' · '.join(metrics)}")
             names = [item["exercise_name"] for item in latest.get("explicit_exercises", [])]
             if names:
                 lines.append(f"- **动作**：{'、'.join(names)}")
+            else:
+                hypotheses = [
+                    item.get("exercise_name") or item.get("movement_pattern_label")
+                    for item in latest.get("hypotheses", [])
+                    if item.get("confidence") in {"MODERATE", "HIGH"}
+                    and (item.get("exercise_name") or item.get("movement_pattern_label"))
+                ]
+                if hypotheses:
+                    lines.append(
+                        f"- **可能的动作模式**：{'、'.join(hypotheses)}（根据训练结构推测）。"
+                    )
+            zone_text = _zone_distribution(latest.get("heart_rate_zones", []))
+            if zone_text:
+                lines.append(f"- **力量训练心率分布**：{zone_text}。")
     return lines
+
+
+def _zone_distribution(zones: list[dict]) -> str | None:
+    shares = {
+        int(item["zone"]): float(item.get("share_percent", 0))
+        for item in zones
+        if item.get("zone") is not None
+    }
+    if not shares:
+        return None
+    low = shares.get(1, 0) + shares.get(2, 0)
+    moderate = shares.get(3, 0)
+    high = shares.get(4, 0) + shares.get(5, 0)
+    return (
+        f"低强度 {low:.1f}% · 中等强度 {moderate:.1f}% · "
+        f"阈值附近及以上 {high:.1f}%"
+    )
 
 
 def _pace(seconds: float) -> str:

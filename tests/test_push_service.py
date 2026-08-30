@@ -70,7 +70,7 @@ def _profile_payload():
                 "corroboration_affects_decision": False,
                 "daily_curve": {
                     "metric": "hrv_rmssd",
-                    "bin_minutes": 5,
+                    "bin_minutes": 1,
                     "device_id": "helio",
                     "device_label": "Amazfit Helio Strap",
                     "selection_basis": "widest_target_day_coverage",
@@ -80,9 +80,9 @@ def _profile_payload():
                     "last_sample_time": "17:58",
                     "points": [
                         {"time": "00:30", "median_ms": 60, "sample_count": 3},
-                        {"time": "00:35", "median_ms": 40, "sample_count": 3},
+                        {"time": "00:31", "median_ms": 40, "sample_count": 3},
                         {"time": "17:00", "median_ms": 80, "sample_count": 3},
-                        {"time": "17:05", "median_ms": 50, "sample_count": 3},
+                        {"time": "17:01", "median_ms": 50, "sample_count": 3},
                     ],
                 },
                 "streams": [{

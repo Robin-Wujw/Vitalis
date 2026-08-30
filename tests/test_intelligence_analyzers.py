@@ -140,7 +140,7 @@ def test_near_baseline_signals_are_interpretable_normal_recovery():
     assert decision.action_plan.primary_session is not None
 
 
-def test_hrv_exposes_gap_aware_five_minute_curve_without_interpretation():
+def test_hrv_exposes_gap_aware_minute_curve_without_interpretation():
     raw = _profile(hrv_today=55)
     raw.series["hrv_rmssd"].extend([
         SeriesPoint(
@@ -149,8 +149,8 @@ def test_hrv_exposes_gap_aware_five_minute_curve_without_interpretation():
             device_id="helio",
         )
         for observed_at, value in (
-            (datetime(2026, 8, 27, 16, 5, tzinfo=timezone.utc), 40),
-            (datetime(2026, 8, 27, 16, 9, tzinfo=timezone.utc), 60),
+            (datetime(2026, 8, 27, 16, 5, 10, tzinfo=timezone.utc), 40),
+            (datetime(2026, 8, 27, 16, 5, 50, tzinfo=timezone.utc), 60),
             (datetime(2026, 8, 27, 16, 35, tzinfo=timezone.utc), 70),
             (datetime(2026, 8, 28, 4, 1, tzinfo=timezone.utc), 50),
         )
@@ -163,13 +163,13 @@ def test_hrv_exposes_gap_aware_five_minute_curve_without_interpretation():
     curve = feature.daily_curve
     assert curve is not None
     assert curve.sample_count == 4
-    assert curve.covered_minutes == 4
+    assert curve.covered_minutes == 3
     assert curve.first_sample_time == "00:05"
     assert curve.last_sample_time == "12:01"
-    assert curve.bin_minutes == 5
+    assert curve.bin_minutes == 1
     assert curve.device_id == "helio"
     assert curve.selection_basis == "widest_target_day_coverage"
-    assert [point.time for point in curve.points] == ["00:05", "00:35", "12:00"]
+    assert [point.time for point in curve.points] == ["00:05", "00:35", "12:01"]
     assert curve.points[0].median_ms == 50
 
 
@@ -197,6 +197,35 @@ def test_hrv_curve_selects_coverage_independently_from_recovery_stream():
     assert feature.daily_curve is not None
     assert feature.daily_curve.device_id == "balance"
     assert feature.daily_curve.sample_count == 4
+
+
+def test_sleep_hrv_drives_recovery_while_rmssd_drives_all_day_curve():
+    raw = _profile(hrv_today=40)
+    raw.series["sleep_hrv"] = _series(
+        "sleep_hrv", [73] + [64 + (offset % 2) for offset in range(1, 22)],
+        device="helio", scope="device",
+    )
+    raw.series["hrv_rmssd"].extend([
+        SeriesPoint(
+            metric="hrv_rmssd", value=value, unit="ms", day=TARGET,
+            observed_at=observed_at, source="zepp", source_scope="device",
+            device_id="balance",
+        )
+        for observed_at, value in (
+            (datetime(2026, 8, 27, 18, 1, tzinfo=timezone.utc), 33),
+            (datetime(2026, 8, 27, 18, 2, tzinfo=timezone.utc), 134),
+        )
+    ])
+
+    feature = HrvAnalyzer().analyze(
+        raw, BaselineEngine().build(raw.series, raw.day)
+    )
+
+    assert feature.preferred_metric == "sleep_hrv"
+    assert feature.value_ms == 73
+    assert feature.daily_curve is not None
+    assert feature.daily_curve.metric == "hrv_rmssd"
+    assert feature.daily_curve.device_id == "balance"
 
 
 def test_decision_abstains_when_baselines_are_not_interpretable():

@@ -245,10 +245,12 @@ embedded Daily/Weekly/Monthly payloads.
 ### 3.9 Feature and Decision Policy
 
 The preferred HRV stream must have a target-day observation. Selection ranks usable
-28-day coverage first, then metric preference (`RMSSD`, sleep HRV, SDNN). Every current
+28-day coverage first, then recovery-metric preference (nightly sleep HRV, sleep-oriented
+SDNN, then all-day RMSSD only when the overnight metrics are absent). Every current
 device stream for the selected metric remains visible with its own baseline deviation;
 deterministic selection does not claim that one device is more accurate. RHR is paired
-conservatively and is not substituted into an HRV baseline.
+conservatively and is not substituted into an HRV baseline. All-day visualization has
+its own RMSSD-only source policy and never changes the recovery metric.
 
 Recovery requires at least two baseline-interpretable signals from HRV, RHR, sleep,
 and recent training load. Multi-signal suppression can produce `RECOVERY` or `REST`;
@@ -429,14 +431,15 @@ channel strips styling. Daytime HRV interpretation is intentionally not part of 
 daily contract until the activity, posture, respiration, circadian-reference, and
 coverage gates in `RESEARCH_NOTES.md` can be satisfied.
 
-`HrvFeatures.daily_curve` provides the non-interpretive visualization stage. It bins
-timestamped canonical-device RMSSD observations into 5-minute local-time medians. This
-is display resampling, not a claim that the vendor's proprietary observations are
-standard 5-minute ECG measurements. Curve-source selection is independent of recovery
-stream selection: it chooses the single target-day RMSSD stream with the most populated
-5-minute bins, without merging absolute values across devices. The PushPlus evening view
-plots that stream on a fixed 0–24 hour axis, breaks the line across missing bins, and
-marks wake time. It never converts the daytime line into stress or emotion labels.
+`HrvFeatures` keeps Zepp's algorithms separate. The recovery value prefers the nightly
+`sleepHRV` summary, then sleep-oriented SDNN when available; the descriptive all-day
+curve uses only `HRVRMSSD/real_data`. The curve bins timestamped observations into
+one-minute local-time medians, matching the stream's observed granularity without
+claiming beat-to-beat or ECG equivalence. Curve-source selection chooses the single
+target-day RMSSD stream with the most populated minute bins, without merging absolute
+values across devices. PushPlus plots it on a fixed 0–24 hour axis, breaks the line
+across missing bins, and marks wake time. It never converts daytime HRV into stress or
+emotion labels.
 
 ## 6. Evidence Boundaries
 

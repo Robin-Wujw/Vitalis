@@ -298,7 +298,7 @@ class HrvCurvePoint(BaseModel):
 
 class DailyHrvCurveFeature(BaseModel):
     metric: Literal["hrv_rmssd"] = "hrv_rmssd"
-    bin_minutes: Literal[5] = 5
+    bin_minutes: Literal[1] = 1
     device_id: str | None = None
     device_label: str
     selection_basis: Literal["widest_target_day_coverage"] = "widest_target_day_coverage"
@@ -306,7 +306,7 @@ class DailyHrvCurveFeature(BaseModel):
     covered_minutes: int = Field(ge=1, le=1440)
     first_sample_time: str
     last_sample_time: str
-    points: list[HrvCurvePoint] = Field(min_length=1, max_length=288)
+    points: list[HrvCurvePoint] = Field(min_length=1, max_length=1440)
 
 
 class HeartRateCoverageFeature(BaseModel):

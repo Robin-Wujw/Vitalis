@@ -142,7 +142,7 @@ class SleepAnalyzer:
 
 
 class HrvAnalyzer:
-    METRIC_PRIORITY = {"hrv_rmssd": 3, "sleep_hrv": 2, "hrv_sdnn": 1}
+    METRIC_PRIORITY = {"sleep_hrv": 3, "hrv_sdnn": 2, "hrv_rmssd": 1}
 
     def analyze(
         self,
@@ -341,7 +341,7 @@ def _daily_hrv_curve(raw: RawDailyProfile) -> DailyHrvCurveFeature | None:
     def coverage_key(item: tuple[tuple[str, str, str | None], list[SeriesPoint]]):
         _, samples = item
         observed = [utc_to_local(point.observed_at) for point in samples]
-        bins = {value.hour * 12 + value.minute // 5 for value in observed}
+        bins = {value.hour * 60 + value.minute for value in observed}
         return len(bins), len(samples), max(observed) - min(observed)
 
     (_, _, device_id), samples = max(streams.items(), key=coverage_key)
@@ -352,7 +352,7 @@ def _daily_hrv_curve(raw: RawDailyProfile) -> DailyHrvCurveFeature | None:
     for point in samples:
         observed = utc_to_local(point.observed_at)
         minute = observed.hour * 60 + observed.minute
-        bins[minute // 5].append(point.value)
+        bins[minute].append(point.value)
         local_samples.append(observed)
         covered_minutes.add(observed.replace(second=0, microsecond=0))
 
@@ -365,7 +365,7 @@ def _daily_hrv_curve(raw: RawDailyProfile) -> DailyHrvCurveFeature | None:
         last_sample_time=max(local_samples).strftime("%H:%M"),
         points=[
             {
-                "time": f"{index // 12:02d}:{(index % 12) * 5:02d}",
+                "time": f"{index // 60:02d}:{index % 60:02d}",
                 "median_ms": round(float(median(values)), 1),
                 "sample_count": len(values),
             }

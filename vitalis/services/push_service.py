@@ -371,7 +371,7 @@ def _render_daily_hrv_curve(
     if not points:
         return []
     bin_minutes = curve.get("bin_minutes")
-    if bin_minutes not in {5, 10, 15, 30}:
+    if bin_minutes not in {1, 5, 10, 15, 30}:
         return []
     values = {
         _time_bin_index(item.get("time"), bin_minutes): float(item["median_ms"])

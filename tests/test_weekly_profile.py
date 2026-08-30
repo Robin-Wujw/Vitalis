@@ -124,3 +124,17 @@ def test_weekly_recovery_event_takes_action_priority():
     recommendation = profile.actions.recommendations[0]
     assert recommendation.code == "PRIORITIZE_RECOVERY"
     assert "完整休息日" in recommendation.action
+
+
+def test_weekly_recovery_prefers_sleep_hrv_over_all_day_rmssd():
+    raw = _raw_week()
+    raw.series["sleep_hrv"] = _series(
+        "sleep_hrv", [62] * 7 + [68] * 7, "ms", device="helio"
+    )
+
+    profile = WeeklyProfileEngine().build(
+        "weekly-run", raw, TrendEngine().calculate(raw), []
+    )
+
+    assert profile.facts.recovery.hrv_metric == "sleep_hrv"
+    assert profile.facts.recovery.hrv_median_ms == 68

@@ -63,6 +63,20 @@ Vitalis currently normalizes:
 - decoded second-level heart rate from dense `SEC_HR` cloud files, with per-device
   coverage and decode status retained alongside the samples.
 
+HRV sources are not interchangeable:
+
+- `readiness.sleepHRV` is one nightly recovery summary per device and is preferred for
+  recovery/baseline decisions;
+- `hrv_sdnn/real_data` is a separate sparse SDNN event stream and keeps an independent
+  baseline;
+- `HRVRMSSD/real_data` is the timestamped all-day RMSSD stream used only for the
+  gap-aware daily curve and ambulatory context.
+
+The file-info endpoint returns ordinary inline events for both HRV event types on the
+connected account, not downloadable archive descriptors. Only `second_heart_rate`
+currently returns `fileId`/`fileType` archive indexes. Vitalis therefore does not
+download an additional HRV file or derive HRV from the one-second heart-rate archive.
+
 UTC measurements are assigned to local days using `VITALIS_TIMEZONE` (default
 `Asia/Shanghai`). Sleep clocks preserve vendor-provided local offset semantics.
 

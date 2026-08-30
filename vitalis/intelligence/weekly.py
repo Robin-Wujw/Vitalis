@@ -125,7 +125,7 @@ def _sleep_facts(
 
 
 def _recovery_facts(trends: list[TrendFeature]) -> WeeklyRecoveryFacts:
-    hrv = _best_weekly_trend(trends, ("hrv_rmssd", "sleep_hrv", "hrv_sdnn"))
+    hrv = _best_weekly_trend(trends, ("sleep_hrv", "hrv_sdnn", "hrv_rmssd"))
     rhr = _best_weekly_trend(trends, ("sleep_rhr", "resting_hr"))
     return WeeklyRecoveryFacts(
         hrv_available_days=hrv.current_distinct_days if hrv else 0,

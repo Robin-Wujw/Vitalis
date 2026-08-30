@@ -250,13 +250,14 @@ Missing intervals are unknown coverage, not high stress.
 - Require subjective mood input before learning or reporting personal emotion
   associations. Never infer happiness from HRV alone.
 
-The descriptive first stage is implemented: the canonical same-device RMSSD stream is
-resampled into 5-minute median display bins, exposed with sample coverage and first/last
-timestamps, and rendered on a real millisecond axis spanning 0–24 hours. Curve-source
-selection uses the one device stream with the most populated target-day bins; it does
-not merge absolute HRV across devices. Missing bins break the line and wake time
-separates overnight and awake context. The 5-minute display bin does not validate the
-vendor's proprietary calculation as a standard 5-minute ECG measurement. The chart
-explicitly makes no stress, recovery, or emotion claim;
+The descriptive first stage is implemented: Zepp's nightly `sleepHRV`, sleep-oriented
+`hrv_sdnn`, and ambulatory `HRVRMSSD` streams remain separate. Recovery prefers the
+nightly summary; the all-day chart uses only RMSSD. Timestamped RMSSD is resampled into
+one-minute median display bins, exposed with sample coverage and first/last timestamps,
+and rendered on a real millisecond axis spanning 0–24 hours. Curve-source selection
+uses the one device stream with the most populated target-day bins; it does not merge
+absolute HRV across devices. Missing bins break the line and wake time separates
+overnight and awake context. Minute display does not establish beat-to-beat or ECG
+equivalence. The chart explicitly makes no stress, recovery, or emotion claim;
 context-dependent daytime interpretation remains blocked by the activity, posture,
 respiration, and time-of-day reference requirements above.

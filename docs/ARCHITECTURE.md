@@ -1,4 +1,4 @@
-# Vitalis Health Intelligence Architecture v6.0
+# Vitalis Health Intelligence Architecture v7.0
 
 ## 1. System Boundary
 
@@ -38,8 +38,9 @@ analysis layer reads only normalized records:
 - `workouts` and `workout_metric_samples`: normalized workout summaries, versioned
   detail metadata, and typed workout HR, speed, equivalent pace, cadence, distance,
   altitude, and running-power observations.
-- `dense_data_files`: metadata for opaque `SEC_HR` payloads; indexed files are not
-  represented as decoded measurements.
+- `dense_data_files`: per-device `SEC_HR` file indexes, decode state, and sample count.
+  Decoded second-level values are stored as ordinary device-scoped `heart_rate`
+  metric samples.
 
 Raw measurements and vendor scores remain separate from Vitalis-derived states.
 `ahi_readiness` and `afib_readiness` are vendor readiness component scores, not AHI or
@@ -91,7 +92,7 @@ The implementation lives in `vitalis/intelligence`:
 
 ### 3.1 DailyProfile
 
-The wire contract is `schema_version=6.0`. Every result carries `analysis_run_id`,
+The wire contract is `schema_version=7.0`. Every result carries `analysis_run_id`,
 `intelligence_version`, `decision_policy_version`, and `evidence_version` separately:
 
 ```text
@@ -120,10 +121,14 @@ not inflate confidence, while comparable disagreement lowers confidence without
 replacing the canonical conclusion. This differs from exercise heart rate, where an
 explicitly attributed and decoded upper-arm stream has stronger form-factor evidence.
 
-`second_heart_rate` contributes per-device coverage hours and days only while its
-`SEC_HR` payload remains indexed rather than decoded. Coverage can explain wear and data
-density, but it cannot contribute heart-rate values or accuracy weights until the
-binary payload and signal quality have been validated.
+`second_heart_rate` uses Zepp's verified index-to-file contract. Vitalis resolves each
+new file ID to a signed HTTPS URL, downloads the small ZIP without forwarding the Zepp
+token, decodes the `DailySecondHeartBeat` protobuf, maps archive entries to indexed
+devices by a global one-to-one interval-overlap assignment, and stores valid values as
+second-level heart rate. A decoded file/device/time interval is skipped on later syncs.
+Nightly analysis reads only recorded sleep windows and reduces each device to one
+median value per minute before feature extraction; it does not retain millions of raw
+points in an analysis profile.
 
 ### 3.2 Data Quality
 
@@ -260,7 +265,7 @@ weekly context but does not replace load, completed sets/reps/weight, or reliabl
 individualized aerobic-intensity classification.
 
 Training content is deterministic engine output, not model-generated advice. Decision
-Policy 6.0 returns an `ActionPlan` with one primary session and at most one optional
+Policy 7.0 returns an `ActionPlan` with one primary session and at most one optional
 compatible addition or alternative. Every session includes dose, evidence, progression,
 stop conditions, and a local-day expiry. The current session library includes:
 
@@ -285,7 +290,7 @@ another conflicting high-load lower-body session.
 
 ### 3.10 Running Analysis
 
-DailyProfile 6.0 embeds `TrainingFeatures.running` with Running Analysis v1. Each
+DailyProfile 7.0 embeds `TrainingFeatures.running` with Running Analysis v1. Each
 session preserves distance, duration, derived average pace, median speed, median cadence,
 cadence variability, HR, threshold-based HR-zone duration, cardiac drift, detected
 work/recovery segments, classification evidence, confidence, and limitations.
@@ -307,7 +312,7 @@ natural observation, never as a universal cadence target.
 
 ### 3.11 Strength Analysis
 
-DailyProfile 6.0 embeds `TrainingFeatures.strength` with Strength Analysis v1. A user
+DailyProfile 7.0 embeds `TrainingFeatures.strength` with Strength Analysis v1. A user
 can confirm exercise name, set count, repetitions, load, RPE/RIR, rest, and session
 focus against a user-owned strength workout. Vitalis normalizes known Chinese or
 English exercise names to movement patterns and muscle groups while preserving the
@@ -334,15 +339,17 @@ rule.
 
 ### 3.12 Nocturnal Recovery Context
 
-DailyProfile 6.0 keeps timestamped ordinary heart rate separate from daily metric
+DailyProfile 7.0 keeps timestamped ordinary heart rate separate from daily metric
 series. For each sleep interval, the engine isolates device streams and requires at
 least 120 covered minutes and 50% interval coverage. It derives the nightly median, a
 rolling five-minute median low point, first- and second-half medians, and coverage.
 The selected nightly stream is compared only with its own preceding 28-night history.
 
 The canonical HRV stream also reports its latest seven-day median against the preceding
-seven days. Minute heart rate is never treated as beat-to-beat HRV, and indexed `SEC_HR`
-files remain coverage metadata until their payload semantics are decoded and validated.
+seven days. Minute and decoded second-level heart rate are never treated as
+beat-to-beat HRV. When current-night coverage is sufficient, the nightly heart-rate
+stream prefers the identified upper-arm device and compares it only with that device's
+own history.
 
 ## 4. API and Assistant
 

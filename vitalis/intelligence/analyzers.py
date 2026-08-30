@@ -17,6 +17,8 @@ from .contracts import (
     HrvStreamFeature,
     LoadState,
     NocturnalHeartRateFeature,
+    OxygenFeatures,
+    OvernightVitalsFeatures,
     ProfileStates,
     RecoveryFeatures,
     RecoveryState,
@@ -33,7 +35,7 @@ from .profile import (
 )
 from .running import RunningAnalyzer
 from .strength import StrengthAnalyzer
-from vitalis.time import local_timezone, utc_to_local
+from vitalis.time import local_sleep_window, utc_to_local
 from vitalis.connectors.zepp.sport_types import CATEGORY_LABELS, FAMILY_LABELS
 from .localization import (
     AVAILABILITY_LABELS,
@@ -373,7 +375,9 @@ def _analyze_nocturnal_heart_rate(
 ) -> NocturnalHeartRateFeature:
     summaries: dict[date, dict[str | None, dict]] = {}
     for sleep_day, record in raw.sleep_by_day.items():
-        window = _sleep_window(sleep_day, record)
+        window = local_sleep_window(
+            sleep_day, record.get("bedtime"), record.get("wake_time")
+        )
         if window is None:
             continue
         start, end = window
@@ -406,9 +410,10 @@ def _analyze_nocturnal_heart_rate(
         target.items(),
         key=lambda item: (
             2 if item[1]["coverage_ratio"] >= 0.8 else 1,
+            int(device_measurement_site(raw, item[0]) == "upper_arm"),
+            int(item[0] == preferred_hrv_device and item[0] is not None),
             history_counts[item[0]],
             item[1]["coverage_ratio"],
-            int(item[0] == preferred_hrv_device and item[0] is not None),
         ),
     )
     historical = [
@@ -443,32 +448,6 @@ def _analyze_nocturnal_heart_rate(
     )
 
 
-def _sleep_window(sleep_day: date, record: dict):
-    bedtime = _as_time(record.get("bedtime"))
-    wake_time = _as_time(record.get("wake_time"))
-    if bedtime is None or wake_time is None:
-        return None
-    wake = datetime.combine(sleep_day, wake_time, tzinfo=local_timezone())
-    start_day = sleep_day - timedelta(days=1) if bedtime >= wake_time else sleep_day
-    start = datetime.combine(start_day, bedtime, tzinfo=local_timezone())
-    if not 120 <= (wake - start).total_seconds() / 60 <= 960:
-        return None
-    return start, wake
-
-
-def _as_time(value):
-    if value is None:
-        return None
-    if isinstance(value, str):
-        for pattern in ("%H:%M:%S", "%H:%M"):
-            try:
-                return datetime.strptime(value, pattern).time()
-            except ValueError:
-                continue
-        return None
-    return value
-
-
 def _night_heart_rate_summary(points, start: datetime, end: datetime):
     by_minute: dict[datetime, list[float]] = defaultdict(list)
     for point in points:
@@ -488,14 +467,19 @@ def _night_heart_rate_summary(points, start: datetime, end: datetime):
     for index in range(4, len(minute_values)):
         window = minute_values[index - 4:index + 1]
         if (window[-1][0] - window[0][0]).total_seconds() <= 6 * 60:
-            rolling.append(float(median(value for _, value in window)))
+            rolling.append((
+                window[2][0],
+                float(median(value for _, value in window)),
+            ))
     if not first or not second or not rolling:
         return None
     first_median = float(median(first))
     second_median = float(median(second))
+    low_time, low_value = min(rolling, key=lambda item: item[1])
     return {
         "median_bpm": round(float(median(value for _, value in minute_values)), 1),
-        "low_5m_bpm": round(min(rolling), 1),
+        "low_5m_bpm": round(low_value, 1),
+        "low_5m_time": low_time.strftime("%H:%M"),
         "first_half_median_bpm": round(first_median, 1),
         "second_half_median_bpm": round(second_median, 1),
         "second_minus_first_bpm": round(second_median - first_median, 1),
@@ -549,23 +533,196 @@ def _corroborate_hrv_streams(
             0,
             False,
         )
-    if all(direction == selected_direction for direction in secondary_directions):
+    opposite = {
+        "above": "below",
+        "below": "above",
+    }.get(selected_direction)
+    if opposite is None or opposite not in secondary_directions:
         return (
             selected_direction,
             ConfidenceBand.MODERATE,
-            "次设备方向一致",
+            "次设备未出现相反方向",
             "consistent",
             len(secondary_directions),
             False,
         )
     return (
-        selected_direction,
+        "unknown",
         ConfidenceBand.LOW,
-        "次设备方向不一致，已降低结论把握",
+        "可比设备出现相反方向，本次不采用 HRV 作为恢复依据",
         "conflicting",
         len(secondary_directions),
         True,
     )
+
+
+class OvernightVitalsAnalyzer:
+    """Interpret overnight respiratory and oxygen signals without diagnosing disease."""
+
+    def analyze(
+        self,
+        raw: RawDailyProfile,
+        baselines: dict[str, list[BaselineStats]],
+        sleep: SleepFeatures,
+    ) -> OvernightVitalsFeatures:
+        respiratory, respiratory_deviation = _daily_metric_with_deviation(
+            raw, baselines, "respiratory_rate"
+        )
+        temperature, _ = _daily_metric_with_deviation(
+            raw, baselines, "skin_temp_delta"
+        )
+        oxygen = self._oxygen(raw, baselines, sleep)
+
+        outliers = []
+        if (
+            respiratory_deviation
+            and respiratory_deviation.direction == "above"
+            and respiratory_deviation.robust_z is not None
+            and respiratory_deviation.robust_z >= 2
+        ):
+            outliers.append("呼吸频率明显高于个人水平")
+        if temperature is not None and abs(temperature) >= 0.5:
+            relation = "高" if temperature > 0 else "低"
+            outliers.append(f"腕温较厂商基线{relation} {abs(temperature):.1f} 摄氏度")
+        if oxygen.repeated_elevation:
+            outliers.append("夜间血氧下降指数连续偏高")
+
+        available = any((
+            respiratory is not None,
+            temperature is not None,
+            oxygen.status == Availability.AVAILABLE,
+        ))
+        limitations = []
+        if respiratory is not None and respiratory_deviation is None:
+            limitations.append("respiratory_rate_baseline_insufficient")
+        return OvernightVitalsFeatures(
+            status=(Availability.AVAILABLE if available else Availability.INSUFFICIENT_DATA),
+            status_label=AVAILABILITY_LABELS[
+                Availability.AVAILABLE.value
+                if available else Availability.INSUFFICIENT_DATA.value
+            ],
+            respiratory_rate=round(respiratory, 1) if respiratory is not None else None,
+            respiratory_rate_deviation=respiratory_deviation,
+            skin_temperature_delta_c=(
+                round(temperature, 2) if temperature is not None else None
+            ),
+            oxygen=oxygen,
+            outlier_labels=outliers,
+            limitations=limitations,
+            limitation_labels=labels(limitations, LIMITATION_LABELS),
+        )
+
+    @staticmethod
+    def _oxygen(
+        raw: RawDailyProfile,
+        baselines: dict[str, list[BaselineStats]],
+        sleep: SleepFeatures,
+    ) -> OxygenFeatures:
+        candidates = []
+        coverage_values = daily_stream_values(
+            raw.series.get("spo2_measured_minutes", []), raw.day
+        )
+        event_values = daily_stream_values(
+            raw.series.get("spo2_odi_events", []), raw.day
+        )
+        for stream, odi in daily_stream_values(
+            raw.series.get("spo2_odi", []), raw.day
+        ).items():
+            baseline = _baseline_for(baselines, "spo2_odi", *stream)
+            measured = coverage_values.get(stream)
+            candidates.append((
+                int(measured is not None),
+                int(bool(baseline and baseline.status == Availability.AVAILABLE)),
+                int(bool(stream[2])),
+                measured or 0,
+                stream,
+                odi,
+                baseline,
+            ))
+        if not candidates:
+            return OxygenFeatures(
+                status=Availability.INSUFFICIENT_DATA,
+                status_label=AVAILABILITY_LABELS[Availability.INSUFFICIENT_DATA.value],
+                limitations=["target_night_oxygen_missing", "oxygen_is_screening_only"],
+                limitation_labels=labels(
+                    ["target_night_oxygen_missing", "oxygen_is_screening_only"],
+                    LIMITATION_LABELS,
+                ),
+            )
+
+        _, _, _, measured, stream, odi, baseline = max(
+            candidates, key=lambda item: item[:4]
+        )
+        sleep_minutes = sleep.duration_minutes
+        coverage_ratio = (
+            min(float(measured) / sleep_minutes, 1.0)
+            if measured and sleep_minutes and sleep_minutes > 0 else None
+        )
+        coverage_ok = bool(
+            measured >= 240
+            and (coverage_ratio is None or coverage_ratio >= 0.7)
+        )
+        if not coverage_ok:
+            return OxygenFeatures(
+                status=Availability.INSUFFICIENT_DATA,
+                status_label=AVAILABILITY_LABELS[Availability.INSUFFICIENT_DATA.value],
+                device_id=stream[2],
+                measured_minutes=int(measured) if measured else None,
+                coverage_ratio=round(coverage_ratio, 3) if coverage_ratio is not None else None,
+                odi_events_per_hour=round(float(odi), 2),
+                limitations=["oxygen_coverage_insufficient", "oxygen_is_screening_only"],
+                limitation_labels=labels(
+                    ["oxygen_coverage_insufficient", "oxygen_is_screening_only"],
+                    LIMITATION_LABELS,
+                ),
+            )
+
+        deviation = BaselineEngine.deviation(odi, baseline) if baseline else None
+        baseline_value = baseline.reference_value if baseline else None
+        threshold = 5.0
+        if baseline and baseline.status == Availability.AVAILABLE:
+            threshold = max(
+                threshold,
+                float(baseline.reference_value or 0)
+                + max(2 * float(baseline.mad or 0), 1.5),
+            )
+        recent = _same_stream_daily_values(
+            raw.series.get("spo2_odi", []), raw.day, stream, 3
+        )
+        elevated_nights = sum(value >= threshold for value in recent)
+        repeated = odi >= threshold and len(recent) >= 2 and elevated_nights >= 2
+        if repeated:
+            interpretation = "repeated_elevation"
+        elif odi >= threshold:
+            interpretation = "single_night_elevation"
+        else:
+            interpretation = "within_personal_range"
+
+        night_values = _sleep_window_metric_values(raw, "spo2", stream[2])
+        return OxygenFeatures(
+            status=Availability.AVAILABLE,
+            status_label=AVAILABILITY_LABELS[Availability.AVAILABLE.value],
+            device_id=stream[2],
+            median_percent=(
+                round(float(median(night_values)), 1) if len(night_values) >= 20 else None
+            ),
+            lower_10th_percent=(
+                round(_percentile(night_values, 0.1), 1) if len(night_values) >= 20 else None
+            ),
+            sample_count=len(night_values),
+            measured_minutes=int(measured),
+            coverage_ratio=round(coverage_ratio, 3) if coverage_ratio is not None else None,
+            odi_events_per_hour=round(float(odi), 2),
+            odi_events=(
+                int(event_values[stream]) if stream in event_values else None
+            ),
+            odi_baseline=(round(float(baseline_value), 2) if baseline_value is not None else None),
+            odi_deviation=deviation,
+            repeated_elevation=repeated,
+            interpretation=interpretation,
+            limitations=["oxygen_is_screening_only"],
+            limitation_labels=[LIMITATION_LABELS["oxygen_is_screening_only"]],
+        )
 
 
 class TrainingAnalyzer:
@@ -695,7 +852,11 @@ class RecoveryAnalyzer:
         positive = []
         negative = []
         hrv_direction = hrv.fusion_direction
-        if hrv_direction == "unknown" and hrv.deviation:
+        if (
+            hrv_direction == "unknown"
+            and not hrv.corroboration_affects_decision
+            and hrv.deviation
+        ):
             hrv_direction = hrv.deviation.direction
         if hrv_direction == "above":
             positive.append("HRV_ABOVE_BASELINE")
@@ -792,6 +953,85 @@ def _baseline_for(
 def _current_median(points: list[SeriesPoint], day: date) -> float | None:
     values = [point.value for point in points if point.day == day]
     return round(float(median(values)), 2) if values else None
+
+
+def _daily_metric_with_deviation(
+    raw: RawDailyProfile,
+    baselines: dict[str, list[BaselineStats]],
+    metric: str,
+) -> tuple[float | None, Deviation | None]:
+    candidates = []
+    for stream, value in daily_stream_values(raw.series.get(metric, []), raw.day).items():
+        baseline = _baseline_for(baselines, metric, *stream)
+        candidates.append((
+            int(bool(baseline and baseline.status == Availability.AVAILABLE)),
+            baseline.distinct_days if baseline else 0,
+            int(bool(stream[2])),
+            stream,
+            float(value),
+            baseline,
+        ))
+    if not candidates:
+        return None, None
+    _, _, _, _, value, baseline = max(candidates, key=lambda item: item[:3])
+    deviation = BaselineEngine.deviation(value, baseline) if baseline else None
+    if deviation and deviation.direction == "unknown":
+        deviation = None
+    return value, deviation
+
+
+def _same_stream_daily_values(
+    points: list[SeriesPoint],
+    target: date,
+    stream: tuple[str, str, str | None],
+    days: int,
+) -> list[float]:
+    grouped: dict[date, list[float]] = defaultdict(list)
+    for point in points:
+        if (
+            target - timedelta(days=days - 1) <= point.day <= target
+            and (point.source, point.source_scope, point.device_id) == stream
+        ):
+            grouped[point.day].append(point.value)
+    return [float(median(grouped[day])) for day in sorted(grouped)]
+
+
+def _sleep_window_metric_values(
+    raw: RawDailyProfile,
+    metric: str,
+    device_id: str | None,
+) -> list[float]:
+    record = raw.sleep_by_day.get(raw.day)
+    window = (
+        local_sleep_window(
+            raw.day, record.get("bedtime"), record.get("wake_time")
+        )
+        if record else None
+    )
+    if window is None:
+        return []
+    start, end = window
+    return [
+        float(point.value)
+        for point in raw.series.get(metric, [])
+        if isinstance(point.observed_at, datetime)
+        and point.device_id == device_id
+        and start <= utc_to_local(point.observed_at) <= end
+        and 50 <= point.value <= 100
+    ]
+
+
+def _percentile(values: list[float], quantile: float) -> float:
+    ordered = sorted(values)
+    if not ordered:
+        raise ValueError("percentile requires at least one value")
+    if len(ordered) == 1:
+        return ordered[0]
+    position = (len(ordered) - 1) * quantile
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    fraction = position - lower
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
 
 
 def _clock_minutes(value) -> int | None:

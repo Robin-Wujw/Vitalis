@@ -299,7 +299,7 @@ def health_dense_file_coverage(
     limit: int = Query(5000, ge=1, le=20_000),
     user_id: str = Depends(require_user_id),
 ) -> dict:
-    """Return indexed dense-file coverage while deliberately withholding file IDs."""
+    """Return dense-file coverage and decode status without exposing file IDs."""
     if from_date > to_date:
         from_date, to_date = to_date, from_date
     if (to_date - from_date).days > 730:

@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from statistics import median
 
 from vitalis.intelligence.contracts import (
@@ -16,7 +16,7 @@ from vitalis.intelligence.contracts import (
     TrainingPreferences,
 )
 from vitalis.storage import HealthRepository
-from vitalis.time import local_day, local_day_utc_bounds
+from vitalis.time import local_day, local_day_utc_bounds, local_sleep_window
 from .localization import QUALITY_LABELS, SIGNAL_LABELS, labels
 
 
@@ -31,8 +31,11 @@ SAMPLE_METRICS = (
     "skin_temp_delta",
     "hybrid_charge",
     "bio_charge",
+    "spo2",
+    "spo2_apnea_low",
 )
 MAX_SAMPLES_PER_METRIC = 1_000_000
+MAX_HEART_RATE_SAMPLES_PER_NIGHT = 200_000
 PROFILE_HISTORY_DAYS = 180
 
 
@@ -249,28 +252,59 @@ class ProfileLoader:
 
     def _add_heart_rate_samples(self, raw: RawDailyProfile, start: date) -> None:
         heart_rate_start = max(start, raw.day - timedelta(days=34))
-        start_at, _ = local_day_utc_bounds(heart_rate_start)
-        _, end_at = local_day_utc_bounds(raw.day)
-        end_at -= timedelta(microseconds=1)
-        raw.heart_rate_samples = [
-            SeriesPoint(
-                metric=row.metric,
-                value=float(row.value),
-                unit=row.unit,
-                day=local_day(row.timestamp),
-                observed_at=row.timestamp,
-                source=row.source,
-                source_scope=row.source_scope,
-                device_id=row.device_id or None,
+        minute_values: dict[
+            tuple[datetime, str, str, str | None, str], list[float]
+        ] = defaultdict(list)
+        for sleep_day, record in raw.sleep_by_day.items():
+            if not heart_rate_start <= sleep_day <= raw.day:
+                continue
+            window = local_sleep_window(
+                sleep_day, record.get("bedtime"), record.get("wake_time")
+            )
+            if window is None:
+                continue
+            start_at, end_at = (
+                value.astimezone(timezone.utc) for value in window
             )
             for row in self.repo.metric_samples(
                 raw.user_id,
                 "heart_rate",
                 start_at,
                 end_at,
-                limit=MAX_SAMPLES_PER_METRIC,
+                limit=MAX_HEART_RATE_SAMPLES_PER_NIGHT,
+            ):
+                if not isinstance(row.value, (int, float)) or not 25 <= float(row.value) <= 240:
+                    continue
+                minute = row.timestamp.replace(second=0, microsecond=0)
+                minute_values[(
+                    minute,
+                    row.source,
+                    row.source_scope,
+                    row.device_id or None,
+                    row.unit,
+                )].append(float(row.value))
+        raw.heart_rate_samples = [
+            SeriesPoint(
+                metric="heart_rate",
+                value=float(median(values)),
+                unit=unit,
+                day=local_day(minute),
+                observed_at=minute,
+                source=source,
+                source_scope=source_scope,
+                device_id=device_id,
             )
-            if isinstance(row.value, (int, float)) and 25 <= float(row.value) <= 240
+            for (minute, source, source_scope, device_id, unit), values
+            in sorted(
+                minute_values.items(),
+                key=lambda item: (
+                    item[0][0],
+                    item[0][1],
+                    item[0][2],
+                    item[0][3] or "",
+                    item[0][4],
+                ),
+            )
         ]
 
     @staticmethod

@@ -308,7 +308,7 @@ class HealthRepository:
     # ---- 密集数据文件索引 ----
 
     def save_dense_data_files(self, files: list[DenseDataFile]) -> int:
-        """Idempotently persist opaque file indexes without treating them as samples."""
+        """Idempotently persist dense-file indexes and their decode status."""
         deduplicated = {
             (
                 item.user_id,
@@ -395,6 +395,17 @@ class HealthRepository:
                 orm.DenseDataFile.stream == stream,
                 orm.DenseDataFile.date.between(start, end),
             ).order_by(orm.DenseDataFile.start_utc, orm.DenseDataFile.id).limit(limit)
+        ).scalars().all())
+
+    def dense_data_file_group(
+        self, user_id: str, stream: str, file_id: str
+    ) -> list[orm.DenseDataFile]:
+        return list(self.db.execute(
+            select(orm.DenseDataFile).where(
+                orm.DenseDataFile.user_id == user_id,
+                orm.DenseDataFile.stream == stream,
+                orm.DenseDataFile.file_id == file_id,
+            ).order_by(orm.DenseDataFile.start_utc, orm.DenseDataFile.id)
         ).scalars().all())
 
     # ---- 单次运动 ----

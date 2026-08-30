@@ -118,10 +118,11 @@ study was found in this pass, so `device_validity.status` should remain
   confidence or prescribe higher effort.
 - Preserve current device boundaries: manufacturer capability claims may inform
   labels and setup guidance, but not device-specific accuracy status.
-- Continue treating dense `SEC_HR` files as coverage metadata until decoded and
-  validated against known sample semantics.
+- Keep decoded `SEC_HR` streams device-isolated. Use their values for sleep-window and
+  exercise heart-rate analysis only; do not reinterpret one-second pulse rate as
+  beat-to-beat intervals or derive HRV from it.
 
-### Implemented In Intelligence 6.0
+### Implemented In Intelligence 7.0
 
 - `PlannedSession.evidence_ref_ids` now binds running and resistance prescriptions to
   the evidence library instead of leaving the sources as detached metadata.
@@ -132,6 +133,12 @@ study was found in this pass, so `device_validity.status` should remain
 - Ordinary minute heart rate is analyzed only inside recorded sleep windows, with
   coverage gates, same-device 28-night comparison, and a separate same-device HRV
   seven-day comparison. It is not used to reconstruct beat-to-beat HRV.
+- The official Zepp Android contract was verified as file index -> signed HTTPS ZIP ->
+  `DailySecondHeartBeat` protobuf. Consecutive integer heart-rate values are decoded at
+  one-second spacing, `255` is discarded as missing, archive entries are mapped to
+  device intervals by a one-to-one overlap assignment, and decoded rows are skipped on
+  later syncs. Nightly profiles query only actual sleep windows and aggregate each
+  device to minute medians before analysis.
 
 ## 2026-08-30: Multi-device HRV Fusion And Daily Reporting
 

@@ -176,21 +176,51 @@ def test_profile_loader_keeps_timestamped_heart_rate_out_of_daily_series():
         repo = HealthRepository(db)
         repo.delete_for_user(user_id)
         repo.upsert_user(user_id)
+        repo.save_daily(NormalizedDaily(
+            user_id=user_id,
+            date=day,
+            sleep=SleepRecord(
+                user_id=user_id,
+                date=day,
+                sleep_duration=120,
+                bedtime=datetime.strptime("02:00", "%H:%M").time(),
+                wake_time=datetime.strptime("04:00", "%H:%M").time(),
+            ),
+        ))
         repo.save_metric_samples([
             MetricSample(
                 user_id=user_id,
                 metric="heart_rate",
-                timestamp=datetime(2026, 8, 27, 18, minute, tzinfo=timezone.utc),
-                value=55 + minute % 2,
+                timestamp=datetime(2026, 8, 27, 18, minute, second, tzinfo=timezone.utc),
+                value=value,
+                unit="bpm",
+                source_scope="device",
+                device_id=device_id,
+            )
+            for minute, second, value, device_id in (
+                (0, 1, 50, "helio"),
+                (0, 20, 60, "helio"),
+                (0, 40, 70, "helio"),
+                (1, 1, 80, "helio"),
+                (1, 20, 90, "helio"),
+                (1, 30, 45, None),
+                (1, 40, 55, None),
+            )
+        ] + [
+            MetricSample(
+                user_id=user_id,
+                metric="heart_rate",
+                timestamp=datetime(2026, 8, 27, 17, 59, tzinfo=timezone.utc),
+                value=200,
                 unit="bpm",
                 source_scope="device",
                 device_id="helio",
             )
-            for minute in range(20)
         ])
         raw = ProfileLoader(repo).load(user_id, day)
 
-    assert len(raw.heart_rate_samples) == 20
-    assert {item.device_id for item in raw.heart_rate_samples} == {"helio"}
+    assert len(raw.heart_rate_samples) == 3
+    assert [item.value for item in raw.heart_rate_samples] == [60, 50, 85]
+    assert {item.device_id for item in raw.heart_rate_samples} == {"helio", None}
     assert "heart_rate" not in raw.series
     assert "heart_rate" not in raw.facts

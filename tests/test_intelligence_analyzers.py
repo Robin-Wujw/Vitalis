@@ -1,6 +1,14 @@
 from datetime import date, datetime, time, timedelta, timezone
 
-from vitalis.intelligence.analyzers import HrvAnalyzer, RecoveryAnalyzer, SleepAnalyzer, TrainingAnalyzer
+import pytest
+
+from vitalis.intelligence.analyzers import (
+    HrvAnalyzer,
+    OvernightVitalsAnalyzer,
+    RecoveryAnalyzer,
+    SleepAnalyzer,
+    TrainingAnalyzer,
+)
 from vitalis.intelligence.baseline import BaselineEngine
 from vitalis.intelligence.contracts import (
     Availability,
@@ -254,6 +262,45 @@ def test_nocturnal_heart_rate_and_same_device_hrv_history_are_analyzed():
     assert without_hrv.rhr_deviation.direction == "below"
 
 
+def test_nocturnal_heart_rate_prefers_complete_upper_arm_stream():
+    raw = _profile(hrv_today=45, rhr_today=56, sleep_today=240, load_today=20)
+    raw.device_models = {
+        "HELIO": "Amazfit Helio Strap",
+        "WATCH": "Amazfit Balance 2",
+    }
+    raw.sleep_by_day = {
+        TARGET: {
+            "date": TARGET,
+            "sleep_duration": 240,
+            "bedtime": time(0, 0),
+            "wake_time": time(4, 0),
+            "source": "zepp",
+        }
+    }
+    raw.heart_rate_samples = []
+    for device_id, value in (("HELIO", 52), ("WATCH", 58)):
+        for minute in range(240):
+            local_at = datetime.combine(
+                TARGET, time.min, tzinfo=timezone(timedelta(hours=8))
+            ) + timedelta(minutes=minute)
+            raw.heart_rate_samples.append(SeriesPoint(
+                metric="heart_rate",
+                value=value,
+                unit="bpm",
+                day=TARGET,
+                observed_at=local_at.astimezone(timezone.utc),
+                source="zepp",
+                source_scope="device",
+                device_id=device_id,
+            ))
+
+    hrv = HrvAnalyzer().analyze(raw, BaselineEngine().build(raw.series, raw.day))
+
+    assert hrv.nocturnal_heart_rate.device_id == "HELIO"
+    assert hrv.nocturnal_heart_rate.measurement_site == "upper_arm"
+    assert hrv.nocturnal_heart_rate.median_bpm == 52
+
+
 def test_recent_strength_keeps_running_primary_and_strength_as_alternative():
     raw = _profile(hrv_today=62, rhr_today=50, sleep_today=510, load_today=0)
     raw.workouts = [{
@@ -470,14 +517,69 @@ def test_hrv_device_disagreement_is_not_averaged_into_a_recovery_signal():
         raw.training_preferences,
     )
 
-    assert hrv.fusion_direction == "above"
+    assert hrv.fusion_direction == "unknown"
     assert hrv.fusion_confidence.value == "LOW"
     assert hrv.corroboration_status == "conflicting"
     assert hrv.corroboration_affects_decision
     assert "multi_device_hrv_disagreement" in hrv.limitations
-    assert "HRV_ABOVE_BASELINE" in recovery.positive_signals
+    assert "HRV_ABOVE_BASELINE" not in recovery.positive_signals
     assert "HRV_BELOW_BASELINE" not in recovery.negative_signals
     assert decision.confidence.value == "LOW"
+
+
+def test_hrv_near_and_above_are_not_treated_as_opposite_directions():
+    raw = _profile(hrv_today=62)
+    raw.series["hrv_rmssd"] += _series(
+        "hrv_rmssd",
+        [50] * 22,
+        device="balance",
+        scope="device",
+    )
+
+    hrv = HrvAnalyzer().analyze(raw, BaselineEngine().build(raw.series, raw.day))
+
+    assert hrv.fusion_direction == "above"
+    assert hrv.corroboration_status == "consistent"
+    assert not hrv.corroboration_affects_decision
+
+
+def test_overnight_vitals_gate_oxygen_and_detect_repeated_odi_elevation():
+    raw = _profile(sleep_today=450)
+    raw.series.update({
+        "spo2_odi": _series(
+            "spo2_odi", [7, 7] + [3] * 20,
+            device="balance", scope="device", unit="events/h",
+        ),
+        "spo2_odi_events": _series(
+            "spo2_odi_events", [52, 51] + [22] * 20,
+            device="balance", scope="device", unit="count",
+        ),
+        "spo2_measured_minutes": _series(
+            "spo2_measured_minutes", [440] * 22,
+            device="balance", scope="device", unit="min",
+        ),
+        "respiratory_rate": _series(
+            "respiratory_rate", [14] + [13.5] * 21,
+            device="balance", scope="device", unit="breaths/min",
+        ),
+        "skin_temp_delta": _series(
+            "skin_temp_delta", [0.2] + [0] * 21,
+            device="balance", scope="device", unit="celsius",
+        ),
+    })
+    baselines = BaselineEngine().build(raw.series, raw.day)
+    sleep, _ = SleepAnalyzer().analyze(raw, baselines)
+
+    vitals = OvernightVitalsAnalyzer().analyze(raw, baselines, sleep)
+
+    assert vitals.status == Availability.AVAILABLE
+    assert vitals.respiratory_rate == 14
+    assert vitals.oxygen.status == Availability.AVAILABLE
+    assert vitals.oxygen.coverage_ratio == pytest.approx(440 / 450, abs=0.001)
+    assert vitals.oxygen.odi_baseline == 3
+    assert vitals.oxygen.repeated_elevation is True
+    assert vitals.oxygen.interpretation == "repeated_elevation"
+    assert "夜间血氧下降指数连续偏高" in vitals.outlier_labels
 
 
 def test_hrv_prefers_longer_baseline_over_wearing_position():

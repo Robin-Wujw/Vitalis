@@ -60,7 +60,8 @@ Vitalis currently normalizes:
 - daily activity, resting heart rate, steps, active minutes, and training summaries;
 - workout summaries plus typed workout-detail heart rate, speed, equivalent pace,
   cadence, distance, altitude, running power, laps, pauses, and explicit strength sets;
-- dense `SEC_HR` file coverage metadata when the payload itself is not decoded.
+- decoded second-level heart rate from dense `SEC_HR` cloud files, with per-device
+  coverage and decode status retained alongside the samples.
 
 UTC measurements are assigned to local days using `VITALIS_TIMEZONE` (default
 `Asia/Shanghai`). Sleep clocks preserve vendor-provided local offset semantics.
@@ -92,9 +93,15 @@ intelligence layer. It may estimate work/rest structure from heart rate while ke
 the movement and target muscle unknown until an explicit vendor set or user
 confirmation is available.
 
-`second_heart_rate/real_data` currently stores only opaque `SEC_HR` coverage metadata.
-`sample_count=0` and `parse_status=indexed` explicitly mean that no measurement samples
-have been decoded. File identifiers are not exposed through the health-query API.
+`second_heart_rate/real_data` returns file indexes rather than samples. For each new
+file ID, Vitalis calls Zepp's official `queryDownUrlList` endpoint, downloads the signed
+HTTPS ZIP without forwarding `apptoken`, and decodes the protobuf heartbeat blocks.
+Each block starts at a Unix-second timestamp and contains consecutive one-second heart
+rate values; `255` is treated as missing. ZIP entries are assigned to indexed devices
+using a global one-to-one maximum-overlap match. Successfully decoded index rows store
+`parse_status=decoded` and `sample_count`; later syncs skip those exact file/device/time
+rows, so historical files are not downloaded repeatedly. File identifiers remain
+private and are not exposed through the health-query API.
 
 ## Balance 2 Bridge
 

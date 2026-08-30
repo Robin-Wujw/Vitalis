@@ -342,7 +342,7 @@ def test_remote_api_keeps_environment_proxy_support(monkeypatch, tmp_path):
             state_dir=tmp_path,
         )
 
-    assert client_kwargs[0]["trust_env"] is True
+    assert client_kwargs[0]["trust_env"] is False
 
 
 def test_daily_push_does_not_analyze_or_send_after_failed_sync(monkeypatch, tmp_path):

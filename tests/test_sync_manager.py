@@ -1,7 +1,9 @@
 """测试 Zepp 同步管理器（SyncManager）。"""
 
 from datetime import date, datetime, timedelta, timezone
+from io import BytesIO
 import threading
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 from sqlalchemy.exc import OperationalError
@@ -96,6 +98,25 @@ class MockDataFetcher:
     def fetch_dense_file_records(self, window: FetchWindow) -> list[FetchedRecord]:
         self.calls.append("dense_files")
         return []
+
+
+def _varint(value: int) -> bytes:
+    output = bytearray()
+    while value > 0x7F:
+        output.append((value & 0x7F) | 0x80)
+        value >>= 7
+    output.append(value)
+    return bytes(output)
+
+
+def _dense_archive(start: datetime, values: list[int]) -> bytes:
+    inner = b"\x08" + _varint(int(start.timestamp()))
+    inner += b"".join(b"\x10" + _varint(value) for value in values)
+    protobuf = b"\x0a" + _varint(len(inner)) + inner
+    output = BytesIO()
+    with ZipFile(output, "w", ZIP_DEFLATED) as zipped:
+        zipped.writestr("heart.pb", protobuf)
+    return output.getvalue()
 
 
 @pytest.fixture(scope="function")
@@ -254,10 +275,17 @@ class TestSyncManager:
         assert rows[0]["workout_count"] == 1
         assert rows[0]["total_duration"] == 30
 
-    def test_dense_file_index_is_persisted_without_fake_samples(self, mock_fetcher, setup_db):
+    def test_dense_file_is_decoded_once_and_persisted_idempotently(self, mock_fetcher, setup_db):
         manager = SyncManager(mock_fetcher)
         user = User(id="dense-sync-user")
         start = datetime(2026, 8, 26, 6, 0, tzinfo=timezone.utc)
+        archive_calls = []
+
+        def fetch_archive(file_type, file_id):
+            archive_calls.append((file_type, file_id))
+            return _dense_archive(start, [72, 255, 74])
+
+        mock_fetcher.fetch_dense_file_archive = fetch_archive
         record = FetchedRecord(raw=RawRecord(
             stream="dense_files",
             source_key="file_info:second_heart_rate:2026-08-26:2026-08-27",
@@ -268,7 +296,7 @@ class TestSyncManager:
                 "deviceId": "1,A1B2C3D4E5F60708",
                 "samples": [{
                     "s": 0,
-                    "e": 60_000,
+                    "e": 2_000,
                     "fileId": "opaque-index-only",
                     "fileType": "SEC_HR",
                     "dateString": "2026-08-26",
@@ -279,6 +307,7 @@ class TestSyncManager:
             repo = HealthRepository(db)
             repo.upsert_user(user.id)
             written = manager._write_stream(record, repo, user)
+            second_written = manager._write_stream(record, repo, user)
             files = repo.dense_data_files(
                 user.id, "second_heart_rate", start.date(), start.date()
             )
@@ -286,11 +315,13 @@ class TestSyncManager:
                 user.id, "heart_rate", start, start + timedelta(days=1)
             )
 
-        assert written == 1
+        assert written == 3
+        assert second_written == 0
+        assert archive_calls == [("SEC_HR", "opaque-index-only")]
         assert len(files) == 1
-        assert files[0].parse_status == "indexed"
-        assert files[0].sample_count == 0
-        assert samples == []
+        assert files[0].parse_status == "decoded"
+        assert files[0].sample_count == 2
+        assert [sample.value for sample in samples] == [72, 74]
 
     def test_sync_report_serializes_same_user_across_managers(self):
         first_entered = threading.Event()

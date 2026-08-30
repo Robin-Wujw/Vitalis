@@ -1816,3 +1816,66 @@ mostly fixed weekly-frequency templates.
 - Part 4 (delivery): feature commit `7b40fd4` (`feat: deepen recovery and training
   prescriptions`) was pushed to `origin/main`. The delivery record was then committed
   and pushed on the same branch, followed by a local/remote revision equality check.
+
+## 26. Verified Dense Heart Rate And Overnight Fusion
+
+Date: 2026-08-30
+
+Goal: decode Zepp's second-level heart-rate files, use them safely in nocturnal
+analysis, complete the multi-device recovery brief, and remove the scheduled delivery
+path's dependency on interactive terminal proxy settings.
+
+### Implemented Contract
+
+- The official Android flow was verified as `fileInfo` index -> `queryDownUrlList` ->
+  signed HTTPS ZIP -> `DailySecondHeartBeat` protobuf. A heartbeat block contains a
+  Unix-second start time followed by consecutive integer heart-rate values; `255` is
+  missing data.
+- ZIP entry/device assignment uses a global one-to-one maximum interval-overlap match.
+  Ambiguous mappings, unsafe URLs, malformed archives, invalid protobuf wire types,
+  oversized content, and non-heart-rate values are rejected.
+- Signed object-storage downloads do not receive the Zepp `apptoken`. Zepp, local
+  Vitalis calls, webhooks, and PushPlus all use `trust_env=False`, so Hermes does not
+  inherit `HTTP_PROXY`, `HTTPS_PROXY`, or `ALL_PROXY` from an interactive shell.
+- A decoded file/device/start interval stores `parse_status=decoded` and its sample
+  count. Later syncs skip the exact decoded set. Decoded samples remain device-scoped
+  and are never averaged across devices or reinterpreted as beat-to-beat HRV.
+- The analysis loader queries only actual sleep windows, reduces each device's
+  second-level values to minute medians, and keeps at most 35 nights. A sufficiently
+  covered upper-arm stream is preferred for current-night heart rate and compared only
+  with its own available history. HRV retains a separate canonical same-device
+  baseline and secondary-device corroboration contract.
+- Dense archives are decoded and persisted one file at a time. This bounds memory for
+  multi-day synchronization instead of retaining the entire window's samples before
+  one large write.
+
+### Real Verification
+
+- A verified production archive was only a few kilobytes and contained two protobuf
+  entries whose timestamp ranges matched two indexed devices. Missing sentinels were
+  discarded and physiological values decoded at one-second spacing.
+- After loading the new service code, the first two-day sync wrote roughly 91,000
+  dense-file/sample records. An immediate identical sync wrote zero dense records,
+  proving that successful archives are not downloaded and decoded repeatedly.
+- A real target-day analysis reported complete sleep, REM sleep, canonical HRV,
+  resting heart rate, a full-night heart-rate median/low-point/trajectory, respiratory
+  rate, and explicit insufficient oxygen coverage without inventing an oxygen result.
+- A 35-day all-stream backfill correctly hit the existing synchronization deadline.
+  A subsequent queued seven-day attempt exposed excessive memory retention in the
+  dense writer and was stopped before commit; SQLite rolled the transaction back while
+  preserving the committed two-day data. The writer was then changed to per-archive
+  persistence and covered by the focused sync/decoder test run.
+- Final verification passed all 226 tests with 225 pre-existing Python 3.14
+  `datetime.utcnow()` deprecation warnings. Python compilation, all Skill JSON parsing,
+  `git diff --check`, and the no-audit-language renderer acceptance passed.
+- After both services restarted, a production two-day sync succeeded with zero dense
+  writes on the already-decoded set. The regenerated DailyProfile selected the complete
+  upper-arm stream for current-night heart rate, retained separate canonical HRV and
+  resting-heart-rate evidence, and abstained from an oxygen conclusion when coverage
+  was insufficient.
+- The final morning brief omitted empty signals, unknown safety text, planning gates,
+  raw device disagreement, and a stale HRV lifecycle sentence that conflicted with the
+  current direction. PushPlus returned application-level success. Both Hermes jobs are
+  active in no-agent script mode, and both `vitalis.service` and
+  `hermes-gateway.service` are active without proxy variables in their service
+  environments.

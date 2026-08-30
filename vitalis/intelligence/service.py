@@ -6,7 +6,14 @@ from uuid import uuid4
 from vitalis.storage import HealthRepository, session_scope
 from vitalis.time import local_today
 
-from .analyzers import HrvAnalyzer, RecoveryAnalyzer, SleepAnalyzer, TrainingAnalyzer, build_states
+from .analyzers import (
+    HrvAnalyzer,
+    OvernightVitalsAnalyzer,
+    RecoveryAnalyzer,
+    SleepAnalyzer,
+    TrainingAnalyzer,
+    build_states,
+)
 from .baseline import BaselineEngine
 from .contracts import (
     AgentContext,
@@ -104,6 +111,12 @@ EVIDENCE_REFS = [
         title="Statistical methods for assessing agreement between two methods of clinical measurement",
         url="https://doi.org/10.1016/S0140-6736(86)90837-8",
         applies_to=["measurement_agreement", "device_interchangeability"],
+    ),
+    EvidenceRef(
+        id="FDA_PULSE_OXIMETER_LIMITATIONS",
+        title="Pulse Oximeter Accuracy and Limitations",
+        url="https://www.fda.gov/medical-devices/safety-communications/pulse-oximeter-accuracy-and-limitations-fda-safety-communication",
+        applies_to=["wearable_spo2", "oxygen_measurement_limitations"],
     ),
     EvidenceRef(
         id="WSS_WEARABLE_SLEEP_2025",
@@ -344,6 +357,7 @@ class IntelligenceCommand:
         baselines = BaselineEngine().build(raw.series, target)
         sleep, sleep_state = SleepAnalyzer().analyze(raw, baselines)
         hrv = HrvAnalyzer().analyze(raw, baselines)
+        overnight_vitals = OvernightVitalsAnalyzer().analyze(raw, baselines, sleep)
         training = TrainingAnalyzer().analyze(raw, baselines)
         recovery = RecoveryAnalyzer().analyze(raw, sleep, sleep_state, hrv, training)
         decision = DecisionEngine().decide(
@@ -364,7 +378,13 @@ class IntelligenceCommand:
             data_quality=raw.data_quality,
             facts=raw.facts,
             baselines=baselines,
-            features=ProfileFeatures(sleep=sleep, hrv=hrv, recovery=recovery, training=training),
+            features=ProfileFeatures(
+                sleep=sleep,
+                hrv=hrv,
+                overnight_vitals=overnight_vitals,
+                recovery=recovery,
+                training=training,
+            ),
             trends=trends,
             events=events,
             states=build_states(sleep_state, recovery, training),

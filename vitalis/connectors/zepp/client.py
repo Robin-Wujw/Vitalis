@@ -21,6 +21,7 @@ import secrets
 import time as time_mod
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable
+from urllib.parse import urlparse
 
 import httpx
 
@@ -37,6 +38,8 @@ API_EVENTS = "/v2/users/me/events"                 # HRV / 每日健康摘要
 API_USER_EVENTS = "/users/{user_id}/events"        # SpO2 / PAI / all-day stress
 API_USER_EVENTS_DATE = "/users/{user_id}/events/dateString"  # ODI / OSA nightly events
 API_FILE_INFO_EVENTS = "/users/me/fileInfo/events"  # Dense measurement file index
+API_FILE_DOWNLOAD_URLS = "/files/{file_type}/users/{user_id}/queryDownUrlList"
+MAX_DENSE_FILE_BYTES = 64 * 1024 * 1024
 
 # 官方客户端请求头（ZeppBridge 实测有效）
 APP_HEADERS = {
@@ -123,7 +126,8 @@ class ZeppAPIClient:
 
             self.region_host = urlparse(self.region_host).netloc or self.region_host.split("//")[-1]
         self.base_url = f"https://{self.region_host}"
-        self._client = httpx.Client(timeout=30.0)
+        # Scheduled Hermes runs must not depend on an interactive shell proxy.
+        self._client = httpx.Client(timeout=30.0, trust_env=False)
         # 官方客户端同款请求头 + 动态 apptoken
         self._headers = {"apptoken": self.app_token, **APP_HEADERS}
         self._request_seq = 0
@@ -287,6 +291,53 @@ class ZeppAPIClient:
                 "limit": str(limit),
             },
         )
+
+    def fetch_file_download_urls(self, file_type: str, file_ids: list[str]) -> dict[str, str]:
+        """Resolve indexed file IDs through Zepp's official download contract."""
+        if not file_ids:
+            return {}
+        payload = self._get(
+            API_FILE_DOWNLOAD_URLS.format(file_type=file_type, user_id=self.user_id),
+            {"fileIds": ",".join(file_ids)},
+        )
+        urls = {
+            str(file_id): value
+            for file_id, value in payload.items()
+            if str(file_id) in file_ids and isinstance(value, str)
+        }
+        if set(urls) != set(file_ids):
+            raise ZeppAuthError("Zepp 未返回全部高频心率文件下载地址")
+        for value in urls.values():
+            parsed = urlparse(value)
+            if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+                raise ZeppAuthError("Zepp 返回了不安全的文件下载地址")
+        return urls
+
+    def download_dense_file(self, file_type: str, file_id: str) -> bytes:
+        """Download one signed SEC_HR archive without forwarding Zepp credentials."""
+        target = self.fetch_file_download_urls(file_type, [file_id])[file_id]
+        for attempt in range(3):
+            try:
+                with self._client.stream("GET", target, follow_redirects=True) as response:
+                    if response.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                        time_mod.sleep(0.1 * (attempt + 1))
+                        continue
+                    if response.status_code != 200:
+                        raise ZeppAuthError(
+                            f"Zepp 高频心率文件下载失败（HTTP {response.status_code}）"
+                        )
+                    content = bytearray()
+                    for chunk in response.iter_bytes():
+                        content.extend(chunk)
+                        if len(content) > MAX_DENSE_FILE_BYTES:
+                            raise ZeppAuthError("Zepp 高频心率文件超过大小限制")
+                    return bytes(content)
+            except httpx.HTTPError as exc:
+                if attempt < 2:
+                    time_mod.sleep(0.1 * (attempt + 1))
+                    continue
+                raise ZeppAuthError(f"高频心率文件网络错误: {exc}") from exc
+        raise ZeppAuthError("Zepp 高频心率文件下载重试耗尽")
 
     def fetch_hrv(self, start_date: str, end_date: str) -> dict:
         """HRV 数据：日期格式 YYYY-MM-DD，内部转为毫秒时间戳。"""

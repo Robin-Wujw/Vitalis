@@ -448,6 +448,9 @@ class DataFetcher:
             )))
         return records
 
+    def fetch_dense_file_archive(self, file_type: str, file_id: str) -> bytes:
+        return self.connector.download_dense_file(file_type, file_id)
+
     # ---- workout detail (pending) ----
 
     def fetch_workout_detail(self, workout_id: str, source: str, start_utc: datetime, end_utc: datetime | None) -> FetchedRecord:

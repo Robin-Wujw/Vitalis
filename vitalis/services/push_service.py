@@ -74,8 +74,6 @@ class PushService:
         else:
             raise ValueError("period must be morning or evening")
 
-        if period == "evening":
-            body_lines.extend(_render_limitations(payload))
         msg = PushMessage(
             title=title,
             body="\n".join(body_lines),
@@ -92,7 +90,7 @@ class PushService:
         if not self.webhook_url:
             return
         try:
-            with httpx.Client(timeout=10.0) as client:
+            with httpx.Client(timeout=10.0, trust_env=False) as client:
                 client.post(
                     self.webhook_url,
                     json={
@@ -107,7 +105,7 @@ class PushService:
             log.warning("webhook push failed")
 
     def _pushplus_handler(self, msg: PushMessage) -> None:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=10.0, trust_env=False) as client:
             response = client.post(
                 PUSHPLUS_URL,
                 json={
@@ -137,6 +135,7 @@ def _render_morning(payload: dict) -> tuple[str, list[str]]:
     states = payload.get("states", {})
     sleep = features["sleep"]
     hrv = features["hrv"]
+    overnight_vitals = features["overnight_vitals"]
     training = features["training"]
     report_date = payload["date"]
     action_title = primary["title"] if primary else decision["action_label"]
@@ -153,7 +152,9 @@ def _render_morning(payload: dict) -> tuple[str, list[str]]:
     ])
     lines.extend(_render_coach_actions(action_plan))
     lines.extend(["", "## 为什么", ""])
-    lines.extend(_render_coach_reasons(sleep, hrv, training, action_plan))
+    lines.extend(_render_coach_reasons(
+        sleep, hrv, overnight_vitals, training, action_plan
+    ))
     notable = _render_notable_event(payload)
     if notable:
         lines.extend(["", "## 最近最值得注意", "", notable])
@@ -164,10 +165,8 @@ def _render_morning(payload: dict) -> tuple[str, list[str]]:
 
 
 def _render_evening(payload: dict) -> tuple[str, list[str]]:
-    decision = payload["decision"]
     features = payload["features"]
     states = payload.get("states", {})
-    recovery = features["recovery"]
     training = features["training"]
     report_date = payload["date"]
     today = [
@@ -175,24 +174,12 @@ def _render_evening(payload: dict) -> tuple[str, list[str]]:
         for workout in training.get("recent_workouts", [])
         if workout.get("date") == report_date
     ]
-    title = f"Vitalis 晚报 · {report_date} · {decision['action_label']}"
+    title_label = today[0]["sport_mode_label"] if len(today) == 1 else "今日训练回顾"
+    title = f"Vitalis 晚报 · {report_date} · {title_label}"
     lines = _metadata(payload)
     lines.extend([
         "",
-        "## 晚间结论",
-        "",
-        (
-            f"- **今日完成**：{len(today)} 次训练 · "
-            f"{_display_with_unit(training.get('today_duration_minutes'), '分钟')}"
-        ),
-        (
-            "- **负荷判断**："
-            f"{states.get('training_load_label') or training.get('load_state_label', '数据不足')}"
-        ),
-        f"- **恢复判断**：{states.get('recovery_label') or recovery.get('state_label', '数据不足')}",
-        f"- **今日状态结论**：{decision['action_label']}",
-        "",
-        "## 今日训练",
+        "## 今天完成了什么",
         "",
     ])
     if today:
@@ -203,54 +190,35 @@ def _render_evening(payload: dict) -> tuple[str, list[str]]:
             ]
             if workout.get("heart_rate_avg_bpm") is not None:
                 details.append(f"平均心率 {workout['heart_rate_avg_bpm']} 次/分钟")
-            details.append(f"识别置信度{workout['recognition_confidence_label']}")
             lines.append(
                 f"- **{workout['sport_mode_label']}** · {' · '.join(details)}"
             )
     else:
-        lines.append("- 今天未记录到训练")
-    lines.extend([
-        "",
-        "## 负荷回顾",
-        "",
-        f"- **今日负荷**：{_display(training.get('today_load'))}",
-        (
-            "- **近 7 日训练**："
-            f"{_display_with_unit(training.get('duration_7d'), '分钟')} · "
-            f"负荷 {_display(training.get('load_7d'))}"
-        ),
-        f"- **当前状态**：{training.get('load_state_label', '数据不足')}",
-        "",
-        "## 恢复信号",
-        "",
-        f"- **积极信号**：{_join_labels(recovery.get('positive_signal_labels'))}",
-        f"- **需关注信号**：{_join_labels(recovery.get('negative_signal_labels'))}",
-    ])
-    if features.get("hrv", {}).get("fusion_summary"):
-        lines.append(
-            f"- **多设备 HRV**：{features['hrv']['fusion_summary']}"
-        )
-    trend_lines = [
-        (
-            f"- **{trend['metric_label']}（{trend['window_days']} 日）**："
-            f"{trend['direction_label']} · {trend['confidence_label']}置信度"
-        )
-        for trend in payload.get("trends", [])
-        if trend.get("status") == "AVAILABLE"
-    ]
-    event_lines = [
-        (
-            f"- **{event['type_label']}**：{event['summary']}"
-            f"（{event['severity_label']}，{event['lifecycle_label']}）"
-        )
-        for event in payload.get("events", [])
-        if event.get("lifecycle") != "RESOLVED"
-    ]
-    lines.extend(["", "## 趋势与事件", ""])
-    lines.extend(trend_lines or ["- 暂无可用趋势"])
-    lines.extend(event_lines or ["- 暂无进行中的健康事件"])
-    lines.extend(_render_workout_intelligence(training))
-    lines.extend(_render_drivers(decision))
+        lines.append("今天没有记录到正式训练，不需要在晚上补训练。")
+
+    details = _render_today_workout_details(training, report_date)
+    if details:
+        lines.extend(["", "## 训练质量", "", *details])
+
+    load_label = states.get("training_load_label") or training.get(
+        "load_state_label", "负荷数据不足"
+    )
+    lines.extend(["", "## 今晚怎么收尾", ""])
+    if today:
+        if training.get("load_state") == "ELEVATED":
+            lines.append(
+                f"今天已经完成训练，当前{load_label}。今晚不再追加跑步或力量，正常进食、补水并按时睡觉。"
+            )
+        else:
+            lines.append(
+                f"今天已经完成训练，当前{load_label}。今晚不再补训练，正常进食、补水并按时睡觉。"
+            )
+        lines.extend([
+            "",
+            "训练后的主观用力（1–10 分）和主要酸痛部位还没有记录；这两项会直接用于调整下一次训练剂量。",
+        ])
+    else:
+        lines.append(f"当前{load_label}。按正常作息休息，明早再根据整夜数据安排训练。")
     return title, lines
 
 
@@ -337,6 +305,7 @@ def _render_coach_session(session: dict, role: str) -> list[str]:
 def _render_coach_reasons(
     sleep: dict,
     hrv: dict,
+    overnight_vitals: dict,
     training: dict,
     action_plan: dict,
 ) -> list[str]:
@@ -354,14 +323,19 @@ def _render_coach_reasons(
         lines.append(f"- {'；'.join(sleep_parts)}。")
 
     recovery_parts = []
-    if _interpretable_deviation(hrv.get("deviation")):
+    if (
+        not hrv.get("corroboration_affects_decision")
+        and _interpretable_deviation(hrv.get("deviation"))
+    ):
         recovery_parts.append(_plain_deviation(hrv["deviation"], "夜间心率变异性"))
-    if hrv.get("recent_7d_direction") != "unknown" and hrv.get("recent_7d_change_percent") is not None:
+    if (
+        not hrv.get("corroboration_affects_decision")
+        and hrv.get("recent_7d_direction") != "unknown"
+        and hrv.get("recent_7d_change_percent") is not None
+    ):
         change = hrv["recent_7d_change_percent"]
         trend = "上升" if change > 0 else "下降" if change < 0 else "持平"
         recovery_parts.append(f"近 7 天中位数较此前 7 天{trend} {abs(change):.1f}%")
-    if recovery_parts:
-        lines.append(f"- {'；'.join(recovery_parts)}。")
 
     night = hrv.get("nocturnal_heart_rate") or {}
     if night.get("status") == "AVAILABLE":
@@ -369,6 +343,8 @@ def _render_coach_reasons(
             f"睡眠中心率中位数 {night['median_bpm']:g} 次/分钟",
             f"稳定 5 分钟低点 {night['low_5m_bpm']:g} 次/分钟",
         ]
+        if night.get("low_5m_time"):
+            night_parts[-1] += f"（{night['low_5m_time']}）"
         if night.get("deviation_percent") is not None:
             change = night["deviation_percent"]
             baseline_nights = night.get("baseline_nights") or 28
@@ -385,7 +361,12 @@ def _render_coach_reasons(
             movement = "回落" if delta < 0 else "升高" if delta > 0 else "基本不变"
             amount = f" {abs(delta):g} 次/分钟" if delta else ""
             night_parts.append(f"后半夜较前半夜{movement}{amount}")
-        lines.append(f"- {'；'.join(night_parts)}。")
+        recovery_parts.extend(night_parts)
+    vitals_reason = _render_overnight_vitals_reason(overnight_vitals)
+    if vitals_reason:
+        recovery_parts.append(vitals_reason.rstrip("。"))
+    if recovery_parts:
+        lines.append(f"- {'；'.join(recovery_parts)}。")
 
     balance = action_plan["weekly_balance"]
     primary = action_plan.get("primary_session")
@@ -407,6 +388,45 @@ def _render_coach_reasons(
     return lines[:4]
 
 
+def _render_overnight_vitals_reason(vitals: dict) -> str | None:
+    if vitals.get("status") != "AVAILABLE":
+        return None
+    parts = []
+    respiratory = vitals.get("respiratory_rate")
+    respiratory_deviation = vitals.get("respiratory_rate_deviation")
+    if respiratory is not None:
+        text = f"夜间呼吸频率 {respiratory:g} 次/分钟"
+        if _interpretable_deviation(respiratory_deviation):
+            text += "，" + _plain_deviation(respiratory_deviation, "").strip()
+        parts.append(text)
+
+    temperature = vitals.get("skin_temperature_delta_c")
+    if temperature is not None and abs(temperature) >= 0.2:
+        relation = "高" if temperature > 0 else "低"
+        parts.append(f"腕温较厂商基线{relation} {abs(temperature):g} 摄氏度")
+
+    oxygen = vitals.get("oxygen") or {}
+    if oxygen.get("status") == "AVAILABLE":
+        odi = oxygen.get("odi_events_per_hour")
+        minutes = oxygen.get("measured_minutes")
+        interpretation = oxygen.get("interpretation")
+        if interpretation == "repeated_elevation":
+            text = "夜间血氧下降频率连续高于个人水平"
+        elif interpretation == "single_night_elevation":
+            text = "今夜血氧下降频率偏高，但还没有连续出现"
+        else:
+            text = "夜间血氧下降频率处于个人常态"
+        details = []
+        if odi is not None:
+            details.append(f"{odi:g} 次/小时")
+        if minutes is not None:
+            details.append(f"覆盖 {minutes} 分钟")
+        if details:
+            text += f"（{'，'.join(details)}）"
+        parts.append(text)
+    return "；".join(parts) + "。" if parts else None
+
+
 def _render_notable_event(payload: dict) -> str | None:
     explanations = {
         "RECOVERY_SUPPRESSED": "多项恢复指标同时偏离个人基线。今天减量或休息比补训练更重要。",
@@ -418,15 +438,27 @@ def _render_notable_event(payload: dict) -> str | None:
         "SLEEP_IMPROVEMENT": "最近睡眠持续改善。保持当前作息，不需要因此额外提高训练强度。",
         "HRV_RECOVERY": "夜间心率变异性持续回到个人正常范围。按计划训练即可，不额外加量。",
     }
-    hrv_conflict = payload["features"]["hrv"].get(
-        "corroboration_affects_decision", False
-    )
+    hrv = payload["features"]["hrv"]
+    hrv_conflict = hrv.get("corroboration_affects_decision", False)
+    current_hrv_direction = (hrv.get("deviation") or {}).get("direction")
+    recent_hrv_direction = hrv.get("recent_7d_direction")
     for event in payload.get("events", []):
         if event.get("lifecycle") == "RESOLVED":
             continue
-        if hrv_conflict and event.get("type") in {"HRV_DROP", "HRV_RECOVERY"}:
+        event_type = event.get("type")
+        if hrv_conflict and event_type in {"HRV_DROP", "HRV_RECOVERY"}:
             continue
-        text = explanations.get(event.get("type"))
+        if event_type == "HRV_RECOVERY" and (
+            current_hrv_direction != "near"
+            or recent_hrv_direction not in {None, "near", "unknown"}
+        ):
+            continue
+        if event_type == "HRV_DROP" and (
+            current_hrv_direction != "below"
+            and recent_hrv_direction != "below"
+        ):
+            continue
+        text = explanations.get(event_type)
         if text:
             return text
     return None
@@ -445,7 +477,7 @@ def _render_coach_cautions(payload: dict) -> list[str]:
         cautions.extend(primary.get("stop_conditions", [])[:1])
     if hrv.get("corroboration_affects_decision"):
         cautions.append(
-            "两台设备的夜间心率变异性方向不一致，本次结论把握已降低；今天不要仅凭这一项加量。"
+            "今天的心率变异性证据不够稳定，本次安排主要依据睡眠、夜间心率和近期训练负荷。"
         )
     if decision["action"] == "INSUFFICIENT_DATA":
         cautions.extend(
@@ -515,22 +547,15 @@ def _unique(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
 
 
-def _render_workout_intelligence(training: dict) -> list[str]:
-    lines = ["", "## 专项训练分析", ""]
+def _render_today_workout_details(training: dict, report_date: str) -> list[str]:
+    lines = []
     running = training.get("running")
     if running:
-        lines.append(
-            "- **跑步量**："
-            f"7 日 {running.get('sessions_7d', 0)} 次 / {running.get('duration_minutes_7d', 0)} 分钟"
-            f"；28 日 {running.get('sessions_28d', 0)} 次 / {running.get('duration_minutes_28d', 0)} 分钟"
-        )
-        if running.get("distance_km_7d") is not None:
-            lines.append(
-                f"- **跑步距离**：7 日 {running['distance_km_7d']} 公里 · "
-                f"28 日 {_display_with_unit(running.get('distance_km_28d'), '公里')}"
-            )
-        if running.get("recent_sessions"):
-            latest = running["recent_sessions"][0]
+        sessions = [
+            item for item in running.get("recent_sessions", [])
+            if item.get("date") == report_date
+        ]
+        for latest in sessions:
             metrics = [latest["classification_label"], f"{latest['duration_minutes']} 分钟"]
             if latest.get("distance_km") is not None:
                 metrics.append(f"{latest['distance_km']} 公里")
@@ -540,23 +565,15 @@ def _render_workout_intelligence(training: dict) -> list[str]:
                 metrics.append(f"步频中位数 {latest['median_cadence_spm']} 步/分钟")
             if latest.get("cardiac_drift_percent") is not None:
                 metrics.append(f"心率漂移 {latest['cardiac_drift_percent']:+g}%")
-            lines.append(f"- **最近跑步**：{' · '.join(metrics)}")
-    else:
-        lines.append("- **跑步**：暂无分析")
+            lines.append(f"- **跑步**：{' · '.join(metrics)}")
 
     strength = training.get("strength")
     if strength:
-        split = strength.get("detected_split_label") or "尚未识别训练分化"
-        next_focus = strength.get("next_focus_label") or "待更多已确认动作"
-        lines.append(
-            f"- **力量结构**：7 日 {strength.get('sessions_7d', 0)} 次 · "
-            f"28 日 {strength.get('sessions_28d', 0)} 次 · {split} · 下一重点 {next_focus}"
-        )
-        lines.append(
-            f"- **动作覆盖**：{strength.get('explicit_session_coverage', 0) * 100:g}% 的力量训练含明确动作"
-        )
-        if strength.get("recent_sessions"):
-            latest = strength["recent_sessions"][0]
+        sessions = [
+            item for item in strength.get("recent_sessions", [])
+            if item.get("date") == report_date
+        ]
+        for latest in sessions:
             metrics = [latest["focus_label"], f"{latest['duration_minutes']} 分钟"]
             if latest.get("total_sets") is not None:
                 metrics.append(f"{latest['total_sets']} 组")
@@ -566,12 +583,10 @@ def _render_workout_intelligence(training: dict) -> list[str]:
                 metrics.append(f"休息中位数 {latest['median_rest_seconds']:g} 秒")
             if latest.get("session_rpe") is not None:
                 metrics.append(f"主观用力 {latest['session_rpe']}/10")
-            lines.append(f"- **最近力量训练**：{' · '.join(metrics)}")
+            lines.append(f"- **力量**：{' · '.join(metrics)}")
             names = [item["exercise_name"] for item in latest.get("explicit_exercises", [])]
             if names:
-                lines.append(f"- **已确认动作**：{'、'.join(names)}")
-    else:
-        lines.append("- **力量训练**：暂无分析")
+                lines.append(f"- **动作**：{'、'.join(names)}")
     return lines
 
 

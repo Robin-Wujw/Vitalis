@@ -61,6 +61,19 @@ def _profile_payload():
                 "rhr_bpm": 47,
                 "rhr_deviation": {"direction": "near", "percent": -1.0},
             },
+            "overnight_vitals": {
+                "status": "AVAILABLE",
+                "respiratory_rate": 13.6,
+                "respiratory_rate_deviation": {"direction": "near", "percent": 1.2},
+                "skin_temperature_delta_c": 0.05,
+                "oxygen": {
+                    "status": "AVAILABLE",
+                    "measured_minutes": 443,
+                    "odi_events_per_hour": 2.84,
+                    "interpretation": "within_personal_range",
+                },
+                "outlier_labels": [],
+            },
             "recovery": {
                 "state_label": "恢复良好",
                 "positive_signal_labels": ["HRV 高于个人基线"],
@@ -85,6 +98,7 @@ def _profile_payload():
                     "duration_minutes_28d": 375,
                     "distance_km_28d": 63.8,
                     "recent_sessions": [{
+                        "date": "2026-08-28",
                         "classification_label": "节奏跑",
                         "duration_minutes": 35,
                         "distance_km": 6.4,
@@ -100,6 +114,7 @@ def _profile_payload():
                     "detected_split_label": "推、拉、腿三分化",
                     "next_focus_label": "拉类",
                     "recent_sessions": [{
+                        "date": "2026-08-28",
                         "focus_label": "推类",
                         "duration_minutes": 52,
                         "total_sets": 9,
@@ -284,19 +299,20 @@ def test_evening_push_names_exact_workout_mode_in_chinese():
     service.push_daily_profile("test-user", _profile_payload(), period="evening")
 
     message = received[0]
-    assert message.title == "Vitalis 晚报 · 2026-08-28 · 正常训练"
-    assert "## 晚间结论" in message.body
-    assert "## 今日训练" in message.body
+    assert message.title == "Vitalis 晚报 · 2026-08-28 · 户外跑"
+    assert "## 今天完成了什么" in message.body
     assert (
-        "- **户外跑** · 35 分钟 · 厂商负荷 62 · 平均心率 148 次/分钟 · "
-        "识别置信度较高"
+        "- **户外跑** · 35 分钟 · 厂商负荷 62 · 平均心率 148 次/分钟"
     ) in message.body
-    assert "- **近 7 日训练**：180 分钟 · 负荷 260" in message.body
-    assert "- **积极信号**：HRV 高于个人基线" in message.body
-    assert "- **训练负荷（7 日）**：上升 · 中等置信度" in message.body
-    assert "- **训练负荷上升**：近 7 日训练负荷持续上升。（提醒，持续中）" in message.body
-    assert message.body.rfind("## 数据限制") > message.body.rfind("## 趋势与事件")
-    assert message.body.rstrip().endswith("- 尚未记录主观用力程度")
+    assert "## 训练质量" in message.body
+    assert "平均配速 5:28/公里" in message.body
+    assert "步频中位数 174 步/分钟" in message.body
+    assert "心率漂移 +3.2%" in message.body
+    assert "## 今晚怎么收尾" in message.body
+    assert "今晚不再补训练" in message.body
+    assert "主观用力（1–10 分）和主要酸痛部位" in message.body
+    assert "趋势与事件" not in message.body
+    assert "数据限制" not in message.body
 
 
 def test_missing_values_do_not_render_dangling_units():
@@ -329,9 +345,26 @@ def test_morning_push_mentions_device_disagreement_only_when_consequential():
 
     service.push_daily_profile("test-user", payload, period="morning")
 
-    assert "两台设备的夜间心率变异性方向不一致" in received[0].body
+    assert "今天的心率变异性证据不够稳定" in received[0].body
     assert "心率变异性持续回到个人正常范围" not in received[0].body
     assert "Amazfit Helio Strap" not in received[0].body
+
+
+def test_morning_push_omits_stale_hrv_recovery_event_when_hrv_is_above_baseline():
+    received = []
+    payload = deepcopy(_profile_payload())
+    payload["features"]["hrv"]["deviation"] = {"direction": "above"}
+    payload["features"]["hrv"]["recent_7d_direction"] = "above"
+    payload["events"] = [{
+        "type": "HRV_RECOVERY",
+        "lifecycle": "PERSISTING",
+    }]
+    service = PushService(pushplus_token="")
+    service.add_handler(received.append)
+
+    service.push_daily_profile("test-user", payload, period="morning")
+
+    assert "心率变异性持续回到个人正常范围" not in received[0].body
 
 
 def test_morning_push_explains_nocturnal_pattern_and_personalized_session():
@@ -383,7 +416,7 @@ def test_pushplus_delivery_keeps_token_in_json_body(monkeypatch):
 
     class Client:
         def __init__(self, **kwargs):
-            assert kwargs == {"timeout": 10.0}
+            assert kwargs == {"timeout": 10.0, "trust_env": False}
 
         def __enter__(self):
             return self

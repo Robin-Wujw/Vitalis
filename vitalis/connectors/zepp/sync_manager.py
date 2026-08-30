@@ -13,9 +13,17 @@ from typing import Callable
 from sqlalchemy.exc import SQLAlchemyError
 
 from vitalis.connectors.zepp.client import ZeppAuthError
+from vitalis.connectors.zepp.dense_hr import decode_sec_hr_archive
 from vitalis.connectors.zepp.fetcher import DataFetcher, FetchWindow, FetchedRecord, _payload_items
 from vitalis.connectors.zepp.parser import ZeppParser
-from vitalis.models import ActivityRecord, NormalizedDaily, SleepRecord, TrainingRecord, User
+from vitalis.models import (
+    ActivityRecord,
+    DenseDataFile,
+    NormalizedDaily,
+    SleepRecord,
+    TrainingRecord,
+    User,
+)
 from vitalis.storage import HealthRepository
 from vitalis.time import local_day
 
@@ -201,7 +209,7 @@ class SyncManager:
                     raise
                 streams.append(self._unavailable_report("wellness", exc))
 
-            # 8. dense_files (metadata only until a file payload is verified)
+            # 8. dense_files
             emit("dense_files", 8, 8, "正在同步高频心率文件索引")
             check()
             try:
@@ -421,7 +429,68 @@ class SyncManager:
             files = parser.parse_dense_file_index(payload, "second_heart_rate")
             for item in files:
                 item.user_id = user.id
-            written = repo.save_dense_data_files(files)
+            grouped: dict[tuple[str, str], list] = {}
+            for item in files:
+                grouped.setdefault((item.file_type, item.file_id), []).append(item)
+            written = 0
+            for (file_type, file_id), indexed_files in grouped.items():
+                existing = repo.dense_data_file_group(
+                    user.id, "second_heart_rate", file_id
+                )
+                decoded_keys = {
+                    (row.start_utc, row.device_id)
+                    for row in existing
+                    if row.parse_status == "decoded"
+                }
+                indexed_keys = {
+                    (
+                        item.start_utc.astimezone(timezone.utc).replace(tzinfo=None)
+                        if item.start_utc and item.start_utc.tzinfo
+                        else item.start_utc,
+                        item.device_id or "",
+                    )
+                    for item in indexed_files
+                }
+                if indexed_keys and indexed_keys <= decoded_keys:
+                    continue
+                mapping_files = {
+                    (row.start_utc, row.device_id): DenseDataFile(
+                        user_id=row.user_id,
+                        source=row.source,
+                        stream=row.stream,
+                        file_id=row.file_id,
+                        file_type=row.file_type,
+                        date=row.date,
+                        start_utc=(
+                            row.start_utc.replace(tzinfo=timezone.utc)
+                            if row.start_utc else None
+                        ),
+                        end_utc=(
+                            row.end_utc.replace(tzinfo=timezone.utc)
+                            if row.end_utc else None
+                        ),
+                        source_scope=row.source_scope,
+                        device_id=row.device_id,
+                        parse_status=row.parse_status,
+                        sample_count=row.sample_count,
+                    )
+                    for row in existing
+                }
+                for item in indexed_files:
+                    start_key = (
+                        item.start_utc.astimezone(timezone.utc).replace(tzinfo=None)
+                        if item.start_utc and item.start_utc.tzinfo
+                        else item.start_utc
+                    )
+                    mapping_files[(start_key, item.device_id or "")] = item
+                archive = self.fetcher.fetch_dense_file_archive(file_type, file_id)
+                decoded = decode_sec_hr_archive(archive, list(mapping_files.values()))
+                for sample in decoded.samples:
+                    sample.user_id = user.id
+                # A multi-day backfill can contain millions of samples. Persist and
+                # release each archive instead of retaining the whole window in RAM.
+                written += repo.save_dense_data_files(decoded.files)
+                written += repo.save_metric_samples(decoded.samples)
 
         return written
 

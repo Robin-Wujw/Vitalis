@@ -91,8 +91,16 @@ class BaselineEngine:
         robust_z = None
         if baseline.median is not None and baseline.mad not in (None, 0):
             robust_z = 0.6745 * (transformed - baseline.median) / baseline.mad
-        percent = 100 * (value - baseline.reference_value) / baseline.reference_value
-        comparison = robust_z if robust_z is not None else percent / 10
+        if baseline.reference_value == 0 and robust_z is None:
+            return Deviation(
+                metric=baseline.metric,
+                baseline_window_days=baseline.window_days,
+            )
+        percent = (
+            100 * (value - baseline.reference_value) / baseline.reference_value
+            if baseline.reference_value != 0 else None
+        )
+        comparison = robust_z if robust_z is not None else float(percent) / 10
         direction = "near"
         if comparison > 0.75:
             direction = "above"

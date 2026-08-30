@@ -10,7 +10,6 @@ import hashlib
 import os
 from pathlib import Path
 from typing import Iterator, Literal
-from urllib.parse import urlsplit
 
 import httpx
 
@@ -57,7 +56,7 @@ def run_daily_push(
             base_url=api.rstrip("/"),
             headers=headers,
             timeout=180.0,
-            trust_env=not _is_loopback(api),
+            trust_env=False,
         ) as client:
             sync = _sync_health(client, days)
             sync_degraded, sync_status, sync_detail = _assess_sync(sync)
@@ -167,10 +166,6 @@ def _stored_profile_is_usable(
     if daily.get("data_quality", {}).get("status") != "SUFFICIENT":
         return False
     return period != "morning" or _sleep_is_complete(daily)
-
-
-def _is_loopback(api: str) -> bool:
-    return urlsplit(api).hostname in {"localhost", "127.0.0.1", "::1"}
 
 
 def _delivery_marker(

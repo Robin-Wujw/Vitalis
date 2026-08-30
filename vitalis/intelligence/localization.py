@@ -103,6 +103,10 @@ LIMITATION_LABELS = {
     "multiple_hrv_devices_no_preferred_device_configured": "存在多台 HRV 设备，尚未指定首选设备",
     "multi_device_hrv_disagreement": "多台设备相对各自基线的 HRV 方向不一致",
     "dense_heart_rate_payload_not_decoded": "秒级心率文件已有覆盖索引，但数值载荷尚未完成解码验证",
+    "target_night_oxygen_missing": "缺少当晚可解释的血氧数据",
+    "oxygen_coverage_insufficient": "当晚血氧覆盖不足",
+    "oxygen_is_screening_only": "消费级血氧仅用于趋势观察，不能用于诊断",
+    "respiratory_rate_baseline_insufficient": "呼吸频率的 28 天基线数据不足",
 }
 
 

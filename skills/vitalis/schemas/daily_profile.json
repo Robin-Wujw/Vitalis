@@ -1,15 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/daily-profile-6.0.json",
-  "title": "Vitalis DailyProfile 6.0",
+  "$id": "https://vitalis.local/schemas/daily-profile-7.0.json",
+  "title": "Vitalis DailyProfile 7.0",
   "type": "object",
   "required": ["schema_version", "analysis_run_id", "intelligence_version", "decision_policy_version", "evidence_version", "user_id", "date", "generated_at", "data_quality", "facts", "baselines", "features", "trends", "events", "states", "decision", "evidence_refs", "metadata"],
   "properties": {
-    "schema_version": {"const": "6.0"},
+    "schema_version": {"const": "7.0"},
     "analysis_run_id": {"type": "string"},
-    "intelligence_version": {"const": "6.0"},
-    "decision_policy_version": {"const": "6.0"},
-    "evidence_version": {"const": "2026-08c"},
+    "intelligence_version": {"const": "7.0"},
+    "decision_policy_version": {"const": "7.0"},
+    "evidence_version": {"const": "2026-08d"},
     "user_id": {"type": "string"},
     "date": {"type": "string", "format": "date"},
     "generated_at": {"type": "string", "format": "date-time"},
@@ -34,7 +34,7 @@
     "events": {"type": "array", "items": {"type": "object"}},
     "features": {
       "type": "object",
-      "required": ["sleep", "hrv", "recovery", "training"],
+      "required": ["sleep", "hrv", "overnight_vitals", "recovery", "training"],
       "properties": {
         "sleep": {
           "type": "object",
@@ -75,6 +75,35 @@
               }
             },
             "heart_rate_coverage": {"type": "array", "items": {"type": "object"}}
+          }
+        },
+        "overnight_vitals": {
+          "type": "object",
+          "required": ["status", "status_label", "oxygen", "outlier_labels", "limitations", "limitation_labels"],
+          "properties": {
+            "status": {"enum": ["AVAILABLE", "INSUFFICIENT_DATA"]},
+            "status_label": {"type": "string"},
+            "respiratory_rate": {"type": ["number", "null"], "minimum": 1},
+            "respiratory_rate_deviation": {"type": ["object", "null"]},
+            "skin_temperature_delta_c": {"type": ["number", "null"]},
+            "oxygen": {
+              "type": "object",
+              "required": ["status", "status_label", "sample_count", "repeated_elevation", "interpretation", "limitations", "limitation_labels"],
+              "properties": {
+                "status": {"enum": ["AVAILABLE", "INSUFFICIENT_DATA"]},
+                "median_percent": {"type": ["number", "null"], "minimum": 50, "maximum": 100},
+                "lower_10th_percent": {"type": ["number", "null"], "minimum": 50, "maximum": 100},
+                "measured_minutes": {"type": ["integer", "null"], "minimum": 0},
+                "coverage_ratio": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+                "odi_events_per_hour": {"type": ["number", "null"], "minimum": 0},
+                "odi_events": {"type": ["integer", "null"], "minimum": 0},
+                "repeated_elevation": {"type": "boolean"},
+                "interpretation": {"enum": ["within_personal_range", "single_night_elevation", "repeated_elevation", "insufficient"]}
+              }
+            },
+            "outlier_labels": {"type": "array", "items": {"type": "string"}},
+            "limitations": {"type": "array", "items": {"type": "string"}},
+            "limitation_labels": {"type": "array", "items": {"type": "string"}}
           }
         },
         "recovery": {

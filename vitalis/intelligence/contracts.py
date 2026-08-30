@@ -10,12 +10,12 @@ from pydantic import BaseModel, Field, model_validator
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "6.0"
+DAILY_SCHEMA_VERSION = "7.0"
 WEEKLY_SCHEMA_VERSION = "2.0"
 MONTHLY_SCHEMA_VERSION = "1.0"
-INTELLIGENCE_VERSION = "6.0"
-DECISION_POLICY_VERSION = "6.0"
-EVIDENCE_VERSION = "2026-08c"
+INTELLIGENCE_VERSION = "7.0"
+DECISION_POLICY_VERSION = "7.0"
+EVIDENCE_VERSION = "2026-08d"
 TRAINING_RESPONSE_SCHEMA_VERSION = "1.0"
 PERSONAL_MODEL_SCHEMA_VERSION = "2.0"
 ASSOCIATION_SCHEMA_VERSION = "1.0"
@@ -311,6 +311,7 @@ class NocturnalHeartRateFeature(BaseModel):
     measurement_site: Literal["upper_arm", "wrist", "unknown"] = "unknown"
     median_bpm: float | None = Field(default=None, ge=1)
     low_5m_bpm: float | None = Field(default=None, ge=1)
+    low_5m_time: str | None = None
     first_half_median_bpm: float | None = Field(default=None, ge=1)
     second_half_median_bpm: float | None = Field(default=None, ge=1)
     second_minus_first_bpm: float | None = None
@@ -352,6 +353,42 @@ class HrvFeatures(BaseModel):
     nocturnal_heart_rate: NocturnalHeartRateFeature | None = None
     streams: list[HrvStreamFeature] = Field(default_factory=list)
     heart_rate_coverage: list[HeartRateCoverageFeature] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    limitation_labels: list[str] = Field(default_factory=list)
+
+
+class OxygenFeatures(BaseModel):
+    status: Availability
+    status_label: str = ""
+    device_id: str | None = None
+    median_percent: float | None = Field(default=None, ge=50, le=100)
+    lower_10th_percent: float | None = Field(default=None, ge=50, le=100)
+    sample_count: int = Field(default=0, ge=0)
+    measured_minutes: int | None = Field(default=None, ge=0)
+    coverage_ratio: float | None = Field(default=None, ge=0, le=1)
+    odi_events_per_hour: float | None = Field(default=None, ge=0)
+    odi_events: int | None = Field(default=None, ge=0)
+    odi_baseline: float | None = Field(default=None, ge=0)
+    odi_deviation: Deviation | None = None
+    repeated_elevation: bool = False
+    interpretation: Literal[
+        "within_personal_range",
+        "single_night_elevation",
+        "repeated_elevation",
+        "insufficient",
+    ] = "insufficient"
+    limitations: list[str] = Field(default_factory=list)
+    limitation_labels: list[str] = Field(default_factory=list)
+
+
+class OvernightVitalsFeatures(BaseModel):
+    status: Availability
+    status_label: str = ""
+    respiratory_rate: float | None = Field(default=None, ge=1)
+    respiratory_rate_deviation: Deviation | None = None
+    skin_temperature_delta_c: float | None = None
+    oxygen: OxygenFeatures
+    outlier_labels: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     limitation_labels: list[str] = Field(default_factory=list)
 
@@ -612,6 +649,7 @@ class TrainingFeatures(BaseModel):
 class ProfileFeatures(BaseModel):
     sleep: SleepFeatures
     hrv: HrvFeatures
+    overnight_vitals: OvernightVitalsFeatures
     recovery: RecoveryFeatures
     training: TrainingFeatures
 
@@ -1051,11 +1089,11 @@ class SubjectiveFeedback(BaseModel):
 
 
 class DailyProfile(BaseModel):
-    schema_version: Literal["6.0"] = DAILY_SCHEMA_VERSION
+    schema_version: Literal["7.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
-    intelligence_version: Literal["6.0"] = INTELLIGENCE_VERSION
-    decision_policy_version: Literal["6.0"] = DECISION_POLICY_VERSION
-    evidence_version: Literal["2026-08c"] = EVIDENCE_VERSION
+    intelligence_version: Literal["7.0"] = INTELLIGENCE_VERSION
+    decision_policy_version: Literal["7.0"] = DECISION_POLICY_VERSION
+    evidence_version: Literal["2026-08d"] = EVIDENCE_VERSION
     user_id: str
     date: DateValue
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

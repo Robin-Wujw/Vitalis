@@ -1,6 +1,22 @@
 from copy import deepcopy
+from html.parser import HTMLParser
 
 from vitalis.services.push_service import PUSHPLUS_URL, PushMessage, PushService
+
+
+class _VisibleTextParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+
+def _visible_text(body: str) -> str:
+    parser = _VisibleTextParser()
+    parser.feed(body)
+    return "".join(parser.parts)
 
 
 def _profile_payload():
@@ -274,25 +290,27 @@ def test_morning_push_renders_actionable_coach_brief_without_audit_noise():
     service.push_daily_profile("test-user", _profile_payload(), period="morning")
 
     message = received[0]
+    text = _visible_text(message.body)
     assert message.title == "Vitalis 晨报 · 2026-08-28 · 轻松跑"
-    assert message.body.startswith("> **数据日期：2026-08-28** · 数据完整")
-    assert "\n## 今日状态\n" in message.body
-    assert "昨夜恢复指标整体良好" in message.body
-    assert "今天安排轻松跑，按低强度完成。" in message.body
-    assert "\n## 昨夜数据\n" in message.body
-    assert "\n## 最近 7 天\n" in message.body
-    assert "\n## 今天安排\n" in message.body
-    assert "### 主要：轻松跑 · 30–45 分钟 · 低强度" in message.body
-    assert "1. **热身**：6–8 分钟 · 轻松。先快走，再逐渐过渡到慢跑" in message.body
-    assert "有余力时，晚些时候可再做拉类力量训练；不做也不影响今天的主要安排。" in message.body
-    assert "### 可选：拉类力量训练 · 40–60 分钟 · 中等强度" in message.body
-    assert "**睡眠**：7 小时 27 分钟；较个人基线 +6.5%" in message.body
-    assert "快速眼动睡眠 106 分钟" in message.body
-    assert "心率变异性 71 毫秒（较个人基线 +8.2%）" in message.body
-    assert "静息心率 47 次/分钟（较个人基线 -1.0%）" in message.body
-    assert "每小时下降 2.84 次" in message.body
-    assert "**构成**：跑步 2 次、82 分钟、14.2 公里；力量训练 2 次" in message.body
-    assert "最近一周训练负荷明显增加。完成今天的计划即可，不再追加训练。" in message.body
+    assert message.template == "html"
+    assert message.body.startswith('<div style="max-width:680px')
+    assert "<blockquote style=" in message.body
+    assert "数据日期：2026-08-28 · 数据完整" in text
+    for heading in ("今日状态", "昨夜数据", "最近 7 天", "今天安排"):
+        assert f">{heading}</h2>" in message.body
+    assert "昨夜恢复指标整体良好" in text
+    assert "今天安排轻松跑，按低强度完成。" in text
+    assert "主要：轻松跑 · 30–45 分钟 · 低强度" in text
+    assert "热身：6–8 分钟 · 轻松。先快走，再逐渐过渡到慢跑" in text
+    assert "有余力时，晚些时候可再做拉类力量训练；不做也不影响今天的主要安排。" in text
+    assert "可选：拉类力量训练 · 40–60 分钟 · 中等强度" in text
+    assert "睡眠：7 小时 27 分钟；较个人基线 +6.5%" in text
+    assert "快速眼动睡眠 106 分钟" in text
+    assert "心率变异性 71 毫秒（较个人基线 +8.2%）" in text
+    assert "静息心率 47 次/分钟（较个人基线 -1.0%）" in text
+    assert "每小时下降 2.84 次" in text
+    assert "构成：跑步 2 次、82 分钟、14.2 公里；力量训练 2 次" in text
+    assert "最近一周训练负荷明显增加。完成今天的计划即可，不再追加训练。" in text
     for audit_text in (
         "安全状态",
         "积极信号",
@@ -310,9 +328,9 @@ def test_morning_push_renders_actionable_coach_brief_without_audit_noise():
         "数据限制",
         "至少间隔 6 小时",
     ):
-        assert audit_text not in message.body
+        assert audit_text not in text
     for internal_code in ("TRAIN_NORMAL", "MODERATE", "RECOVERY_NORMAL", "session_rpe_unavailable"):
-        assert internal_code not in message.title + message.body
+        assert internal_code not in message.title + text
 
 
 def test_push_report_discloses_degraded_fresh_sync():
@@ -328,8 +346,9 @@ def test_push_report_discloses_degraded_fresh_sync():
 
     service.push_daily_profile("test-user", payload, period="morning")
 
-    assert "## 必要提醒" in received[0].body
-    assert "本次同步未完整完成，结论使用的是已经保存的当天数据。" in received[0].body
+    text = _visible_text(received[0].body)
+    assert ">必要提醒</h2>" in received[0].body
+    assert "本次同步未完整完成，结论使用的是已经保存的当天数据。" in text
 
 
 def test_evening_push_names_exact_workout_mode_in_chinese():
@@ -340,25 +359,23 @@ def test_evening_push_names_exact_workout_mode_in_chinese():
     service.push_daily_profile("test-user", _profile_payload(), period="evening")
 
     message = received[0]
+    text = _visible_text(message.body)
     assert message.title == "Vitalis 晚报 · 2026-08-28 · 户外跑"
-    assert "## 今日回顾" in message.body
-    assert (
-        "- **户外跑** · 35 分钟 · 设备训练负荷 62 · 平均心率 148 次/分钟"
-    ) in message.body
-    assert "## 训练表现" in message.body
-    assert "平均配速 5:28/公里" in message.body
-    assert "步频中位数 174 步/分钟" in message.body
-    assert "心率漂移 +3.2%" in message.body
-    assert "低强度 30.0% · 中等强度 30.0% · 阈值附近及以上 40.0%" in message.body
-    assert "## 全天状态" in message.body
-    assert "今天走了 8,632 步" in message.body
-    assert "设备记录的平均压力 31；放松状态占 62%；高压力占 2%" in message.body
-    assert "## 今晚恢复" in message.body
-    assert "今晚不再追加跑步或腿部力量" in message.body
-    assert "## 明天衔接" in message.body
-    assert "明天先按低负担方向预留" in message.body
-    assert "趋势与事件" not in message.body
-    assert "数据限制" not in message.body
+    for heading in ("今日回顾", "训练表现", "全天状态", "今晚恢复", "明天衔接"):
+        assert f">{heading}</h2>" in message.body
+    assert "户外跑 · 35 分钟 · 设备训练负荷 62 · 平均心率 148 次/分钟" in text
+    assert "平均配速 5:28/公里" in text
+    assert "步频中位数 174 步/分钟" in text
+    assert "心率漂移 +3.2%" in text
+    assert "低强度 30.0% · 中等强度 30.0% · 阈值附近及以上 40.0%" in text
+    assert "今天走了 8,632 步" in text
+    assert "设备记录的平均压力 31；放松状态占 62%；高压力占 2%" in text
+    assert "这表示近期训练刺激增加，不代表恢复变差" in text
+    assert "训练刺激减少" not in text
+    assert "今晚不再追加跑步或腿部力量" in text
+    assert "明天先按低负担方向预留" in text
+    assert "趋势与事件" not in text
+    assert "数据限制" not in text
 
 
 def test_evening_rest_day_reports_activity_without_treating_rest_as_a_problem():
@@ -395,6 +412,23 @@ def test_evening_low_confidence_run_does_not_name_workout_type_or_drift():
     assert "课型暂不下结论" in body
     assert "节奏跑" not in body
     assert "心率漂移" not in body
+
+
+def test_html_report_escapes_user_controlled_values():
+    received = []
+    payload = deepcopy(_profile_payload())
+    exercises = payload["features"]["training"]["strength"]["recent_sessions"][0][
+        "explicit_exercises"
+    ]
+    exercises[0]["exercise_name"] = '<img src="x" onerror="alert(1)">卧推'
+    service = PushService(pushplus_token="")
+    service.add_handler(received.append)
+
+    service.push_daily_profile("test-user", payload, period="evening")
+
+    body = received[0].body
+    assert '&lt;img src="x" onerror="alert(1)"&gt;卧推' in body
+    assert '<img src="x"' not in body
 
 
 def test_missing_values_do_not_render_dangling_units():
@@ -475,14 +509,15 @@ def test_morning_push_explains_nocturnal_pattern_and_personalized_session():
     service.push_daily_profile("test-user", payload, period="morning")
 
     body = received[0].body
-    assert "近 7 天较此前 7 天 +12.5%" in body
-    assert "**睡眠中心率**：中位数 50 次/分钟" in body
-    assert "稳定 5 分钟低点 46 次/分钟" in body
-    assert "后半夜较前半夜回落 1 次/分钟" in body
-    assert "最近一次跑步为稳定跑，33 分钟" in body
-    assert "Amazfit Helio Strap" not in body
-    reasons = body.split("## 为什么这样安排", 1)[1].split("## 最近最值得注意", 1)[0]
-    assert reasons.count("\n-") <= 4
+    text = _visible_text(body)
+    assert "近 7 天较此前 7 天 +12.5%" in text
+    assert "睡眠中心率：中位数 50 次/分钟" in text
+    assert "稳定 5 分钟低点 46 次/分钟" in text
+    assert "后半夜较前半夜回落 1 次/分钟" in text
+    assert "最近一次跑步为稳定跑，33 分钟" in text
+    assert "Amazfit Helio Strap" not in text
+    reasons = body.split(">为什么这样安排</h2>", 1)[1].split(">最近最值得注意</h2>", 1)[0]
+    assert reasons.count("<li") <= 4
 
 
 def test_pushplus_delivery_keeps_token_in_json_body(monkeypatch):
@@ -520,7 +555,7 @@ def test_pushplus_delivery_keeps_token_in_json_body(monkeypatch):
             "token": "private-token",
             "title": "晨间日报",
             "content": "数据完整",
-            "template": "markdown",
+                "template": "html",
         }},
     )]
     assert "private-token" not in requests[0][0]

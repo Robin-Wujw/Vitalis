@@ -87,7 +87,9 @@ concurrent action plan: fused overnight health, recent running and strength bala
 one primary session, and an optional addition or alternative with a concrete dose and
 plain-language reasons. The Evening report instead reviews completed workouts, daily
 activity and stress, recent training rhythm and load, then gives a practical recovery
-action and leaves tomorrow's intensity to the next complete overnight assessment.
+action and leaves tomorrow's intensity to the next complete overnight assessment. Both
+reports are sent with PushPlus' HTML template using portable inline styling; report
+values are escaped before HTML generation.
 
 Add the PushPlus token to Hermes' private `~/.hermes/.env`:
 

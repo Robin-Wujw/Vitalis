@@ -48,6 +48,20 @@ The first model version uses the following boundaries:
   methods are treated as interchangeable. A secondary wearable can corroborate the
   canonical stream, but agreement does not turn two unvalidated streams into a more
   accurate synthetic value.
+- Laborde et al. (2017, DOI `10.3389/fpsyg.2017.00213`), the 2024 Society for
+  Psychophysiological Research guidance (DOI `10.1111/psyp.14604`), and Sammito et al.
+  (2024, DOI `10.3389/fphys.2024.1430458`) require ambulatory HRV interpretation to
+  account for recording method, activity, posture, time, physiology, lifestyle, and
+  external confounders. A minute-scale wearable value is not a direct stress label.
+- Järvelin-Pasanen et al. (2018, DOI `10.2486/indhealth.2017-0190`) supports an
+  association between occupational stress and reduced parasympathetic HRV measures at
+  group and observation-window levels. It does not validate classifying each low
+  daytime RMSSD point as stress.
+- Saygin et al. (2025, DOI `10.1016/j.biopsycho.2025.109171`) shows that respiration
+  can create spurious ambulatory RSA associations. Schneider et al. (2025, DOI
+  `10.1007/s11886-025-02299-4`) found context-dependent positive-affect/HRV directions.
+  Vitalis therefore requires contextual and subjective evidence rather than inferring
+  stress valence or happiness from daytime HRV alone.
 
 Device validity remains `LIMITED_BY_EVIDENCE` when only form-factor research exists.
 Never convert missing model-specific validation or indexed-but-undecoded second-heart-

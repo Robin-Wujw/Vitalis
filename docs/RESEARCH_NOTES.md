@@ -183,3 +183,69 @@ The daily report is a presentation layer, not an audit dump. Full per-device str
 multi-window trends, limitations, and rule evidence remain in DailyProfile. The push
 should select only facts that explain or change today's action, omit empty/unknown
 sections, and translate any retained event into its practical implication.
+
+## 2026-08-30: Ambulatory Daytime HRV Interpretation
+
+### Sources Reviewed
+
+- Task Force short-term HRV measurement standards (1996):
+  <https://pubmed.ncbi.nlm.nih.gov/8737210/>
+- Laborde et al. psychophysiological HRV recommendations (2017):
+  <https://doi.org/10.3389/fpsyg.2017.00213>
+- Society for Psychophysiological Research publication guidance, including ambulatory
+  ECG/PPG measurement (2024): <https://doi.org/10.1111/psyp.14604>
+- Sammito et al. review of physiological, disease, lifestyle, and external HRV
+  confounders (2024): <https://doi.org/10.3389/fphys.2024.1430458>
+- Järvelin-Pasanen et al. occupational stress and HRV systematic review (2018):
+  <https://doi.org/10.2486/indhealth.2017-0190>
+- Vrijkotte et al. activity- and posture-adjusted ambulatory work-stress study (2000):
+  <https://doi.org/10.1161/01.HYP.35.4.880>
+- Saygin et al. ambulatory respiratory-control study (2025):
+  <https://doi.org/10.1016/j.biopsycho.2025.109171>
+- Schneider et al. positive affect and HRV systematic review (2025):
+  <https://doi.org/10.1007/s11886-025-02299-4>
+
+### Findings And Product Boundary
+
+Ambulatory vagally mediated HRV can contribute information about physiological arousal,
+but a momentary RMSSD value is not a direct stress or emotion measurement. Occupational
+stress studies commonly associate higher chronic stress with lower RMSSD or other
+parasympathetic measures, while using questionnaires and longer observation windows.
+This evidence does not validate labeling each low daytime wearable value as stress.
+
+Posture, physical activity, respiration, time of day, recent food/caffeine/alcohol,
+temperature, illness, and measurement quality can all change HRV. Activity- and
+posture-adjusted ambulatory studies demonstrate why the metabolic context must be
+separated from non-metabolic changes. Respiratory behavior can also create spurious
+within-person psychological associations when it is not measured or controlled.
+
+Positive affect has a context-dependent association with vagally mediated HRV. The
+reviewed evidence found different directions for trait, resting, activated, and
+momentary positive affect. Vitalis must therefore never translate an HRV segment into
+"happy". Emotion claims require time-linked subjective reports such as ecological
+momentary assessment.
+
+The real Zepp `HRVRMSSD/real_data` stream contains attributed daytime samples, but it is
+not continuous: samples occur in minute-spaced runs separated by long gaps, and the
+current day may be uploaded only through the morning even after a later synchronization.
+Missing intervals are unknown coverage, not high stress.
+
+### Proposed Analysis Policy (Not Yet Implemented)
+
+- Keep nocturnal recovery HRV and daytime ambulatory HRV as separate contracts.
+- Preserve one canonical same-device RMSSD stream and compare `lnRMSSD` only with that
+  stream's own history; do not merge wearable milliseconds.
+- Display gap-aware descriptive daytime coverage before making interpretations. Do not
+  connect segments across missing intervals or substitute zeros.
+- Aggregate only sufficiently sampled stationary windows. Five-minute HRV standards
+  inform the minimum observation concept, but Zepp's proprietary per-sample calculation
+  window must be verified before selecting the final window rule.
+- Build time-of-day personal references so circadian variation is not treated as a
+  stress response.
+- Require time-aligned low-activity/posture context and exclude workouts before emitting
+  a "lower physiological load" candidate. Current daily steps and workout summaries are
+  not enough for this gate.
+- Treat respiration as an explicit confidence limitation until a suitable daytime
+  respiratory stream exists.
+- Require subjective mood input before learning or reporting personal emotion
+  associations. Never infer happiness from HRV alone.

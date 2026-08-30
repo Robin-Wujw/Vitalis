@@ -8,6 +8,9 @@ from datetime import datetime
 from typing import Callable
 
 import httpx
+from markdown import Markdown
+from markdown.extensions import Extension
+from markdown.treeprocessors import Treeprocessor
 
 log = logging.getLogger("vitalis.push")
 PUSHPLUS_URL = "https://www.pushplus.plus/send"
@@ -20,6 +23,7 @@ class PushMessage:
     title: str
     body: str
     user_id: str
+    template: str = "html"
     timestamp: datetime = field(default_factory=datetime.now)
     extras: dict = field(default_factory=dict)
 
@@ -76,8 +80,9 @@ class PushService:
 
         msg = PushMessage(
             title=title,
-            body="\n".join(body_lines),
+            body=_render_report_html(body_lines),
             user_id=user_id,
+            template="html",
             extras=payload,
         )
         return self.push(msg)
@@ -97,6 +102,7 @@ class PushService:
                         "user_id": msg.user_id,
                         "title": msg.title,
                         "body": msg.body,
+                        "template": msg.template,
                         "timestamp": msg.timestamp.isoformat(),
                         "extras": msg.extras,
                     },
@@ -112,7 +118,7 @@ class PushService:
                     "token": self.pushplus_token,
                     "title": msg.title,
                     "content": msg.body,
-                    "template": "markdown",
+                    "template": msg.template,
                 },
             )
             response.raise_for_status()
@@ -125,6 +131,52 @@ class PushService:
             code = payload.get("code")
             if code != 200:
                 raise RuntimeError(f"PushPlus rejected delivery with code {code}")
+
+
+_REPORT_ELEMENT_STYLES = {
+    "blockquote": (
+        "margin:0 0 18px;padding:10px 12px;border-left:4px solid #0f766e;"
+        "background:#f0fdfa;color:#475569"
+    ),
+    "h2": (
+        "margin:24px 0 10px;padding:0 0 7px;border-bottom:1px solid #dbe4e8;"
+        "color:#0f4c5c;font-size:19px;line-height:1.35"
+    ),
+    "h3": "margin:18px 0 8px;color:#243b53;font-size:16px;line-height:1.4",
+    "p": "margin:8px 0;color:#334155;line-height:1.75",
+    "ul": "margin:8px 0 12px;padding-left:21px;color:#334155",
+    "ol": "margin:8px 0 12px;padding-left:23px;color:#334155",
+    "li": "margin:6px 0;line-height:1.7",
+    "strong": "color:#111827;font-weight:650",
+}
+
+
+class _ReportStyleTreeprocessor(Treeprocessor):
+    def run(self, root):
+        for element in root.iter():
+            style = _REPORT_ELEMENT_STYLES.get(element.tag)
+            if style:
+                element.set("style", style)
+        return root
+
+
+class _ReportStyleExtension(Extension):
+    def extendMarkdown(self, markdown):  # noqa: N802 - Markdown extension API
+        markdown.treeprocessors.register(
+            _ReportStyleTreeprocessor(markdown), "vitalis_report_style", 5
+        )
+
+
+def _render_report_html(lines: list[str]) -> str:
+    """Convert the deterministic report dialect into portable, safe PushPlus HTML."""
+    source = "\n".join(lines).replace("&", "&amp;").replace("<", "&lt;")
+    fragment = Markdown(extensions=[_ReportStyleExtension()]).convert(source)
+    return (
+        '<div style="max-width:680px;margin:0 auto;padding:4px 2px 20px;'
+        'color:#1f2937;font-size:15px;line-height:1.65;letter-spacing:0;'
+        'word-break:break-word">'
+        f"{fragment}</div>"
+    )
 
 
 def _render_morning(payload: dict) -> tuple[str, list[str]]:
@@ -262,12 +314,19 @@ def _render_evening_daily_state(payload: dict, training: dict) -> list[str]:
     change = training.get("load_7d_change_percent")
     if load is not None:
         text = f"截至昨天的 7 个完整日，设备训练负荷为 {load:g}"
+        meaning = "这是训练刺激，不直接代表恢复好坏"
         if reference is not None and change is not None:
             relation = "高" if change > 0 else "低" if change < 0 else "相同"
             amount = f" {abs(change):.1f}%" if change else ""
             text += f"，比此前 3 周周均（{reference:g}）{relation}{amount}"
+            if change > 0:
+                meaning = "这表示近期训练刺激增加，不代表恢复变差"
+            elif change < 0:
+                meaning = "这表示近期训练刺激减少，不代表恢复变差"
+            else:
+                meaning = "这表示近期训练刺激与此前接近，不代表恢复好坏"
         lines.append(
-            f"- **近期负荷**：{text}。这表示训练刺激减少，不代表恢复变差。"
+            f"- **近期负荷**：{text}。{meaning}。"
         )
     return lines
 

@@ -422,6 +422,13 @@ next-day continuity actions. It does not turn a day without formal training into
 problem, infer readiness from load alone, or print low-confidence workout type and
 cardiac-drift claims.
 
+Both daily renderers produce sanitized HTML for PushPlus. The health content remains a
+deterministic text contract; a presentation pass escapes raw HTML, converts the report
+dialect, and adds conservative inline styles that remain readable when a delivery
+channel strips styling. Daytime HRV interpretation is intentionally not part of the
+daily contract until the activity, posture, respiration, circadian-reference, and
+coverage gates in `RESEARCH_NOTES.md` can be satisfied.
+
 ## 6. Evidence Boundaries
 
 - WHO activity guidance supplies population-level weekly context, not readiness rules.

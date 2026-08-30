@@ -140,7 +140,7 @@ def test_near_baseline_signals_are_interpretable_normal_recovery():
     assert decision.action_plan.primary_session is not None
 
 
-def test_hrv_exposes_gap_aware_half_hour_curve_without_interpretation():
+def test_hrv_exposes_gap_aware_five_minute_curve_without_interpretation():
     raw = _profile(hrv_today=55)
     raw.series["hrv_rmssd"].extend([
         SeriesPoint(
@@ -167,10 +167,36 @@ def test_hrv_exposes_gap_aware_half_hour_curve_without_interpretation():
     assert curve.first_sample_time == "00:05"
     assert curve.last_sample_time == "12:01"
     assert curve.bin_minutes == 5
+    assert curve.device_id == "helio"
+    assert curve.selection_basis == "widest_target_day_coverage"
     assert [point.time for point in curve.points] == ["00:05", "00:35", "12:00"]
     assert curve.points[0].median_ms == 50
-    assert len(feature.recent_daily_values) == 7
-    assert feature.baseline_ms is not None
+
+
+def test_hrv_curve_selects_coverage_independently_from_recovery_stream():
+    raw = _profile(hrv_today=55)
+    raw.device_models = {
+        "HELIO": "Amazfit Helio Strap",
+        "BALANCE": "Amazfit Balance 2",
+    }
+    raw.series["hrv_rmssd"].extend([
+        SeriesPoint(
+            metric="hrv_rmssd", value=50 + offset, unit="ms", day=TARGET,
+            observed_at=datetime(2026, 8, 27, 16, offset, tzinfo=timezone.utc),
+            source="zepp", source_scope="device", device_id=device,
+        )
+        for device, offsets in (("helio", (0, 5)), ("balance", (0, 5, 10, 15)))
+        for offset in offsets
+    ])
+
+    feature = HrvAnalyzer().analyze(
+        raw, BaselineEngine().build(raw.series, raw.day)
+    )
+
+    assert feature.preferred_device_id == "helio"
+    assert feature.daily_curve is not None
+    assert feature.daily_curve.device_id == "balance"
+    assert feature.daily_curve.sample_count == 4
 
 
 def test_decision_abstains_when_baselines_are_not_interpretable():

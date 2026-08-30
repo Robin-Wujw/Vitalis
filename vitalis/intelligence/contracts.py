@@ -296,14 +296,12 @@ class HrvCurvePoint(BaseModel):
     sample_count: int = Field(ge=1)
 
 
-class HrvDailyValue(BaseModel):
-    date: date
-    value_ms: float = Field(gt=0)
-
-
 class DailyHrvCurveFeature(BaseModel):
     metric: Literal["hrv_rmssd"] = "hrv_rmssd"
     bin_minutes: Literal[5] = 5
+    device_id: str | None = None
+    device_label: str
+    selection_basis: Literal["widest_target_day_coverage"] = "widest_target_day_coverage"
     sample_count: int = Field(ge=1)
     covered_minutes: int = Field(ge=1, le=1440)
     first_sample_time: str
@@ -351,7 +349,6 @@ class HrvFeatures(BaseModel):
     preferred_device_id: str | None = None
     preferred_device_label: str | None = None
     value_ms: float | None = None
-    baseline_ms: float | None = Field(default=None, gt=0)
     ln_rmssd: float | None = None
     deviation: Deviation | None = None
     recent_7d_median_ms: float | None = Field(default=None, ge=0)
@@ -374,7 +371,6 @@ class HrvFeatures(BaseModel):
     rhr_deviation: Deviation | None = None
     nocturnal_heart_rate: NocturnalHeartRateFeature | None = None
     daily_curve: DailyHrvCurveFeature | None = None
-    recent_daily_values: list[HrvDailyValue] = Field(default_factory=list, max_length=7)
     streams: list[HrvStreamFeature] = Field(default_factory=list)
     heart_rate_coverage: list[HeartRateCoverageFeature] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)

@@ -432,10 +432,11 @@ coverage gates in `RESEARCH_NOTES.md` can be satisfied.
 `HrvFeatures.daily_curve` provides the non-interpretive visualization stage. It bins
 timestamped canonical-device RMSSD observations into 5-minute local-time medians. This
 is display resampling, not a claim that the vendor's proprietary observations are
-standard 5-minute ECG measurements. The PushPlus evening view plots real millisecond
-values only from the first to last observation, breaks the line across missing bins,
-marks wake time, and shows the same stream's seven daily medians. It never converts the
-daytime line into stress or emotion labels.
+standard 5-minute ECG measurements. Curve-source selection is independent of recovery
+stream selection: it chooses the single target-day RMSSD stream with the most populated
+5-minute bins, without merging absolute values across devices. The PushPlus evening view
+plots that stream on a fixed 0–24 hour axis, breaks the line across missing bins, and
+marks wake time. It never converts the daytime line into stress or emotion labels.
 
 ## 6. Evidence Boundaries
 

@@ -252,10 +252,11 @@ Missing intervals are unknown coverage, not high stress.
 
 The descriptive first stage is implemented: the canonical same-device RMSSD stream is
 resampled into 5-minute median display bins, exposed with sample coverage and first/last
-timestamps, and rendered on a real millisecond axis from the first to last observation.
-Missing bins break the line, wake time separates overnight and awake context, and a
-same-stream seven-day daily-median chart supplies the longer view. The 5-minute display
-bin does not validate the vendor's proprietary calculation as a standard 5-minute ECG
-measurement. The chart explicitly makes no stress, recovery, or emotion claim;
+timestamps, and rendered on a real millisecond axis spanning 0–24 hours. Curve-source
+selection uses the one device stream with the most populated target-day bins; it does
+not merge absolute HRV across devices. Missing bins break the line and wake time
+separates overnight and awake context. The 5-minute display bin does not validate the
+vendor's proprietary calculation as a standard 5-minute ECG measurement. The chart
+explicitly makes no stress, recovery, or emotion claim;
 context-dependent daytime interpretation remains blocked by the activity, posture,
 respiration, and time-of-day reference requirements above.

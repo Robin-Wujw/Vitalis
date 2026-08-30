@@ -190,7 +190,6 @@ class HrvAnalyzer:
         value = selected.value
         baseline = selected.baseline
         deviation = BaselineEngine.deviation(value, baseline) if baseline else None
-        same_stream_daily = _same_stream_daily_hrv(raw, selected)
         (
             recent_7d_median,
             previous_7d_median,
@@ -198,7 +197,7 @@ class HrvAnalyzer:
             recent_7d_direction,
             recent_7d_days,
             previous_7d_days,
-        ) = _same_stream_hrv_change(same_stream_daily, raw.day)
+        ) = _same_stream_hrv_change(raw, selected)
         metric_candidates = [item for item in candidates if item.metric == metric]
         streams = [
             HrvStreamFeature(
@@ -237,7 +236,7 @@ class HrvAnalyzer:
         ) = _corroborate_hrv_streams(selected, metric_candidates)
 
         nocturnal_hr = _analyze_nocturnal_heart_rate(raw, device_id)
-        daily_curve = _daily_hrv_curve(raw, selected)
+        daily_curve = _daily_hrv_curve(raw)
         rhr_candidates = []
         for rhr_metric in ("sleep_rhr", "resting_hr"):
             for stream, rhr in daily_stream_values(raw.series.get(rhr_metric, []), raw.day).items():
@@ -297,10 +296,6 @@ class HrvAnalyzer:
             preferred_device_id=device_id,
             preferred_device_label=selected.device_label,
             value_ms=round(value, 2),
-            baseline_ms=(
-                round(baseline.reference_value, 2)
-                if baseline and baseline.reference_value is not None else None
-            ),
             ln_rmssd=round(log(value), 4) if metric == "hrv_rmssd" and value > 0 else None,
             deviation=deviation,
             recent_7d_median_ms=recent_7d_median,
@@ -321,11 +316,6 @@ class HrvAnalyzer:
             rhr_deviation=rhr_deviation,
             nocturnal_heart_rate=nocturnal_hr,
             daily_curve=daily_curve,
-            recent_daily_values=[
-                {"date": day, "value_ms": round(same_stream_daily[day], 2)}
-                for day in sorted(same_stream_daily)
-                if raw.day - timedelta(days=6) <= day <= raw.day
-            ],
             streams=streams,
             heart_rate_coverage=heart_rate_coverage,
             limitations=limitations,
@@ -333,23 +323,28 @@ class HrvAnalyzer:
         )
 
 
-def _daily_hrv_curve(
-    raw: RawDailyProfile, selected: _HrvCandidate
-) -> DailyHrvCurveFeature | None:
-    if selected.metric != "hrv_rmssd":
-        return None
-    samples = [
+def _daily_hrv_curve(raw: RawDailyProfile) -> DailyHrvCurveFeature | None:
+    target_samples = [
         point
-        for point in raw.series.get(selected.metric, [])
+        for point in raw.series.get("hrv_rmssd", [])
         if point.day == raw.day
-        and point.source == selected.source
-        and point.source_scope == selected.scope
-        and point.device_id == selected.device_id
         and isinstance(point.observed_at, datetime)
         and point.value > 0
     ]
-    if not samples:
+    if not target_samples:
         return None
+
+    streams: dict[tuple[str, str, str | None], list[SeriesPoint]] = defaultdict(list)
+    for point in target_samples:
+        streams[(point.source, point.source_scope, point.device_id)].append(point)
+
+    def coverage_key(item: tuple[tuple[str, str, str | None], list[SeriesPoint]]):
+        _, samples = item
+        observed = [utc_to_local(point.observed_at) for point in samples]
+        bins = {value.hour * 12 + value.minute // 5 for value in observed}
+        return len(bins), len(samples), max(observed) - min(observed)
+
+    (_, _, device_id), samples = max(streams.items(), key=coverage_key)
 
     bins: dict[int, list[float]] = defaultdict(list)
     local_samples = []
@@ -362,6 +357,8 @@ def _daily_hrv_curve(
         covered_minutes.add(observed.replace(second=0, microsecond=0))
 
     return DailyHrvCurveFeature(
+        device_id=device_id,
+        device_label=device_label(raw, device_id),
         sample_count=len(samples),
         covered_minutes=len(covered_minutes),
         first_sample_time=min(local_samples).strftime("%H:%M"),
@@ -377,9 +374,7 @@ def _daily_hrv_curve(
     )
 
 
-def _same_stream_daily_hrv(
-    raw: RawDailyProfile, selected: _HrvCandidate
-) -> dict[date, float]:
+def _same_stream_hrv_change(raw: RawDailyProfile, selected: _HrvCandidate):
     points = [
         point
         for point in raw.series.get(selected.metric, [])
@@ -390,17 +385,14 @@ def _same_stream_daily_hrv(
     by_day: dict[date, list[float]] = defaultdict(list)
     for point in points:
         by_day[point.day].append(point.value)
-    return {day: float(median(values)) for day, values in by_day.items()}
-
-
-def _same_stream_hrv_change(daily: dict[date, float], target_day: date):
+    daily = {day: median(values) for day, values in by_day.items()}
     recent = [
         value for day, value in daily.items()
-        if target_day - timedelta(days=6) <= day <= target_day
+        if raw.day - timedelta(days=6) <= day <= raw.day
     ]
     previous = [
         value for day, value in daily.items()
-        if target_day - timedelta(days=13) <= day <= target_day - timedelta(days=7)
+        if raw.day - timedelta(days=13) <= day <= raw.day - timedelta(days=7)
     ]
     if len(recent) < 3 or len(previous) < 3:
         return None, None, None, "unknown", len(recent), len(previous)

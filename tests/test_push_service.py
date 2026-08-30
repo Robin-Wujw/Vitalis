@@ -61,7 +61,6 @@ def _profile_payload():
             },
             "hrv": {
                 "value_ms": 71,
-                "baseline_ms": 65.6,
                 "deviation": {"direction": "above", "percent": 8.2},
                 "preferred_device_label": "Amazfit Helio Strap",
                 "fusion_confidence_label": "较高",
@@ -72,6 +71,9 @@ def _profile_payload():
                 "daily_curve": {
                     "metric": "hrv_rmssd",
                     "bin_minutes": 5,
+                    "device_id": "helio",
+                    "device_label": "Amazfit Helio Strap",
+                    "selection_basis": "widest_target_day_coverage",
                     "sample_count": 12,
                     "covered_minutes": 10,
                     "first_sample_time": "00:31",
@@ -83,15 +85,6 @@ def _profile_payload():
                         {"time": "17:05", "median_ms": 50, "sample_count": 3},
                     ],
                 },
-                "recent_daily_values": [
-                    {"date": "2026-08-22", "value_ms": 57},
-                    {"date": "2026-08-23", "value_ms": 70},
-                    {"date": "2026-08-24", "value_ms": 66},
-                    {"date": "2026-08-25", "value_ms": 67},
-                    {"date": "2026-08-26", "value_ms": 70},
-                    {"date": "2026-08-27", "value_ms": 63},
-                    {"date": "2026-08-28", "value_ms": 71},
-                ],
                 "streams": [{
                     "device_label": "Amazfit Helio Strap",
                     "measurement_site": "upper_arm",
@@ -394,17 +387,16 @@ def test_evening_push_names_exact_workout_mode_in_chinese():
     assert "低强度 30.0% · 中等强度 30.0% · 阈值附近及以上 40.0%" in text
     assert "今天走了 8,632 步" in text
     assert "设备记录的平均压力 31；放松状态占 62%；高压力占 2%" in text
-    assert "今日 HRV 时间线" in text
-    assert '<svg viewBox="0 0 600 165"' in message.body
+    assert "全天 HRV" in text
+    assert '<svg viewBox="0 0 600 175"' in message.body
     assert "&lt;svg" not in message.body
     assert "最低 40" in text and "最高 80 毫秒" in text
     assert message.body.count('stroke="#ef5b56"') == 2
     assert "00:31" in text and "17:58" in text
     assert "醒来 08:15" in text
-    assert "近 7 天 HRV" in text
-    assert "个人基线 65.6 毫秒" in text
-    assert "比基线高 8.2%" in text
-    assert "断线处没有记录" in text
+    assert all(f">{hour}时</text>" in message.body for hour in (0, 6, 12, 18, 24))
+    assert "近 7 天 HRV" not in text
+    assert "没有同步到 RMSSD，不会补线" in text
     assert "不单独解读为压力" in text
     assert "12 个样本" not in text
     assert "覆盖 10 分钟" not in text

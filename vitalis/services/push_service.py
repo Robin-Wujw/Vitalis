@@ -386,73 +386,21 @@ def _render_daily_hrv_curve(
     last = curve.get("last_sample_time", "--:--")
     return [
         "",
-        "### 今日 HRV",
-        "",
-        _ReportHtmlBlock(_render_hrv_overview_html(hrv)),
-        "",
-        "### 今日 HRV 时间线",
+        "### 全天 HRV",
         "",
         _ReportHtmlBlock(_render_hrv_chart_html(
             values,
             bin_minutes=bin_minutes,
-            first_time=first,
-            last_time=last,
             wake_time=sleep.get("wake_time"),
         )),
         "",
-        "虚线标出醒来时间；断线处没有记录。醒来后的 HRV 容易受活动、姿势和呼吸影响，不单独解读为压力。",
+        f"今天 {first}–{last} 有记录；图上断开的时段没有同步到 RMSSD，不会补线。虚线标出醒来时间。白天 HRV 容易受活动、姿势和呼吸影响，不单独解读为压力。",
         "",
-        *(
-            [
-                "### 近 7 天 HRV",
-                "",
-                _ReportHtmlBlock(_render_hrv_week_chart_html(
-                    hrv.get("recent_daily_values") or []
-                )),
-                "",
-            ]
-            if len(hrv.get("recent_daily_values") or []) >= 2 else []
-        ),
     ]
 
 
-def _render_hrv_overview_html(hrv: dict) -> str:
-    value = float(hrv["value_ms"])
-    baseline = hrv.get("baseline_ms")
-    deviation = hrv.get("deviation") or {}
-    percent = deviation.get("percent")
-    comparison = ""
-    if isinstance(percent, (int, float)):
-        if percent > 0:
-            comparison = f"比基线高 {abs(percent):.1f}%"
-        elif percent < 0:
-            comparison = f"比基线低 {abs(percent):.1f}%"
-        else:
-            comparison = "与基线相同"
-    baseline_html = (
-        f'<span style="color:#64748b">个人基线 {float(baseline):g} 毫秒</span>'
-        if isinstance(baseline, (int, float)) else ""
-    )
-    comparison_html = (
-        f'<span style="color:#0f766e;font-weight:600">{comparison}</span>'
-        if comparison else ""
-    )
-    separator = '<span style="color:#cbd5e1">·</span>'
-    details = separator.join(item for item in (baseline_html, comparison_html) if item)
-    return (
-        '<div style="margin:6px 0 10px;padding:12px 14px;border:1px solid #dbe4e8;'
-        'border-radius:6px;background:#ffffff">'
-        '<div style="color:#111827;font-size:26px;font-weight:700;line-height:1.25">'
-        f'{value:g} <span style="font-size:15px;font-weight:500;color:#475569">毫秒</span>'
-        '</div>'
-        f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;font-size:13px">{details}</div>'
-        '</div>'
-    )
-
-
 def _render_hrv_chart_html(
-    values: dict[int, float], *, bin_minutes: int, first_time: str,
-    last_time: str, wake_time: str | None
+    values: dict[int, float], *, bin_minutes: int, wake_time: str | None
 ) -> str:
     low_value = min(values.values())
     high_value = max(values.values())
@@ -460,12 +408,11 @@ def _render_hrv_chart_html(
     axis_high = float(int((high_value + 9) // 10) * 10)
     if axis_high <= axis_low:
         axis_high = axis_low + 10
-    first_index, last_index = min(values), max(values)
     left, right, top, bottom = 52.0, 576.0, 24.0, 128.0
+    daily_bin_count = 24 * 60 // bin_minutes
 
     def coordinate(index: int) -> tuple[float, float]:
-        span = max(last_index - first_index, 1)
-        x = left + (index - first_index) / span * (right - left)
+        x = left + index / daily_bin_count * (right - left)
         ratio = (values[index] - axis_low) / (axis_high - axis_low)
         return x, bottom - ratio * (bottom - top)
 
@@ -509,8 +456,8 @@ def _render_hrv_chart_html(
     )
     wake_index = _time_bin_index(wake_time, bin_minutes)
     wake_marker = ""
-    if wake_index is not None and first_index < wake_index < last_index:
-        wake_x = left + (wake_index - first_index) / (last_index - first_index) * (right - left)
+    if wake_index is not None and 0 < wake_index < daily_bin_count:
+        wake_x = left + wake_index / daily_bin_count * (right - left)
         wake_label = wake_time[:5]
         wake_marker = (
             f'<line x1="{wake_x:.1f}" y1="{top}" x2="{wake_x:.1f}" y2="{bottom}" '
@@ -524,62 +471,21 @@ def _render_hrv_chart_html(
         '<div style="display:flex;justify-content:flex-end;gap:14px;padding:0 10px 4px;'
         'color:#475569;font-size:12px">'
         f'<span>最低 {low_value:g}</span><span>最高 {high_value:g} 毫秒</span></div>'
-        '<svg viewBox="0 0 600 165" width="100%" role="img" '
-        'aria-label="今日心率变异性时间线" '
+        '<svg viewBox="0 0 600 175" width="100%" role="img" '
+        'aria-label="全天心率变异性时间线" '
         'style="display:block;width:100%;height:auto;background:#ffffff">'
         f'{grid}{labels}{wake_marker}{"".join(lines)}{extrema}'
-        f'<text x="{left}" y="154" text-anchor="start" fill="#64748b" font-size="12">{first_time}</text>'
-        f'<text x="{right}" y="154" text-anchor="end" fill="#64748b" font-size="12">{last_time}</text>'
+        f'{_render_day_axis(left, right)}'
         '</svg></div>'
     )
 
 
-def _render_hrv_week_chart_html(points: list[dict]) -> str:
-    valid = [
-        (str(item.get("date")), float(item["value_ms"]))
-        for item in points
-        if isinstance(item.get("value_ms"), (int, float))
-    ]
-    values = [value for _, value in valid]
-    low = max(0.0, float(int(min(values) // 10) * 10 - 10))
-    high = float(int((max(values) + 9) // 10) * 10 + 10)
-    left, right, top, bottom = 44.0, 576.0, 25.0, 116.0
-
-    coordinates = []
-    for index, (_, value) in enumerate(valid):
-        x = left + index / max(len(valid) - 1, 1) * (right - left)
-        y = bottom - (value - low) / (high - low) * (bottom - top)
-        coordinates.append((x, y))
-    polyline = " ".join(f"{x:.1f},{y:.1f}" for x, y in coordinates)
-    dots = "".join(
-        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="#ffffff" '
-        'stroke="#2f9e44" stroke-width="3"/>'
-        for x, y in coordinates
-    )
-    value_labels = "".join(
-        f'<text x="{x:.1f}" y="{y - 10:.1f}" text-anchor="middle" '
-        f'fill="#2f9e44" font-size="12">{value:g}</text>'
-        for (x, y), (_, value) in zip(coordinates, valid)
-    )
-    weekday_labels = "".join(
-        f'<text x="{x:.1f}" y="145" text-anchor="middle" fill="#64748b" font-size="12">'
-        f'周{"一二三四五六日"[datetime.fromisoformat(day).weekday()]}</text>'
-        for (x, _), (day, _) in zip(coordinates, valid)
-    )
-    grid = "".join(
-        f'<line x1="{left}" y1="{y}" x2="{right}" y2="{y}" '
-        'stroke="#e2e8f0" stroke-width="1"/>'
-        for y in (top, (top + bottom) / 2, bottom)
-    )
-    return (
-        '<div style="margin:6px 0 10px;padding:8px;border:1px solid #dbe4e8;'
-        'border-radius:6px;background:#ffffff;overflow:hidden">'
-        '<svg viewBox="0 0 600 155" width="100%" role="img" '
-        'aria-label="近七天心率变异性折线图" '
-        'style="display:block;width:100%;height:auto;background:#ffffff">'
-        f'{grid}<polyline points="{polyline}" fill="none" stroke="#86c782" '
-        f'stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>{dots}'
-        f'{value_labels}{weekday_labels}</svg></div>'
+def _render_day_axis(left: float, right: float) -> str:
+    return "".join(
+        f'<text x="{left + hour / 24 * (right - left):.1f}" y="158" '
+        'text-anchor="middle" fill="#64748b" font-size="12">'
+        f'{hour}时</text>'
+        for hour in (0, 6, 12, 18, 24)
     )
 
 

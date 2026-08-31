@@ -2,25 +2,34 @@
 
 ## 1. Purpose
 
-This document is the execution contract for repository changes. It keeps planning,
-implementation, tests, and project documentation synchronized so unfinished work is
-visible and reproducible.
+This document is the execution contract for every repository work session. It keeps
+planning, implementation, tests, commits, and project documentation synchronized so
+unfinished work is visible and reproducible.
 
 ## 2. Required Workflow
 
-Every implementation session must follow this order:
+Every repository task, including features, fixes, refactors, configuration, research,
+and documentation, must follow this order:
 
 1. Inspect the repository state, existing documentation, and relevant tests without
-   changing business code.
-2. Write a detailed, part-based TODO list in this document and show it to the user.
-3. Implement only one listed part at a time.
+   changing business code. Read-only inspection may go only far enough to form an
+   accurate plan.
+2. Before implementation or any other state-changing command, write a detailed,
+   part-based TODO list in this document and show it to the user.
+3. Implement only one listed part at a time. If evidence changes the scope or approach,
+   update the plan before continuing; do not silently diverge from it.
 4. Add or update unit tests for the behavior changed by that part.
 5. Run the focused tests for the part. A part may be checked only after they pass.
 6. Update the relevant project Markdown when behavior, APIs, configuration, project
-   structure, or test counts change.
-7. Run the complete test suite and record the result before closing the session.
-8. Commit and push the corresponding feature after its tests and documentation pass.
-   A local implementation is not complete until the remote branch contains it, unless
+   structure, platform support, or test counts change.
+7. After each major plan part passes its focused tests and documentation checks, commit
+   only that part before starting the next major part. Do not batch several completed
+   major parts into one final commit, and do not include unrelated user changes.
+8. Run the complete test suite and record the result before closing the session. If
+   final verification requires a fix, add or reopen a plan part and commit that fix
+   separately after verification.
+9. Push the completed branch after all planned parts and final verification pass. A
+   local implementation is not complete until the remote branch contains it, unless
    the user explicitly asks to keep the work local or the push is blocked externally.
 
 ## 3. Completion Rules
@@ -1930,3 +1939,25 @@ as the scheduler rather than the training decision maker.
   substitution remains inactive until a weather source is implemented.
 - Part 5 (delivery): feature commit `0477b0b` (`feat: personalize training rotation`)
   was pushed from local `main` to `origin/main`.
+
+## 28. Cross-Platform Planning and Commit Contract
+
+Date: 2026-08-31
+
+Goal: make planning mandatory before repository work, require a separate Git commit for
+each completed major plan part, and define Linux server plus Windows support as an
+explicit cross-platform product contract.
+
+### Delivery Plan
+
+- [x] Part 1 - Make the plan-before-execution rule apply to every repository task and
+  require each completed major part to be committed before the next part begins.
+- [ ] Part 2 - Define the shared-core/platform-adapter strategy and platform-specific
+  security and verification requirements for Linux servers and Windows workstations.
+- [ ] Part 3 - Validate the Markdown diff, confirm unrelated user changes remain
+  untouched, and create a documentation-only commit for this contract update.
+
+### Verification Log
+
+- Part 1: the required workflow now mandates a visible plan before state-changing work
+  and a separate, scoped commit after each verified major plan part.

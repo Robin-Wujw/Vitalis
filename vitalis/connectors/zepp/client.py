@@ -27,6 +27,13 @@ import httpx
 
 from .sport_types import ZEPP_SPORT_MODES
 
+try:
+    import truststore
+except ImportError:
+    truststore = None
+else:
+    truststore.inject_into_ssl()
+
 # ---- 真实 Zepp 区域云端点（实测有效路径） ----
 API_DEVICES = "/users/{user_id}/devices"
 API_HEART_RATE = "/users/{user_id}/heartRate"

@@ -5,13 +5,18 @@ from __future__ import annotations
 from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from datetime import date
-import fcntl
 import hashlib
 import os
 from pathlib import Path
 from typing import Iterator, Literal
 
 import httpx
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+    import msvcrt
 
 from vitalis.services.push_service import PushService
 from vitalis.time import local_today
@@ -188,13 +193,26 @@ def _delivery_lock(marker: Path) -> Iterator[None]:
     lock_path = marker.with_suffix(".lock")
     with lock_path.open("a", encoding="utf-8") as lock_file:
         os.chmod(lock_path, 0o600)
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        yield
+        if fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        else:
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def _mark_delivered(marker: Path) -> None:
     descriptor = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as marker_file:
+        os.chmod(marker, 0o600)
         marker_file.write("sent\n")
         marker_file.flush()
         os.fsync(marker_file.fileno())

@@ -365,6 +365,9 @@ def test_training_preferences_are_health_first_and_user_scoped(client):
         json={
             "weekly_running_target": 3,
             "weekly_strength_target": 3,
+            "rotation_policy": "ALTERNATE",
+            "treadmill_available": False,
+            "bad_weather_running_policy": "STRENGTH",
             "available_weekdays": [1, 2, 4, 5, 6],
             "max_session_minutes": 75,
             "running_experience": "INTERMEDIATE",
@@ -379,6 +382,9 @@ def test_training_preferences_are_health_first_and_user_scoped(client):
     assert payload["primary_goal"] == "HEALTH"
     assert payload["running_required"] is True
     assert payload["strength_required"] is True
+    assert payload["rotation_policy"] == "ALTERNATE"
+    assert payload["treadmill_available"] is False
+    assert payload["bad_weather_running_policy"] == "STRENGTH"
     assert payload["available_weekdays"] == [1, 2, 4, 5, 6]
     assert client.get(
         "/api/v1/intelligence/training-preferences",
@@ -390,6 +396,8 @@ def test_training_preferences_are_health_first_and_user_scoped(client):
     ).json()
     assert other["equipment"] == []
     assert other["pain_or_injury_status"] == "UNKNOWN"
+    assert other["rotation_policy"] == "BALANCE"
+    assert other["bad_weather_running_policy"] == "DEFER"
 
 
 def test_health_event_acknowledgement_api_is_user_scoped(client):

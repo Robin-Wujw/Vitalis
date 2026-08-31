@@ -520,6 +520,50 @@ def test_recent_strength_keeps_running_primary_and_strength_as_alternative():
     assert decision.action_plan.session_relationship == "ALTERNATIVE"
 
 
+def test_alternate_rotation_prefers_strength_after_running_over_weekly_balance():
+    raw = _with_genuinely_low_recent_load(
+        _profile(hrv_today=62, rhr_today=50, sleep_today=510, load_today=0)
+    )
+    raw.training_preferences = TrainingPreferences(
+        user_id="u",
+        weekly_running_target=7,
+        weekly_strength_target=1,
+        rotation_policy="ALTERNATE",
+        treadmill_available=False,
+        bad_weather_running_policy="STRENGTH",
+    )
+    raw.workouts = [
+        {
+            "local_day": TARGET - timedelta(days=1),
+            "data": {
+                "type": "running",
+                "training_family": "aerobic",
+                "duration": 35,
+                "load": 25,
+            },
+        },
+        {
+            "local_day": TARGET - timedelta(days=2),
+            "data": {
+                "type": "strength",
+                "training_family": "strength",
+                "duration": 45,
+                "load": 20,
+            },
+        },
+    ]
+
+    *_, decision = _analyze(raw)
+
+    balance = decision.action_plan.weekly_balance
+    assert balance.strength_completed_7d == balance.strength_target_7d
+    assert balance.running_completed_7d < balance.running_target_7d
+    assert decision.action_plan.primary_session.session_type == "STRENGTH"
+    assert decision.action_plan.primary_session.personalization_reasons[0] == (
+        "最近一次正式训练是跑步，按你的跑步与力量轮换偏好安排力量训练。"
+    )
+
+
 def test_recorded_pain_blocks_planned_training():
     raw = _with_genuinely_low_recent_load(
         _profile(hrv_today=62, rhr_today=50, sleep_today=510, load_today=0)

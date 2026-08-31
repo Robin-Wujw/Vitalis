@@ -284,9 +284,11 @@ stop conditions, and a local-day expiry. The current session library includes:
 - Recovery activity and full rest with explicit intensity constraints.
 
 The planner's fixed product goal is health first with both running and strength
-required. User constraints specify weekly targets, available weekdays, session time,
-experience, equipment, and pain/injury state. Missing constraints remain explicit and
-reduce prescription specificity; recorded pain or injury blocks planned training.
+required. User constraints specify weekly targets, running/strength selection policy,
+treadmill availability, bad-weather running fallback, available weekdays, session
+time, experience, equipment, and pain/injury state. Missing constraints remain
+explicit and reduce prescription specificity; recorded pain or injury blocks planned
+training.
 
 Running and strength completion are compared against both 7-day and 28-day targets.
 When both are due, the larger relative deficit becomes primary; ties alternate from the
@@ -294,6 +296,13 @@ latest training family. Easy running and upper-body strength may be separate sam
 additions with at least six hours between them. Quality running and lower-body strength
 are alternatives, and a quality/long run or leg session in the previous 48 hours blocks
 another conflicting high-load lower-body session.
+
+Users may instead select explicit running/strength alternation. In that mode, the most
+recent recognized aerobic session selects strength next, and the most recent strength
+session selects running next, even when weekly target deficits differ. Recovery,
+availability, injury, and load-conflict gates still take precedence. Weather fallback
+preferences are stored deterministically, but are not applied until a weather source is
+configured; Vitalis never invents weather conditions.
 
 ### 3.10 Running Analysis
 

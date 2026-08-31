@@ -1880,3 +1880,51 @@ path's dependency on interactive terminal proxy settings.
   active in no-agent script mode, and both `vitalis.service` and
   `hermes-gateway.service` are active without proxy variables in their service
   environments.
+
+## 27. User-Selected Running And Strength Rotation
+
+Date: 2026-08-31
+
+Goal: let a user choose deterministic running/strength alternation while preserving
+health gates, record treadmill availability and bad-weather fallback, and keep Hermes
+as the scheduler rather than the training decision maker.
+
+### Delivery Plan
+
+- [x] Part 1 - Extend the current training-preference contract and persistence model.
+- [x] Part 2 - Apply explicit alternation in the health-gated deterministic planner.
+- [x] Part 3 - Update the API, Skill tool/schema, renderer explanation, tests, and docs.
+- [x] Part 4 - Store the user's selected policy and verify it against real current data.
+- [ ] Part 5 - Commit and push the verified feature to `origin/main`.
+
+### Implemented Contract
+
+- Training preferences now distinguish weekly-balance planning from explicit
+  running/strength alternation. Under alternation, the latest recognized aerobic
+  workout selects strength next and the latest strength workout selects running next.
+- Recovery suppression, pain/injury, unavailable training days, and recent lower-body
+  conflicts continue to override or constrain the selected training family.
+- Treadmill availability and bad-weather running fallback are user-scoped persistent
+  preferences. They are not applied until a reliable weather source is configured;
+  Vitalis does not infer current weather or claim that a fallback was triggered.
+- The current training-preference storage model directly owns all three fields. The
+  deployed pre-production database was advanced to that current schema without adding
+  a compatibility reader, version branch, or retained migration path.
+- The morning renderer receives the resulting structured action plan and explains when
+  the user's alternation preference selected the primary session. Hermes still only
+  dispatches synchronization, analysis, and delivery.
+
+### Verification Log
+
+- Focused preference, planner, API, and Skill coverage passed 76 tests. The complete
+  suite passed 262 tests with existing Python 3.14 `datetime.utcnow()` deprecation
+  warnings. Compilation, all Skill JSON parsing, and `git diff --check` passed.
+- The production preference row retained its existing 3/3 weekly targets, equipment,
+  and pain/injury state while setting alternation, no treadmill, and strength as the
+  stored bad-weather fallback.
+- After restarting `vitalis.service`, `/healthz` returned success. A real current-day
+  analysis selected `STRENGTH` with title `全身力量训练`; its first personalization
+  reason stated that the latest formal workout was running and the user's alternation
+  preference therefore selected strength.
+- No duplicate morning notification was sent during verification. Weather-triggered
+  substitution remains inactive until a weather source is implemented.

@@ -163,7 +163,7 @@ class DecisionEngine:
             DecisionAction.TRAIN_NORMAL: "moderate",
             DecisionAction.TRAIN_LIGHT: "low",
         }[action]
-        primary_type = self._primary_type(training, balance)
+        primary_type = self._primary_type(training, balance, preferences)
         primary, optional, relationship = self._sessions(
             day, primary_type, intensity, training, preferences, balance, conflicts
         )
@@ -266,7 +266,10 @@ class DecisionEngine:
         return DecisionAction.TRAIN_NORMAL
 
     @staticmethod
-    def _primary_type(training, balance) -> str:
+    def _primary_type(training, balance, preferences) -> str:
+        latest = training.recent_workouts[0].training_family if training.recent_workouts else None
+        if preferences.rotation_policy == "ALTERNATE" and latest in {"aerobic", "strength"}:
+            return "STRENGTH" if latest == "aerobic" else "RUNNING"
         if balance.running_due and not balance.strength_due:
             return "RUNNING"
         if balance.strength_due and not balance.running_due:
@@ -279,7 +282,6 @@ class DecisionEngine:
         ) / balance.strength_target_7d
         if run_gap != strength_gap:
             return "RUNNING" if run_gap > strength_gap else "STRENGTH"
-        latest = training.recent_workouts[0].training_family if training.recent_workouts else None
         return "STRENGTH" if latest == "aerobic" else "RUNNING"
 
     def _sessions(
@@ -305,6 +307,7 @@ class DecisionEngine:
             else:
                 optional = self._recovery(preferences, "跑步后的低负担恢复", "OPTIONAL")
                 relationship = "ADDITION"
+            self._add_rotation_reason(primary, training, preferences)
             return primary, optional, relationship
 
         primary = self._strength(preferences, training, "PRIMARY", intensity)
@@ -314,7 +317,21 @@ class DecisionEngine:
         else:
             optional = self._recovery(preferences, "力量训练后的低负担恢复", "OPTIONAL")
             relationship = "ADDITION"
+        self._add_rotation_reason(primary, training, preferences)
         return primary, optional, relationship
+
+    @staticmethod
+    def _add_rotation_reason(primary, training, preferences) -> None:
+        if preferences.rotation_policy != "ALTERNATE" or not training.recent_workouts:
+            return
+        latest = training.recent_workouts[0].training_family
+        if latest == "aerobic" and primary.session_type == "STRENGTH":
+            reason = "最近一次正式训练是跑步，按你的跑步与力量轮换偏好安排力量训练。"
+        elif latest == "strength" and primary.session_type == "RUNNING":
+            reason = "最近一次正式训练是力量，按你的跑步与力量轮换偏好安排跑步。"
+        else:
+            return
+        primary.personalization_reasons.insert(0, reason)
 
     @staticmethod
     def _conflicts(day: date, training: TrainingFeatures) -> list[str]:

@@ -15,6 +15,13 @@ def main() -> int:
     update = subparsers.add_parser("set", help="完整替换当前训练偏好")
     update.add_argument("--running-target", type=int, default=3, choices=range(1, 8))
     update.add_argument("--strength-target", type=int, default=3, choices=range(1, 8))
+    update.add_argument("--rotation-policy", choices=("BALANCE", "ALTERNATE"), default="BALANCE")
+    update.add_argument("--treadmill-available", action="store_true")
+    update.add_argument(
+        "--bad-weather-running-policy",
+        choices=("DEFER", "STRENGTH", "RECOVERY"),
+        default="DEFER",
+    )
     update.add_argument("--available-weekdays", nargs="*", type=int, default=[])
     update.add_argument("--max-session-minutes", type=int)
     update.add_argument("--running-experience", choices=("BEGINNER", "INTERMEDIATE", "ADVANCED"))
@@ -30,6 +37,9 @@ def main() -> int:
         body = {
             "weekly_running_target": args.running_target,
             "weekly_strength_target": args.strength_target,
+            "rotation_policy": args.rotation_policy,
+            "treadmill_available": args.treadmill_available,
+            "bad_weather_running_policy": args.bad_weather_running_policy,
             "available_weekdays": args.available_weekdays,
             "running_experience": args.running_experience,
             "strength_experience": args.strength_experience,

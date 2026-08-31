@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/training-preferences-1.0.json",
-  "title": "Vitalis TrainingPreferences 1.0",
+  "$id": "https://vitalis.local/schemas/training-preferences-1.1.json",
+  "title": "Vitalis TrainingPreferences 1.1",
   "type": "object",
-  "required": ["user_id", "primary_goal", "primary_goal_label", "running_required", "strength_required", "weekly_running_target", "weekly_strength_target", "available_weekdays", "equipment", "pain_or_injury_status"],
+  "required": ["user_id", "primary_goal", "primary_goal_label", "running_required", "strength_required", "weekly_running_target", "weekly_strength_target", "rotation_policy", "treadmill_available", "bad_weather_running_policy", "available_weekdays", "equipment", "pain_or_injury_status"],
   "properties": {
     "user_id": {"type": "string"},
     "primary_goal": {"const": "HEALTH"},
@@ -12,6 +12,9 @@
     "strength_required": {"const": true},
     "weekly_running_target": {"type": "integer", "minimum": 1, "maximum": 7},
     "weekly_strength_target": {"type": "integer", "minimum": 1, "maximum": 7},
+    "rotation_policy": {"enum": ["BALANCE", "ALTERNATE"]},
+    "treadmill_available": {"type": "boolean"},
+    "bad_weather_running_policy": {"enum": ["DEFER", "STRENGTH", "RECOVERY"]},
     "available_weekdays": {"type": "array", "uniqueItems": true, "items": {"type": "integer", "minimum": 1, "maximum": 7}},
     "max_session_minutes": {"type": ["integer", "null"], "minimum": 20, "maximum": 180},
     "running_experience": {"enum": ["BEGINNER", "INTERMEDIATE", "ADVANCED", null]},

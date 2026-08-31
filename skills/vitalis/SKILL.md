@@ -67,8 +67,9 @@ Internal enum codes exist only for program control and must never appear in the 
   and completed workout: call `tools/complete_recommendation.py`.
 - Record RPE, fatigue, mental state, soreness, or notes: call `tools/feedback.py add`.
 - List feedback: call `tools/feedback.py list`.
-- Read or replace running/strength targets, availability, experience, equipment, and
-  pain/injury state with `tools/training_preferences.py`.
+- Read or replace running/strength targets, rotation, treadmill/weather fallback,
+  availability, experience, equipment, and pain/injury state with
+  `tools/training_preferences.py`.
 - Confirm exact exercises for a strength workout only from the user's statement by
   calling `tools/strength_exercises.py`; never derive an exercise from heart rate.
 - Acknowledge an event only after the user asks: call `tools/acknowledge_event.py`.

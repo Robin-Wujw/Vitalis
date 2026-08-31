@@ -41,8 +41,8 @@ semantics.
 | POST | `/intelligence/recommendations/{id}/complete` | Explicitly link a recommendation to a completed workout |
 | POST | `/intelligence/feedback` | Record RPE, fatigue, mental state, soreness, or notes |
 | GET | `/intelligence/feedback?start=&end=` | Read subjective feedback |
-| GET | `/intelligence/training-preferences` | Read health-first running/strength targets and constraints |
-| PUT | `/intelligence/training-preferences` | Replace weekly availability, experience, equipment, and pain/injury state |
+| GET | `/intelligence/training-preferences` | Read health-first running/strength targets, rotation, weather fallback, and constraints |
+| PUT | `/intelligence/training-preferences` | Replace rotation, treadmill/weather policy, weekly availability, experience, equipment, and pain/injury state |
 | POST | `/intelligence/workouts/{workout_id}/strength-exercises` | Replace confirmed exercises and session focus for a user-owned strength workout |
 | POST | `/intelligence/events/{id}/acknowledge` | Acknowledge a user-scoped event |
 

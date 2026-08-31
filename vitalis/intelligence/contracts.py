@@ -785,6 +785,9 @@ class TrainingStep(BaseModel):
 class TrainingPreferenceInput(BaseModel):
     weekly_running_target: int = Field(default=3, ge=1, le=7)
     weekly_strength_target: int = Field(default=3, ge=1, le=7)
+    rotation_policy: Literal["BALANCE", "ALTERNATE"] = "BALANCE"
+    treadmill_available: bool = False
+    bad_weather_running_policy: Literal["DEFER", "STRENGTH", "RECOVERY"] = "DEFER"
     available_weekdays: list[int] = Field(default_factory=list, max_length=7)
     max_session_minutes: int | None = Field(default=None, ge=20, le=180)
     running_experience: Literal["BEGINNER", "INTERMEDIATE", "ADVANCED"] | None = None

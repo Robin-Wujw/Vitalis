@@ -208,3 +208,48 @@ def test_running_analysis_uses_device_zones_dynamics_and_comparable_runs():
     assert session.comparable_baseline.pace_difference_percent == -6.5
     assert session.comparable_baseline.heart_rate_difference_bpm == 15
     assert session.comparable_baseline.power_difference_percent == 6.4
+
+
+def test_running_analysis_computes_moving_time_stride_and_kilometer_splits():
+    samples = [
+        _sample(0, "distance", 0, "m"),
+        _sample(300, "distance", 1000, "m"),
+        _sample(660, "distance", 2000, "m"),
+        _sample(900, "distance", 3000, "m"),
+    ]
+    for second in range(0, 901, 30):
+        samples.extend([
+            _sample(second, "heart_rate", 140 + second // 300, "bpm"),
+            _sample(second, "altitude", 10 + second / 300, "m"),
+            _sample(second, "stride_length", 108, "cm"),
+        ])
+    workout = _run(samples, duration=15, distance=3.0)
+    workout["detail"] = {
+        "pauses": [{
+            "started_at": (START + timedelta(seconds=300)).isoformat(),
+            "duration_seconds": 60,
+        }]
+    }
+
+    session = RunningAnalyzer().analyze(_raw([workout])).recent_sessions[0]
+
+    assert session.pause_duration_seconds == 60
+    assert session.moving_duration_minutes == 14
+    assert session.average_pace_seconds_per_km == 280
+    assert session.median_stride_length_cm == 108
+    assert len(session.kilometer_splits) == 3
+    assert [split.moving_seconds for split in session.kilometer_splits] == [300, 300, 240]
+    assert session.kilometer_splits[1].average_pace_seconds_per_km == 300
+    assert session.kilometer_splits[0].average_heart_rate_bpm is not None
+    assert session.kilometer_splits[0].elevation_gain_m is not None
+
+
+def test_pause_overlap_accepts_naive_database_samples_and_aware_pause_time():
+    start = START.replace(tzinfo=None)
+    pauses = [(START + timedelta(seconds=30), 60)]
+
+    overlap = RunningAnalyzer._pause_overlap_seconds(
+        pauses, start, start + timedelta(seconds=120)
+    )
+
+    assert overlap == 60

@@ -124,6 +124,10 @@ class ZeppParser:
                         sleep_score=int(sleep["ss"]) if sleep.get("ss") is not None else None,
                         bedtime=bedtime,
                         wake_time=wake_time,
+                        stages=self._sleep_stage_slices(
+                            day, summary, sleep, st_val, ed_val
+                        ),
+                        wake_count=self._bounded_int(sleep, ("wc",), 0, 100),
                     )
 
             steps = summary.get("stp") or {}
@@ -280,7 +284,7 @@ class ZeppParser:
                 minimum,
                 maximum,
             ))
-        samples.extend(ZeppParser._cadence_samples(
+        samples.extend(ZeppParser._gait_samples(
             workout_id, start, data.get("gait")
         ))
         samples.extend(ZeppParser._run_posture_samples(
@@ -417,7 +421,7 @@ class ZeppParser:
         return samples
 
     @staticmethod
-    def _cadence_samples(
+    def _gait_samples(
         workout_id: str, start: datetime, encoded: object
     ) -> list[WorkoutMetricSample]:
         if not isinstance(encoded, str) or not encoded:
@@ -430,6 +434,7 @@ class ZeppParser:
                 continue
             try:
                 elapsed += max(int(fields[0] or 1), 0)
+                stride = float(fields[-2])
                 cadence = float(fields[-1])
             except ValueError:
                 continue
@@ -440,6 +445,14 @@ class ZeppParser:
                     metric="cadence",
                     value=cadence,
                     unit="spm",
+                ))
+            if elapsed <= MAX_WORKOUT_SECONDS and 10 <= stride <= 300:
+                samples.append(WorkoutMetricSample(
+                    workout_id=workout_id,
+                    timestamp=start + timedelta(seconds=elapsed),
+                    metric="stride_length",
+                    value=stride,
+                    unit="cm",
                 ))
         return samples
 
@@ -1459,6 +1472,65 @@ class ZeppParser:
         if valid_stage_found and sleep.get("supRem") in (True, 1, "1"):
             return 0
         return None
+
+    @staticmethod
+    def _sleep_stage_slices(
+        day: date,
+        summary: dict,
+        sleep: dict,
+        session_start: object,
+        session_end: object,
+    ) -> list:
+        from vitalis.models import SleepStageSlice
+
+        stages = sleep.get("stage")
+        if not isinstance(stages, list):
+            return []
+        offset = ZeppParser._first_number(summary, ("tz",)) or 0
+        offset = max(min(int(offset), 18 * 60 * 60), -18 * 60 * 60)
+        utc_midnight = (
+            datetime.combine(day, time.min, tzinfo=timezone.utc)
+            - timedelta(seconds=offset)
+        )
+        names = {5: "deep", 4: "light", 8: "rem", 11: "rem", 7: "awake"}
+
+        def build(anchor: datetime) -> list[SleepStageSlice]:
+            output = []
+            for item in stages:
+                if not isinstance(item, dict):
+                    continue
+                mode = ZeppParser._first_number(item, ("mode",))
+                start = ZeppParser._first_number(item, ("start",))
+                stop = ZeppParser._first_number(item, ("stop",))
+                if mode is None or start is None or stop is None or stop < start:
+                    continue
+                start_time = anchor + timedelta(minutes=int(start))
+                end_time = anchor + timedelta(minutes=int(stop) + 1)
+                output.append(SleepStageSlice(
+                    stage=names.get(int(mode), "awake"),
+                    start_time=start_time,
+                    end_time=end_time,
+                ))
+            return output
+
+        previous_day = build(utc_midnight - timedelta(days=1))
+        start_at = ZeppParser._parse_datetime_value(session_start)
+        end_at = ZeppParser._parse_datetime_value(session_end)
+        if start_at is None or end_at is None:
+            return previous_day
+        start_at, end_at = ZeppParser._utc(start_at), ZeppParser._utc(end_at)
+        same_day = build(utc_midnight)
+
+        def overlap(items: list[SleepStageSlice]) -> float:
+            return sum(
+                max(
+                    0.0,
+                    (min(item.end_time, end_at) - max(item.start_time, start_at)).total_seconds(),
+                )
+                for item in items
+            )
+
+        return same_day if overlap(same_day) > overlap(previous_day) else previous_day
 
     @staticmethod
     def _normalize_device_identifier(value: object) -> str | None:

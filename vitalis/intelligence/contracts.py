@@ -10,10 +10,10 @@ from pydantic import BaseModel, Field, model_validator
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "8.0"
+DAILY_SCHEMA_VERSION = "9.0"
 WEEKLY_SCHEMA_VERSION = "3.0"
 MONTHLY_SCHEMA_VERSION = "1.0"
-INTELLIGENCE_VERSION = "8.0"
+INTELLIGENCE_VERSION = "9.0"
 DECISION_POLICY_VERSION = "7.0"
 EVIDENCE_VERSION = "2026-08e"
 TRAINING_RESPONSE_SCHEMA_VERSION = "1.0"
@@ -273,6 +273,10 @@ class SleepFeatures(BaseModel):
     vendor_sleep_score: int | None = None
     duration_deviation: Deviation | None = None
     regularity_minutes: float | None = None
+    wake_count: int | None = Field(default=None, ge=0)
+    wake_count_deviation: Deviation | None = None
+    stage_timeline_available: bool = False
+    stage_slice_count: int = Field(default=0, ge=0)
     limitations: list[str] = Field(default_factory=list)
     limitation_labels: list[str] = Field(default_factory=list)
 
@@ -443,6 +447,8 @@ class RecoveryFeatures(BaseModel):
     negative_signal_labels: list[str] = Field(default_factory=list)
     vendor_readiness: float | None = None
     vendor_charge: float | None = None
+    vendor_readiness_components: dict[str, float] = Field(default_factory=dict)
+    vendor_charge_components: dict[str, float] = Field(default_factory=dict)
     limitations: list[str] = Field(default_factory=list)
     limitation_labels: list[str] = Field(default_factory=list)
 
@@ -487,6 +493,18 @@ class RunningSegment(BaseModel):
     average_heart_rate_bpm: float | None = Field(default=None, ge=1)
 
 
+class RunningKilometerSplit(BaseModel):
+    index: int = Field(ge=1)
+    distance_km: float = Field(gt=0, le=1)
+    elapsed_seconds: float = Field(gt=0)
+    moving_seconds: float = Field(gt=0)
+    average_pace_seconds_per_km: float = Field(gt=0)
+    average_heart_rate_bpm: float | None = Field(default=None, ge=1)
+    maximum_heart_rate_bpm: float | None = Field(default=None, ge=1)
+    elevation_gain_m: float | None = Field(default=None, ge=0)
+    elevation_loss_m: float | None = Field(default=None, ge=0)
+
+
 class ComparableRunBaseline(BaseModel):
     sample_count: int = Field(ge=3, le=10)
     window_days: Literal[180] = 180
@@ -516,10 +534,13 @@ class RunningSessionAnalysis(BaseModel):
     confidence: ConfidenceBand
     confidence_label: str
     duration_minutes: int = Field(ge=0)
+    moving_duration_minutes: float = Field(default=0, ge=0)
+    pause_duration_seconds: int = Field(default=0, ge=0)
     distance_km: float | None = Field(default=None, ge=0)
     average_pace_seconds_per_km: float | None = Field(default=None, ge=0)
     median_speed_mps: float | None = Field(default=None, ge=0)
     median_cadence_spm: float | None = Field(default=None, ge=0)
+    median_stride_length_cm: float | None = Field(default=None, ge=0)
     cadence_variability_percent: float | None = Field(default=None, ge=0)
     average_power_watts: float | None = Field(default=None, ge=0)
     median_equivalent_pace_seconds_per_km: float | None = Field(default=None, ge=0)
@@ -534,6 +555,7 @@ class RunningSessionAnalysis(BaseModel):
     cardiac_drift_percent: float | None = None
     comparable_baseline: ComparableRunBaseline | None = None
     segments: list[RunningSegment] = Field(default_factory=list, max_length=20)
+    kilometer_splits: list[RunningKilometerSplit] = Field(default_factory=list, max_length=200)
     evidence: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
 
@@ -681,6 +703,28 @@ class StrengthAnalysis(BaseModel):
     limitations: list[str] = Field(default_factory=list)
 
 
+class TrainingStatusFeatures(BaseModel):
+    """Longer-horizon fitness facts; never used as a same-day recovery score."""
+
+    status: Availability
+    status_label: str = ""
+    vo2max_ml_kg_min: float | None = Field(default=None, gt=0)
+    vo2max_observed_on: date | None = None
+    vo2max_change_28d_percent: float | None = None
+    lactate_threshold_hr_bpm: float | None = Field(default=None, gt=0)
+    lactate_threshold_pace_seconds_per_km: float | None = Field(default=None, gt=0)
+    lactate_threshold_observed_on: date | None = None
+    lactate_threshold_pace_change_28d_percent: float | None = None
+    pai_earned_7d: float | None = Field(default=None, ge=0)
+    pai_low_7d: float | None = Field(default=None, ge=0)
+    pai_medium_7d: float | None = Field(default=None, ge=0)
+    pai_high_7d: float | None = Field(default=None, ge=0)
+    dominant_pai_zone: Literal["low", "medium", "high"] | None = None
+    dominant_pai_zone_label: str | None = None
+    conclusions: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
 class TrainingFeatures(BaseModel):
     status: Availability
     status_label: str = ""
@@ -701,6 +745,7 @@ class TrainingFeatures(BaseModel):
     recent_workouts: list[WorkoutFeature] = Field(default_factory=list)
     running: RunningAnalysis | None = None
     strength: StrengthAnalysis | None = None
+    training_status: TrainingStatusFeatures | None = None
     load_deviation: Deviation | None = None
     load_state: LoadState = LoadState.INSUFFICIENT_DATA
     load_state_label: str = ""
@@ -1153,9 +1198,9 @@ class SubjectiveFeedback(BaseModel):
 
 
 class DailyProfile(BaseModel):
-    schema_version: Literal["8.0"] = DAILY_SCHEMA_VERSION
+    schema_version: Literal["9.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
-    intelligence_version: Literal["8.0"] = INTELLIGENCE_VERSION
+    intelligence_version: Literal["9.0"] = INTELLIGENCE_VERSION
     decision_policy_version: Literal["7.0"] = DECISION_POLICY_VERSION
     evidence_version: Literal["2026-08e"] = EVIDENCE_VERSION
     user_id: str

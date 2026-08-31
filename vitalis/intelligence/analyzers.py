@@ -28,6 +28,7 @@ from .contracts import (
     SleepFeatures,
     SleepState,
     TrainingFeatures,
+    TrainingStatusFeatures,
     WorkoutFeature,
 )
 from .profile import (
@@ -126,6 +127,15 @@ class SleepAnalyzer:
         if regularity is None:
             limitations.append("sleep_regularity_history_insufficient")
         rem_sleep = record.get("rem_sleep")
+        wake_count = record.get("wake_count")
+        wake_baseline = _baseline_for(
+            baselines, "sleep_wake_count", "zepp", "normalized_daily_record", None
+        )
+        wake_deviation = (
+            BaselineEngine.deviation(float(wake_count), wake_baseline)
+            if wake_count is not None and wake_baseline else None
+        )
+        stages = record.get("stages") if isinstance(record.get("stages"), list) else []
         return SleepFeatures(
             status=Availability.AVAILABLE,
             status_label=AVAILABILITY_LABELS[Availability.AVAILABLE.value],
@@ -138,6 +148,10 @@ class SleepAnalyzer:
             vendor_sleep_score=record.get("sleep_score"),
             duration_deviation=deviation,
             regularity_minutes=round(float(regularity), 1) if regularity is not None else None,
+            wake_count=int(wake_count) if wake_count is not None else None,
+            wake_count_deviation=wake_deviation,
+            stage_timeline_available=bool(stages),
+            stage_slice_count=len(stages),
             limitations=limitations,
             limitation_labels=labels(limitations, LIMITATION_LABELS),
         ), state
@@ -961,6 +975,7 @@ class TrainingAnalyzer:
         limitations.append("session_rpe_unavailable")
         running = RunningAnalyzer().analyze(raw)
         strength = StrengthAnalyzer().analyze(raw)
+        training_status = self._training_status(raw)
         if running.sessions_28d and running.zone_method == "unavailable":
             limitations.append("aerobic_intensity_classification_unavailable")
         return TrainingFeatures(
@@ -985,11 +1000,122 @@ class TrainingAnalyzer:
             recent_workouts=sorted(recent_workouts, key=lambda item: item.date, reverse=True),
             running=running,
             strength=strength,
+            training_status=training_status,
             load_deviation=deviation,
             load_state=load_state,
             load_state_label=LOAD_LABELS[load_state.value],
             limitations=limitations,
             limitation_labels=labels(limitations, LIMITATION_LABELS),
+        )
+
+    @staticmethod
+    def _training_status(raw: RawDailyProfile) -> TrainingStatusFeatures:
+        def daily_values(metric: str) -> dict[date, float]:
+            values: dict[date, list[float]] = {}
+            for point in raw.series.get(metric, []):
+                if point.day <= raw.day:
+                    values.setdefault(point.day, []).append(float(point.value))
+            return {
+                day: float(median(day_values))
+                for day, day_values in values.items()
+                if day_values
+            }
+
+        def latest(metric: str) -> tuple[date, float] | None:
+            values = daily_values(metric)
+            if not values:
+                return None
+            latest_day = max(values)
+            return latest_day, values[latest_day]
+
+        def change_28d(metric: str) -> float | None:
+            values = daily_values(metric)
+            if len(values) < 2:
+                return None
+            latest_day = max(values)
+            prior_days = [
+                day for day in values
+                if latest_day - timedelta(days=28) <= day <= latest_day - timedelta(days=7)
+            ]
+            if not prior_days:
+                return None
+            reference = median(values[day] for day in prior_days)
+            return (
+                round((values[latest_day] - reference) / reference * 100, 1)
+                if reference else None
+            )
+
+        def sum_7d(metric: str) -> float | None:
+            values = daily_values(metric)
+            relevant = [
+                value for day, value in values.items()
+                if raw.day - timedelta(days=6) <= day <= raw.day
+            ]
+            return round(sum(relevant), 1) if relevant else None
+
+        vo2max = latest("vo2max")
+        threshold_hr = latest("lactate_threshold_hr")
+        threshold_pace = latest("lactate_threshold_pace")
+        pai = sum_7d("pai_daily")
+        pai_zones = {
+            "low": sum_7d("pai_low_zone"),
+            "medium": sum_7d("pai_medium_zone"),
+            "high": sum_7d("pai_high_zone"),
+        }
+        available_zones = {
+            zone: value for zone, value in pai_zones.items() if value is not None
+        }
+        dominant = (
+            max(available_zones, key=available_zones.get)
+            if available_zones and sum(available_zones.values()) > 0 else None
+        )
+        zone_labels = {"low": "低强度", "medium": "中强度", "high": "高强度"}
+        conclusions = []
+        vo2_change = change_28d("vo2max")
+        if vo2max and vo2_change is not None:
+            direction = "提高" if vo2_change > 1 else "下降" if vo2_change < -1 else "基本稳定"
+            conclusions.append(f"最大摄氧量近 28 天{direction}（{vo2_change:+.1f}%）。")
+        pace_change = change_28d("lactate_threshold_pace")
+        if threshold_pace and pace_change is not None:
+            direction = "变快" if pace_change < -1 else "变慢" if pace_change > 1 else "基本稳定"
+            conclusions.append(f"乳酸阈值配速近 28 天{direction}（用时变化 {pace_change:+.1f}%）。")
+        if dominant:
+            total = sum(available_zones.values())
+            share = available_zones[dominant] / total * 100
+            conclusions.append(
+                f"近 7 天 PAI 主要来自{zone_labels[dominant]}活动（{share:.0f}%）。"
+            )
+        available = any((vo2max, threshold_hr, threshold_pace, pai is not None))
+        limitations = []
+        if vo2max is None:
+            limitations.append("暂无可用的最大摄氧量记录。")
+        if threshold_pace is None:
+            limitations.append("暂无可用的乳酸阈值配速记录。")
+        return TrainingStatusFeatures(
+            status=Availability.AVAILABLE if available else Availability.INSUFFICIENT_DATA,
+            status_label=AVAILABILITY_LABELS[
+                (Availability.AVAILABLE if available else Availability.INSUFFICIENT_DATA).value
+            ],
+            vo2max_ml_kg_min=round(vo2max[1], 1) if vo2max else None,
+            vo2max_observed_on=vo2max[0] if vo2max else None,
+            vo2max_change_28d_percent=vo2_change,
+            lactate_threshold_hr_bpm=(round(threshold_hr[1], 1) if threshold_hr else None),
+            lactate_threshold_pace_seconds_per_km=(
+                round(threshold_pace[1], 1) if threshold_pace else None
+            ),
+            lactate_threshold_observed_on=(
+                max(item[0] for item in (threshold_hr, threshold_pace) if item)
+                if threshold_hr or threshold_pace else None
+            ),
+            lactate_threshold_pace_change_28d_percent=pace_change,
+            pai_earned_7d=pai,
+            pai_low_7d=pai_zones["low"],
+            pai_medium_7d=pai_zones["medium"],
+            pai_high_7d=pai_zones["high"],
+            dominant_pai_zone=dominant,
+            dominant_pai_zone_label=zone_labels.get(dominant),
+            conclusions=conclusions,
+            limitations=limitations,
         )
 
 
@@ -1052,6 +1178,26 @@ class RecoveryAnalyzer:
         charge = _current_median(
             raw.series.get("hybrid_charge", []) or raw.series.get("bio_charge", []), raw.day
         )
+        readiness_components = {
+            label: value
+            for metric, label in (
+                ("physical_readiness", "身体"),
+                ("mental_readiness", "心理"),
+                ("hrv_readiness", "心率变异性"),
+                ("rhr_readiness", "静息心率"),
+                ("skin_temp_readiness", "皮肤温度"),
+                ("ahi_readiness", "呼吸"),
+            )
+            if (value := _current_median(raw.series.get(metric, []), raw.day)) is not None
+        }
+        charge_components = {
+            label: value
+            for metric, label in (
+                ("physical_charge", "身体"),
+                ("mental_charge", "心理"),
+            )
+            if (value := _current_median(raw.series.get(metric, []), raw.day)) is not None
+        }
         limitations = list(sleep.limitations)
         if interpreted < 2:
             limitations.append("fewer_than_two_baseline_interpretable_signals")
@@ -1070,6 +1216,8 @@ class RecoveryAnalyzer:
             negative_signal_labels=labels(negative, DRIVER_LABELS),
             vendor_readiness=readiness,
             vendor_charge=charge,
+            vendor_readiness_components=readiness_components,
+            vendor_charge_components=charge_components,
             limitations=limitations,
             limitation_labels=labels(limitations, LIMITATION_LABELS),
         )

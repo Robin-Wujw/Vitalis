@@ -53,6 +53,8 @@ class SleepRecord(BaseModel):
     sleep_score: int | None = Field(default=None, ge=0, le=100, description="睡眠评分")
     bedtime: time | None = None
     wake_time: time | None = None
+    stages: list["SleepStageSlice"] = Field(default_factory=list)
+    wake_count: int | None = Field(default=None, ge=0)
 
     @property
     def quality(self) -> SleepQuality:
@@ -70,6 +72,14 @@ class SleepRecord(BaseModel):
         if self.sleep_duration >= 360:
             return SleepQuality.FAIR
         return SleepQuality.POOR
+
+
+class SleepStageSlice(BaseModel):
+    """One vendor-observed sleep-stage interval in UTC."""
+
+    stage: Literal["deep", "light", "rem", "awake"]
+    start_time: datetime
+    end_time: datetime
 
 
 class Workout(BaseModel):
@@ -122,6 +132,7 @@ class WorkoutMetricSample(BaseModel):
         "speed",
         "equivalent_pace",
         "cadence",
+        "stride_length",
         "distance",
         "altitude",
         "running_power",
@@ -169,7 +180,7 @@ class StrengthSetObservation(BaseModel):
 class WorkoutDetail(BaseModel):
     """Current normalized workout-detail contract."""
 
-    schema_version: Literal["3.0"] = "3.0"
+    schema_version: Literal["4.0"] = "4.0"
     workout_id: str
     metrics_present: list[str] = Field(default_factory=list)
     metric_sample_counts: dict[str, int] = Field(default_factory=dict)

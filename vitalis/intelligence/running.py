@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from statistics import mean, median
 
 from .contracts import (
@@ -12,6 +12,7 @@ from .contracts import (
     RunningAnalysis,
     ComparableRunBaseline,
     RunningHeartRateZone,
+    RunningKilometerSplit,
     RunningSegment,
     RunningSessionAnalysis,
 )
@@ -133,17 +134,22 @@ class RunningAnalyzer:
         heart_rate = grouped.get("heart_rate", [])
         speed = [item for item in grouped.get("speed", []) if item.value > 0]
         cadence = grouped.get("cadence", [])
+        stride = grouped.get("stride_length", [])
         power = grouped.get("running_power", [])
         equivalent_pace = grouped.get("equivalent_pace", [])
         ground_contact = grouped.get("ground_contact_time", [])
         vertical_oscillation = grouped.get("vertical_oscillation", [])
         vertical_ratio = grouped.get("vertical_stride_ratio", [])
         duration = self._duration(workout)
+        pauses = self._pauses(workout)
+        pause_seconds = sum(item[1] for item in pauses)
+        moving_seconds = max(duration * 60 - pause_seconds, 0)
+        moving_minutes = round(moving_seconds / 60, 1)
         distance = self._distance(workout)
         median_speed = self._median_value(speed)
         average_pace = (
-            round(duration * 60 / distance, 1)
-            if distance and distance > 0 and duration > 0
+            round(moving_seconds / distance, 1)
+            if distance and distance > 0 and moving_seconds > 0
             else round(1000 / median_speed, 1) if median_speed else None
         )
         cadence_median = self._median_value(cadence)
@@ -159,6 +165,9 @@ class RunningAnalyzer:
             else "unavailable"
         )
         segments = self._segments(speed, heart_rate)
+        kilometer_splits = self._kilometer_splits(
+            grouped.get("distance", []), heart_rate, grouped.get("altitude", []), pauses
+        )
         classification, confidence, evidence = self._classify(
             duration,
             zones,
@@ -197,10 +206,15 @@ class RunningAnalyzer:
             confidence=confidence,
             confidence_label=CONFIDENCE_LABELS[confidence.value],
             duration_minutes=duration,
+            moving_duration_minutes=moving_minutes,
+            pause_duration_seconds=pause_seconds,
             distance_km=distance,
             average_pace_seconds_per_km=average_pace,
             median_speed_mps=round(median_speed, 3) if median_speed else None,
             median_cadence_spm=round(cadence_median, 1) if cadence_median else None,
+            median_stride_length_cm=(
+                round(self._median_value(stride), 1) if stride else None
+            ),
             cadence_variability_percent=cadence_variability,
             average_power_watts=round(average_power, 1) if average_power is not None else None,
             median_equivalent_pace_seconds_per_km=(
@@ -229,6 +243,7 @@ class RunningAnalyzer:
             cardiac_drift_percent=drift,
             comparable_baseline=comparable,
             segments=segments[:20],
+            kilometer_splits=kilometer_splits,
             evidence=evidence,
             limitations=limitations,
         )
@@ -286,6 +301,98 @@ class RunningAnalyzer:
         return float(max(points, key=lambda item: (item.day, item.observed_at)).value)
 
     @staticmethod
+    def _pauses(workout: dict) -> list[tuple[datetime, int]]:
+        output = []
+        detail = workout.get("detail") or {}
+        for item in detail.get("pauses", []) if isinstance(detail, dict) else []:
+            if not isinstance(item, dict):
+                continue
+            started = item.get("started_at")
+            try:
+                if isinstance(started, str):
+                    started = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                duration = max(int(item.get("duration_seconds") or 0), 0)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(started, datetime) and duration:
+                output.append((started, duration))
+        return output
+
+    @staticmethod
+    def _pause_overlap_seconds(
+        pauses: list[tuple[datetime, int]], start: datetime, end: datetime
+    ) -> float:
+        def utc_seconds(value: datetime) -> float:
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            return value.astimezone(timezone.utc).timestamp()
+
+        start_seconds = utc_seconds(start)
+        end_seconds = utc_seconds(end)
+        total = 0.0
+        for pause_start, duration in pauses:
+            pause_start_seconds = utc_seconds(pause_start)
+            pause_end_seconds = pause_start_seconds + duration
+            total += max(
+                0.0,
+                min(end_seconds, pause_end_seconds)
+                - max(start_seconds, pause_start_seconds),
+            )
+        return total
+
+    def _kilometer_splits(
+        self,
+        distance: list,
+        heart_rate: list,
+        altitude: list,
+        pauses: list[tuple[datetime, int]],
+    ) -> list[RunningKilometerSplit]:
+        points = [item for item in distance if item.value >= 0]
+        if len(points) < 2 or points[-1].value < 1000:
+            return []
+
+        def crossing(target: float) -> datetime | None:
+            for left, right in zip(points, points[1:]):
+                if left.value <= target <= right.value and right.value > left.value:
+                    ratio = (target - left.value) / (right.value - left.value)
+                    return left.timestamp + (right.timestamp - left.timestamp) * ratio
+            return None
+
+        start_time = crossing(0) or points[0].timestamp
+        output = []
+        full_kilometers = int(points[-1].value // 1000)
+        previous_time = start_time
+        for index in range(1, full_kilometers + 1):
+            end_time = crossing(index * 1000)
+            if end_time is None or end_time <= previous_time:
+                continue
+            elapsed = (end_time - previous_time).total_seconds()
+            moving = elapsed - self._pause_overlap_seconds(pauses, previous_time, end_time)
+            if moving <= 0:
+                previous_time = end_time
+                continue
+            hrs = [item.value for item in heart_rate if previous_time <= item.timestamp < end_time]
+            elevations = [item.value for item in altitude if previous_time <= item.timestamp <= end_time]
+            gain = loss = None
+            if len(elevations) >= 2:
+                deltas = [right - left for left, right in zip(elevations, elevations[1:])]
+                gain = round(sum(value for value in deltas if value > 0), 1)
+                loss = round(abs(sum(value for value in deltas if value < 0)), 1)
+            output.append(RunningKilometerSplit(
+                index=index,
+                distance_km=1.0,
+                elapsed_seconds=round(elapsed, 1),
+                moving_seconds=round(moving, 1),
+                average_pace_seconds_per_km=round(moving, 1),
+                average_heart_rate_bpm=round(mean(hrs), 1) if hrs else None,
+                maximum_heart_rate_bpm=max(hrs) if hrs else None,
+                elevation_gain_m=gain,
+                elevation_loss_m=loss,
+            ))
+            previous_time = end_time
+        return output
+
+    @staticmethod
     def _group_samples(samples: list) -> dict[str, list]:
         output: dict[str, list] = defaultdict(list)
         for item in samples:
@@ -318,8 +425,9 @@ class RunningAnalyzer:
             (4, cuts[2], cuts[3] - 1),
             (5, cuts[3], None),
         )
-        counts = {zone: 0 for zone in range(1, 6)}
-        for sample in samples:
+        counts = {zone: 0.0 for zone in range(1, 6)}
+        weights = RunningAnalyzer._sample_duration_weights(samples)
+        for sample, seconds in zip(samples, weights):
             zone = (
                 1 if sample.value < cuts[0]
                 else 2 if sample.value < cuts[1]
@@ -327,19 +435,38 @@ class RunningAnalyzer:
                 else 4 if sample.value < cuts[3]
                 else 5
             )
-            counts[zone] += 1
-        total = len(samples)
+            counts[zone] += seconds
+        total = sum(weights)
         return [
             RunningHeartRateZone(
                 zone=zone,
                 label=ZONE_LABELS[zone],
                 lower_bpm=lower,
                 upper_bpm=upper,
-                duration_seconds=counts[zone],
+                duration_seconds=round(counts[zone]),
                 share_percent=round(counts[zone] / total * 100, 1),
             )
             for zone, lower, upper in bounds
         ]
+
+    @staticmethod
+    def _sample_duration_weights(samples: list) -> list[float]:
+        if not samples:
+            return []
+        intervals = [
+            (right.timestamp - left.timestamp).total_seconds()
+            for left, right in zip(samples, samples[1:])
+            if 0 < (right.timestamp - left.timestamp).total_seconds() <= 30
+        ]
+        typical = float(median(intervals)) if intervals else 1.0
+        output = []
+        for index, sample in enumerate(samples):
+            if index + 1 < len(samples):
+                seconds = (samples[index + 1].timestamp - sample.timestamp).total_seconds()
+                output.append(seconds if 0 < seconds <= 30 else typical)
+            else:
+                output.append(typical)
+        return output
 
     @staticmethod
     def _device_zone_boundaries(workout: dict) -> list[int]:

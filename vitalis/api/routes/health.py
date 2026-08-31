@@ -43,6 +43,10 @@ def health_data_health(user_id: str = Depends(require_user_id)) -> dict:
 @router.post("/sync")
 def health_sync(
     days: int = Query(7, ge=1, le=730, description="同步天数"),
+    decode_dense_files: bool = Query(
+        False,
+        description="显式解码最多一个秒级心率归档；普通日报同步只更新索引",
+    ),
     user_id: str = Depends(require_user_id),
 ) -> dict:
     """手动触发增量同步（不局限于凌晨自动调度）。"""
@@ -58,7 +62,10 @@ def health_sync(
                     "detail": "尚未导入 Zepp 凭据，请先访问 /connect/zepp/scan 导入",
                 }
             report = connector.sync_with_report(
-                User(id=user_id), days=days, repo=repo
+                User(id=user_id),
+                days=days,
+                repo=repo,
+                decode_dense_files=decode_dense_files,
             )
         if any(stream.needs_reauth for stream in report.streams):
             raise ZeppAuthError(

@@ -10,7 +10,7 @@ Zepp（华米）真实授权方式：网页登录拿 apptoken，非 OAuth2 扫�
 数据获取（对齐 ZeppBridge 已实测端点）：
   - 睡眠/活动：/v1/data/band_data.json（summary 为 base64 JSON）
   - 运动：/v1/sport/{sport}/history.json（13 种运动类型）
-  - 训练负荷：/v2/watch/users/{id}/WatchSportStatistics/SPORT_LOAD
+  - 训练负荷 / VO₂max：/v2/watch/users/{id}/WatchSportStatistics/{statistic}
   - HRV：/v2/users/me/events?eventType=hrv_sdnn
   - 每日摘要：/v2/users/me/events?eventType=DailyHealth
 
@@ -27,7 +27,12 @@ from ..base import ConnectorAuth, ConnectorSyncResult, HealthConnector
 from ..registry import register_connector
 from .client import MockOAuthToken, MockZeppClient, ZeppAPIClient, ZeppAuthError, SPORTS
 from .fetcher import DataFetcher, FetchWindow
-from .sync_manager import SyncManager, SyncReport, StreamReport
+from .sync_manager import (
+    DENSE_ARCHIVE_BATCH_SIZE,
+    SyncManager,
+    SyncReport,
+    StreamReport,
+)
 
 DEFAULT_REGION = "api-mifitcn.zepp.com"  # 中国区缺省（其它区按账号区域）
 
@@ -133,7 +138,7 @@ class ZeppConnector(HealthConnector):
 
     def sync_with_report(
         self, user: User, days: int = 730, repo=None,
-        on_progress=None,
+        on_progress=None, decode_dense_files: bool = False,
     ) -> SyncReport:
         """完整同步并返回逐流报告（支持最长 730 天 / 2 年）。"""
         if self.mock:
@@ -151,7 +156,10 @@ class ZeppConnector(HealthConnector):
             )
         client = self._client_for(repo, user)
         fetcher = DataFetcher(client)
-        manager = SyncManager(fetcher)
+        manager = SyncManager(
+            fetcher,
+            dense_archive_budget=DENSE_ARCHIVE_BATCH_SIZE if decode_dense_files else 0,
+        )
         return manager.sync_report(user, days, repo=repo, on_progress=on_progress)
 
     def fetch(

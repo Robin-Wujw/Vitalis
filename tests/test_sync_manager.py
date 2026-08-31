@@ -16,6 +16,30 @@ from vitalis.models import User, Workout, WorkoutType
 from vitalis.storage import HealthRepository, init_db, session_scope
 
 
+@pytest.mark.parametrize(
+    ("stream", "source_key", "expected"),
+    [
+        ("wellness", "wellness:spo2:user:2026-08-01:2026-08-02", "wellness/spo2_point"),
+        ("wellness", "wellness:spo2:user_day:2026-08-01:2026-08-02:odi", "wellness/spo2_odi"),
+        ("wellness", "wellness:spo2:user_day:2026-08-01:2026-08-02:osa_event", "wellness/spo2_osa"),
+        ("heart_rate", "heart_rate:1:2", "heart_rate/minute_endpoint"),
+        ("dense_files", "file_info:second_heart_rate:2026-08-01:2026-08-02", "heart_rate/dense_file"),
+    ],
+)
+def test_diagnostic_streams_keep_independent_substream_health(
+    stream, source_key, expected
+):
+    record = FetchedRecord(raw=RawRecord(
+        stream=stream,
+        source_key=source_key,
+        start_utc=datetime.now(timezone.utc),
+        end_utc=datetime.now(timezone.utc),
+        payload={"items": []},
+    ))
+
+    assert SyncManager._diagnostic_stream(record) == expected
+
+
 class MockDataFetcher:
     """Mock DataFetcher：返回空但格式正确的记录。"""
 
@@ -240,6 +264,25 @@ class TestSyncManager:
             with pytest.raises(Exception, match="同步已取消"):
                 manager.sync_report(user, days=7, repo=repo, on_progress=cancel_on_first)
 
+    def test_sync_timeout_keeps_completed_streams(self, mock_fetcher, setup_db, monkeypatch):
+        from vitalis.connectors.zepp import sync_manager as sync_module
+
+        clock = iter([0, 0, 100])
+        monkeypatch.setattr(sync_module.time, "monotonic", lambda: next(clock))
+        user = User(id="partial-timeout-user")
+
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            report = SyncManager(mock_fetcher).sync_report(user, days=7, repo=repo)
+
+        assert report.success is False
+        assert report.records_written == 1
+        assert "已保存此前完成的数据流" in report.message
+        assert report.streams[0].stream == "heart_rate"
+        assert report.streams[-1].stream == "daily_summary"
+        assert report.streams[-1].status == "failed"
+
     def test_failure_report(self, mock_fetcher):
         manager = SyncManager(mock_fetcher)
         err = ZeppAuthError("boom")
@@ -291,7 +334,7 @@ class TestSyncManager:
         assert written == 1
         assert workout is not None and workout.detail_synced is True
         assert workout.detail == {
-            "schema_version": "3.0",
+            "schema_version": "4.0",
             "workout_id": str(int(start.timestamp())),
             "metrics_present": ["heart_rate"],
             "metric_sample_counts": {"heart_rate": 4},
@@ -443,6 +486,46 @@ class TestSyncManager:
         assert files[0].parse_status == "decoded"
         assert files[0].sample_count == 2
         assert [sample.value for sample in samples] == [72, 74]
+
+    def test_standard_sync_indexes_dense_file_without_downloading_archive(
+        self, mock_fetcher, setup_db
+    ):
+        manager = SyncManager(mock_fetcher, dense_archive_budget=0)
+        user = User(id="dense-index-only-user")
+        start = datetime(2026, 8, 26, 6, 0, tzinfo=timezone.utc)
+        mock_fetcher.fetch_dense_file_archive = lambda *_args: pytest.fail(
+            "standard sync must not download a dense archive"
+        )
+        record = FetchedRecord(raw=RawRecord(
+            stream="dense_files",
+            source_key="file_info:second_heart_rate:2026-08-26:2026-08-27",
+            start_utc=start,
+            end_utc=start + timedelta(days=1),
+            payload={"items": [{"value": {
+                "startTime": int(start.timestamp() * 1000),
+                "deviceId": "1,A1B2C3D4E5F60708",
+                "samples": [{
+                    "s": 0,
+                    "e": 2_000,
+                    "fileId": "index-without-download",
+                    "fileType": "SEC_HR",
+                    "dateString": "2026-08-26",
+                }],
+            }}]},
+        ))
+
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            written = manager._write_stream(record, repo, user)
+            files = repo.dense_data_files(
+                user.id, "second_heart_rate", start.date(), start.date()
+            )
+
+        assert written == 1
+        assert len(files) == 1
+        assert files[0].parse_status == "indexed"
+        assert files[0].sample_count == 0
 
     def test_sync_report_serializes_same_user_across_managers(self):
         first_entered = threading.Event()

@@ -102,7 +102,7 @@ Zepp workout history is returned by `/v1/sport/run/history.json`; the response m
 multiple activities, so each record's numeric `type` is authoritative. Workout detail
 comes from `/v1/sport/run/detail.json`. Vitalis normalizes its compressed series into
 typed UTC observations in `workout_metric_samples`. The current contract supports
-heart rate, speed, equivalent pace, cadence, cumulative distance, altitude, running
+heart rate, speed, equivalent pace, cadence, stride length, cumulative distance, altitude, running
 power, ground-contact time, vertical oscillation, vertical stride ratio, laps, pauses,
 and explicit vendor strength sets when present. The three `runPosture` sentinels are
 discarded rather than stored as zero. Workout summaries retain a valid six-boundary
@@ -120,9 +120,12 @@ intelligence layer. It may estimate work/rest structure from heart rate while ke
 the movement and target muscle unknown until an explicit vendor set or user
 confirmation is available.
 
-`second_heart_rate/real_data` returns file indexes rather than samples. For each new
-file ID, Vitalis calls Zepp's official `queryDownUrlList` endpoint, downloads the signed
-HTTPS ZIP without forwarding `apptoken`, and decodes the protobuf heartbeat blocks.
+`second_heart_rate/real_data` returns file indexes rather than samples. Ordinary health
+sync stores those indexes without downloading large archives. When
+`decode_dense_files=true` is explicitly requested, Vitalis decodes at most one new
+archive through Zepp's official `queryDownUrlList` endpoint. The signed HTTPS ZIP is
+downloaded without forwarding `apptoken`, then its protobuf heartbeat blocks are
+stored as device-scoped heart-rate samples.
 Each block starts at a Unix-second timestamp and contains consecutive one-second heart
 rate values; `255` is treated as missing. ZIP entries are assigned to indexed devices
 using a global one-to-one maximum-overlap match. Successfully decoded index rows store

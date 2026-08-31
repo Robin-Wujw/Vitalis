@@ -1,10 +1,11 @@
 """仓储层：封装对 ORM 的读写，业务层只依赖仓储接口。"""
 
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import hashlib
 from uuid import uuid4
 
-from sqlalchemy import delete, func, or_, select, text, update
+from sqlalchemy import Integer, case, cast, delete, func, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from vitalis.models import (
@@ -29,6 +30,17 @@ from vitalis.intelligence.contracts import (
 )
 
 from . import models as orm
+
+
+@dataclass(frozen=True)
+class WorkoutAnalysisSample:
+    workout_id: str
+    timestamp: datetime
+    metric: str
+    value: float
+    unit: str
+    source_scope: str
+    device_id: str | None
 
 
 class HealthRepository:
@@ -511,7 +523,7 @@ class HealthRepository:
             row for row in rows
             if not row.detail_synced
             or not isinstance(row.detail, dict)
-            or row.detail.get("schema_version") != "3.0"
+            or row.detail.get("schema_version") != "4.0"
         ][:limit]
 
     def save_workout_detail(
@@ -577,6 +589,81 @@ class HealthRepository:
         user_id: str,
         workout_ids: list[str],
         limit: int = 2_000_000,
+        resolution_seconds: int = 5,
+    ) -> list[WorkoutAnalysisSample]:
+        if not workout_ids:
+            return []
+        resolution_seconds = max(int(resolution_seconds), 1)
+        dialect = self.db.get_bind().dialect.name
+        if dialect == "sqlite":
+            epoch = cast(func.strftime("%s", orm.WorkoutMetricSample.timestamp), Integer)
+        elif dialect == "postgresql":
+            epoch = cast(func.extract("epoch", orm.WorkoutMetricSample.timestamp), Integer)
+        else:
+            rows = self.workout_metric_samples_for_workouts_raw(
+                user_id, workout_ids, limit
+            )
+            return [
+                WorkoutAnalysisSample(
+                    workout_id=row.workout_id,
+                    timestamp=row.timestamp,
+                    metric=row.metric,
+                    value=row.value,
+                    unit=row.unit,
+                    source_scope=row.source_scope,
+                    device_id=row.device_id,
+                )
+                for row in rows
+            ]
+        bucket = cast(epoch / resolution_seconds, Integer)
+        value = case(
+            (orm.WorkoutMetricSample.metric == "distance", func.max(orm.WorkoutMetricSample.value)),
+            else_=func.avg(orm.WorkoutMetricSample.value),
+        ).label("value")
+        statement = (
+            select(
+                orm.WorkoutMetricSample.workout_id,
+                func.min(orm.WorkoutMetricSample.timestamp).label("timestamp"),
+                orm.WorkoutMetricSample.metric,
+                value,
+                orm.WorkoutMetricSample.unit,
+                orm.WorkoutMetricSample.source_scope,
+                orm.WorkoutMetricSample.device_id,
+            )
+            .where(
+                orm.WorkoutMetricSample.user_id == user_id,
+                orm.WorkoutMetricSample.workout_id.in_(workout_ids),
+            )
+            .group_by(
+                orm.WorkoutMetricSample.workout_id,
+                orm.WorkoutMetricSample.metric,
+                orm.WorkoutMetricSample.unit,
+                orm.WorkoutMetricSample.source_scope,
+                orm.WorkoutMetricSample.device_id,
+                bucket,
+            )
+            .order_by(
+                orm.WorkoutMetricSample.workout_id,
+                func.min(orm.WorkoutMetricSample.timestamp),
+                orm.WorkoutMetricSample.metric,
+            )
+            .limit(limit)
+        )
+        return [
+            WorkoutAnalysisSample(
+                workout_id=row.workout_id,
+                timestamp=row.timestamp,
+                metric=row.metric,
+                value=float(row.value),
+                unit=row.unit,
+                source_scope=row.source_scope,
+                device_id=row.device_id,
+            )
+            for row in self.db.execute(statement)
+        ]
+
+    def workout_metric_samples_for_workouts_raw(
+        self, user_id: str, workout_ids: list[str], limit: int = 2_000_000
     ) -> list[orm.WorkoutMetricSample]:
         if not workout_ids:
             return []
@@ -662,16 +749,19 @@ class HealthRepository:
     def latest_stream_sample_at(self, user_id: str, stream: str) -> datetime | None:
         metric_by_stream = {
             "heart_rate": "heart_rate",
+            "heart_rate/minute_endpoint": "heart_rate",
             "hrv": "hrv_sdnn",
             "wellness/hrv_rmssd": "hrv_rmssd",
-            "wellness/spo2": "spo2",
+            "wellness/spo2_point": "spo2",
+            "wellness/spo2_odi": "spo2_odi",
+            "wellness/spo2_osa": "spo2_apnea_low",
             "wellness/respiratory_rate": "respiratory_rate",
             "wellness/all_day_stress": "stress",
             "wellness/pai": "pai_daily",
             "wellness/lactate_threshold": "lactate_threshold_hr",
         }
         metric = metric_by_stream.get(stream)
-        if metric in {"heart_rate", "hrv_sdnn", "hrv_rmssd", "spo2"}:
+        if metric in {"heart_rate", "hrv_sdnn", "hrv_rmssd", "spo2", "spo2_apnea_low"}:
             return self.db.execute(select(func.max(orm.MetricSample.timestamp)).where(
                 orm.MetricSample.user_id == user_id,
                 orm.MetricSample.metric == metric,
@@ -700,7 +790,7 @@ class HealthRepository:
                 orm.DailyMetric.user_id == user_id
             )).scalar_one_or_none()
             return datetime.combine(value, datetime.min.time()) if value else None
-        if stream == "dense_files":
+        if stream in {"dense_files", "heart_rate/dense_file"}:
             return self.db.execute(select(func.max(orm.DenseDataFile.end_utc)).where(
                 orm.DenseDataFile.user_id == user_id
             )).scalar_one_or_none()

@@ -1,6 +1,6 @@
 """API coverage for timestamped metrics, daily metrics and workouts."""
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from vitalis.models import (
     DailyMetric,
@@ -245,7 +245,7 @@ def test_normalized_workout_metric_samples_are_isolated_and_returned_in_order(cl
             "sample-user",
             workout_id,
             {
-                "schema_version": "3.0",
+                "schema_version": "4.0",
                 "workout_id": workout_id,
                 "metrics_present": ["heart_rate"],
                 "metric_sample_counts": {"heart_rate": 2},
@@ -277,3 +277,43 @@ def test_normalized_workout_metric_samples_are_isolated_and_returned_in_order(cl
     )
     assert other.status_code == 200
     assert other.json()["detail"] is None
+
+
+def test_analysis_workout_samples_are_aggregated_to_five_second_bins():
+    user_id = "analysis-sample-bins"
+    workout_id = "run-bins"
+    start = datetime(2026, 8, 26, 6, 0, tzinfo=timezone.utc)
+    samples = [
+        WorkoutMetricSample(
+            workout_id=workout_id,
+            timestamp=start + timedelta(seconds=second),
+            metric=metric,
+            value=value,
+            unit=unit,
+        )
+        for second, metric, value, unit in (
+            (0, "heart_rate", 100, "bpm"),
+            (1, "heart_rate", 110, "bpm"),
+            (5, "heart_rate", 120, "bpm"),
+            (0, "distance", 0, "m"),
+            (1, "distance", 20, "m"),
+            (5, "distance", 30, "m"),
+        )
+    ]
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        repo.save_workout(Workout(
+            user_id=user_id,
+            workout_id=workout_id,
+            started_at=start,
+            type=WorkoutType.RUNNING,
+            duration=1,
+        ))
+        repo.save_workout_detail(
+            user_id, workout_id, {"schema_version": "4.0"}, samples
+        )
+        rows = repo.workout_metric_samples_for_workouts(user_id, [workout_id])
+
+    assert [row.value for row in rows if row.metric == "heart_rate"] == [105, 120]
+    assert [row.value for row in rows if row.metric == "distance"] == [20, 30]

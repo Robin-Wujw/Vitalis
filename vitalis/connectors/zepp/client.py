@@ -33,7 +33,7 @@ API_HEART_RATE = "/users/{user_id}/heartRate"
 API_BAND_DATA = "/v1/data/band_data.json"          # 手环原始数据（睡眠/步数等）
 API_SPORT_HISTORY = "/v1/sport/{sport}/history.json"  # 运动摘要列表
 API_SPORT_DETAIL = "/v1/sport/run/detail.json"     # 单次运动明细
-API_WATCH_STATS = "/v2/watch/users/{user_id}/WatchSportStatistics/SPORT_LOAD"  # 训练负荷
+API_WATCH_STATS = "/v2/watch/users/{user_id}/WatchSportStatistics/{statistic}"
 API_EVENTS = "/v2/users/me/events"                 # HRV / 每日健康摘要
 API_USER_EVENTS = "/users/{user_id}/events"        # SpO2 / PAI / all-day stress
 API_USER_EVENTS_DATE = "/users/{user_id}/events/dateString"  # ODI / OSA nightly events
@@ -219,8 +219,10 @@ class ZeppAPIClient:
     def fetch_watch_statistics(self, statistic: str = "SPORT_LOAD", start_day: str = "",
                                end_day: str = "", limit: int = 30, reverse: bool = True) -> dict:
         """训练负荷 / VO2。"""
+        if statistic not in {"SPORT_LOAD", "VO2_MAX"}:
+            raise ValueError(f"unsupported watch statistic: {statistic}")
         return self._get(
-            API_WATCH_STATS.format(user_id=self.user_id),
+            API_WATCH_STATS.format(user_id=self.user_id, statistic=statistic),
             {
                 "startDay": start_day, "endDay": end_day,
                 "limit": str(limit), "isReverse": "true" if reverse else "false",
@@ -441,8 +443,16 @@ class MockZeppClient:
 
     def fetch_watch_statistics(self, statistic: str = "SPORT_LOAD", start_day: str = "",
                                end_day: str = "", limit: int = 30, reverse: bool = True) -> dict:
+        metric = "load" if statistic == "SPORT_LOAD" else "vo2max"
         return {"code": 0, "data": {"items": [
-            {"day": (date.today() - timedelta(days=i)).isoformat(), "load": self._rng.randint(20, 80)}
+            {
+                "day": (date.today() - timedelta(days=i)).isoformat(),
+                metric: (
+                    self._rng.randint(20, 80)
+                    if statistic == "SPORT_LOAD"
+                    else self._rng.randint(40, 55)
+                ),
+            }
             for i in range(min(limit, 30))
         ]}}
 

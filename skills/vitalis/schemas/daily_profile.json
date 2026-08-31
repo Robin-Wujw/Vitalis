@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/daily-profile-8.0.json",
-  "title": "Vitalis DailyProfile 8.0",
+  "$id": "https://vitalis.local/schemas/daily-profile-9.0.json",
+  "title": "Vitalis DailyProfile 9.0",
   "type": "object",
   "required": ["schema_version", "analysis_run_id", "intelligence_version", "decision_policy_version", "evidence_version", "user_id", "date", "generated_at", "data_quality", "facts", "baselines", "features", "trends", "events", "states", "decision", "evidence_refs", "metadata"],
   "properties": {
-    "schema_version": {"const": "8.0"},
+    "schema_version": {"const": "9.0"},
     "analysis_run_id": {"type": "string"},
-    "intelligence_version": {"const": "8.0"},
+    "intelligence_version": {"const": "9.0"},
     "decision_policy_version": {"const": "7.0"},
     "evidence_version": {"const": "2026-08e"},
     "user_id": {"type": "string"},
@@ -42,6 +42,10 @@
           "properties": {
             "status": {"enum": ["AVAILABLE", "INSUFFICIENT_DATA"]},
             "status_label": {"type": "string"},
+            "wake_count": {"type": ["integer", "null"], "minimum": 0},
+            "wake_count_deviation": {"type": ["object", "null"]},
+            "stage_timeline_available": {"type": "boolean"},
+            "stage_slice_count": {"type": "integer", "minimum": 0},
             "limitations": {"type": "array", "items": {"type": "string"}},
             "limitation_labels": {"type": "array", "items": {"type": "string"}}
           }
@@ -118,6 +122,8 @@
             "state_label": {"type": "string"},
             "positive_signal_labels": {"type": "array", "items": {"type": "string"}},
             "negative_signal_labels": {"type": "array", "items": {"type": "string"}},
+            "vendor_readiness_components": {"type": "object", "additionalProperties": {"type": "number"}},
+            "vendor_charge_components": {"type": "object", "additionalProperties": {"type": "number"}},
             "limitation_labels": {"type": "array", "items": {"type": "string"}}
           }
         },
@@ -140,9 +146,9 @@
             "running": {
               "type": ["object", "null"],
               "properties": {
-                "schema_version": {"const": "1.0"},
+                "schema_version": {"const": "2.0"},
                 "status": {"enum": ["AVAILABLE", "INSUFFICIENT_DATA"]},
-                "zone_method": {"enum": ["lactate_threshold", "unavailable"]},
+                "zone_method": {"enum": ["device_workout", "lactate_threshold", "mixed", "unavailable"]},
                 "recent_sessions": {"type": "array", "items": {"type": "object"}},
                 "limitations": {"type": "array", "items": {"type": "string"}}
               }
@@ -160,6 +166,20 @@
                 "recent_sessions": {"type": "array", "items": {"type": "object"}},
                 "muscle_recovery": {"type": "array", "items": {"type": "object"}},
                 "limitations": {"type": "array", "items": {"type": "string"}}
+              }
+            },
+            "training_status": {
+              "type": ["object", "null"],
+              "properties": {
+                "status": {"enum": ["AVAILABLE", "INSUFFICIENT_DATA"]},
+                "vo2max_ml_kg_min": {"type": ["number", "null"]},
+                "vo2max_observed_on": {"type": ["string", "null"], "format": "date"},
+                "vo2max_change_28d_percent": {"type": ["number", "null"]},
+                "lactate_threshold_hr_bpm": {"type": ["number", "null"]},
+                "lactate_threshold_pace_seconds_per_km": {"type": ["number", "null"]},
+                "pai_earned_7d": {"type": ["number", "null"]},
+                "dominant_pai_zone": {"enum": ["low", "medium", "high", null]},
+                "conclusions": {"type": "array", "items": {"type": "string"}}
               }
             },
             "limitation_labels": {"type": "array", "items": {"type": "string"}},

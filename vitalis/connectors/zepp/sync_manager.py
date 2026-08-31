@@ -31,6 +31,7 @@ from vitalis.time import local_day
 _user_sync_locks_guard = threading.Lock()
 _user_sync_locks: dict[str, threading.Lock] = {}
 WORKOUT_DETAIL_BATCH_SIZE = 4
+DENSE_ARCHIVE_BATCH_SIZE = 1
 
 
 def _sync_lock_for_user(user_id: str) -> threading.Lock:
@@ -77,9 +78,16 @@ class SyncProgress:
 class SyncManager:
     """同步管理器（同步版本，适配 httpx 同步客户端）。"""
 
-    def __init__(self, fetcher: DataFetcher, cancel_event: threading.Event | None = None):
+    def __init__(
+        self,
+        fetcher: DataFetcher,
+        cancel_event: threading.Event | None = None,
+        dense_archive_budget: int = DENSE_ARCHIVE_BATCH_SIZE,
+    ):
         self.fetcher = fetcher
         self._cancel = cancel_event or threading.Event()
+        self._dense_archive_budget = max(int(dense_archive_budget), 0)
+        self._dense_archives_remaining = self._dense_archive_budget
 
     def request_cancel(self) -> None:
         self._cancel.set()
@@ -98,6 +106,7 @@ class SyncManager:
         active_stream = "initialization"
         try:
             self._cancel.clear()
+            self._dense_archives_remaining = self._dense_archive_budget
             window = FetchWindow.days_back(days)
             self._refresh_devices(repo, user)
             started = time.monotonic()
@@ -279,6 +288,13 @@ class SyncManager:
             ):
                 streams.append(self._failure_report(active_stream, exc))
             self._save_stream_health(repo, user, streams)
+            if "同步超时" in str(exc):
+                return SyncReport(
+                    success=False,
+                    streams=streams,
+                    records_written=sum(item.records_written for item in streams),
+                    message="同步达到时间预算；已保存此前完成的数据流，后续将继续增量同步",
+                )
             raise
         finally:
             run_lock.release()
@@ -334,6 +350,8 @@ class SyncManager:
         self, stream: str, records: list[FetchedRecord], repo: HealthRepository | None, user: User
     ) -> StreamReport:
         aggregate = StreamReport(stream=stream, status="success", records_written=0, raw_records=0)
+        if stream == "dense_files":
+            records = list(reversed(records))
         successes = 0
         notices = 0
         for rec in records:
@@ -549,7 +567,15 @@ class SyncManager:
             for item in files:
                 grouped.setdefault((item.file_type, item.file_id), []).append(item)
             written = 0
-            for (file_type, file_id), indexed_files in grouped.items():
+            ordered_groups = sorted(
+                grouped.items(),
+                key=lambda item: max(
+                    (file.start_utc or datetime.min.replace(tzinfo=timezone.utc))
+                    for file in item[1]
+                ),
+                reverse=True,
+            )
+            for (file_type, file_id), indexed_files in ordered_groups:
                 existing = repo.dense_data_file_group(
                     user.id, "second_heart_rate", file_id
                 )
@@ -568,6 +594,20 @@ class SyncManager:
                     for item in indexed_files
                 }
                 if indexed_keys and indexed_keys <= handled_keys:
+                    continue
+                if self._dense_archives_remaining <= 0:
+                    existing_keys = {
+                        (row.start_utc, row.device_id) for row in existing
+                    }
+                    new_indexes = [
+                        item for item in indexed_files
+                        if (
+                            item.start_utc.astimezone(timezone.utc).replace(tzinfo=None)
+                            if item.start_utc and item.start_utc.tzinfo else item.start_utc,
+                            item.device_id or "",
+                        ) not in existing_keys
+                    ]
+                    written += repo.save_dense_data_files(new_indexes)
                     continue
                 mapping_files = {
                     (row.start_utc, row.device_id): DenseDataFile(
@@ -600,6 +640,7 @@ class SyncManager:
                     )
                     mapping_files[(start_key, item.device_id or "")] = item
                 archive = self.fetcher.fetch_dense_file_archive(file_type, file_id)
+                self._dense_archives_remaining -= 1
                 decoded = decode_sec_hr_archive(archive, list(mapping_files.values()))
                 for sample in decoded.samples:
                     sample.user_id = user.id
@@ -653,7 +694,18 @@ class SyncManager:
         if record.raw.stream == "wellness":
             parts = record.raw.source_key.split(":")
             if len(parts) > 1 and parts[1]:
+                if parts[1] == "spo2":
+                    subtype = parts[-1] if parts else ""
+                    if subtype == "odi":
+                        return "wellness/spo2_odi"
+                    if subtype == "osa_event":
+                        return "wellness/spo2_osa"
+                    return "wellness/spo2_point"
                 return f"wellness/{parts[1]}"
+        if record.raw.stream == "heart_rate":
+            return "heart_rate/minute_endpoint"
+        if record.raw.stream == "dense_files" and "second_heart_rate" in record.raw.source_key:
+            return "heart_rate/dense_file"
         return record.raw.stream
 
     @staticmethod

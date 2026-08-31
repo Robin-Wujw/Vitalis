@@ -37,7 +37,7 @@ analysis layer reads only normalized records:
   PAI, ODI, and lactate-threshold fields.
 - `workouts` and `workout_metric_samples`: normalized workout summaries, versioned
   detail metadata, device zone boundaries, and typed workout HR, speed, equivalent
-  pace, cadence, distance, altitude, running power, ground-contact time, vertical
+  pace, cadence, stride length, distance, altitude, running power, ground-contact time, vertical
   oscillation, and vertical-stride-ratio observations.
 - `dense_data_files`: per-device `SEC_HR` file indexes, decode state, and sample count.
   Decoded second-level values are stored as ordinary device-scoped `heart_rate`
@@ -59,11 +59,13 @@ configured application timezone (`VITALIS_TIMEZONE`, currently `Asia/Shanghai`).
 clock times use the vendor-provided offset, and workout summaries are assigned to the
 local date on which the session started.
 
-Workout detail is current-contract-only (`schema_version=3.0`). Rows from older detail
+Workout detail is current-contract-only (`schema_version=4.0`). Rows from older detail
 contracts are fetched and replaced in bounded batches during subsequent synchronization
 windows so a historical upgrade cannot consume the whole health-sync budget. Zepp delta/time series
 are decoded into typed metric samples. Laps retain only verified index, duration, and
-distance semantics; pauses retain start and duration. Explicit vendor strength sets may
+distance semantics; pauses retain start and duration. Running analysis derives moving
+time and per-kilometre pace, heart rate, and elevation from these normalized streams.
+Explicit vendor strength sets may
 carry exercise identity, repetitions, weight, work duration, and rest. Empty or
 undocumented vendor fields remain absent, and strength assessment payloads are not
 reinterpreted as exercise names.

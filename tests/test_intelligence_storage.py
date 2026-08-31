@@ -93,8 +93,8 @@ def test_analysis_snapshots_are_immutable_per_run():
                 TARGET,
                 TARGET,
                 "1.0",
-                "3.0",
-                "3.0",
+                "4.0",
+                "4.0",
                 "2026-08",
                 {"generated_at": "2026-08-28T01:00:00Z", "marker": marker},
             )

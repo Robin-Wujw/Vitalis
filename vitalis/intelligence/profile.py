@@ -23,19 +23,12 @@ from .localization import QUALITY_LABELS, SIGNAL_LABELS, labels
 SAMPLE_METRICS = (
     "hrv_rmssd",
     "hrv_sdnn",
-    "sleep_hrv",
-    "sleep_rhr",
-    "readiness",
-    "physical_readiness",
-    "mental_readiness",
-    "skin_temp_delta",
-    "hybrid_charge",
-    "bio_charge",
     "spo2",
     "spo2_apnea_low",
 )
 MAX_SAMPLES_PER_METRIC = 1_000_000
 PROFILE_HISTORY_DAYS = 180
+DETAIL_WORKOUTS_PER_FAMILY = 8
 
 
 @dataclass(frozen=True)
@@ -97,13 +90,19 @@ class ProfileLoader:
             for row in self.repo.workouts(user_id, start - timedelta(days=1), day)
             if row.started_at and start <= local_day(row.started_at) <= day
         ]
-        detail_ids = [
-            row.workout_id
-            for row in workout_rows
-            if row.detail_synced
-            and row.started_at
-            and local_day(row.started_at) >= day - timedelta(days=27)
-        ]
+        detail_ids = []
+        for workout_type in ("running", "strength"):
+            family_rows = [
+                row for row in workout_rows
+                if row.detail_synced
+                and row.started_at
+                and local_day(row.started_at) >= day - timedelta(days=27)
+                and str((row.data or {}).get("type") or "").lower() == workout_type
+            ]
+            detail_ids.extend(
+                row.workout_id
+                for row in family_rows[:DETAIL_WORKOUTS_PER_FAMILY]
+            )
         samples_by_workout: dict[str, list] = defaultdict(list)
         for sample in self.repo.workout_metric_samples_for_workouts(user_id, detail_ids):
             samples_by_workout[sample.workout_id].append(sample)
@@ -207,6 +206,7 @@ class ProfileLoader:
         for day, record in raw.sleep_by_day.items():
             _append(raw, "sleep_duration", record.get("sleep_duration"), "min", day, record.get("source", "zepp"), "normalized_daily_record")
             _append(raw, "sleep_score", record.get("sleep_score"), "score", day, record.get("source", "zepp"), "normalized_daily_record")
+            _append(raw, "sleep_wake_count", record.get("wake_count"), "count", day, record.get("source", "zepp"), "normalized_daily_record")
         for day, record in raw.activity_by_day.items():
             _append(raw, "resting_hr", record.get("resting_hr"), "bpm", day, record.get("source", "zepp"), "normalized_daily_record", positive=True)
             _append(raw, "steps", record.get("steps"), "steps", day, record.get("source", "zepp"), "normalized_daily_record")
@@ -250,7 +250,7 @@ class ProfileLoader:
                 )
 
     def _add_heart_rate_samples(self, raw: RawDailyProfile, start: date) -> None:
-        heart_rate_start = max(start, raw.day - timedelta(days=34))
+        heart_rate_start = max(start, raw.day - timedelta(days=27))
         minute_values: dict[
             tuple[datetime, str, str, str | None, str], float
         ] = {}

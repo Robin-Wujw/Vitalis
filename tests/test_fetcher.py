@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
+from vitalis.connectors.zepp.client import ZeppAPIClient
 from vitalis.connectors.zepp.fetcher import (
     DataFetcher,
     FetchWindow,
@@ -11,6 +12,30 @@ from vitalis.connectors.zepp.fetcher import (
     _heart_rate_items,
     _payload_items,
 )
+
+
+def test_watch_statistics_uses_requested_statistic_in_path(monkeypatch):
+    client = ZeppAPIClient("token", "user-123", "api-mifitcn.zepp.com")
+    calls = []
+    monkeypatch.setattr(
+        client,
+        "_get",
+        lambda path, params: calls.append((path, params)) or {"items": []},
+    )
+
+    client.fetch_watch_statistics("SPORT_LOAD", "2026-08-01", "2026-08-30")
+    client.fetch_watch_statistics("VO2_MAX", "2026-08-01", "2026-08-30")
+
+    assert [call[0] for call in calls] == [
+        "/v2/watch/users/user-123/WatchSportStatistics/SPORT_LOAD",
+        "/v2/watch/users/user-123/WatchSportStatistics/VO2_MAX",
+    ]
+
+
+def test_watch_statistics_rejects_unknown_statistic():
+    client = ZeppAPIClient("token", "user-123", "api-mifitcn.zepp.com")
+    with pytest.raises(ValueError, match="unsupported watch statistic"):
+        client.fetch_watch_statistics("UNKNOWN")
 
 
 class TestFetchWindow:

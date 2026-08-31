@@ -242,7 +242,7 @@ def test_decode_workout_detail_to_typed_metric_samples():
             "currentDistance": "0,0;1,250;1,520;",
             "time_delta_altitude": "0,967;1,972;",
             "power_meter": "0,210;1,215;",
-            "gait": "0,0,0,176;1,1,4,178;",
+            "gait": "0,0,101,176;1,1,104,178;",
             "runPosture": "0,263,88,87;1,65535,95,255;2,270,65535,91;",
             "lap": "0,371,1000,s00000000000;1,376,1000,s00000000000",
             "pause": f"{int(start.timestamp())},37,-1,-1,2",
@@ -262,12 +262,13 @@ def test_decode_workout_detail_to_typed_metric_samples():
     assert detail.metrics_present == [
         "altitude", "cadence", "distance", "equivalent_pace",
         "ground_contact_time", "heart_rate", "running_power", "speed",
-        "vertical_oscillation", "vertical_stride_ratio",
+        "stride_length", "vertical_oscillation", "vertical_stride_ratio",
     ]
     assert detail.metric_sample_counts["cadence"] == 2
     assert detail.metric_sample_counts["ground_contact_time"] == 2
     assert detail.metric_sample_counts["vertical_oscillation"] == 2
     assert detail.metric_sample_counts["vertical_stride_ratio"] == 2
+    assert [row.value for row in detail.samples if row.metric == "stride_length"] == [101, 104]
     assert [row.value for row in detail.samples if row.metric == "vertical_stride_ratio"] == [8.7, 9.1]
     assert [lap.distance_meters for lap in detail.laps] == [1000, 1000]
     assert detail.pauses[0].duration_seconds == 37
@@ -484,12 +485,13 @@ def test_parse_band_sleep_recovers_rem_from_stage_modes():
             "lt": 282,
             "ss": 81,
             "supRem": 1,
+            "wc": 3,
             "stage": [
-                {"mode": 4, "start": 120, "stop": 401},
-                {"mode": 5, "start": 402, "stop": 465},
-                {"mode": 8, "start": 466, "stop": 514},
-                {"mode": 11, "start": 515, "stop": 564},
-                {"mode": 7, "start": 565, "stop": 570},
+                {"mode": 4, "start": 1568, "stop": 1849},
+                {"mode": 5, "start": 1850, "stop": 1913},
+                {"mode": 8, "start": 1914, "stop": 1962},
+                {"mode": 11, "start": 1963, "stop": 2012},
+                {"mode": 7, "start": 2013, "stop": 2018},
             ],
         },
     }).encode()).decode()
@@ -499,7 +501,14 @@ def test_parse_band_sleep_recovers_rem_from_stage_modes():
         "summary": summary,
     }]}})
 
-    assert sleeps[date(2026, 8, 29)].rem_sleep == 99
+    sleep = sleeps[date(2026, 8, 29)]
+    assert sleep.rem_sleep == 99
+    assert sleep.wake_count == 3
+    assert [item.stage for item in sleep.stages] == [
+        "light", "deep", "rem", "rem", "awake"
+    ]
+    assert sleep.stages[0].start_time == start
+    assert sleep.stages[-1].end_time == end
 
 
 def test_parse_band_sleep_preserves_explicit_zero_rem():

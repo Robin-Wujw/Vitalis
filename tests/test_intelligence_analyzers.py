@@ -140,6 +140,44 @@ def test_rolling_training_load_includes_target_day():
     assert training.duration_7d == 210
 
 
+def test_training_status_uses_vo2max_threshold_and_pai_without_combining_scores():
+    raw = _profile()
+    raw.series.update({
+        "vo2max": _series("vo2max", [52, 50], unit="ml/kg/min"),
+        "lactate_threshold_hr": _series(
+            "lactate_threshold_hr", [171, 169], unit="bpm"
+        ),
+        "lactate_threshold_pace": _series(
+            "lactate_threshold_pace", [270, 282], unit="s/km"
+        ),
+        "pai_daily": _series("pai_daily", [8, 7, 6, 5, 4, 3, 2], unit="pai"),
+        "pai_low_zone": _series("pai_low_zone", [1] * 7, unit="pai"),
+        "pai_medium_zone": _series("pai_medium_zone", [2] * 7, unit="pai"),
+        "pai_high_zone": _series("pai_high_zone", [4] * 7, unit="pai"),
+    })
+    # Historical reference must be at least seven days before the latest value.
+    raw.series["vo2max"][1] = raw.series["vo2max"][1].__class__(
+        **{**raw.series["vo2max"][1].__dict__, "day": TARGET - timedelta(days=14),
+           "observed_at": TARGET - timedelta(days=14)}
+    )
+    raw.series["lactate_threshold_pace"][1] = raw.series["lactate_threshold_pace"][1].__class__(
+        **{**raw.series["lactate_threshold_pace"][1].__dict__, "day": TARGET - timedelta(days=14),
+           "observed_at": TARGET - timedelta(days=14)}
+    )
+
+    status = TrainingAnalyzer().analyze(
+        raw, BaselineEngine().build(raw.series, raw.day)
+    ).training_status
+
+    assert status.vo2max_ml_kg_min == 52
+    assert status.vo2max_change_28d_percent == 4
+    assert status.lactate_threshold_pace_seconds_per_km == 270
+    assert status.lactate_threshold_pace_change_28d_percent == pytest.approx(-4.3)
+    assert status.pai_earned_7d == 35
+    assert status.dominant_pai_zone == "high"
+    assert len(status.conclusions) == 3
+
+
 def test_near_baseline_signals_are_interpretable_normal_recovery():
     *_, recovery, decision = _analyze(
         _profile(hrv_today=51, rhr_today=56, sleep_today=452, load_today=31)

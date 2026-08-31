@@ -695,6 +695,12 @@ def _render_overnight_summary(
         stage_parts.append(f"快速眼动睡眠 {sleep['rem_minutes']} 分钟")
     if sleep.get("awake_minutes") is not None:
         stage_parts.append(f"清醒 {sleep['awake_minutes']} 分钟")
+    if sleep.get("wake_count") is not None:
+        wake_text = f"夜间醒来 {sleep['wake_count']} 次"
+        wake_deviation = sleep.get("wake_count_deviation") or {}
+        if wake_deviation.get("percent") is not None:
+            wake_text += f"（较个人基线 {wake_deviation['percent']:+.1f}%）"
+        stage_parts.append(wake_text)
     if stage_parts:
         lines.append(f"- **睡眠结构**：{'；'.join(stage_parts)}。设备分期主要看长期变化。")
 
@@ -778,6 +784,31 @@ def _render_weekly_training_summary(training: dict) -> list[str]:
             f"- **与近期相比**：本周训练负荷比此前 3 周周均（{reference:g}）"
             f"{relation}{amount}。这表示训练刺激的多少，不代表恢复好坏。"
         )
+
+    status = training.get("training_status") or {}
+    fitness_parts = []
+    if status.get("vo2max_ml_kg_min") is not None:
+        text = f"最大摄氧量 {status['vo2max_ml_kg_min']:g} 毫升/公斤/分钟"
+        if status.get("vo2max_change_28d_percent") is not None:
+            text += f"（近 28 天 {status['vo2max_change_28d_percent']:+.1f}%）"
+        fitness_parts.append(text)
+    if status.get("lactate_threshold_pace_seconds_per_km") is not None:
+        text = (
+            "乳酸阈值配速 "
+            f"{_pace(status['lactate_threshold_pace_seconds_per_km'])}/公里"
+        )
+        if status.get("lactate_threshold_hr_bpm") is not None:
+            text += f"，对应心率 {status['lactate_threshold_hr_bpm']:g} 次/分钟"
+        fitness_parts.append(text)
+    if fitness_parts:
+        lines.append(f"- **跑步能力**：{'；'.join(fitness_parts)}。")
+
+    if status.get("pai_earned_7d") is not None:
+        pai_text = f"近 7 天累计获得 {status['pai_earned_7d']:g} PAI"
+        if status.get("dominant_pai_zone_label"):
+            pai_text += f"，主要来自{status['dominant_pai_zone_label']}活动"
+        lines.append(f"- **活动强度贡献**：{pai_text}。")
+
     return lines or ["最近 7 天没有可汇总的训练记录。"]
 
 
@@ -945,7 +976,11 @@ def _render_today_workout_details(training: dict, report_date: str) -> list[str]
                 if confidence in {"MODERATE", "HIGH"}
                 else "课型暂不下结论"
             )
-            metrics = [classification, f"{latest['duration_minutes']} 分钟"]
+            metrics = [classification, f"总耗时 {latest['duration_minutes']} 分钟"]
+            if latest.get("pause_duration_seconds", 0) > 0:
+                metrics.append(
+                    f"实际运动 {latest.get('moving_duration_minutes', 0):g} 分钟"
+                )
             if latest.get("distance_km") is not None:
                 metrics.append(f"{round(latest['distance_km'], 2):g} 公里")
             if latest.get("average_pace_seconds_per_km") is not None:
@@ -978,8 +1013,21 @@ def _render_today_workout_details(training: dict, report_date: str) -> list[str]
                 dynamics.append(f"垂直振幅 {latest['median_vertical_oscillation_mm']:g} 毫米")
             if latest.get("median_vertical_stride_ratio_percent") is not None:
                 dynamics.append(f"垂直步幅比 {latest['median_vertical_stride_ratio_percent']:g}%")
+            if latest.get("median_stride_length_cm") is not None:
+                dynamics.append(f"步幅中位数 {latest['median_stride_length_cm']:g} 厘米")
             if dynamics:
                 lines.append(f"- **跑姿记录**：{' · '.join(dynamics)}。")
+            splits = latest.get("kilometer_splits") or []
+            if splits:
+                split_parts = []
+                for split in splits[:10]:
+                    text = f"{split['index']} 公里 {_pace(split['average_pace_seconds_per_km'])}"
+                    if split.get("average_heart_rate_bpm") is not None:
+                        text += f" / {split['average_heart_rate_bpm']:g} 次/分钟"
+                    if split.get("elevation_gain_m") is not None:
+                        text += f" / 爬升 {split['elevation_gain_m']:g} 米"
+                    split_parts.append(text)
+                lines.append(f"- **公里分段**：{'；'.join(split_parts)}。")
             baseline = latest.get("comparable_baseline")
             if baseline:
                 pace_delta = float(baseline["pace_difference_percent"])

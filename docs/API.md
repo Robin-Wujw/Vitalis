@@ -59,6 +59,7 @@ semantics.
 | GET | `/health/metrics/{metric}?from=&to=` | Read timestamped measurements and provenance |
 | GET | `/health/daily-metrics?metric=&from=&to=` | Read sparse daily metrics |
 | GET | `/health/dense-files/second_heart_rate?from=&to=` | Read high-frequency file coverage without file IDs |
+| POST | `/health/sync?days=&decode_dense_files=false` | Sync health data; dense archives are index-only unless one-file decoding is explicitly enabled |
 
 ## Examples
 

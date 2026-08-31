@@ -1895,7 +1895,7 @@ as the scheduler rather than the training decision maker.
 - [x] Part 2 - Apply explicit alternation in the health-gated deterministic planner.
 - [x] Part 3 - Update the API, Skill tool/schema, renderer explanation, tests, and docs.
 - [x] Part 4 - Store the user's selected policy and verify it against real current data.
-- [ ] Part 5 - Commit and push the verified feature to `origin/main`.
+- [x] Part 5 - Commit and push the verified feature to `origin/main`.
 
 ### Implemented Contract
 
@@ -1928,3 +1928,5 @@ as the scheduler rather than the training decision maker.
   preference therefore selected strength.
 - No duplicate morning notification was sent during verification. Weather-triggered
   substitution remains inactive until a weather source is implemented.
+- Part 5 (delivery): feature commit `0477b0b` (`feat: personalize training rotation`)
+  was pushed from local `main` to `origin/main`.

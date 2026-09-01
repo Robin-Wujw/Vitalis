@@ -1,4 +1,5 @@
 from datetime import date
+import os
 import stat
 
 import pytest
@@ -50,6 +51,14 @@ def test_morning_push_syncs_current_day_and_sends_exactly_once(monkeypatch, tmp_
     requests = []
     sent = []
     profile = _daily()
+    chmod_calls = []
+    real_chmod = daily_push.os.chmod
+
+    def record_chmod(path, mode):
+        chmod_calls.append((os.fspath(path), mode))
+        real_chmod(path, mode)
+
+    monkeypatch.setattr(daily_push.os, "chmod", record_chmod)
 
     class Client:
         def __init__(self, **kwargs):
@@ -106,8 +115,11 @@ def test_morning_push_syncs_current_day_and_sends_exactly_once(monkeypatch, tmp_
     }
     marker = next(tmp_path.glob("*.sent"))
     assert "explicit-user" not in marker.name
-    assert stat.S_IMODE(marker.stat().st_mode) == 0o600
-    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+    assert (os.fspath(marker), 0o600) in chmod_calls
+    assert (os.fspath(tmp_path), 0o700) in chmod_calls
+    if os.name != "nt":
+        assert stat.S_IMODE(marker.stat().st_mode) == 0o600
+        assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
 
 
 def test_manual_test_push_ignores_and_preserves_scheduled_delivery_marker(

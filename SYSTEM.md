@@ -86,12 +86,12 @@ Vitalis 仍处于预生产阶段。所有实现只面向当前契约和当前契
 
 ## 9. 最近验证结果
 
-Zepp 数据正确性任务的最终验证：
+最近两项任务的最终验证：
 
-- 审查后针对性测试：157 项通过。
-- 排除既有 Windows 文件权限测试 `tests/test_daily_push.py` 后：293 项通过。
-- 完整套件：308 项通过，1 项失败。
-- 唯一失败是 `tests/test_daily_push.py:109`：Unix `0600` 断言在 Windows 上观察到 `0666`，属于既有平台差异。
+- Zepp 数据正确性审查后针对性测试：157 项通过。
+- Windows daily push 权限契约针对性测试：16 项通过。
+- Windows 完整测试套件：309 项全部通过。
+- Linux 继续严格验证状态目录 `0700` 和标记文件 `0600`；Windows 验证代码请求了相同权限，并由 NTFS ACL 继承负责实际访问控制。
 - Python 编译通过。
 - OpenAPI 生成 42 条路径，训练明细和力量操作要求提供 workout source。
 - 全新内存 SQLite schema 的来源感知唯一约束通过验证。
@@ -101,7 +101,6 @@ Zepp 数据正确性任务的最终验证：
 
 - [ ] 完成共享核心/平台适配层审计，明确 Linux 与 Windows 的服务、安全和文件权限验证矩阵。
 - [ ] 设计持久化 chunk coverage ledger、重试/退避、备份/恢复和数据保留策略；这些不属于当前 Zepp 正确性批次。
-- [ ] 在 Linux 环境运行完整套件，确认 `tests/test_daily_push.py` 的 `0600` 权限契约。
 
 ## 11. 当前文档精简任务
 
@@ -123,3 +122,22 @@ Zepp 数据正确性任务的最终验证：
 - 根目录 `SYSTEM.md` 已从两千余行精简为中文活跃执行契约，并链接历史归档。
 - 两个文件均未发现控制字符；`git diff --check` 通过。
 - 本任务只修改 Markdown，不运行应用测试，也不改变应用代码、数据库、服务、部署或运行时配置。
+
+## 12. Windows daily push 权限契约修复
+
+日期：2026-09-01
+
+目标：在不降低 Linux 文件权限要求的前提下，让 daily push 状态文件测试正确表达 Windows 的 NTFS ACL 语义。
+
+### TODO
+
+- [x] 保留 Linux 状态目录 `0700` 和标记文件 `0600` 的严格 mode 断言。
+- [x] 在所有平台验证实现明确调用 `chmod(0700/0600)`。
+- [x] Windows 不再使用无意义的 POSIX `st_mode` 数值判断 NTFS ACL。
+- [x] 运行针对性测试和完整测试套件。
+
+### 验证日志
+
+- `tests/test_daily_push.py` 16 项测试通过。
+- Windows 完整测试套件 309 项全部通过，产生 472 条既有 `datetime.utcnow()` 弃用警告。
+- 本任务只修改测试和执行契约，不改变 daily push 运行时权限调用。

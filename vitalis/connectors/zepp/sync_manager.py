@@ -14,18 +14,23 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from vitalis.connectors.zepp.client import ZeppAuthError
 from vitalis.connectors.zepp.dense_hr import decode_sec_hr_archive
-from vitalis.connectors.zepp.fetcher import DataFetcher, FetchWindow, FetchedRecord, _payload_items
+from vitalis.connectors.zepp.fetcher import (
+    DataFetcher,
+    FetchBatch,
+    FetchedRecord,
+    FetchWindow,
+    PartialFetchError,
+    _payload_items,
+)
 from vitalis.connectors.zepp.parser import ZeppParser
 from vitalis.models import (
     ActivityRecord,
     DenseDataFile,
     NormalizedDaily,
     SleepRecord,
-    TrainingRecord,
     User,
 )
 from vitalis.storage import HealthRepository
-from vitalis.time import local_day
 
 
 _user_sync_locks_guard = threading.Lock()
@@ -66,6 +71,26 @@ class SyncReport:
     records_written: int = 0
     message: str | None = None
 
+    @property
+    def needs_reauth(self) -> bool:
+        return any(stream.needs_reauth for stream in self.streams)
+
+    @property
+    def blocking_streams(self) -> list[StreamReport]:
+        return [
+            stream for stream in self.streams
+            if stream.status not in {"success", "unavailable"}
+        ]
+
+    @property
+    def error_kind(self) -> str | None:
+        if self.needs_reauth:
+            return "auth"
+        for stream in self.blocking_streams:
+            if stream.error_kind:
+                return stream.error_kind
+        return None
+
 
 @dataclass
 class SyncProgress:
@@ -73,6 +98,10 @@ class SyncProgress:
     current: int
     total: int
     message: str
+
+
+class DenseArchiveFetchError(ZeppAuthError):
+    """Dense archive download failed before decoding began."""
 
 
 class SyncManager:
@@ -88,6 +117,8 @@ class SyncManager:
         self._cancel = cancel_event or threading.Event()
         self._dense_archive_budget = max(int(dense_archive_budget), 0)
         self._dense_archives_remaining = self._dense_archive_budget
+        self._defer_workout_rebuild = False
+        self._deferred_workout_days: set = set()
 
     def request_cancel(self) -> None:
         self._cancel.set()
@@ -95,9 +126,10 @@ class SyncManager:
     def sync_report(
         self,
         user: User,
-        days: int,
+        days: int | None = None,
         repo: HealthRepository | None = None,
         on_progress: Callable[[SyncProgress], None] | None = None,
+        window: FetchWindow | None = None,
     ) -> SyncReport:
         """执行一次完整同步，返回逐流报告。"""
         run_lock = _sync_lock_for_user(user.id)
@@ -107,10 +139,17 @@ class SyncManager:
         try:
             self._cancel.clear()
             self._dense_archives_remaining = self._dense_archive_budget
-            window = FetchWindow.days_back(days)
+            if window is None:
+                if days is None:
+                    raise ZeppAuthError("同步窗口不能为空", kind="invalid_request")
+                window = FetchWindow.days_back(days)
+            window_days = max(
+                1,
+                round((window.end - window.start).total_seconds() / (24 * 60 * 60)),
+            )
             self._refresh_devices(repo, user)
             started = time.monotonic()
-            budget = 90 if days <= 7 else min(45 + days * 3, 20 * 60)
+            budget = 90 if window_days <= 7 else min(45 + window_days * 3, 20 * 60)
             deadline = started + budget
 
             def emit(stream: str, current: int, total: int, message: str) -> None:
@@ -119,9 +158,12 @@ class SyncManager:
 
             def check() -> None:
                 if self._cancel.is_set():
-                    raise ZeppAuthError("同步已取消")
+                    raise ZeppAuthError("同步已取消", kind="cancelled")
                 if time.monotonic() > deadline:
-                    raise ZeppAuthError("同步超时，已停止后续请求")
+                    raise ZeppAuthError(
+                        "同步超时，已停止后续请求",
+                        kind="timeout",
+                    )
 
             # 1. heart_rate (core)
             active_stream = "heart_rate"
@@ -131,9 +173,9 @@ class SyncManager:
                 records = self.fetcher.fetch_heart_rate_records(window)
                 streams.append(self._persist_records("heart_rate", records, repo, user))
             except ZeppAuthError as exc:
-                if "取消" in str(exc) or "超时" in str(exc):
+                if exc.kind in {"cancelled", "timeout"}:
                     raise
-                streams.append(self._failure_report("heart_rate", exc))
+                streams.append(self._stream_failure_report("heart_rate", exc, repo, user))
 
             # 2. daily_summary (core)
             active_stream = "daily_summary"
@@ -143,9 +185,9 @@ class SyncManager:
                 records = self.fetcher.fetch_daily_statistics_records(window)
                 streams.append(self._persist_records("daily_summary", records, repo, user))
             except ZeppAuthError as exc:
-                if "取消" in str(exc) or "超时" in str(exc):
+                if exc.kind in {"cancelled", "timeout"}:
                     raise
-                streams.append(self._failure_report("daily_summary", exc))
+                streams.append(self._stream_failure_report("daily_summary", exc, repo, user))
 
             # 3. workouts (core)
             active_stream = "workouts"
@@ -155,12 +197,12 @@ class SyncManager:
                 records = self.fetcher.fetch_workout_records(window)
                 streams.append(self._persist_records("workouts", records, repo, user))
             except ZeppAuthError as exc:
-                if "取消" in str(exc) or "超时" in str(exc):
+                if exc.kind in {"cancelled", "timeout"}:
                     raise
-                if "Unavailable" in str(exc) or "unavailable" in str(exc).lower():
+                if exc.kind == "not_available":
                     streams.append(self._unavailable_report("workouts", exc))
                 else:
-                    streams.append(self._failure_report("workouts", exc))
+                    streams.append(self._stream_failure_report("workouts", exc, repo, user))
 
             # 4. sleep (optional)
             active_stream = "sleep"
@@ -170,12 +212,12 @@ class SyncManager:
                 records = self.fetcher.fetch_sleep_records(window)
                 streams.append(self._persist_records("sleep", records, repo, user))
             except ZeppAuthError as exc:
-                if "取消" in str(exc) or "超时" in str(exc):
+                if exc.kind in {"cancelled", "timeout"}:
                     raise
-                if "Unavailable" in str(exc) or "unavailable" in str(exc).lower():
+                if exc.kind == "not_available":
                     streams.append(self._unavailable_report("sleep", exc))
                 else:
-                    streams.append(self._failure_report("sleep", exc))
+                    streams.append(self._stream_failure_report("sleep", exc, repo, user))
 
             # 5. hrv (optional)
             active_stream = "hrv"
@@ -185,12 +227,12 @@ class SyncManager:
                 records = self.fetcher.fetch_hrv_records(window)
                 streams.append(self._persist_records("hrv", records, repo, user))
             except ZeppAuthError as exc:
-                if "取消" in str(exc) or "超时" in str(exc):
+                if exc.kind in {"cancelled", "timeout"}:
                     raise
-                if "Unavailable" in str(exc) or "unavailable" in str(exc).lower():
+                if exc.kind == "not_available":
                     streams.append(self._unavailable_report("hrv", exc))
                 else:
-                    streams.append(self._failure_report("hrv", exc))
+                    streams.append(self._stream_failure_report("hrv", exc, repo, user))
 
             # 6. wellness (optional: stress, SpO2, respiration, PAI, RMSSD)
             active_stream = "wellness"
@@ -208,9 +250,12 @@ class SyncManager:
                         fetched_at=datetime.now(timezone.utc), error_kind="not_available",
                     ))
             except ZeppAuthError as exc:
-                if "取消" in str(exc) or "超时" in str(exc):
+                if exc.kind in {"cancelled", "timeout"}:
                     raise
-                streams.append(self._unavailable_report("wellness", exc))
+                if exc.kind == "not_available":
+                    streams.append(self._unavailable_report("wellness", exc))
+                else:
+                    streams.append(self._stream_failure_report("wellness", exc, repo, user))
 
             # 7. dense_files
             active_stream = "dense_files"
@@ -228,9 +273,12 @@ class SyncManager:
                         fetched_at=datetime.now(timezone.utc), error_kind="not_available",
                     ))
             except ZeppAuthError as exc:
-                if "取消" in str(exc) or "超时" in str(exc):
+                if exc.kind in {"cancelled", "timeout"}:
                     raise
-                streams.append(self._unavailable_report("dense_files", exc))
+                if exc.kind == "not_available":
+                    streams.append(self._unavailable_report("dense_files", exc))
+                else:
+                    streams.append(self._stream_failure_report("dense_files", exc, repo, user))
 
             # 8. workout_detail is intentionally last: a slow historical detail
             # upgrade must not block sleep, HRV, oxygen, or other daily health data.
@@ -260,18 +308,18 @@ class SyncManager:
                 else:
                     streams.append(self._persist_records("workout_detail", records, repo, user))
             except ZeppAuthError as exc:
-                if "取消" in str(exc):
+                if exc.kind in {"cancelled", "timeout"}:
                     raise
-                if "Unavailable" in str(exc) or "unavailable" in str(exc).lower():
+                if exc.kind == "not_available":
                     streams.append(self._unavailable_report("workout_detail", exc))
                 else:
-                    streams.append(self._failure_report("workout_detail", exc))
+                    streams.append(self._stream_failure_report("workout_detail", exc, repo, user))
 
-            core_failed = any(
-                s.stream in ("heart_rate", "daily_summary", "workouts") and s.status == "failed"
-                for s in streams
-            )
-            success = not core_failed
+            blocking = [
+                stream for stream in streams
+                if stream.status not in {"success", "unavailable"}
+            ]
+            success = not blocking
             total_written = sum(s.records_written for s in streams)
             self._save_stream_health(repo, user, streams)
 
@@ -279,16 +327,21 @@ class SyncManager:
                 success=success,
                 streams=streams,
                 records_written=total_written,
-                message="至少一个核心数据流失败；同步未报告成功" if core_failed else None,
+                message=(
+                    "至少一个数据流失败或不完整；已保存成功写入，后续将继续增量同步"
+                    if blocking else None
+                ),
             )
         except ZeppAuthError as exc:
             if not any(
                 report.stream == active_stream and report.fetch_status == "failed"
                 for report in streams
             ):
-                streams.append(self._failure_report(active_stream, exc))
+                streams.append(
+                    self._stream_failure_report(active_stream, exc, repo, user)
+                )
             self._save_stream_health(repo, user, streams)
-            if "同步超时" in str(exc):
+            if exc.kind == "timeout":
                 return SyncReport(
                     success=False,
                     streams=streams,
@@ -349,28 +402,66 @@ class SyncManager:
     def _persist_records(
         self, stream: str, records: list[FetchedRecord], repo: HealthRepository | None, user: User
     ) -> StreamReport:
+        coverage = records if isinstance(records, FetchBatch) else None
         aggregate = StreamReport(stream=stream, status="success", records_written=0, raw_records=0)
+        if not records:
+            now = datetime.now(timezone.utc)
+            return StreamReport(
+                stream=stream,
+                status="success",
+                records_written=0,
+                raw_records=0,
+                diagnostic_stream=stream,
+                fetch_status="success",
+                parse_status="empty",
+                write_status="not_run",
+                fetched_at=now,
+                parsed_at=now,
+            )
         if stream == "dense_files":
             records = list(reversed(records))
         successes = 0
         notices = 0
-        for rec in records:
-            one = self._persist_record(rec, repo, user)
-            aggregate.diagnostics.append(one)
-            aggregate.records_written += one.records_written
-            aggregate.raw_records += one.raw_records
-            if one.status == "success":
-                successes += 1
-            else:
-                notices += 1
-                aggregate.status = one.status
-                aggregate.capability = one.capability
-                aggregate.message = one.message
+        capabilities: list[str] = []
+        deferred_workouts = stream == "workouts" and repo is not None
+        if deferred_workouts:
+            self._defer_workout_rebuild = True
+            self._deferred_workout_days = set()
+        try:
+            for rec in records:
+                one = self._persist_record(rec, repo, user)
+                aggregate.diagnostics.append(one)
+                aggregate.records_written += one.records_written
+                aggregate.raw_records += one.raw_records
+                capabilities.append(one.capability)
+                if one.status == "success":
+                    successes += 1
+                else:
+                    notices += 1
+                    aggregate.status = one.status
+                    aggregate.capability = one.capability
+                    aggregate.message = one.message
+                    aggregate.error_kind = one.error_kind
+                    aggregate.needs_reauth = aggregate.needs_reauth or one.needs_reauth
+        except Exception:
+            self._defer_workout_rebuild = False
+            self._deferred_workout_days = set()
+            raise
+        if deferred_workouts:
+            self._defer_workout_rebuild = False
+            aggregate.records_written += repo.rebuild_training_days(
+                user.id, self._deferred_workout_days
+            )
+            self._deferred_workout_days = set()
         if successes > 0:
-            aggregate.status = "success"
-            aggregate.capability = "verified"
+            aggregate.status = "unverified" if notices else "success"
+            aggregate.capability = (
+                "unverified"
+                if notices or any(value != "verified" for value in capabilities)
+                else "verified"
+            )
             if notices > 0:
-                aggregate.message = f"已解析可用数据；{notices} 个可选响应没有可识别记录"
+                aggregate.message = f"已解析部分数据；{notices} 个响应不完整或无法识别"
         aggregate.fetched_at = max(
             (item.fetched_at for item in aggregate.diagnostics if item.fetched_at),
             default=None,
@@ -393,6 +484,29 @@ class SyncManager:
         aggregate.write_status = self._aggregate_stage(
             [item.write_status for item in aggregate.diagnostics]
         )
+        if coverage is not None:
+            aggregate.diagnostics.extend(
+                StreamReport(
+                    stream=stream,
+                    status="unavailable",
+                    capability="unavailable",
+                    message=message,
+                    diagnostic_stream=diagnostic,
+                    fetch_status="unavailable",
+                    fetched_at=datetime.now(timezone.utc),
+                    error_kind="not_available",
+                )
+                for diagnostic, message in coverage.unavailable_capabilities
+            )
+        if coverage is not None and coverage.partial:
+            aggregate.status = "unverified"
+            aggregate.capability = "unverified"
+            aggregate.fetch_status = "partial"
+            aggregate.error_kind = "partial_coverage"
+            aggregate.message = (
+                f"{coverage.successful_chunks}/{coverage.expected_chunks} 个分块成功；"
+                f"{coverage.unavailable_chunks} 个分块不可用"
+            )
         return aggregate
 
     def _persist_record(
@@ -421,20 +535,35 @@ class SyncManager:
                 report.parse_status = "success"
                 report.write_status = "no_change"
             elif _payload_items(record.raw.payload):
-                if record.raw.stream in {"dense_files", "workout_detail"}:
-                    report.parse_status = "success"
-                    report.write_status = "no_change"
-                else:
-                    report.parse_status = "unrecognized"
-                    report.write_status = "not_run"
-                    report.status = "unverified"
-                    report.error_kind = "unrecognized_payload"
-                    report.message = "云端返回了记录，但当前解析器没有产生结构化数据"
+                report.parse_status = "unrecognized"
+                report.write_status = "not_run"
+                report.status = "unverified"
+                report.error_kind = "unrecognized_payload"
+                report.message = "云端返回了记录，但当前解析器没有产生结构化数据"
             else:
                 report.parse_status = "empty"
                 report.write_status = "not_run"
         except SQLAlchemyError:
             raise
+        except DenseArchiveFetchError as exc:
+            report.status = "failed"
+            report.capability = "unavailable"
+            report.needs_reauth = exc.needs_reauth
+            report.message = str(exc)
+            report.diagnostic_stream = "heart_rate/dense_archive"
+            report.fetch_status = "failed"
+            report.parse_status = "not_run"
+            report.write_status = "not_run"
+            report.error_kind = exc.kind
+        except ZeppAuthError as exc:
+            report.status = "failed"
+            report.capability = "unavailable"
+            report.needs_reauth = exc.needs_reauth
+            report.message = str(exc)
+            report.parsed_at = datetime.now(timezone.utc)
+            report.parse_status = "failed"
+            report.write_status = "not_run"
+            report.error_kind = exc.kind
         except Exception as exc:
             report.status = "failed"
             report.capability = "unavailable"
@@ -481,32 +610,33 @@ class SyncManager:
         elif stream == "workouts":
             parts = record.raw.source_key.split(":", 2)
             sport_hint = parts[1] if len(parts) >= 2 else ""
-            workouts = parser.parse_sport_history(payload, sport_hint=sport_hint)
-            # 按天聚合写入 training
-            from collections import defaultdict
-            by_day: dict = defaultdict(list)
-            parsed = len(workouts)
-            for w in workouts:
-                w.user_id = user.id
-                repo.save_workout(w)
+            workouts = [
+                workout
+                for workout in parser.parse_sport_history(payload, sport_hint=sport_hint)
+                if workout.workout_id
+            ]
+            unique = {
+                (workout.source, workout.workout_id): workout
+                for workout in workouts
+            }
+            parsed = len(unique)
+            affected_days = set()
+            for workout in unique.values():
+                workout.user_id = user.id
+                affected_days.update(repo.save_workout(workout))
                 written += 1
-                if w.started_at:
-                    by_day[local_day(w.started_at)].append(w)
-            for day, ws in by_day.items():
-                training = TrainingRecord(
-                    user_id=user.id,
-                    date=day,
-                    workout_count=len(ws),
-                    total_duration=sum(w.duration for w in ws),
-                    total_load=sum(w.load for w in ws),
-                )
-                repo.save_daily(NormalizedDaily(user_id=user.id, date=day, training=training))
-                written += 1
+            if self._defer_workout_rebuild:
+                self._deferred_workout_days.update(affected_days)
+            else:
+                written += repo.rebuild_training_days(user.id, affected_days)
 
         elif stream == "workout_detail":
             parts = record.raw.source_key.split(":", 2)
             workout_id = parts[1] if len(parts) >= 2 else ""
-            workout = repo.workout(user.id, workout_id) if workout_id else None
+            workout = (
+                repo.workout(user.id, workout_id, source="zepp")
+                if workout_id else None
+            )
             summary_end = None
             if workout and isinstance(workout.data, dict):
                 summary_end = parser._parse_datetime_value(workout.data.get("ended_at"))
@@ -517,6 +647,7 @@ class SyncManager:
                 workout_id,
                 detail.model_dump(mode="json", exclude={"samples"}),
                 samples=detail.samples,
+                source="zepp",
             ))
 
         elif stream == "heart_rate":
@@ -577,7 +708,7 @@ class SyncManager:
             )
             for (file_type, file_id), indexed_files in ordered_groups:
                 existing = repo.dense_data_file_group(
-                    user.id, "second_heart_rate", file_id
+                    user.id, "second_heart_rate", file_id, source="zepp"
                 )
                 handled_keys = {
                     (row.start_utc, row.device_id)
@@ -639,7 +770,12 @@ class SyncManager:
                         else item.start_utc
                     )
                     mapping_files[(start_key, item.device_id or "")] = item
-                archive = self.fetcher.fetch_dense_file_archive(file_type, file_id)
+                try:
+                    archive = self.fetcher.fetch_dense_file_archive(file_type, file_id)
+                except ZeppAuthError as exc:
+                    raise DenseArchiveFetchError(
+                        str(exc), kind=exc.kind, needs_reauth=exc.needs_reauth
+                    ) from exc
                 self._dense_archives_remaining -= 1
                 decoded = decode_sec_hr_archive(archive, list(mapping_files.values()))
                 for sample in decoded.samples:
@@ -650,6 +786,24 @@ class SyncManager:
                 written += repo.save_metric_samples(decoded.samples)
 
         return written, parsed
+
+    def _stream_failure_report(
+        self,
+        stream: str,
+        error: Exception,
+        repo: HealthRepository | None,
+        user: User,
+    ) -> StreamReport:
+        if isinstance(error, PartialFetchError):
+            report = self._persist_records(stream, error.records, repo, user)
+            report.status = "failed"
+            report.capability = "unavailable"
+            report.needs_reauth = error.needs_reauth
+            report.message = str(error)
+            report.fetch_status = "failed"
+            report.error_kind = error.kind
+            return report
+        return self._failure_report(stream, error)
 
     def _failure_report(self, stream: str, error: Exception) -> StreamReport:
         msg = str(error)
@@ -684,7 +838,7 @@ class SyncManager:
 
     @staticmethod
     def _aggregate_stage(statuses: list[str]) -> str:
-        for status in ("success", "no_change", "failed", "unrecognized", "empty", "not_run", "never"):
+        for status in ("failed", "unrecognized", "success", "no_change", "empty", "not_run", "never"):
             if status in statuses:
                 return status
         return "never"
@@ -710,13 +864,8 @@ class SyncManager:
 
     @staticmethod
     def _error_kind(error: Exception, stage: str) -> str:
-        text = str(error).lower()
-        if isinstance(error, ZeppAuthError) and error.needs_reauth:
-            return "auth"
-        if "unavailable" in text or "not found" in text or "404" in text:
-            return "not_available"
-        if any(value in text for value in ("timeout", "timed out", "network", "connect")):
-            return "network"
+        if isinstance(error, ZeppAuthError):
+            return error.kind
         return "unrecognized_payload" if stage == "parse" else "unknown"
 
     def _save_stream_health(

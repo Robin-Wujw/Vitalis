@@ -717,7 +717,16 @@ class ZeppParser:
             ("running_distance", ("totalRunningDistance",), "m"),
             ("cycling_distance", ("totalCyclingDistance",), "m"),
         )
-        output: dict[tuple[date, str], DailyMetric] = {}
+        output: dict[tuple[date, str, str, str], DailyMetric] = {}
+
+        def store(item: DailyMetric) -> None:
+            output[(
+                item.date,
+                item.metric,
+                item.source_scope or "unknown",
+                item.device_id or "",
+            )] = item
+
         for item in ZeppParser._items(raw):
             if not isinstance(item, dict):
                 continue
@@ -745,10 +754,10 @@ class ZeppParser:
                     ):
                         reading = ZeppParser._first_number(latest, (key,))
                         if reading is not None and 0 <= reading <= 100:
-                            output[(day, metric)] = DailyMetric(
+                            store(DailyMetric(
                                 date=day, metric=metric, value=reading, unit="score",
                                 source_scope="user_fused",
-                            )
+                            ))
                 continue
             objects: list[tuple[dict, dict | None]] = []
             nested_samples = event_value.get("samples") if event_value else None
@@ -767,10 +776,10 @@ class ZeppParser:
                         value = ZeppParser._first_number(nested, keys)
                     if value is None:
                         continue
-                    output[(day, metric)] = DailyMetric(
+                    store(DailyMetric(
                         date=day, metric=metric, value=value, unit=unit,
                         source_scope="device" if device else "user_fused", device_id=device,
-                    )
+                    ))
                 if nested and item.get("eventType") == "readiness":
                     supplemental = (
                         ("skin_temp_delta", "skinTempCalibrated", "C", 0.01, -2.0, 2.0),
@@ -786,11 +795,11 @@ class ZeppParser:
                             continue
                         reading *= scale
                         if minimum <= reading <= maximum:
-                            output[(day, metric)] = DailyMetric(
+                            store(DailyMetric(
                                 date=day, metric=metric, value=reading, unit=unit,
                                 source_scope="device" if device else "unknown",
                                 device_id=device,
-                            )
+                            ))
         return list(output.values())
 
     @staticmethod
@@ -992,7 +1001,10 @@ class ZeppParser:
                         ("respiratory_rate_min", min(readings)),
                         ("respiratory_rate_max", max(readings)),
                     ):
-                        daily.append(DailyMetric(date=day, metric=metric, value=reading, unit="brpm", source_scope="device"))
+                        daily.append(DailyMetric(
+                            date=day, metric=metric, value=reading, unit="brpm",
+                            source_scope="unknown",
+                        ))
         elif label == "hrv_rmssd":
             samples.extend(ZeppParser.parse_hrv_samples(raw, "hrv_rmssd"))
         elif label == "lactate_threshold":
@@ -1022,6 +1034,8 @@ class ZeppParser:
                 subtype = item.get("subType")
                 day = ZeppParser._metric_date(item, None)
                 if subtype == "odi" and day:
+                    device_id = ZeppParser._device_id(item)
+                    source_scope = "device" if device_id else "unknown"
                     for metric, keys, unit in (
                         ("spo2_odi", ("odi",), "events/h"),
                         ("spo2_odi_events", ("odiNum",), "count"),
@@ -1031,14 +1045,14 @@ class ZeppParser:
                         if reading is not None:
                             daily.append(DailyMetric(
                                 date=day, metric=metric, value=reading, unit=unit,
-                                source_scope="device", device_id=ZeppParser._device_id(item),
+                                source_scope=source_scope, device_id=device_id,
                             ))
                     seconds = ZeppParser._first_number(item, ("cost",))
                     if seconds is not None and 60 <= seconds <= 86_400:
                         daily.append(DailyMetric(
                             date=day, metric="spo2_measured_minutes",
-                            value=round(seconds / 60), unit="min", source_scope="device",
-                            device_id=ZeppParser._device_id(item),
+                            value=round(seconds / 60), unit="min",
+                            source_scope=source_scope, device_id=device_id,
                         ))
                     continue
                 try:

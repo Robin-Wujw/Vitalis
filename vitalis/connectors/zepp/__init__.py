@@ -22,6 +22,7 @@ from datetime import date, datetime, time, timedelta, timezone
 
 from vitalis.config import settings
 from vitalis.models import AuthToken, MetricSample, NormalizedDaily, TrainingRecord, User
+from vitalis.time import local_today
 
 from ..base import ConnectorAuth, ConnectorSyncResult, HealthConnector
 from ..registry import register_connector
@@ -67,7 +68,18 @@ class ZeppConnector(HealthConnector):
             region_host: 区域主机（缺省中国区 api-mifitcn.zepp.com）
         """
         if not app_token:
-            raise ZeppAuthError("apptoken 不能为空")
+            raise ZeppAuthError("apptoken 不能为空", kind="invalid_request")
+        existing = repo.get_token(vitalis_user_id, self.source)
+        if (
+            existing is not None
+            and existing.source_user_id
+            and vendor_user_id
+            and existing.source_user_id != vendor_user_id
+        ):
+            raise ZeppAuthError(
+                "当前本地用户已绑定其他 Zepp 账号；请先断开并清理该用户数据",
+                kind="invalid_request",
+            )
         region = region_host.strip() or DEFAULT_REGION
         client = ZeppAPIClient(app_token=app_token, user_id=vendor_user_id or "me", region_host=region)
         # 验证：拉设备列表（或按需用 /v2/users/me/events 探测）
@@ -76,7 +88,7 @@ class ZeppConnector(HealthConnector):
         except ZeppAuthError as exc:
             raise ZeppAuthError(
                 f"token 验证失败：{exc}。请确认 apptoken/user_id 与区域正确",
-                needs_reauth=exc.needs_reauth,
+                kind=exc.kind,
             )
 
         auth = AuthToken(
@@ -97,7 +109,7 @@ class ZeppConnector(HealthConnector):
 
     def authorize_url(self) -> tuple[str, str]:
         if not self.mock:
-            raise ZeppAuthError("Zepp 使用 apptoken 导入，不走扫码；请用 POST /connect/zepp/token 导入")
+            raise ZeppAuthError("Zepp 使用 apptoken 导入，不走扫码；请用 POST /connect/zepp/token 导入", kind="invalid_request")
         from .client import generate_state
 
         state = generate_state()
@@ -105,12 +117,12 @@ class ZeppConnector(HealthConnector):
 
     def authorize_url_for(self, state: str) -> str:
         if not self.mock:
-            raise ZeppAuthError("Zepp 使用 apptoken 导入，不走扫码")
+            raise ZeppAuthError("Zepp 使用 apptoken 导入，不走扫码", kind="invalid_request")
         return self._mock_client.get_authorize_url(state)
 
     def exchange_and_save(self, repo, user_id: str, code: str, state: str = "") -> AuthToken:
         if not self.mock:
-            raise ZeppAuthError("真实模式请用 POST /connect/zepp/token 导入 apptoken")
+            raise ZeppAuthError("真实模式请用 POST /connect/zepp/token 导入 apptoken", kind="invalid_request")
         token: MockOAuthToken = self._mock_client.exchange_code(code)
         auth = AuthToken(
             user_id=user_id,
@@ -139,11 +151,12 @@ class ZeppConnector(HealthConnector):
     def sync_with_report(
         self, user: User, days: int = 730, repo=None,
         on_progress=None, decode_dense_files: bool = False,
+        window: FetchWindow | None = None,
     ) -> SyncReport:
         """完整同步并返回逐流报告（支持最长 730 天 / 2 年）。"""
         if self.mock:
             # mock 模式走简化逻辑
-            end = date.today()
+            end = local_today()
             start = end - timedelta(days=min(days, 14))
             dailies = self._mock_fetch(user, start, end)
             if repo:
@@ -160,12 +173,18 @@ class ZeppConnector(HealthConnector):
             fetcher,
             dense_archive_budget=DENSE_ARCHIVE_BATCH_SIZE if decode_dense_files else 0,
         )
-        return manager.sync_report(user, days, repo=repo, on_progress=on_progress)
+        return manager.sync_report(
+            user,
+            days,
+            repo=repo,
+            on_progress=on_progress,
+            window=window,
+        )
 
     def fetch(
         self, user: User, start: date | None = None, end: date | None = None, repo=None
     ) -> list[NormalizedDaily]:
-        end = end or date.today()
+        end = end or local_today()
         start = start or (end - timedelta(days=14))
         if start > end:
             start, end = end, start
@@ -173,9 +192,15 @@ class ZeppConnector(HealthConnector):
             return self._mock_fetch(user, start, end)
         if repo is None:
             raise AuthRequired("fetch 真实数据需要提供 repo 会话")
-        # Real mode synchronizes first, then rebuilds normalized daily source records.
-        days = (end - start).days + 1
-        self.sync_with_report(user, days=days, repo=repo)
+        # Real mode synchronizes the requested local-date interval before rebuilding.
+        window = FetchWindow.local_dates(start, end)
+        report = self.sync_with_report(user, repo=repo, window=window)
+        if not report.success:
+            raise ZeppAuthError(
+                report.message or "Zepp 同步失败或数据不完整",
+                kind=report.error_kind or "unknown",
+                needs_reauth=report.needs_reauth,
+            )
         return self._rebuild_dailies(repo, user.id, start, end)
 
     def _mock_fetch(self, user: User, start: date, end: date) -> list[NormalizedDaily]:

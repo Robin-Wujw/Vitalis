@@ -2,7 +2,7 @@
 
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from vitalis.api.deps import require_user_id
 from vitalis.intelligence.contracts import (
@@ -201,7 +201,10 @@ def complete_recommendation(
 ) -> RecommendationInstance:
     try:
         return IntelligenceAction().complete_recommendation(
-            user_id, recommendation_id, payload.workout_id
+            user_id,
+            recommendation_id,
+            payload.workout_id,
+            workout_source=payload.workout_source,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -263,11 +266,12 @@ def set_training_preferences(
 def confirm_strength_workout(
     workout_id: str,
     payload: StrengthWorkoutConfirmationInput,
+    source: str = Query(..., min_length=1, max_length=32),
     user_id: str = Depends(require_user_id),
 ) -> list[StrengthExerciseRecord]:
     try:
         return IntelligenceAction().confirm_strength_workout(
-            user_id, workout_id, payload
+            user_id, workout_id, payload, workout_source=source
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

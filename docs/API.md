@@ -38,12 +38,12 @@ semantics.
 | GET | `/intelligence/personal-associations?day=YYYY-MM-DD` | Read 60/90-day association evaluations |
 | GET | `/intelligence/timeline?start=&end=&limit=` | Read typed health timeline summaries |
 | GET | `/intelligence/recommendations/{id}` | Read one recommendation instance |
-| POST | `/intelligence/recommendations/{id}/complete` | Explicitly link a recommendation to a completed workout |
-| POST | `/intelligence/feedback` | Record RPE, fatigue, mental state, soreness, or notes |
+| POST | `/intelligence/recommendations/{id}/complete` | Link a recommendation using `workout_source` plus `workout_id` |
+| POST | `/intelligence/feedback` | Record feedback; workout-linked input requires `workout_source` plus `workout_id` |
 | GET | `/intelligence/feedback?start=&end=` | Read subjective feedback |
 | GET | `/intelligence/training-preferences` | Read health-first running/strength targets, rotation, weather fallback, and constraints |
 | PUT | `/intelligence/training-preferences` | Replace rotation, treadmill/weather policy, weekly availability, experience, equipment, and pain/injury state |
-| POST | `/intelligence/workouts/{workout_id}/strength-exercises` | Replace confirmed exercises and session focus for a user-owned strength workout |
+| POST | `/intelligence/workouts/{workout_id}/strength-exercises?source=` | Replace confirmed exercises for one source-qualified strength workout |
 | POST | `/intelligence/events/{id}/acknowledge` | Acknowledge a user-scoped event |
 
 ## Health Data and Synchronization
@@ -55,9 +55,9 @@ semantics.
 | GET | `/health/token-status` | Read credential state and next synchronization time |
 | GET | `/health/range?from=&to=&granularity=` | Read 180d/90d/30d/7d/1d aggregate blocks |
 | GET | `/health/workouts?from=&to=` | List workout summaries and detail availability |
-| GET | `/health/workouts/{workout_id}` | Read current v3 workout detail and ordered typed metric samples |
-| GET | `/health/metrics/{metric}?from=&to=` | Read timestamped measurements and provenance |
-| GET | `/health/daily-metrics?metric=&from=&to=` | Read sparse daily metrics |
+| GET | `/health/workouts/{workout_id}?source=` | Read current v4.0 workout detail and source-isolated typed samples |
+| GET | `/health/metrics/{metric}?from=&to=&resolution=` | Read timestamped measurements; raw/hour/day points retain source, scope, device, and unit |
+| GET | `/health/daily-metrics?metric=&from=&to=` | Read sparse daily metrics with source provenance |
 | GET | `/health/dense-files/second_heart_rate?from=&to=` | Read high-frequency file coverage without file IDs |
 | POST | `/health/sync?days=&decode_dense_files=false` | Sync health data; dense archives are index-only unless one-file decoding is explicitly enabled |
 
@@ -94,6 +94,7 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/feedback' \
   -H 'X-User-Id: <local-user-id>' \
   -d '{
     "date": "2026-08-28",
+    "workout_source": "zepp",
     "workout_id": "<workout-id>",
     "session_rpe": 7,
     "physical_fatigue": 3
@@ -104,7 +105,7 @@ Confirm the exercises in one strength workout. This replaces that workout's curr
 exercise list and does not infer old records:
 
 ```bash
-curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/strength-exercises' \
+curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/strength-exercises?source=zepp' \
   -H 'Content-Type: application/json' \
   -H 'X-User-Id: <local-user-id>' \
   -d '{
@@ -128,8 +129,16 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/st
   snapshots share one AnalysisRun identity.
 - Facts, inferences, and actions remain distinct in period profiles.
 - Missing measurements remain null or produce explicit insufficient-data state.
+- Canonical workout identity is `(source, workout_id)`. Detail reads, recommendation
+  completion, feedback, strength confirmation, timeline references, and analysis outputs
+  retain both fields.
 - Workout-detail samples use `metric`, `value`, and `unit`; the removed heart-rate-only
   sample shape is not retained as an alias.
+- Metric `1h` and `1d` aggregation never combines different source, source scope, device,
+  or unit streams. Daily buckets use `VITALIS_TIMEZONE`, not UTC calendar dates, and
+  aggregate queries stream the complete range rather than applying the raw 50,000-row cap.
+- Training-response overlap identities use `source:workout_id`; comparable-run baselines
+  return parallel workout source and ID arrays.
 - Exact strength exercises come only from explicit vendor sets or user confirmation.
   Heart rate can estimate work/rest structure but not exercise identity or load.
 - `decision.action_plan` contains one primary session and at most one optional addition

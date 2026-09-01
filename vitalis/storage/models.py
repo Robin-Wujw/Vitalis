@@ -43,7 +43,10 @@ class Device(Base):
 
 class SleepRecord(Base):
     __tablename__ = "sleep_records"
-    __table_args__ = ({"info": {"timescale": True}},)
+    __table_args__ = (
+        UniqueConstraint("user_id", "date", name="uq_sleep_record_day"),
+        {"info": {"timescale": True}},
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(String(64), index=True)
@@ -53,7 +56,10 @@ class SleepRecord(Base):
 
 class ActivityRecord(Base):
     __tablename__ = "activity_records"
-    __table_args__ = ({"info": {"timescale": True}},)
+    __table_args__ = (
+        UniqueConstraint("user_id", "date", name="uq_activity_record_day"),
+        {"info": {"timescale": True}},
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(String(64), index=True)
@@ -63,7 +69,10 @@ class ActivityRecord(Base):
 
 class TrainingRecord(Base):
     __tablename__ = "training_records"
-    __table_args__ = ({"info": {"timescale": True}},)
+    __table_args__ = (
+        UniqueConstraint("user_id", "date", name="uq_training_record_day"),
+        {"info": {"timescale": True}},
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(String(64), index=True)
@@ -77,7 +86,7 @@ class MetricSample(Base):
     __tablename__ = "metric_samples"
     __table_args__ = (
         UniqueConstraint(
-            "user_id", "source", "metric", "timestamp", "device_id",
+            "user_id", "source", "metric", "timestamp", "source_scope", "device_id",
             name="uq_metric_sample",
         ),
         Index(
@@ -105,7 +114,10 @@ class DailyMetric(Base):
 
     __tablename__ = "daily_metrics"
     __table_args__ = (
-        UniqueConstraint("user_id", "source", "date", "metric", name="uq_daily_metric"),
+        UniqueConstraint(
+            "user_id", "source", "date", "metric", "source_scope", "device_id",
+            name="uq_daily_metric",
+        ),
         {"info": {"timescale": True}},
     )
 
@@ -117,7 +129,7 @@ class DailyMetric(Base):
     value: Mapped[float] = mapped_column(Float)
     unit: Mapped[str] = mapped_column(String(24), default="")
     source_scope: Mapped[str] = mapped_column(String(24), default="unknown")
-    device_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    device_id: Mapped[str] = mapped_column(String(128), default="", nullable=False)
 
 
 class DenseDataFile(Base):
@@ -173,7 +185,7 @@ class WorkoutMetricSample(Base):
     __tablename__ = "workout_metric_samples"
     __table_args__ = (
         UniqueConstraint(
-            "user_id", "workout_id", "metric", "timestamp",
+            "user_id", "source", "workout_id", "metric", "timestamp",
             name="uq_workout_metric_sample",
         ),
         {"info": {"timescale": True}},
@@ -181,6 +193,7 @@ class WorkoutMetricSample(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(String(64), index=True)
+    source: Mapped[str] = mapped_column(String(32), default="zepp")
     workout_id: Mapped[str] = mapped_column(String(128), index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime, index=True)
     metric: Mapped[str] = mapped_column(String(48), index=True)
@@ -222,12 +235,14 @@ class StrengthExercise(Base):
     __tablename__ = "strength_exercises"
     __table_args__ = (
         UniqueConstraint(
-            "user_id", "workout_id", "order", name="uq_strength_exercise_order"
+            "user_id", "workout_source", "workout_id", "order",
+            name="uq_strength_exercise_order",
         ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(64), index=True)
+    workout_source: Mapped[str] = mapped_column(String(32), index=True)
     workout_id: Mapped[str] = mapped_column(String(128), index=True)
     order: Mapped[int] = mapped_column(Integer)
     exercise_name: Mapped[str] = mapped_column(String(100))
@@ -350,7 +365,8 @@ class RecommendationInstance(Base):
     __tablename__ = "recommendation_instances"
     __table_args__ = (
         UniqueConstraint(
-            "user_id", "linked_workout_id", name="uq_recommendation_completed_workout"
+            "user_id", "linked_workout_source", "linked_workout_id",
+            name="uq_recommendation_completed_workout",
         ),
     )
 
@@ -359,6 +375,7 @@ class RecommendationInstance(Base):
     user_id: Mapped[str] = mapped_column(String(64), index=True)
     date: Mapped[date] = mapped_column(Date, index=True)
     decision: Mapped[dict] = mapped_column(JSON)
+    linked_workout_source: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     linked_workout_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     completion_status: Mapped[str] = mapped_column(String(16), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime)
@@ -373,6 +390,7 @@ class SubjectiveFeedback(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(64), index=True)
     date: Mapped[date] = mapped_column(Date, index=True)
+    workout_source: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     workout_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     recommendation_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     session_rpe: Mapped[float | None] = mapped_column(Float, nullable=True)

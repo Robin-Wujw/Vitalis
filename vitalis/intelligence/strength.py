@@ -92,11 +92,13 @@ def normalize_exercise(
     order: int,
     value: StrengthExerciseInput,
     session_focus: str | None = None,
+    workout_source: str = "zepp",
 ) -> StrengthExerciseRecord:
     pattern, muscles = classify_exercise(value.exercise_id, value.exercise_name)
     return StrengthExerciseRecord(
         id=uuid4().hex,
         user_id=user_id,
+        workout_source=workout_source,
         workout_id=workout_id,
         order=order,
         exercise_name=value.exercise_name.strip(),
@@ -206,8 +208,12 @@ class StrengthAnalyzer:
                     "心率不能区分卧推、深蹲或其他具体动作。",
                 ],
             ))
+        workout_id = str(workout.get("workout_id") or "")
         feedback = sorted(
-            raw.feedback_by_workout.get(str(workout.get("workout_id") or ""), []),
+            raw.feedback_by_workout.get(
+                (str(workout.get("source") or "zepp"), workout_id),
+                raw.feedback_by_workout.get(workout_id, []),
+            ),
             key=lambda item: item.created_at,
         )
         latest = feedback[-1] if feedback else None
@@ -221,6 +227,7 @@ class StrengthAnalyzer:
             limitations.append("心率或圈段结构不足，未估计工作段和休息段。")
         return StrengthSessionAnalysis(
             workout_id=str(workout.get("workout_id") or ""),
+            source=str(workout.get("source") or "zepp"),
             date=self._date(workout),
             duration_minutes=max(int((workout.get("data") or {}).get("duration") or 0), 0),
             focus=focus,
@@ -256,6 +263,7 @@ class StrengthAnalyzer:
         detail = workout.get("detail") or {}
         items = detail.get("strength_sets") or []
         output = []
+        workout_source = str(workout.get("source") or "zepp")
         workout_id = str(workout.get("workout_id") or "")
         for order, item in enumerate(items, start=1):
             name = item.get("exercise_name")
@@ -265,7 +273,7 @@ class StrengthAnalyzer:
             pattern, muscles = classify_exercise(exercise_id, name)
             confidence = ConfidenceBand.HIGH if pattern != "unknown" else ConfidenceBand.MODERATE
             stable_id = sha256(
-                f"{user_id}|{workout_id}|vendor|{order}".encode("utf-8")
+                f"{user_id}|{workout_source}|{workout_id}|vendor|{order}".encode("utf-8")
             ).hexdigest()[:32]
             output.append(StrengthExerciseRecord(
                 id=stable_id,

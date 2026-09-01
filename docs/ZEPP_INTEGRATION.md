@@ -32,7 +32,9 @@ The pairing implementation:
 
 Temporary cookie visibility or network failures do not automatically disconnect the
 account. The extension calls `/connect/zepp/link/validate` to verify the server-side
-credential state before reporting a loss of connection.
+credential state before reporting a loss of connection. A local Vitalis user cannot be
+rebound to a different Zepp vendor account without first disconnecting and clearing that
+user's data, preventing two vendor accounts from sharing one analysis history.
 
 ## Credential Lifecycle
 
@@ -157,3 +159,30 @@ persisting device authentication material. Their HRV values remain separate: Vit
 compares each stream with its own baseline and fuses only the resulting directions.
 Upper-arm evidence can choose Helio as the display stream when equivalent baselines are
 available, but it does not override cross-device disagreement or imply ECG equivalence.
+
+## Canonical Persistence and Sync Outcomes
+
+Workout history can repeat the same day or workout across sport endpoints, pages, and
+overlapping synchronization windows. Vitalis first upserts each stable workout identity,
+then rebuilds every affected `training_records` day from the complete canonical workout
+table across all connector sources using `VITALIS_TIMEZONE`. Page order therefore cannot
+replace a multi-workout day, equal workout IDs from different sources remain separate, and
+a corrected start timestamp updates both the old and new local dates.
+
+Timestamped and daily metric identities include `source`, `source_scope`, and `device_id`;
+two connectors, devices, or semantically different source scopes never overwrite or
+aggregate into one another merely because their metric and time match. Raw, hourly, daily,
+and sparse-daily API results expose that provenance. Daily timestamped-metric buckets use
+`VITALIS_TIMEZONE`; missing device attribution remains absent at API and analysis boundaries.
+
+HTTP 200 empty payloads, unsupported endpoints, authentication rejection, transient
+network/service failure, and non-empty unrecognized payloads are separate outcomes. Only
+an explicit `not_available` endpoint can be skipped as an optional capability and is
+recorded as a substream diagnostic. Within one capability, all chunks must be available or
+all unavailable: mixed successful and unavailable chunks are partial coverage and block
+complete synchronization. Successful chunks completed before a later terminal error are
+persisted before the stream is marked failed. Explicit local-date requests are serialized
+back to vendor date parameters in `VITALIS_TIMEZONE`, not from their UTC boundary date.
+A real optional-stream or dense-file network/authentication failure is retained as failed
+and is never reported as an empty account. Authentication failures mark the browser link
+for login; transient failures keep the connection and remain retryable.

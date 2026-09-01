@@ -270,7 +270,7 @@ def validate_linked_credentials(
         with session_scope() as db:
             repo = HealthRepository(db)
             if repo.get_token(user_id, "zepp") is None:
-                raise ZeppAuthError("Zepp 凭据不存在", needs_reauth=True)
+                raise ZeppAuthError("Zepp 凭据不存在", kind="auth")
             connector._client_for(repo, User(id=user_id)).verify()
             repo.mark_browser_link_verified(link_digest, "云端登录凭据仍然有效")
     except RuntimeError as exc:
@@ -368,13 +368,32 @@ def _device_linked_user(authorization: str) -> tuple[str, str, str]:
 def _initial_pairing_sync(
     user_id: str, sync_days: int, pairing_id: str, link_digest: str
 ) -> None:
+    sync_succeeded = False
+    needs_reauth = False
     try:
         connector: ZeppConnector = get_connector("zepp")  # type: ignore[assignment]
         with session_scope() as db:
             report = connector.sync_with_report(
                 User(id=user_id), days=sync_days, repo=HealthRepository(db)
             )
-        message = f"Zepp 已连接，首次同步写入 {report.records_written} 条记录"
+        sync_succeeded = report.success
+        needs_reauth = report.needs_reauth
+        message = (
+            f"Zepp 已连接，首次同步写入 {report.records_written} 条记录"
+            if sync_succeeded
+            else (
+                "Zepp 登录已失效，请重新登录"
+                if needs_reauth
+                else "Zepp 已连接，但首次同步不完整，将稍后重试"
+            )
+        )
+    except ZeppAuthError as exc:
+        needs_reauth = exc.needs_reauth
+        message = (
+            f"Zepp 登录已失效，请重新登录：{exc}"
+            if needs_reauth
+            else "Zepp 已连接，但首次同步失败，将稍后重试"
+        )
     except Exception:
         message = "Zepp 已连接，但首次同步失败，将稍后重试"
     with session_scope() as db:
@@ -382,7 +401,12 @@ def _initial_pairing_sync(
         row = repo.pairing_session(pairing_id)
         if row and row.status == "connected":
             row.message = message[:512]
-        repo.mark_browser_link_synced(link_digest, message)
+        if sync_succeeded:
+            repo.mark_browser_link_synced(link_digest, message)
+        elif needs_reauth:
+            repo.mark_browser_link_reauth(link_digest, message)
+        else:
+            repo.mark_browser_link_sync_failed(link_digest, message)
 
 
 def _linked_incremental_sync(user_id: str, link_digest: str) -> None:
@@ -392,14 +416,32 @@ def _linked_incremental_sync(user_id: str, link_digest: str) -> None:
             report = connector.sync_with_report(
                 User(id=user_id), days=7, repo=HealthRepository(db)
             )
-        message = f"登录凭据已更新，同步写入 {report.records_written} 条记录"
+        message = (
+            f"登录凭据已更新，同步写入 {report.records_written} 条记录"
+            if report.success
+            else "登录凭据有效，但数据同步不完整，将稍后重试"
+        )
         with session_scope() as db:
-            HealthRepository(db).mark_browser_link_synced(link_digest, message)
+            repo = HealthRepository(db)
+            if report.success:
+                repo.mark_browser_link_synced(link_digest, message)
+            elif report.needs_reauth:
+                repo.mark_browser_link_reauth(
+                    link_digest, "同步验证失败，请重新登录"
+                )
+            else:
+                repo.mark_browser_link_sync_failed(link_digest, message)
     except ZeppAuthError as exc:
         with session_scope() as db:
-            HealthRepository(db).mark_browser_link_reauth(
-                link_digest, f"同步验证失败，请重新登录：{exc}"
-            )
+            repo = HealthRepository(db)
+            if exc.needs_reauth:
+                repo.mark_browser_link_reauth(
+                    link_digest, f"同步验证失败，请重新登录：{exc}"
+                )
+            else:
+                repo.mark_browser_link_sync_failed(
+                    link_digest, "登录状态有效，但数据同步失败，将稍后重试"
+                )
     except Exception:
         with session_scope() as db:
             HealthRepository(db).mark_browser_link_sync_failed(

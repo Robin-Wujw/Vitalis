@@ -202,8 +202,10 @@ class IntelligenceCommand:
                     user_id, target - timedelta(days=179), target
                 )
                 for item in response_feedback:
-                    if item.workout_id:
-                        raw.feedback_by_workout.setdefault(item.workout_id, []).append(item)
+                    if item.workout_id and item.workout_source:
+                        raw.feedback_by_workout.setdefault(
+                            (item.workout_source, item.workout_id), []
+                        ).append(item)
                 weekly_feedback = [
                     item.model_dump(mode="json")
                     for item in response_feedback
@@ -214,9 +216,12 @@ class IntelligenceCommand:
                     for item in response_feedback
                     if target - timedelta(days=27) <= item.date <= target
                 ]
-                recommendation_by_workout = repo.recommendations_for_workouts(
+                recommendation_by_workout = repo.recommendations_for_workout_keys(
                     user_id,
-                    [item["workout_id"] for item in raw.workouts if item.get("workout_id")],
+                    [
+                        (str(item.get("source") or "zepp"), item["workout_id"])
+                        for item in raw.workouts if item.get("workout_id")
+                    ],
                 )
 
             daily = self._build_daily_from_raw(run.id, raw, identity)
@@ -599,11 +604,15 @@ class IntelligenceAction:
             return HealthRepository(db).acknowledge_health_event(user_id, event_id)
 
     def complete_recommendation(
-        self, user_id: str, recommendation_id: str, workout_id: str
+        self,
+        user_id: str,
+        recommendation_id: str,
+        workout_id: str,
+        workout_source: str = "zepp",
     ) -> RecommendationInstance:
         with session_scope() as db:
             return HealthRepository(db).link_recommendation(
-                user_id, recommendation_id, workout_id
+                user_id, recommendation_id, workout_id, workout_source
             )
 
     def log_feedback(
@@ -614,7 +623,11 @@ class IntelligenceAction:
         target = feedback_input.date or local_today()
         with session_scope() as db:
             repo = HealthRepository(db)
-            if feedback_input.workout_id and not repo.workout(user_id, feedback_input.workout_id):
+            if feedback_input.workout_id and not repo.workout(
+                user_id,
+                feedback_input.workout_id,
+                source=feedback_input.workout_source or "",
+            ):
                 raise ValueError("指定训练不存在或不属于当前用户")
             if feedback_input.recommendation_id:
                 recommendation = repo.recommendation(
@@ -622,7 +635,10 @@ class IntelligenceAction:
                 )
                 if recommendation is None:
                     raise ValueError("训练建议不存在或不属于当前用户")
-                if recommendation.linked_workout_id != feedback_input.workout_id:
+                if (
+                    recommendation.linked_workout_source != feedback_input.workout_source
+                    or recommendation.linked_workout_id != feedback_input.workout_id
+                ):
                     raise ValueError("训练反馈与建议关联的训练不一致")
             feedback = SubjectiveFeedback(
                 id=uuid4().hex,
@@ -637,10 +653,11 @@ class IntelligenceAction:
         user_id: str,
         workout_id: str,
         confirmation: StrengthWorkoutConfirmationInput,
+        workout_source: str = "zepp",
     ) -> list[StrengthExerciseRecord]:
         with session_scope() as db:
             repo = HealthRepository(db)
-            workout = repo.workout(user_id, workout_id)
+            workout = repo.workout(user_id, workout_id, source=workout_source)
             if workout is None:
                 raise ValueError("指定训练不存在或不属于当前用户")
             data = workout.data or {}
@@ -653,10 +670,13 @@ class IntelligenceAction:
                     order,
                     item,
                     confirmation.session_focus,
+                    workout_source=workout_source,
                 )
                 for order, item in enumerate(confirmation.exercises, start=1)
             ]
-            return repo.replace_strength_exercises(user_id, workout_id, exercises)
+            return repo.replace_strength_exercises(
+                user_id, workout_id, exercises, workout_source
+            )
 
     def set_training_preferences(
         self, user_id: str, preferences: TrainingPreferenceInput

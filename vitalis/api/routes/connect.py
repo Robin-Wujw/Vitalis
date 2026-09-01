@@ -18,6 +18,7 @@ from vitalis.connectors import get_connector
 from vitalis.connectors.zepp import AuthRequired, ZeppAuthError, ZeppConnector
 from vitalis.services import SyncService
 from vitalis.storage import HealthRepository, session_scope
+from vitalis.time import local_today
 from vitalis.api.deps import require_user_id
 
 router = APIRouter(prefix="/connect", tags=["connect"])
@@ -349,10 +350,13 @@ def zepp_callback(
             repo = HealthRepository(db)
             user_id = repo.consume_oauth_state(state)
             if user_id is None:
-                raise ZeppAuthError("state 无效或已被使用，请重新发起扫码")
+                raise ZeppAuthError(
+                    "state 无效或已被使用，请重新发起扫码",
+                    kind="invalid_request",
+                )
             auth = connector.exchange_and_save(repo, user_id, code)
         # 授权事务已提交（释放 SQLite 写锁），再执行数据同步
-        sync = SyncService(connector).sync_user(user_id, start=date.today() - timedelta(days=7))
+        sync = SyncService(connector).sync_user(user_id, start=local_today() - timedelta(days=7))
         if "text/html" in request.headers.get("accept", "*/*"):
             base = str(request.url).split("/api/v1")[0]
             body = f"""<!DOCTYPE html>
@@ -460,21 +464,32 @@ def _probe_region_hosts(user_id: str, app_token: str, region_hint: str | None, s
             client.verify()
             with lock:
                 if result["host"] is None:
-                    result["host"] = host
+                    result["host"] = client.region_host
         except Exception:
             pass
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(hosts), 6)) as executor:
-        futures = [executor.submit(try_host, h) for h in hosts]
-        # 等第一个成功或全部超时（45秒）
-        for future in concurrent.futures.as_completed(futures, timeout=45):
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=min(len(hosts), 6))
+    futures = [executor.submit(try_host, host) for host in hosts]
+    try:
+        # Wait for the first success or the total probe budget.
+        for _future in concurrent.futures.as_completed(futures, timeout=45):
             if result["host"]:
                 break
+    except concurrent.futures.TimeoutError as exc:
+        raise ZeppAuthError(
+            "Zepp 区域主机探测超时，请稍后重试",
+            kind="timeout",
+        ) from exc
+    finally:
+        for future in futures:
+            future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
 
     if result["host"] is None:
         raise ZeppAuthError(
             f"未能在允许的区域主机上验证账号。尝试了 {len(hosts)} 个主机，"
-            "请确认已登录 watchface.zepp.com 且凭据未过期。"
+            "请确认已登录 watchface.zepp.com 且凭据未过期。",
+            kind="vendor_response",
         )
     return result["host"]
 
@@ -516,7 +531,8 @@ def import_zepp_token(req: ImportTokenRequest, vitalis_user: str = Depends(requi
             saved_host=req.region_host or None,
         )
     except ZeppAuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        status_code = 503 if exc.kind in {"network", "service", "timeout"} else 400
+        raise HTTPException(status_code=status_code, detail=str(exc))
 
     # 3. 保存凭据
     try:
@@ -564,10 +580,15 @@ def import_zepp_token(req: ImportTokenRequest, vitalis_user: str = Depends(requi
                 "records_written": report.records_written,
                 "message": report.message,
             }
-            from vitalis.services import IntelligenceCommand
-            result = IntelligenceCommand().analyze(vitalis_user)
-            response["analysis_run_id"] = result.run.id
-            response["profile"] = result.daily.model_dump(mode="json")
+            if report.success:
+                from vitalis.services import IntelligenceCommand
+                result = IntelligenceCommand().analyze(vitalis_user)
+                response["analysis_run_id"] = result.run.id
+                response["profile"] = result.daily.model_dump(mode="json")
+            else:
+                response["status"] = (
+                    "needs_reauth" if report.needs_reauth else "sync_incomplete"
+                )
         except Exception as exc:
             response["sync_error"] = str(exc)
     return response
@@ -641,10 +662,15 @@ def connect_zepp(req: ConnectRequest, user_id: str = Depends(require_user_id)) -
     connector.authenticate()
 
     response = {"status": "connected", "source": "zepp", "user_id": user_id}
+    sync_succeeded = True
     if connector.mock:
         response["auth_mode"] = "mock"
 
     if req.sync_history:
+        sync_end = req.end or local_today()
+        sync_start = req.start or (
+            sync_end - timedelta(days=req.sync_days - 1)
+        )
         try:
             with session_scope() as db:
                 repo = HealthRepository(db)
@@ -660,26 +686,39 @@ def connect_zepp(req: ConnectRequest, user_id: str = Depends(require_user_id)) -
                 from vitalis.models import User
                 if connector.mock:
                     dailies = connector.fetch(
-                        User(id=user_id), start=req.start, end=req.end, repo=repo
+                        User(id=user_id), start=sync_start, end=sync_end, repo=repo
                     )
                     for d in dailies:
                         repo.save_daily(d)
                     response["sync"] = {
                         "days_synced": len(dailies),
-                        "start": str(req.start or date.today() - timedelta(days=req.sync_days - 1)),
-                        "end": str(req.end or date.today()),
+                        "start": str(sync_start),
+                        "end": str(sync_end),
                     }
                 else:
+                    from vitalis.connectors.zepp.fetcher import FetchWindow
                     report = connector.sync_with_report(
-                        User(id=user_id), days=req.sync_days, repo=repo
+                        User(id=user_id),
+                        repo=repo,
+                        window=FetchWindow.local_dates(sync_start, sync_end),
                     )
+                    sync_succeeded = report.success
+                    if not report.success:
+                        response["status"] = (
+                            "needs_reauth" if report.needs_reauth else "sync_incomplete"
+                        )
                     response["sync"] = {
                         "success": report.success,
                         "streams": [
                             {
                                 "stream": s.stream,
                                 "status": s.status,
+                                "fetch_status": s.fetch_status,
+                                "parse_status": s.parse_status,
+                                "write_status": s.write_status,
                                 "records_written": s.records_written,
+                                "error_kind": s.error_kind,
+                                "needs_reauth": s.needs_reauth,
                                 "message": s.message,
                             }
                             for s in report.streams
@@ -687,14 +726,15 @@ def connect_zepp(req: ConnectRequest, user_id: str = Depends(require_user_id)) -
                         "records_written": report.records_written,
                         "message": report.message,
                     }
-            # 同步提交后显式运行分析命令。
-            from vitalis.services import IntelligenceCommand
-            try:
-                result = IntelligenceCommand().analyze(user_id, req.end)
-                response["analysis_run_id"] = result.run.id
-                response["profile"] = result.daily.model_dump(mode="json")
-            except Exception as exc:
-                response["profile"] = {"error": str(exc)}
+            # 只有完整同步后才运行分析，避免基于旧数据或部分写入推送结论。
+            if sync_succeeded:
+                from vitalis.services import IntelligenceCommand
+                try:
+                    result = IntelligenceCommand().analyze(user_id, sync_end)
+                    response["analysis_run_id"] = result.run.id
+                    response["profile"] = result.daily.model_dump(mode="json")
+                except Exception as exc:
+                    response["profile"] = {"error": str(exc)}
         except AuthRequired as exc:
             return {"status": "scan_required", "user_id": user_id, "detail": str(exc)}
         except Exception as exc:
@@ -712,6 +752,17 @@ def connect_generic(source: str, req: ConnectRequest, user_id: str = Depends(req
         return {"status": "error", "detail": str(exc)}
     connector.authenticate()
     if req.sync_history:
-        response = SyncService(connector).sync_user(user_id, start=req.start, end=req.end)
+        try:
+            response = SyncService(connector).sync_user(
+                user_id, start=req.start, end=req.end
+            )
+        except ZeppAuthError as exc:
+            return {
+                "status": "needs_reauth" if exc.needs_reauth else "sync_incomplete",
+                "source": source,
+                "user_id": user_id,
+                "error_kind": exc.kind,
+                "detail": str(exc),
+            }
         return {"status": "connected", "source": source, "user_id": user_id, "sync": response}
     return {"status": "connected", "source": source, "user_id": user_id}

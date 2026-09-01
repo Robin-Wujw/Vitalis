@@ -41,7 +41,7 @@ class TrainingResponseEngine:
         analysis_run_id: str,
         raw: RawDailyProfile,
         feedback: list[SubjectiveFeedback],
-        recommendation_by_workout: dict[str, str],
+        recommendation_by_workout: dict[tuple[str, str] | str, str],
         history_days: int = 90,
     ) -> list[TrainingResponse]:
         start = raw.day - timedelta(days=history_days - 1)
@@ -51,24 +51,42 @@ class TrainingResponseEngine:
             and isinstance(item.get("local_day"), date)
             and start <= item["local_day"] < raw.day
         ]
-        workout_ids_by_day: dict[date, list[str]] = defaultdict(list)
+        workout_keys_by_day: dict[date, list[tuple[str, str]]] = defaultdict(list)
         for item in workouts:
-            workout_ids_by_day[item["local_day"]].append(item["workout_id"])
-        feedback_by_workout: dict[str, list[SubjectiveFeedback]] = defaultdict(list)
+            workout_keys_by_day[item["local_day"]].append(
+                (str(item.get("source") or "zepp"), item["workout_id"])
+            )
+        feedback_by_workout: dict[
+            tuple[str, str], list[SubjectiveFeedback]
+        ] = defaultdict(list)
         for item in feedback:
             if item.workout_id:
-                feedback_by_workout[item.workout_id].append(item)
+                feedback_by_workout[
+                    (item.workout_source or "zepp", item.workout_id)
+                ].append(item)
 
         return [
             self._one(
                 analysis_run_id,
                 raw,
                 workout,
-                workout_ids_by_day,
-                feedback_by_workout.get(workout["workout_id"], []),
-                recommendation_by_workout.get(workout["workout_id"]),
+                workout_keys_by_day,
+                feedback_by_workout.get(
+                    (str(workout.get("source") or "zepp"), workout["workout_id"]),
+                    [],
+                ),
+                recommendation_by_workout.get(
+                    (str(workout.get("source") or "zepp"), workout["workout_id"])
+                ) or recommendation_by_workout.get(workout["workout_id"]),
             )
-            for workout in sorted(workouts, key=lambda item: (item["local_day"], item["workout_id"]))
+            for workout in sorted(
+                workouts,
+                key=lambda item: (
+                    item["local_day"],
+                    str(item.get("source") or "zepp"),
+                    item["workout_id"],
+                ),
+            )
         ]
 
     def _one(
@@ -76,7 +94,7 @@ class TrainingResponseEngine:
         analysis_run_id: str,
         raw: RawDailyProfile,
         workout: dict,
-        workout_ids_by_day: dict[date, list[str]],
+        workout_keys_by_day: dict[date, list[tuple[str, str]]],
         feedback: list[SubjectiveFeedback],
         recommendation_id: str | None,
     ) -> TrainingResponse:
@@ -96,10 +114,17 @@ class TrainingResponseEngine:
 
         for offset in (1, 2, 3):
             response_day = workout_day + timedelta(days=offset)
-            overlaps = sorted(
-                item for item in workout_ids_by_day.get(response_day, [])
-                if item != workout["workout_id"]
+            workout_key = (
+                str(workout.get("source") or "zepp"),
+                workout["workout_id"],
             )
+            overlap_keys = sorted(
+                item for item in workout_keys_by_day.get(response_day, [])
+                if item != workout_key
+            )
+            overlaps = [
+                f"{source}:{workout_id}" for source, workout_id in overlap_keys
+            ]
             all_overlaps.update(overlaps)
             observations: list[ResponseMetricObservation] = []
             if response_day > raw.day:
@@ -135,6 +160,7 @@ class TrainingResponseEngine:
             user_id=raw.user_id,
             exposure=WorkoutExposure(
                 workout_id=workout["workout_id"],
+                source=str(workout.get("source") or "zepp"),
                 date=workout_day,
                 type=str(data.get("type") or "other"),
                 sport_mode=str(data.get("sport_mode") or "unknown"),

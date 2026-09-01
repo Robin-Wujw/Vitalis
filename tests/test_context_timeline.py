@@ -61,6 +61,7 @@ def test_timeline_projects_typed_summaries_without_raw_samples():
         user_id,
         SubjectiveFeedbackInput(
             date=TARGET,
+            workout_source="zepp",
             workout_id=workout_id,
             recommendation_id=first.recommendation.id,
             session_rpe=6,

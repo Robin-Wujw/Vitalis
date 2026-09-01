@@ -10,6 +10,7 @@ from datetime import date, timedelta
 from vitalis.connectors import HealthConnector
 from vitalis.models import NormalizedDaily
 from vitalis.storage import HealthRepository, session_scope
+from vitalis.time import local_today
 
 
 class SyncService:
@@ -32,7 +33,7 @@ class SyncService:
         2. connector.fetch 拉取并转换为 Vitalis Schema
         3. repository.save_daily 写入各表
         """
-        end = end or date.today()
+        end = end or local_today()
         start = start or (end - timedelta(days=14))
 
         from vitalis.models import User
@@ -63,7 +64,7 @@ class SyncService:
         user = User(id=user_id, name=user_id)
         with session_scope() as db:
             repo = HealthRepository(db)
-            end = end or date.today()
+            end = end or local_today()
             start = start or (end - timedelta(days=7))
             dailies = self.connector.fetch(user, start, end, repo=repo)
         return [d.model_dump(mode="json") for d in dailies]

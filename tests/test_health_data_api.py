@@ -2,6 +2,7 @@
 
 from datetime import date, datetime, timedelta, timezone
 
+from vitalis.intelligence.profile import ProfileLoader
 from vitalis.models import (
     DailyMetric,
     DenseDataFile,
@@ -11,6 +12,7 @@ from vitalis.models import (
     WorkoutType,
 )
 from vitalis.storage import HealthRepository, session_scope
+from vitalis.storage import models as storage_models
 
 
 def test_metric_series_and_daily_metrics(client):
@@ -173,7 +175,7 @@ def test_workout_list_and_detail(client):
     assert listing.json()["workouts"][0]["detail_available"] is True
 
     detail = client.get(
-        "/api/v1/health/workouts/run-1",
+        "/api/v1/health/workouts/run-1?source=zepp",
         headers={"X-User-Id": user_id},
     )
     assert detail.status_code == 200
@@ -260,7 +262,7 @@ def test_normalized_workout_metric_samples_are_isolated_and_returned_in_order(cl
         )
 
     detail = client.get(
-        f"/api/v1/health/workouts/{workout_id}",
+        f"/api/v1/health/workouts/{workout_id}?source=zepp",
         headers={"X-User-Id": "sample-user"},
     )
     assert detail.status_code == 200
@@ -272,7 +274,7 @@ def test_normalized_workout_metric_samples_are_isolated_and_returned_in_order(cl
     assert {sample["source_scope"] for sample in payload["samples"]} == {"workout_detail"}
 
     other = client.get(
-        f"/api/v1/health/workouts/{workout_id}",
+        f"/api/v1/health/workouts/{workout_id}?source=zepp",
         headers={"X-User-Id": "other-sample-user"},
     )
     assert other.status_code == 200
@@ -317,3 +319,308 @@ def test_analysis_workout_samples_are_aggregated_to_five_second_bins():
 
     assert [row.value for row in rows if row.metric == "heart_rate"] == [105, 120]
     assert [row.value for row in rows if row.metric == "distance"] == [20, 30]
+
+
+def test_metric_and_daily_metric_identities_include_source_scope_and_device(client):
+    user_id = "source-scope-identity-user"
+    observed = datetime(2026, 8, 25, 8, 5, tzinfo=timezone.utc)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        assert repo.save_metric_samples([
+            MetricSample(
+                user_id=user_id,
+                metric="heart_rate",
+                timestamp=observed,
+                value=61,
+                source_scope="user_fused",
+            ),
+            MetricSample(
+                user_id=user_id,
+                metric="heart_rate",
+                timestamp=observed,
+                value=63,
+                source_scope="unknown",
+            ),
+            MetricSample(
+                user_id=user_id,
+                source="garmin",
+                metric="heart_rate",
+                timestamp=observed,
+                value=65,
+                source_scope="user_fused",
+            ),
+        ]) == 3
+        assert repo.save_daily_metrics([
+            DailyMetric(
+                user_id=user_id,
+                date=observed.date(),
+                metric="readiness",
+                value=70,
+                source_scope="device",
+                device_id="DEVICE-A",
+            ),
+            DailyMetric(
+                user_id=user_id,
+                date=observed.date(),
+                metric="readiness",
+                value=80,
+                source_scope="device",
+                device_id="DEVICE-B",
+            ),
+            DailyMetric(
+                user_id=user_id,
+                date=observed.date(),
+                metric="readiness",
+                value=75,
+                source_scope="user_fused",
+            ),
+            DailyMetric(
+                user_id=user_id,
+                source="garmin",
+                date=observed.date(),
+                metric="readiness",
+                value=85,
+                source_scope="device",
+                device_id="DEVICE-A",
+            ),
+        ]) == 4
+
+    metric_response = client.get(
+        "/api/v1/health/metrics/heart_rate"
+        "?from=2026-08-25T00:00:00Z&to=2026-08-26T00:00:00Z&resolution=raw",
+        headers={"X-User-Id": user_id},
+    )
+    assert metric_response.status_code == 200
+    assert {
+        (point["source"], point["source_scope"], point["device_id"], point["value"])
+        for point in metric_response.json()["points"]
+    } == {
+        ("zepp", "user_fused", None, 61),
+        ("zepp", "unknown", None, 63),
+        ("garmin", "user_fused", None, 65),
+    }
+
+    hourly_response = client.get(
+        "/api/v1/health/metrics/heart_rate"
+        "?from=2026-08-25T00:00:00Z&to=2026-08-26T00:00:00Z&resolution=1h",
+        headers={"X-User-Id": user_id},
+    )
+    assert len(hourly_response.json()["points"]) == 3
+
+    daily_response = client.get(
+        "/api/v1/health/daily-metrics"
+        "?from=2026-08-25&to=2026-08-25&metric=readiness",
+        headers={"X-User-Id": user_id},
+    )
+    assert daily_response.status_code == 200
+    assert {
+        (item["source"], item["source_scope"], item["device_id"], item["value"])
+        for item in daily_response.json()["metrics"]
+    } == {
+        ("zepp", "device", "DEVICE-A", 70),
+        ("zepp", "device", "DEVICE-B", 80),
+        ("zepp", "user_fused", None, 75),
+        ("garmin", "device", "DEVICE-A", 85),
+    }
+
+
+def test_metric_daily_resolution_uses_configured_local_day(client):
+    user_id = "metric-local-day-user"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        repo.save_metric_samples([
+            MetricSample(
+                user_id=user_id,
+                metric="heart_rate",
+                timestamp=datetime(2026, 8, 25, 15, 59, tzinfo=timezone.utc),
+                value=60,
+                unit="bpm",
+                source_scope="device",
+                device_id="DEVICE-A",
+            ),
+            MetricSample(
+                user_id=user_id,
+                metric="heart_rate",
+                timestamp=datetime(2026, 8, 25, 16, 0, tzinfo=timezone.utc),
+                value=70,
+                unit="bpm",
+                source_scope="device",
+                device_id="DEVICE-A",
+            ),
+        ])
+
+    response = client.get(
+        "/api/v1/health/metrics/heart_rate"
+        "?from=2026-08-25T00:00:00Z&to=2026-08-26T00:00:00Z&resolution=1d",
+        headers={"X-User-Id": user_id},
+    )
+
+    assert [(item["timestamp"], item["value"]) for item in response.json()["points"]] == [
+        ("2026-08-25", 60),
+        ("2026-08-26", 70),
+    ]
+
+
+def test_metric_aggregation_is_not_truncated_at_raw_row_limit(client):
+    user_id = "metric-large-aggregate-user"
+    start = datetime(2026, 8, 25, 0, 0, tzinfo=timezone.utc)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        db.execute(storage_models.MetricSample.__table__.insert(), [
+            {
+                "user_id": user_id,
+                "source": "zepp",
+                "metric": "heart_rate",
+                "timestamp": (start + timedelta(seconds=index)).replace(tzinfo=None),
+                "value": 60,
+                "unit": "bpm",
+                "source_scope": "device",
+                "device_id": "DEVICE-A",
+            }
+            for index in range(50_001)
+        ])
+
+    response = client.get(
+        "/api/v1/health/metrics/heart_rate"
+        "?from=2026-08-25T00:00:00Z&to=2026-08-26T00:00:00Z&resolution=1d",
+        headers={"X-User-Id": user_id},
+    )
+
+    assert response.status_code == 200
+    assert sum(item["count"] for item in response.json()["points"]) == 50_001
+
+
+def test_sync_stream_freshness_is_filtered_by_source():
+    user_id = "stream-source-freshness-user"
+    zepp_time = datetime(2026, 8, 25, 8, 0, tzinfo=timezone.utc)
+    garmin_time = zepp_time + timedelta(days=1)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        repo.save_metric_samples([
+            MetricSample(
+                user_id=user_id,
+                source="zepp",
+                metric="heart_rate",
+                timestamp=zepp_time,
+                value=60,
+            ),
+            MetricSample(
+                user_id=user_id,
+                source="garmin",
+                metric="heart_rate",
+                timestamp=garmin_time,
+                value=70,
+            ),
+        ])
+        state = repo.save_sync_stream_state(
+            user_id,
+            "heart_rate",
+            source="zepp",
+            fetch_status="success",
+            parse_status="success",
+            write_status="success",
+            fetched_at=zepp_time,
+            parsed_at=zepp_time,
+            written_at=zepp_time,
+            raw_records=1,
+            records_written=1,
+        )
+
+    assert state.last_sample_at == zepp_time.replace(tzinfo=None)
+
+
+def test_workout_list_uses_configured_local_day_boundaries(client):
+    user_id = "workout-local-boundary-user"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        for workout_id, started_at in (
+            ("before", datetime(2026, 8, 24, 15, 59, tzinfo=timezone.utc)),
+            ("start", datetime(2026, 8, 24, 16, 0, tzinfo=timezone.utc)),
+            ("end", datetime(2026, 8, 25, 15, 59, tzinfo=timezone.utc)),
+            ("after", datetime(2026, 8, 25, 16, 0, tzinfo=timezone.utc)),
+        ):
+            repo.save_workout(Workout(
+                user_id=user_id,
+                workout_id=workout_id,
+                started_at=started_at,
+                type=WorkoutType.RUNNING,
+                duration=10,
+            ))
+
+    response = client.get(
+        "/api/v1/health/workouts?from=2026-08-25&to=2026-08-25",
+        headers={"X-User-Id": user_id},
+    )
+    assert response.status_code == 200
+    assert {item["workout_id"] for item in response.json()["workouts"]} == {
+        "start", "end",
+    }
+
+
+def test_workout_detail_samples_are_isolated_by_source(client):
+    user_id = "multi-source-workout-user"
+    workout_id = "shared-workout-id"
+    started_at = datetime(2026, 8, 25, 8, 0, tzinfo=timezone.utc)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        for source in ("zepp", "garmin"):
+            repo.save_workout(Workout(
+                user_id=user_id,
+                source=source,
+                workout_id=workout_id,
+                started_at=started_at,
+                type=WorkoutType.RUNNING,
+                duration=10,
+            ))
+            assert repo.save_workout_detail(
+                user_id,
+                workout_id,
+                {"schema_version": "4.0", "source": source},
+                [WorkoutMetricSample(
+                    source=source,
+                    workout_id=workout_id,
+                    timestamp=started_at,
+                    metric="heart_rate",
+                    value=100 if source == "zepp" else 120,
+                    unit="bpm",
+                )],
+                source=source,
+            )
+
+        zepp = repo.workout_metric_samples(
+            user_id, workout_id, source="zepp"
+        )
+        garmin = repo.workout_metric_samples(
+            user_id, workout_id, source="garmin"
+        )
+        repo.rebuild_training_days(user_id, {date(2026, 8, 25)})
+        training = repo.training_range(
+            user_id, date(2026, 8, 25), date(2026, 8, 25)
+        )
+        raw = ProfileLoader(repo).load(user_id, date(2026, 8, 25))
+
+    assert [row.value for row in zepp] == [100]
+    assert [row.value for row in garmin] == [120]
+    assert training[0]["workout_count"] == 2
+    samples = {
+        (item["source"], item["samples"][0].value)
+        for item in raw.workouts
+    }
+    assert samples == {("zepp", 100), ("garmin", 120)}
+
+    zepp_response = client.get(
+        f"/api/v1/health/workouts/{workout_id}?source=zepp",
+        headers={"X-User-Id": user_id},
+    )
+    garmin_response = client.get(
+        f"/api/v1/health/workouts/{workout_id}?source=garmin",
+        headers={"X-User-Id": user_id},
+    )
+    assert zepp_response.json()["detail"]["samples"][0]["value"] == 100
+    assert garmin_response.json()["detail"]["samples"][0]["value"] == 120

@@ -109,7 +109,7 @@ def test_overlapping_workout_marks_response_as_confounded():
 
     assert response.recovery_status == RecoveryOutcome.CONFOUNDED
     assert response.recovery_hours is None
-    assert response.overlapping_workout_ids == ["overlap-workout"]
+    assert response.overlapping_workout_ids == ["zepp:overlap-workout"]
     assert response.confidence == ConfidenceBand.LOW
 
 

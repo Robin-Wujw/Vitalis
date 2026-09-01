@@ -200,6 +200,7 @@ class RunningAnalyzer:
         )
         return RunningSessionAnalysis(
             workout_id=str(workout.get("workout_id") or ""),
+            source=str(workout.get("source") or "zepp"),
             date=self._workout_date(workout),
             classification=classification,
             classification_label=CLASSIFICATION_LABELS[classification],
@@ -509,6 +510,9 @@ class RunningAnalyzer:
         baseline_power = float(median(valid_powers)) if len(valid_powers) >= 3 else None
         return ComparableRunBaseline(
             sample_count=len(comparable),
+            workout_sources=[
+                str(item.get("source") or "zepp") for item in comparable
+            ],
             workout_ids=[str(item.get("workout_id") or "") for item in comparable],
             median_pace_seconds_per_km=round(baseline_pace, 1),
             pace_difference_percent=round((current_pace - baseline_pace) / baseline_pace * 100, 1),

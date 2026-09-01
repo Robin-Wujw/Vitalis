@@ -1,9 +1,11 @@
 """API 端到端测试：mock Zepp 下完整走通 连接 -> 同步 -> 查询 -> 分析。"""
 
+import concurrent.futures
 import hashlib
 from datetime import date, datetime, timedelta, timezone
 import importlib
 
+import pytest
 from starlette.requests import Request
 
 from vitalis.config import settings
@@ -250,6 +252,7 @@ def test_feedback_api_is_scoped_and_validated(client):
         headers=headers,
         json={
             "date": "2026-08-28",
+            "workout_source": "zepp",
             "workout_id": "feedback-api-workout",
             "session_rpe": 7,
             "physical_fatigue": 3,
@@ -298,7 +301,10 @@ def test_recommendation_completion_api_is_explicit_and_user_scoped(client):
     linked = client.post(
         f"/api/v1/intelligence/recommendations/{recommendation_id}/complete",
         headers=headers,
-        json={"workout_id": "recommendation-api-workout"},
+        json={
+            "workout_source": "zepp",
+            "workout_id": "recommendation-api-workout",
+        },
     )
     assert linked.status_code == 200
     assert linked.json()["completion_status"] == "COMPLETED"
@@ -329,7 +335,7 @@ def test_strength_exercise_confirmation_is_user_scoped(client):
         ))
 
     response = client.post(
-        f"/api/v1/intelligence/workouts/{workout_id}/strength-exercises",
+        f"/api/v1/intelligence/workouts/{workout_id}/strength-exercises?source=zepp",
         headers={"X-User-Id": user_id},
         json={
             "session_focus": "PUSH",
@@ -348,7 +354,7 @@ def test_strength_exercise_confirmation_is_user_scoped(client):
     assert exercise["muscle_group_labels"] == ["胸部", "肱三头肌", "肩部"]
     assert exercise["source"] == "user_confirmed"
     assert client.post(
-        f"/api/v1/intelligence/workouts/{workout_id}/strength-exercises",
+        f"/api/v1/intelligence/workouts/{workout_id}/strength-exercises?source=zepp",
         headers={"X-User-Id": "strength-api-other"},
         json={
             "session_focus": "PUSH",
@@ -469,6 +475,39 @@ def test_public_base_url_prefers_https_configuration(monkeypatch):
     assert _public_base_url(request) == "https://health.example.com"
 
 
+def test_region_probe_timeout_is_structured(monkeypatch):
+    from vitalis.api.routes.connect import _probe_region_hosts
+    from vitalis.connectors.zepp import auth_parser, client as zepp_client
+    from vitalis.connectors.zepp import ZeppAuthError
+
+    class Client:
+        def __init__(self, *_args, region_host, **_kwargs):
+            self.region_host = region_host.replace("https://", "").rstrip("/")
+
+        @staticmethod
+        def verify():
+            raise ZeppAuthError("offline", kind="network")
+
+    monkeypatch.setattr(
+        auth_parser,
+        "preferred_region_hosts",
+        lambda *_args: ["https://api-mifitcn.zepp.com"] * 7,
+    )
+    monkeypatch.setattr(zepp_client, "ZeppAPIClient", Client)
+    monkeypatch.setattr(
+        concurrent.futures,
+        "as_completed",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            concurrent.futures.TimeoutError()
+        ),
+    )
+
+    with pytest.raises(ZeppAuthError) as raised:
+        _probe_region_hosts("vendor-user", "token", None, None)
+
+    assert raised.value.kind == "timeout"
+
+
 # ---- 新 API：健康查询 / 同步 / 聚合 ----
 
 def test_health_sync(client):
@@ -506,7 +545,10 @@ def test_health_sync_transient_zepp_failure_keeps_browser_link_connected(
             return object()
 
         def sync_with_report(self, *args, **kwargs):
-            raise ZeppAuthError("同步超时，已停止后续请求")
+            raise ZeppAuthError(
+                "同步超时，已停止后续请求",
+                kind="timeout",
+            )
 
     monkeypatch.setattr(health, "get_connector", lambda _source: TransientConnector())
     response = client.post(
@@ -521,7 +563,7 @@ def test_health_sync_transient_zepp_failure_keeps_browser_link_connected(
     ).json()["streams"]
     sync_state = next(item for item in diagnostic if item["stream"] == "sync")
     assert sync_state["fetch"]["status"] == "failed"
-    assert sync_state["error_kind"] == "network"
+    assert sync_state["error_kind"] == "timeout"
     link = client.get(
         "/api/v1/connect/zepp/token", headers={"X-User-Id": user_id}
     ).json()
@@ -577,6 +619,53 @@ def test_health_token_status_authorized(client):
     body = resp.json()
     assert body["authorized"] is True
     assert body["valid"] is True  # mock 模式下始终有效
+
+
+def test_health_token_status_transient_failure_keeps_connection(client, monkeypatch):
+    from vitalis.api.routes import health
+    from vitalis.connectors.zepp import ZeppAuthError
+
+    user_id = "token-status-transient"
+    code = client.post(
+        "/api/v1/connect/zepp/pair?sync_days=1",
+        headers={"X-User-Id": user_id},
+    ).json()["pairing_code"]
+    client.post(
+        f"/api/v1/connect/zepp/pair/{code}/credentials",
+        json={"cookie": '{"userid":"vendor-status","apptoken":"saved-token"}'},
+    )
+
+    class Client:
+        @staticmethod
+        def verify():
+            raise ZeppAuthError("service unavailable", kind="service")
+
+    class Connector:
+        @staticmethod
+        def authenticate():
+            return None
+
+        @staticmethod
+        def load_token(_repo, _requested_user_id):
+            return type("Auth", (), {
+                "source_user_id": "vendor-status",
+                "region_host": "api-mifitcn.zepp.com",
+            })()
+
+        @staticmethod
+        def _client_for(_repo, _user):
+            return Client()
+
+    monkeypatch.setattr(health, "get_connector", lambda _source: Connector())
+    body = client.get(
+        "/api/v1/health/token-status", headers={"X-User-Id": user_id}
+    ).json()
+
+    assert body["valid"] is False
+    assert body["retryable"] is True
+    assert body["error_kind"] == "service"
+    assert body["connection_status"] == "connected"
+    assert body["needs_login"] is False
 
 
 def test_health_token_status_unauthorized(client):
@@ -828,7 +917,7 @@ def test_browser_link_validation_network_failure_keeps_connection(client, monkey
 
     class UnavailableClient:
         def verify(self):
-            raise ZeppAuthError("网络错误: temporary failure")
+            raise ZeppAuthError("网络错误: temporary failure", kind="network")
 
     class UnavailableConnector:
         def _client_for(self, *_args, **_kwargs):
@@ -928,6 +1017,41 @@ def test_non_auth_link_sync_failure_keeps_connection_valid(monkeypatch):
         assert link.status == "connected"
         assert link.last_sync_at is None
         assert link.message == "登录状态有效，但数据同步失败，将稍后重试"
+
+
+def test_initial_pairing_sync_exception_records_failure_without_unbound_report(
+    monkeypatch
+):
+    from vitalis.api.routes import zepp_pairing
+
+    user_id = "initial-sync-failure-user"
+    pairing_id = "initial-sync-failure-pairing"
+    digest = hashlib.sha256(b"initial-sync-failure-link").hexdigest()
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.create_pairing_session(
+            pairing_id,
+            user_id,
+            datetime.now(timezone.utc) + timedelta(minutes=5),
+        )
+        repo.finish_pairing_session(pairing_id)
+        repo.create_browser_link(digest, user_id)
+
+    class FailingConnector:
+        def sync_with_report(self, *_args, **_kwargs):
+            raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr(zepp_pairing, "get_connector", lambda _source: FailingConnector())
+    zepp_pairing._initial_pairing_sync(user_id, 1, pairing_id, digest)
+
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        link = repo.browser_link(digest)
+        pairing = repo.pairing_session(pairing_id)
+        assert link is not None and link.last_sync_at is None
+        assert link.message == "Zepp 已连接，但首次同步失败，将稍后重试"
+        assert pairing is not None
+        assert pairing.message == "Zepp 已连接，但首次同步失败，将稍后重试"
 
 
 def test_browser_link_cannot_be_rebound_by_user_header(client):

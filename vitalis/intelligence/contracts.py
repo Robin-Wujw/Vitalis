@@ -509,6 +509,7 @@ class ComparableRunBaseline(BaseModel):
     sample_count: int = Field(ge=3, le=10)
     window_days: Literal[180] = 180
     distance_tolerance_percent: Literal[20] = 20
+    workout_sources: list[str] = Field(min_length=3, max_length=10)
     workout_ids: list[str] = Field(min_length=3, max_length=10)
     median_pace_seconds_per_km: float = Field(gt=0)
     pace_difference_percent: float
@@ -520,6 +521,7 @@ class ComparableRunBaseline(BaseModel):
 
 class RunningSessionAnalysis(BaseModel):
     workout_id: str
+    source: str = "zepp"
     date: DateValue
     classification: Literal[
         "RECOVERY_RUN",
@@ -600,6 +602,7 @@ class StrengthWorkoutConfirmationInput(BaseModel):
 class StrengthExerciseRecord(BaseModel):
     id: str
     user_id: str
+    workout_source: str = "zepp"
     workout_id: str
     order: int = Field(ge=1)
     exercise_name: str
@@ -648,6 +651,7 @@ class ExerciseHypothesis(BaseModel):
 
 class StrengthSessionAnalysis(BaseModel):
     workout_id: str
+    source: str = "zepp"
     date: DateValue
     duration_minutes: int = Field(ge=0)
     focus: Literal[
@@ -1159,6 +1163,7 @@ class MonthlyProfile(BaseModel):
 
 class SubjectiveFeedbackInput(BaseModel):
     date: DateValue | None = None
+    workout_source: str | None = Field(default=None, min_length=1, max_length=32)
     workout_id: str | None = Field(default=None, max_length=128)
     recommendation_id: str | None = Field(default=None, max_length=64)
     session_rpe: float | None = Field(default=None, ge=1, le=10)
@@ -1181,6 +1186,10 @@ class SubjectiveFeedbackInput(BaseModel):
             self.notes = self.notes.strip() or None
         if self.session_rpe is not None and not self.workout_id:
             raise ValueError("训练 RPE 必须关联一次已完成训练")
+        if self.workout_id and not self.workout_source:
+            raise ValueError("关联训练时必须提供 workout_source")
+        if self.workout_source and not self.workout_id:
+            raise ValueError("workout_source 必须与 workout_id 同时提供")
         if self.recommendation_id and not self.workout_id:
             raise ValueError("建议反馈必须同时关联已完成训练")
         return self
@@ -1190,6 +1199,7 @@ class SubjectiveFeedback(BaseModel):
     id: str
     user_id: str
     date: DateValue
+    workout_source: str | None = None
     workout_id: str | None = None
     recommendation_id: str | None = None
     session_rpe: float | None = Field(default=None, ge=1, le=10)
@@ -1412,6 +1422,7 @@ class RecommendationInstance(BaseModel):
     user_id: str
     date: DateValue
     decision: TrainingDecision
+    linked_workout_source: str | None = None
     linked_workout_id: str | None = None
     completion_status: RecommendationStatus = RecommendationStatus.PLANNED
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -1420,6 +1431,7 @@ class RecommendationInstance(BaseModel):
 
 class WorkoutExposure(BaseModel):
     workout_id: str
+    source: str = "zepp"
     date: DateValue
     type: str
     sport_mode: str
@@ -1517,6 +1529,7 @@ class PersonalModel(BaseModel):
 
 
 class LinkRecommendationInput(BaseModel):
+    workout_source: str = Field(min_length=1, max_length=32)
     workout_id: str = Field(min_length=1, max_length=128)
 
 

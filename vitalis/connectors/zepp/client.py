@@ -20,7 +20,7 @@ import re
 import secrets
 import time as time_mod
 from datetime import date, datetime, timedelta, timezone
-from typing import Callable
+from typing import Callable, Literal
 from urllib.parse import urlparse
 
 import httpx
@@ -66,24 +66,42 @@ ZEPP_HOST_PATTERN = re.compile(r"^api-mifit[^.]*\.(zepp\.com|huami\.com)$", re.I
 
 
 def validate_region_host(host: str) -> str:
-    """校验并规范化区域主机名（防 SSRF）。"""
+    """Validate and normalize an allowlisted Zepp HTTPS origin."""
     if not host:
-        raise ZeppAuthError("region_host 不能为空")
-    host = host.strip().lower()
-    if host.startswith(("http://", "https://")):
-        from urllib.parse import urlparse
-        parsed = urlparse(host)
-        host = parsed.netloc or host.split("//")[-1].split("/")[0]
-    # 拒绝端口、路径、凭据
-    if ":" in host:
-        raise ZeppAuthError("region_host 不允许指定端口")
-    if "/" in host or "?" in host or "#" in host:
-        raise ZeppAuthError("region_host 不允许路径或查询参数")
-    if "@" in host:
-        raise ZeppAuthError("region_host 不允许凭据")
-    if not ZEPP_HOST_PATTERN.match(host):
-        raise ZeppAuthError(f"region_host 不合法，仅允许 api-mifit*.zepp.com 或 api-mifit*.huami.com")
-    return host
+        raise ZeppAuthError("region_host 不能为空", kind="invalid_request")
+    raw = host.strip()
+    if "://" in raw:
+        parsed = urlparse(raw)
+        if parsed.scheme.lower() != "https":
+            raise ZeppAuthError("region_host 仅允许 HTTPS", kind="invalid_request")
+        if parsed.username or parsed.password:
+            raise ZeppAuthError("region_host 不允许凭据", kind="invalid_request")
+        try:
+            has_port = parsed.port is not None
+        except ValueError as exc:
+            raise ZeppAuthError(
+                "region_host 端口格式无效", kind="invalid_request"
+            ) from exc
+        if has_port:
+            raise ZeppAuthError("region_host 不允许指定端口", kind="invalid_request")
+        if parsed.path not in ("", "/") or parsed.params or parsed.query or parsed.fragment:
+            raise ZeppAuthError(
+                "region_host 不允许路径、查询参数或片段", kind="invalid_request"
+            )
+        normalized = parsed.hostname or ""
+    else:
+        if any(char in raw for char in (":", "/", "?", "#", "@")):
+            raise ZeppAuthError(
+                "region_host 只允许裸主机名", kind="invalid_request"
+            )
+        normalized = raw
+    normalized = normalized.lower()
+    if not ZEPP_HOST_PATTERN.fullmatch(normalized):
+        raise ZeppAuthError(
+            "region_host 不合法，仅允许 api-mifit*.zepp.com 或 api-mifit*.huami.com",
+            kind="invalid_request",
+        )
+    return normalized
 
 # Full public Zepp OS workout code -> canonical mode name.
 SPORT_TYPE_MAP = {code: mode.code for code, mode in ZEPP_SPORT_MODES.items()}
@@ -95,12 +113,33 @@ SPORTS = [
 ]
 
 
-class ZeppAuthError(RuntimeError):
-    """Zepp request failure with an explicit credential-rejection signal."""
+ZeppErrorKind = Literal[
+    "auth",
+    "not_available",
+    "network",
+    "service",
+    "timeout",
+    "cancelled",
+    "invalid_request",
+    "partial_coverage",
+    "vendor_response",
+    "unknown",
+]
 
-    def __init__(self, message: str, *, needs_reauth: bool = False):
+
+class ZeppAuthError(RuntimeError):
+    """Zepp failure with a stable machine-readable classification."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: ZeppErrorKind = "unknown",
+        needs_reauth: bool = False,
+    ):
         super().__init__(message)
-        self.needs_reauth = needs_reauth
+        self.kind: ZeppErrorKind = "auth" if needs_reauth else kind
+        self.needs_reauth = self.kind == "auth"
 
 
 class MockOAuthToken:
@@ -126,12 +165,9 @@ class ZeppAPIClient:
     def __init__(self, app_token: str, user_id: str, region_host: str = ""):
         self.app_token = app_token
         self.user_id = user_id
-        self.region_host = region_host or "api-mifitcn.zepp.com"  # 缺省中国区
-        if self.region_host.startswith(("http://", "https://")):
-            # 规范化：只保留主机名
-            from urllib.parse import urlparse
-
-            self.region_host = urlparse(self.region_host).netloc or self.region_host.split("//")[-1]
+        self.region_host = validate_region_host(
+            region_host or "api-mifitcn.zepp.com"
+        )
         self.base_url = f"https://{self.region_host}"
         # Scheduled Hermes runs must not depend on an interactive shell proxy.
         self._client = httpx.Client(timeout=30.0, trust_env=False)
@@ -149,30 +185,46 @@ class ZeppAPIClient:
                     params=params,
                     headers=self._headers,
                 )
+            except httpx.TimeoutException as exc:
+                if attempt < 2:
+                    time_mod.sleep(0.05 * (attempt + 1))
+                    continue
+                raise ZeppAuthError(f"请求超时: {exc}", kind="timeout") from exc
             except httpx.HTTPError as exc:
                 if attempt < 2:
                     time_mod.sleep(0.05 * (attempt + 1))
                     continue
-                raise ZeppAuthError(f"网络错误: {exc}")
+                raise ZeppAuthError(f"网络错误: {exc}", kind="network") from exc
 
             if resp.status_code in (401, 403):
                 raise ZeppAuthError(
                     f"token 失效（HTTP {resp.status_code}），请重新导入",
-                    needs_reauth=True,
+                    kind="auth",
+                )
+            if resp.status_code == 404:
+                raise ZeppAuthError(
+                    "Zepp 接口不可用（HTTP 404）",
+                    kind="not_available",
                 )
             if resp.status_code in (429, 500, 502, 503, 504):
                 if attempt < 2:
                     time_mod.sleep(0.1)
                     continue
-                raise ZeppAuthError(f"Zepp 服务暂时不可用（HTTP {resp.status_code}）")
+                raise ZeppAuthError(
+                    f"Zepp 服务暂时不可用（HTTP {resp.status_code}）",
+                    kind="service",
+                )
             if resp.status_code != 200:
-                raise ZeppAuthError(f"Zepp 接口错误（HTTP {resp.status_code}）: {resp.text[:200]}")
+                raise ZeppAuthError(
+                    f"Zepp 接口错误（HTTP {resp.status_code}）: {resp.text[:200]}",
+                    kind="vendor_response",
+                )
             try:
                 return resp.json()
             except ValueError:
                 # band_data 等可能返回非 JSON，按文本返回
                 return {"_raw_text": resp.text}
-        raise ZeppAuthError("Zepp 请求重试耗尽")
+        raise ZeppAuthError("Zepp 请求重试耗尽", kind="service")
 
     def _request_id(self) -> str:
         self._request_seq += 1
@@ -185,10 +237,22 @@ class ZeppAPIClient:
             {"enableMultiDevice": "true", "device_type": "android_phone"},
         )
 
-    def fetch_heart_rate(self, start_ms: int, end_ms: int, limit: int = 1000, hr_type: int = 2) -> dict:
+    def fetch_heart_rate(
+        self,
+        start_time: int,
+        end_time: int,
+        limit: int = 1000,
+        hr_type: int = 2,
+    ) -> dict:
+        """Fetch heart-rate rows; this Zepp endpoint uses Unix seconds."""
         return self._get(
             API_HEART_RATE.format(user_id=self.user_id),
-            {"startTime": str(start_ms), "endTime": str(end_ms), "limit": str(limit), "type": str(hr_type)},
+            {
+                "startTime": str(start_time),
+                "endTime": str(end_time),
+                "limit": str(limit),
+                "type": str(hr_type),
+            },
         )
 
     def fetch_band_data(self, from_date: str, to_date: str, query_type: str = "detail",
@@ -315,11 +379,17 @@ class ZeppAPIClient:
             if str(file_id) in file_ids and isinstance(value, str)
         }
         if set(urls) != set(file_ids):
-            raise ZeppAuthError("Zepp 未返回全部高频心率文件下载地址")
+            raise ZeppAuthError(
+                "Zepp 未返回全部高频心率文件下载地址",
+                kind="vendor_response",
+            )
         for value in urls.values():
             parsed = urlparse(value)
             if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
-                raise ZeppAuthError("Zepp 返回了不安全的文件下载地址")
+                raise ZeppAuthError(
+                    "Zepp 返回了不安全的文件下载地址",
+                    kind="vendor_response",
+                )
         return urls
 
     def download_dense_file(self, file_type: str, file_id: str) -> bytes:
@@ -327,34 +397,58 @@ class ZeppAPIClient:
         target = self.fetch_file_download_urls(file_type, [file_id])[file_id]
         for attempt in range(3):
             try:
-                with self._client.stream("GET", target, follow_redirects=True) as response:
+                with self._client.stream("GET", target, follow_redirects=False) as response:
                     if response.status_code in (429, 500, 502, 503, 504) and attempt < 2:
                         time_mod.sleep(0.1 * (attempt + 1))
                         continue
                     if response.status_code != 200:
                         raise ZeppAuthError(
-                            f"Zepp 高频心率文件下载失败（HTTP {response.status_code}）"
+                            f"Zepp 高频心率文件下载失败（HTTP {response.status_code}）",
+                            kind=(
+                                "not_available"
+                                if response.status_code == 404
+                                else "service"
+                                if response.status_code in (429, 500, 502, 503, 504)
+                                else "vendor_response"
+                            ),
                         )
                     content = bytearray()
                     for chunk in response.iter_bytes():
                         content.extend(chunk)
                         if len(content) > MAX_DENSE_FILE_BYTES:
-                            raise ZeppAuthError("Zepp 高频心率文件超过大小限制")
+                            raise ZeppAuthError(
+                                "Zepp 高频心率文件超过大小限制",
+                                kind="vendor_response",
+                            )
                     return bytes(content)
+            except httpx.TimeoutException as exc:
+                if attempt < 2:
+                    time_mod.sleep(0.1 * (attempt + 1))
+                    continue
+                raise ZeppAuthError(
+                    f"高频心率文件下载超时: {exc}",
+                    kind="timeout",
+                ) from exc
             except httpx.HTTPError as exc:
                 if attempt < 2:
                     time_mod.sleep(0.1 * (attempt + 1))
                     continue
-                raise ZeppAuthError(f"高频心率文件网络错误: {exc}") from exc
-        raise ZeppAuthError("Zepp 高频心率文件下载重试耗尽")
+                raise ZeppAuthError(
+                    f"高频心率文件网络错误: {exc}",
+                    kind="network",
+                ) from exc
+        raise ZeppAuthError("Zepp 高频心率文件下载重试耗尽", kind="service")
 
     def fetch_hrv(self, start_date: str, end_date: str) -> dict:
-        """HRV 数据：日期格式 YYYY-MM-DD，内部转为毫秒时间戳。"""
-        from datetime import datetime
-        start = datetime.strptime(start_date, "%Y-%m-%d")
-        end = datetime.strptime(end_date, "%Y-%m-%d")
+        """HRV data for inclusive configured-local dates, encoded as UTC millis."""
+        from vitalis.time import local_day_utc_bounds
+
+        start_day = date.fromisoformat(start_date)
+        end_day = date.fromisoformat(end_date)
+        start, _ = local_day_utc_bounds(start_day)
+        _, end = local_day_utc_bounds(end_day)
         start_ms = int(start.timestamp() * 1000)
-        end_ms = int(end.replace(hour=23, minute=59, second=59).timestamp() * 1000)
+        end_ms = int(end.timestamp() * 1000) - 1
         return self.fetch_events("hrv_sdnn", "real_data", start_ms, end_ms, 2000, True)
 
     # ---- 验证 ----

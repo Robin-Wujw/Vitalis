@@ -205,5 +205,18 @@ legacy endpoints, migrations, backfills, dual reads, or old-data adapters. Re-in
 disposable local data after a contract change. Missing observations remain missing and
 must never be replaced with zero or fabricated measurements.
 
+The current canonical-data constraints require a fresh database/schema when upgrading
+from an earlier checkout: stop every API, scheduler, and synchronization worker; retain a
+cold copy only for whole-version rollback; create a new empty SQLite database or
+PostgreSQL application schema; start the current code so `init_db()` creates its tables;
+then reconnect Zepp, synchronize the desired history, and run a new analysis. Do not run
+old and new versions against the same database. The application intentionally contains
+no online ALTER, legacy-row conversion, or compatibility reader for this change.
+
+After re-ingestion, verify that each daily table has one row per `(user_id, date)`, that
+same-time metrics from different sources/scopes/devices remain separate, that source-qualified
+workout details and user links resolve independently, and that each daily training summary
+matches all canonical workouts grouped by `VITALIS_TIMEZONE`.
+
 See [SYSTEM.md](../SYSTEM.md) for the required plan, test, documentation, commit, and
 delivery workflow.

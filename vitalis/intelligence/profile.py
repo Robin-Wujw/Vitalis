@@ -53,7 +53,7 @@ class RawDailyProfile:
     activity_by_day: dict[date, dict] = field(default_factory=dict)
     training_by_day: dict[date, dict] = field(default_factory=dict)
     workouts: list[dict] = field(default_factory=list)
-    feedback_by_workout: dict[str, list] = field(default_factory=dict)
+    feedback_by_workout: dict[tuple[str, str], list] = field(default_factory=dict)
     training_preferences: TrainingPreferences | None = None
     device_models: dict[str, str] = field(default_factory=dict)
     dense_heart_rate_coverage: dict[str, dict] = field(default_factory=dict)
@@ -87,10 +87,10 @@ class ProfileLoader:
         self._add_device_context(raw)
         workout_rows = [
             row
-            for row in self.repo.workouts(user_id, start - timedelta(days=1), day)
+            for row in self.repo.workouts(user_id, start, day)
             if row.started_at and start <= local_day(row.started_at) <= day
         ]
-        detail_ids = []
+        detail_keys: list[tuple[str, str]] = []
         for workout_type in ("running", "strength"):
             family_rows = [
                 row for row in workout_rows
@@ -99,15 +99,18 @@ class ProfileLoader:
                 and local_day(row.started_at) >= day - timedelta(days=27)
                 and str((row.data or {}).get("type") or "").lower() == workout_type
             ]
-            detail_ids.extend(
-                row.workout_id
+            detail_keys.extend(
+                (row.source, row.workout_id)
                 for row in family_rows[:DETAIL_WORKOUTS_PER_FAMILY]
             )
-        samples_by_workout: dict[str, list] = defaultdict(list)
-        for sample in self.repo.workout_metric_samples_for_workouts(user_id, detail_ids):
-            samples_by_workout[sample.workout_id].append(sample)
-        exercises_by_workout = self.repo.strength_exercises_for_workouts(
-            user_id, [row.workout_id for row in workout_rows]
+        samples_by_workout: dict[tuple[str, str], list] = defaultdict(list)
+        for sample in self.repo.workout_metric_samples_for_workouts(
+            user_id, detail_keys
+        ):
+            samples_by_workout[(sample.source, sample.workout_id)].append(sample)
+        workout_keys = [(row.source, row.workout_id) for row in workout_rows]
+        exercises_by_workout = self.repo.strength_exercises_for_workout_keys(
+            user_id, workout_keys
         )
         raw.workouts = [
             {
@@ -118,8 +121,10 @@ class ProfileLoader:
                 "local_day": local_day(row.started_at) if row.started_at else None,
                 "detail_available": row.detail_synced,
                 "detail": row.detail or None,
-                "samples": samples_by_workout.get(row.workout_id, []),
-                "confirmed_exercises": exercises_by_workout.get(row.workout_id, []),
+                "samples": samples_by_workout.get((row.source, row.workout_id), []),
+                "confirmed_exercises": exercises_by_workout.get(
+                    (row.source, row.workout_id), []
+                ),
                 "data": row.data or {},
             }
             for row in workout_rows
@@ -211,8 +216,9 @@ class ProfileLoader:
             _append(raw, "resting_hr", record.get("resting_hr"), "bpm", day, record.get("source", "zepp"), "normalized_daily_record", positive=True)
             _append(raw, "steps", record.get("steps"), "steps", day, record.get("source", "zepp"), "normalized_daily_record")
         for day, record in raw.training_by_day.items():
-            _append(raw, "training_load", record.get("total_load"), "load", day, "zepp", "normalized_daily_record")
-            _append(raw, "training_duration", record.get("total_duration"), "min", day, "zepp", "normalized_daily_record")
+            source = record.get("source", "canonical_workouts")
+            _append(raw, "training_load", record.get("total_load"), "load", day, source, "normalized_daily_record")
+            _append(raw, "training_duration", record.get("total_duration"), "min", day, source, "normalized_daily_record")
 
     def _add_daily_metrics(self, raw: RawDailyProfile, start: date) -> None:
         for row in self.repo.daily_metrics(raw.user_id, start, raw.day):
@@ -224,7 +230,7 @@ class ProfileLoader:
                 row.date,
                 row.source,
                 row.source_scope,
-                row.device_id,
+                row.device_id or None,
                 positive=False,
             )
 

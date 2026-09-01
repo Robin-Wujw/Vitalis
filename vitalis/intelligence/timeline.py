@@ -61,7 +61,14 @@ class HealthTimelineEngine:
                 references={
                     "recommendation_id": recommendation.id,
                     "analysis_run_id": recommendation.analysis_run_id,
-                    **({"workout_id": recommendation.linked_workout_id} if recommendation.linked_workout_id else {}),
+                    **(
+                        {
+                            "workout_source": recommendation.linked_workout_source,
+                            "workout_id": recommendation.linked_workout_id,
+                        }
+                        if recommendation.linked_workout_source
+                        and recommendation.linked_workout_id else {}
+                    ),
                 },
                 details={
                     "completion_status": recommendation.completion_status.value,
@@ -82,12 +89,15 @@ class HealthTimelineEngine:
             if workout_day is None or not start <= workout_day <= end:
                 continue
             items.append(TimelineItem(
-                id=f"workout:{workout.workout_id}",
+                id=f"workout:{workout.source}:{workout.workout_id}",
                 type="workout",
                 date=workout_day,
                 title=f"完成训练：{data.get('sport_mode_label') or '未知运动'}",
                 summary=f"{int(data.get('duration') or 0)} 分钟",
-                references={"workout_id": workout.workout_id},
+                references={
+                    "workout_source": workout.source,
+                    "workout_id": workout.workout_id,
+                },
                 details={
                     "sport_mode": data.get("sport_mode") or "unknown",
                     "training_family": data.get("training_family") or "skill",
@@ -112,7 +122,13 @@ class HealthTimelineEngine:
                 summary="已记录训练或当日主观感受",
                 references={
                     "feedback_id": feedback.id,
-                    **({"workout_id": feedback.workout_id} if feedback.workout_id else {}),
+                    **(
+                        {
+                            "workout_source": feedback.workout_source,
+                            "workout_id": feedback.workout_id,
+                        }
+                        if feedback.workout_source and feedback.workout_id else {}
+                    ),
                     **({"recommendation_id": feedback.recommendation_id} if feedback.recommendation_id else {}),
                 },
                 details=details,
@@ -145,13 +161,17 @@ class HealthTimelineEngine:
                 if not start <= response.exposure.date <= end:
                     continue
                 items.append(TimelineItem(
-                    id=f"response:{response.analysis_run_id}:{response.exposure.workout_id}",
+                    id=(
+                        f"response:{response.analysis_run_id}:"
+                        f"{response.exposure.source}:{response.exposure.workout_id}"
+                    ),
                     type="training_response",
                     date=response.exposure.date,
                     title=f"训练响应：{response.exposure.sport_mode_label}",
                     summary=response.recovery_status_label,
                     references={
                         "analysis_run_id": response.analysis_run_id,
+                        "workout_source": response.exposure.source,
                         "workout_id": response.exposure.workout_id,
                     },
                     details={

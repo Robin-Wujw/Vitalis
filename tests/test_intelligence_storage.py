@@ -36,6 +36,7 @@ def test_feedback_is_validated_stored_and_user_scoped():
         user_id,
         SubjectiveFeedbackInput(
             date=TARGET,
+            workout_source="zepp",
             workout_id="feedback-workout",
             session_rpe=7,
             physical_fatigue=3,
@@ -68,6 +69,7 @@ def test_feedback_rejects_foreign_workout_reference():
             "feedback-other",
             SubjectiveFeedbackInput(
                 date=TARGET,
+                workout_source="zepp",
                 workout_id="private-workout",
                 session_rpe=6,
             ),
@@ -124,6 +126,7 @@ def test_command_persists_one_run_and_all_intelligence_snapshots():
         user_id,
         SubjectiveFeedbackInput(
             date=TARGET,
+            workout_source="zepp",
             workout_id="pipeline-feedback-workout",
             session_rpe=8,
             physical_fatigue=4,
@@ -240,6 +243,7 @@ def test_recommendation_completion_and_feedback_form_an_explicit_identity_chain(
         user_id,
         SubjectiveFeedbackInput(
             date=TARGET,
+            workout_source="zepp",
             workout_id=workout_id,
             recommendation_id=linked.id,
             session_rpe=7,

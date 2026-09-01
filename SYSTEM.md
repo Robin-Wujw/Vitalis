@@ -1961,3 +1961,115 @@ explicit cross-platform product contract.
 
 - Part 1: the required workflow now mandates a visible plan before state-changing work
   and a separate, scoped commit after each verified major plan part.
+
+## 29. Canonical Zepp Data Correctness Session
+
+Date: 2026-09-01
+
+Goal: repair current-contract synchronization facts before adding new ingestion or
+maintenance features. Canonical workouts must drive local-day training summaries,
+metric identities must preserve device and source scope, and fetch failures must never
+be presented as cloud-empty or successful.
+
+### Delivery Plan
+
+- [x] Part 1 - Add fresh-schema natural keys and native upserts for daily records,
+  DailyMetric, and MetricSample while preserving device/source-scope identity.
+- [x] Part 2 - Persist canonical workouts first, rebuild affected local-day training
+  summaries from the workout table, and use configured-timezone query boundaries.
+- [x] Part 3 - Classify Zepp errors structurally and make core/optional stream outcomes
+  internally consistent without parsing human-readable error messages.
+- [x] Part 4 - Synchronize current-contract documentation and run focused, full,
+  compilation, schema, OpenAPI, JSON, and diff verification.
+
+### Constraints
+
+- No migration, ALTER TABLE, legacy reader, dual read/write, compatibility branch, or
+  old-data conversion is introduced. The changed constraints require a fresh schema and
+  vendor re-ingestion before live use.
+- Missing-value Optional contracts, raw payload retention, chunk coverage ledgers,
+  retry/backoff improvements, backup/restore, and retention policy remain separate
+  planned work rather than partial additions to this batch.
+- Existing databases, services, deployments, commits, and remotes are not changed by
+  this session without separate explicit authorization.
+
+### Verification Log
+
+- Part 1: fresh SQLite inspection confirmed daily `(user_id, date)` uniqueness,
+  source-scope/device-aware MetricSample and DailyMetric keys, and source-aware workout
+  detail sample identity. Native upsert and multi-device/source-scope API regressions
+  passed.
+- Part 2: multi-page and multi-sport tests confirmed canonical workouts rebuild one
+  complete Shanghai-local training day, repeated sync stays idempotent, timestamp
+  corrections clean the old day, and local-day workout API boundaries are half-open and
+  correct.
+- Part 3: HTTP, transport, timeout, optional endpoint, empty response, unrecognized
+  payload, pairing, and link-state regressions passed. Region hosts are validated at the
+  client boundary, dense downloads reject redirects, and incomplete synchronization no
+  longer marks a browser link synced.
+- Part 4: focused post-review run passed 110 tests. The UTF-8 full suite reached 278
+  passes with one pre-existing Windows-only failure at `tests/test_daily_push.py:109`,
+  whose Unix `0600` mode assertion observes `0666` on Windows; excluding that file passed
+  263 tests. Python compilation, 42-path OpenAPI generation, all 12 Skill JSON schemas,
+  fresh-schema constraint assertions, and `git diff --check` passed. High-effort review
+  findings were fixed; its final heart-rate timestamp concern was checked against
+  ZeppBridge and found to be a parameter-name mismatch—the endpoint intentionally uses
+  Unix seconds—so the client parameter and docstring were clarified without changing
+  working request semantics. No database, service, deployment, commit, or remote was
+  changed.
+
+### Continuation Plan
+
+- [x] Part 5 - Reconfirm the current focused baseline without changing repository state.
+  - The existing Zepp fetcher, sync manager, API, and health-data tests still pass, so the
+    remaining work is uncovered contract propagation rather than a known failing test.
+- [x] Part 6 - Make explicit fetch windows and synchronization completeness authoritative.
+  - Preserve successful partial writes, but never report mixed chunk coverage, failed
+    optional streams, or authentication loss as a successful synchronization.
+  - Make pairing, manual sync, generic connect, token status, and scheduled analysis use
+    the same success and reauthentication decisions.
+- [x] Part 7 - Propagate canonical workout identity and metric provenance end to end.
+  - Treat workouts as `(source, workout_id)` through derived training, detail/sample
+    reads, intelligence links, feedback, recommendations, strength confirmation, and API
+    references.
+  - Return source provenance from metric APIs and keep hourly/daily aggregation separated
+    by source, scope, device, and unit using the configured local day.
+- [x] Part 8 - Correct remaining Zepp boundary and diagnostic-stage behavior.
+  - Distinguish dense archive fetch failures from parse failures, reject unknown non-empty
+    payloads, normalize region hosts safely, contain probe timeouts, and remove host-timezone
+    dependence from HRV request boundaries.
+- [x] Part 9 - Add regression coverage, synchronize documentation, and rerun complete
+  verification without changing databases, services, deployments, commits, or remotes.
+
+### Continuation Verification Log
+
+- Part 5: with pytest cache and Python bytecode disabled, `tests/test_fetcher.py`,
+  `tests/test_sync_manager.py`, `tests/test_api.py`, and `tests/test_health_data_api.py`
+  passed all 110 tests on Windows. The run emitted only existing deprecation warnings.
+- Part 6: explicit local-date windows now use configured-timezone UTC bounds and serialize
+  vendor date parameters back in that timezone. In-memory coverage distinguishes complete,
+  wholly unavailable, and mixed partial chunks; every failed or unverified stream blocks
+  overall success while successful chunks completed before a terminal error are persisted.
+  Pairing, manual/generic connect, token status, and scheduled analysis now share report
+  success and reauthentication behavior. Focused fetch/sync/API regressions passed.
+- Part 7: canonical workout identity is `(source, workout_id)` through training-day
+  rebuilds, detail/sample reads, ProfileLoader, feedback, recommendations, strength
+  confirmation, response output, timeline references, and health APIs. Timestamped and
+  daily metric APIs return source provenance, never aggregate across source/scope/device/
+  unit, and use `VITALIS_TIMEZONE` for daily buckets. Same-ID Zepp/Garmin regressions
+  confirmed isolated samples and a combined two-workout derived training day.
+- Part 8: dense archive download failures are fetch-stage diagnostics while decode errors
+  remain parse-stage failures; non-empty unknown dense/detail payloads are unverified.
+  Region validation rejects non-origin URL components, probe timeout is structured, HRV
+  epochs use configured-local-day bounds, full heart-rate pages advance by `generatedTime`,
+  and successful empty heart-rate responses are not refetched. Focused regressions passed.
+- Part 9: the final post-review focused suite passed 157 tests. The full suite excluding
+  the pre-existing Windows-only `tests/test_daily_push.py` file passed 293 tests; the
+  complete suite passed 308 tests with only its known `0600` versus Windows `0666`
+  assertion failing. Post-review fixes also reject cross-account local-user rebinding,
+  preserve source-qualified stream freshness, stream aggregate ranges beyond the raw
+  50,000-row cap, and retain source in training-response/comparable-run references.
+  Python compilation passed. OpenAPI still exposes 42 paths and requires workout source
+  for detail and strength operations. A fresh in-memory SQLite schema confirmed source-
+  aware strength/recommendation uniqueness and subjective-feedback source storage.
+  `git diff --check` passed. No database, service, deployment, commit, or remote changed.

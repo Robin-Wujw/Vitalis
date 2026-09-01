@@ -1,11 +1,11 @@
 """仓储层：封装对 ORM 的读写，业务层只依赖仓储接口。"""
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 import hashlib
 from uuid import uuid4
 
-from sqlalchemy import Integer, case, cast, delete, func, or_, select, text, update
+from sqlalchemy import Integer, case, cast, delete, func, or_, select, text, tuple_, update
 from sqlalchemy.orm import Session
 
 from vitalis.models import (
@@ -15,6 +15,7 @@ from vitalis.models import (
     DailyMetric,
     DenseDataFile,
     MetricSample,
+    TrainingRecord,
     Workout,
     WorkoutMetricSample,
 )
@@ -29,11 +30,14 @@ from vitalis.intelligence.contracts import (
     TrainingPreferences,
 )
 
+from vitalis.time import local_day, local_day_utc_bounds
+
 from . import models as orm
 
 
 @dataclass(frozen=True)
 class WorkoutAnalysisSample:
+    source: str
     workout_id: str
     timestamp: datetime
     metric: str
@@ -140,14 +144,32 @@ class HealthRepository:
         self.db.flush()
 
     def _upsert(self, model, user_id: str, day, data: dict) -> None:
-        """JSON 列数据按 (user_id, date) 唯一键更新或插入。"""
-        existing = self.db.query(model).filter(
-            model.user_id == user_id, model.date == day
-        ).one_or_none()
-        if existing:
-            existing.data = data
-        else:
+        """Upsert one current-contract daily row by ``(user_id, date)``."""
+        dialect = self.db.get_bind().dialect.name
+        if dialect in ("sqlite", "postgresql"):
+            if dialect == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert as dialect_insert
+            else:
+                from sqlalchemy.dialects.postgresql import insert as dialect_insert
+            statement = dialect_insert(model).values(
+                user_id=user_id,
+                date=day,
+                data=data,
+            )
+            self.db.execute(statement.on_conflict_do_update(
+                index_elements=["user_id", "date"],
+                set_={"data": statement.excluded.data},
+            ))
+            return
+
+        existing = self.db.execute(select(model).where(
+            model.user_id == user_id,
+            model.date == day,
+        )).scalar_one_or_none()
+        if existing is None:
             self.db.add(model(user_id=user_id, date=day, data=data))
+        else:
+            existing.data = data
 
     # ---- 查询 ----
     def get_sleep(self, user_id: str, day: date) -> dict | None:
@@ -188,13 +210,16 @@ class HealthRepository:
 
     def save_metric_samples(self, samples: list[MetricSample]) -> int:
         """Idempotently upsert timestamped measurements."""
-        deduplicated: dict[tuple[str, str, str, datetime, str], MetricSample] = {}
+        deduplicated: dict[
+            tuple[str, str, str, datetime, str, str], MetricSample
+        ] = {}
         for sample in samples:
             key = (
                 sample.user_id,
                 sample.source,
                 sample.metric,
                 _naive_utc(sample.timestamp),
+                sample.source_scope or "unknown",
                 sample.device_id or "",
             )
             deduplicated[key] = sample
@@ -215,21 +240,25 @@ class HealthRepository:
                     "source": source,
                     "metric": metric,
                     "timestamp": timestamp,
+                    "source_scope": source_scope,
                     "device_id": device_id,
                     "value": sample.value,
                     "unit": sample.unit,
-                    "source_scope": sample.source_scope,
                 }
-                for (user_id, source, metric, timestamp, device_id), sample in deduplicated.items()
+                for (
+                    user_id, source, metric, timestamp, source_scope, device_id
+                ), sample in deduplicated.items()
             ]
             for offset in range(0, len(rows), 500):
                 statement = dialect_insert(orm.MetricSample).values(rows[offset:offset + 500])
                 statement = statement.on_conflict_do_update(
-                    index_elements=["user_id", "source", "metric", "timestamp", "device_id"],
+                    index_elements=[
+                        "user_id", "source", "metric", "timestamp", "source_scope",
+                        "device_id",
+                    ],
                     set_={
                         "value": statement.excluded.value,
                         "unit": statement.excluded.unit,
-                        "source_scope": statement.excluded.source_scope,
                     },
                 )
                 self.db.execute(statement)
@@ -237,13 +266,16 @@ class HealthRepository:
             return len(rows)
 
         written = 0
-        for (user_id, source, metric, timestamp, device_id), sample in deduplicated.items():
+        for (
+            user_id, source, metric, timestamp, source_scope, device_id
+        ), sample in deduplicated.items():
             row = self.db.execute(
                 select(orm.MetricSample).where(
                     orm.MetricSample.user_id == user_id,
                     orm.MetricSample.source == source,
                     orm.MetricSample.metric == metric,
                     orm.MetricSample.timestamp == timestamp,
+                    orm.MetricSample.source_scope == source_scope,
                     orm.MetricSample.device_id == device_id,
                 )
             ).scalar_one_or_none()
@@ -253,12 +285,13 @@ class HealthRepository:
                     source=source,
                     metric=metric,
                     timestamp=timestamp,
+                    source_scope=source_scope,
                     device_id=device_id,
                 )
                 self.db.add(row)
             row.value = sample.value
             row.unit = sample.unit
-            row.source_scope = sample.source_scope
+            row.source_scope = source_scope
             row.device_id = device_id
             written += 1
         self.db.flush()
@@ -267,13 +300,26 @@ class HealthRepository:
     def metric_samples(
         self, user_id: str, metric: str, start: datetime, end: datetime, limit: int = 50_000
     ) -> list[orm.MetricSample]:
-        return list(self.db.execute(
-            select(orm.MetricSample).where(
-                orm.MetricSample.user_id == user_id,
-                orm.MetricSample.metric == metric,
-                orm.MetricSample.timestamp.between(_naive_utc(start), _naive_utc(end)),
-            ).order_by(orm.MetricSample.timestamp).limit(limit)
-        ).scalars().all())
+        return list(self.metric_sample_rows(user_id, metric, start, end, limit=limit))
+
+    def metric_sample_rows(
+        self,
+        user_id: str,
+        metric: str,
+        start: datetime,
+        end: datetime,
+        limit: int | None = None,
+    ):
+        statement = select(orm.MetricSample).where(
+            orm.MetricSample.user_id == user_id,
+            orm.MetricSample.metric == metric,
+            orm.MetricSample.timestamp.between(_naive_utc(start), _naive_utc(end)),
+        ).order_by(orm.MetricSample.timestamp)
+        if limit is not None:
+            statement = statement.limit(limit)
+        return self.db.execute(
+            statement.execution_options(yield_per=10_000)
+        ).scalars()
 
     def heart_rate_minute_medians(
         self, user_id: str, start: datetime, end: datetime
@@ -343,37 +389,78 @@ class HealthRepository:
         return output
 
     def save_daily_metrics(self, metrics: list[DailyMetric]) -> int:
-        """Idempotently upsert sparse daily vendor metrics."""
-        deduplicated: dict[tuple[str, str, date, str], DailyMetric] = {}
+        """Idempotently upsert sparse daily vendor metrics by source stream."""
+        deduplicated: dict[
+            tuple[str, str, date, str, str, str], DailyMetric
+        ] = {}
         for metric in metrics:
-            key = (metric.user_id, metric.source, metric.date, metric.metric)
+            key = (
+                metric.user_id,
+                metric.source,
+                metric.date,
+                metric.metric,
+                metric.source_scope or "unknown",
+                metric.device_id or "",
+            )
             deduplicated[key] = metric
 
-        written = 0
-        for (user_id, source, day, metric_name), metric in deduplicated.items():
-            row = self.db.execute(
-                select(orm.DailyMetric).where(
-                    orm.DailyMetric.user_id == user_id,
-                    orm.DailyMetric.source == source,
-                    orm.DailyMetric.date == day,
-                    orm.DailyMetric.metric == metric_name,
+        if not deduplicated:
+            return 0
+
+        rows = [
+            {
+                "user_id": user_id,
+                "source": source,
+                "date": day,
+                "metric": metric_name,
+                "source_scope": source_scope,
+                "device_id": device_id,
+                "value": metric.value,
+                "unit": metric.unit,
+            }
+            for (
+                user_id, source, day, metric_name, source_scope, device_id
+            ), metric in deduplicated.items()
+        ]
+        dialect = self.db.get_bind().dialect.name
+        if dialect in ("sqlite", "postgresql"):
+            if dialect == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert as dialect_insert
+            else:
+                from sqlalchemy.dialects.postgresql import insert as dialect_insert
+            for offset in range(0, len(rows), 500):
+                statement = dialect_insert(orm.DailyMetric).values(
+                    rows[offset:offset + 500]
                 )
-            ).scalar_one_or_none()
+                self.db.execute(statement.on_conflict_do_update(
+                    index_elements=[
+                        "user_id", "source", "date", "metric", "source_scope",
+                        "device_id",
+                    ],
+                    set_={
+                        "value": statement.excluded.value,
+                        "unit": statement.excluded.unit,
+                    },
+                ))
+            self.db.flush()
+            return len(rows)
+
+        for values in rows:
+            row = self.db.execute(select(orm.DailyMetric).where(
+                orm.DailyMetric.user_id == values["user_id"],
+                orm.DailyMetric.source == values["source"],
+                orm.DailyMetric.date == values["date"],
+                orm.DailyMetric.metric == values["metric"],
+                orm.DailyMetric.source_scope == values["source_scope"],
+                orm.DailyMetric.device_id == values["device_id"],
+            )).scalar_one_or_none()
             if row is None:
-                row = orm.DailyMetric(
-                    user_id=user_id,
-                    source=source,
-                    date=day,
-                    metric=metric_name,
-                )
-                self.db.add(row)
-            row.value = metric.value
-            row.unit = metric.unit
-            row.source_scope = metric.source_scope
-            row.device_id = metric.device_id
-            written += 1
+                self.db.add(orm.DailyMetric(**values))
+            else:
+                row.value = values["value"]
+                row.unit = values["unit"]
         self.db.flush()
-        return written
+        return len(rows)
 
     def daily_metrics(self, user_id: str, start: date, end: date, metric: str | None = None) -> list[orm.DailyMetric]:
         stmt = select(orm.DailyMetric).where(
@@ -477,44 +564,124 @@ class HealthRepository:
         ).scalars().all())
 
     def dense_data_file_group(
-        self, user_id: str, stream: str, file_id: str
+        self,
+        user_id: str,
+        stream: str,
+        file_id: str,
+        source: str | None = None,
     ) -> list[orm.DenseDataFile]:
+        statement = select(orm.DenseDataFile).where(
+            orm.DenseDataFile.user_id == user_id,
+            orm.DenseDataFile.stream == stream,
+            orm.DenseDataFile.file_id == file_id,
+        )
+        if source is not None:
+            statement = statement.where(orm.DenseDataFile.source == source)
         return list(self.db.execute(
-            select(orm.DenseDataFile).where(
-                orm.DenseDataFile.user_id == user_id,
-                orm.DenseDataFile.stream == stream,
-                orm.DenseDataFile.file_id == file_id,
-            ).order_by(orm.DenseDataFile.start_utc, orm.DenseDataFile.id)
+            statement.order_by(
+                orm.DenseDataFile.start_utc, orm.DenseDataFile.id
+            )
         ).scalars().all())
 
     # ---- 单次运动 ----
 
-    def save_workout(self, workout: Workout) -> None:
-        row = self.db.execute(
+    def save_workout(self, workout: Workout) -> set[date]:
+        """Upsert a canonical workout and return its affected local days."""
+        existing = self.db.execute(
             select(orm.Workout).where(
                 orm.Workout.user_id == workout.user_id,
                 orm.Workout.source == workout.source,
                 orm.Workout.workout_id == workout.workout_id,
             )
         ).scalar_one_or_none()
-        if row is None:
-            row = orm.Workout(
-                user_id=workout.user_id,
-                source=workout.source,
-                workout_id=workout.workout_id,
-            )
-            self.db.add(row)
-        row.started_at = _naive_utc(workout.started_at) if workout.started_at else None
-        row.vendor_source = workout.vendor_source
-        row.data = workout.model_dump(mode="json", exclude_none=True)
+        affected = {
+            local_day(existing.started_at)
+            for existing in (existing,)
+            if existing is not None and existing.started_at is not None
+        }
+        started_at = _naive_utc(workout.started_at) if workout.started_at else None
+        if workout.started_at is not None:
+            affected.add(local_day(workout.started_at))
+        values = {
+            "user_id": workout.user_id,
+            "source": workout.source,
+            "workout_id": workout.workout_id,
+            "started_at": started_at,
+            "vendor_source": workout.vendor_source,
+            "data": workout.model_dump(mode="json", exclude_none=True),
+        }
+
+        dialect = self.db.get_bind().dialect.name
+        if dialect in ("sqlite", "postgresql"):
+            if dialect == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert as dialect_insert
+            else:
+                from sqlalchemy.dialects.postgresql import insert as dialect_insert
+            statement = dialect_insert(orm.Workout).values(**values)
+            self.db.execute(statement.on_conflict_do_update(
+                index_elements=["user_id", "source", "workout_id"],
+                set_={
+                    "started_at": statement.excluded.started_at,
+                    "vendor_source": statement.excluded.vendor_source,
+                    "data": statement.excluded.data,
+                },
+            ))
+        elif existing is None:
+            self.db.add(orm.Workout(**values))
+        else:
+            existing.started_at = started_at
+            existing.vendor_source = workout.vendor_source
+            existing.data = values["data"]
         self.db.flush()
+        return affected
+
+    def rebuild_training_days(self, user_id: str, days: set[date]) -> int:
+        """Rebuild derived training rows from canonical workouts."""
+        changed = 0
+        for day in sorted(days):
+            start_at, _ = local_day_utc_bounds(day)
+            _, end_at = local_day_utc_bounds(day)
+            rows = list(self.db.execute(select(orm.Workout).where(
+                orm.Workout.user_id == user_id,
+                orm.Workout.started_at >= _naive_utc(start_at),
+                orm.Workout.started_at < _naive_utc(end_at),
+            )).scalars().all())
+            if not rows:
+                result = self.db.execute(delete(orm.TrainingRecord).where(
+                    orm.TrainingRecord.user_id == user_id,
+                    orm.TrainingRecord.date == day,
+                ))
+                changed += int(bool(result.rowcount))
+                continue
+            training = TrainingRecord(
+                user_id=user_id,
+                source="canonical_workouts",
+                date=day,
+                workout_count=len(rows),
+                total_duration=sum(int((row.data or {}).get("duration") or 0) for row in rows),
+                total_load=sum(int((row.data or {}).get("load") or 0) for row in rows),
+            )
+            self.save_daily(NormalizedDaily(
+                user_id=user_id,
+                date=day,
+                training=training,
+            ))
+            changed += 1
+        self.db.flush()
+        return changed
 
     def pending_workout_details(
-        self, user_id: str, start: datetime, end: datetime, limit: int = 100
+        self,
+        user_id: str,
+        start: datetime,
+        end: datetime,
+        limit: int = 100,
+        source: str = "zepp",
     ) -> list[orm.Workout]:
         rows = list(self.db.execute(
             select(orm.Workout).where(
                 orm.Workout.user_id == user_id,
+                orm.Workout.source == source,
                 orm.Workout.started_at.between(_naive_utc(start), _naive_utc(end)),
                 orm.Workout.vendor_source.is_not(None),
             ).order_by(orm.Workout.started_at)
@@ -532,10 +699,13 @@ class HealthRepository:
         workout_id: str,
         detail: dict,
         samples: list[WorkoutMetricSample] | None = None,
+        *,
+        source: str = "zepp",
     ) -> bool:
         row = self.db.execute(
             select(orm.Workout).where(
                 orm.Workout.user_id == user_id,
+                orm.Workout.source == source,
                 orm.Workout.workout_id == workout_id,
             )
         ).scalar_one_or_none()
@@ -546,11 +716,13 @@ class HealthRepository:
         if samples is not None:
             self.db.execute(delete(orm.WorkoutMetricSample).where(
                 orm.WorkoutMetricSample.user_id == user_id,
+                orm.WorkoutMetricSample.source == source,
                 orm.WorkoutMetricSample.workout_id == workout_id,
             ))
             self.db.add_all([
                 orm.WorkoutMetricSample(
                     user_id=user_id,
+                    source=source,
                     workout_id=workout_id,
                     timestamp=_naive_utc(sample.timestamp),
                     metric=sample.metric,
@@ -570,9 +742,11 @@ class HealthRepository:
         workout_id: str,
         metric: str | None = None,
         limit: int = 250_000,
+        source: str = "zepp",
     ) -> list[orm.WorkoutMetricSample]:
         query = select(orm.WorkoutMetricSample).where(
             orm.WorkoutMetricSample.user_id == user_id,
+            orm.WorkoutMetricSample.source == source,
             orm.WorkoutMetricSample.workout_id == workout_id,
         )
         if metric:
@@ -587,12 +761,17 @@ class HealthRepository:
     def workout_metric_samples_for_workouts(
         self,
         user_id: str,
-        workout_ids: list[str],
+        workout_ids: list[str] | list[tuple[str, str]],
         limit: int = 2_000_000,
         resolution_seconds: int = 5,
+        source: str = "zepp",
     ) -> list[WorkoutAnalysisSample]:
         if not workout_ids:
             return []
+        workout_keys = [
+            (source, item) if isinstance(item, str) else item
+            for item in workout_ids
+        ]
         resolution_seconds = max(int(resolution_seconds), 1)
         dialect = self.db.get_bind().dialect.name
         if dialect == "sqlite":
@@ -601,10 +780,11 @@ class HealthRepository:
             epoch = cast(func.extract("epoch", orm.WorkoutMetricSample.timestamp), Integer)
         else:
             rows = self.workout_metric_samples_for_workouts_raw(
-                user_id, workout_ids, limit
+                user_id, workout_keys, limit
             )
             return [
                 WorkoutAnalysisSample(
+                    source=row.source,
                     workout_id=row.workout_id,
                     timestamp=row.timestamp,
                     metric=row.metric,
@@ -622,6 +802,7 @@ class HealthRepository:
         ).label("value")
         statement = (
             select(
+                orm.WorkoutMetricSample.source,
                 orm.WorkoutMetricSample.workout_id,
                 func.min(orm.WorkoutMetricSample.timestamp).label("timestamp"),
                 orm.WorkoutMetricSample.metric,
@@ -632,9 +813,13 @@ class HealthRepository:
             )
             .where(
                 orm.WorkoutMetricSample.user_id == user_id,
-                orm.WorkoutMetricSample.workout_id.in_(workout_ids),
+                tuple_(
+                    orm.WorkoutMetricSample.source,
+                    orm.WorkoutMetricSample.workout_id,
+                ).in_(workout_keys),
             )
             .group_by(
+                orm.WorkoutMetricSample.source,
                 orm.WorkoutMetricSample.workout_id,
                 orm.WorkoutMetricSample.metric,
                 orm.WorkoutMetricSample.unit,
@@ -643,6 +828,7 @@ class HealthRepository:
                 bucket,
             )
             .order_by(
+                orm.WorkoutMetricSample.source,
                 orm.WorkoutMetricSample.workout_id,
                 func.min(orm.WorkoutMetricSample.timestamp),
                 orm.WorkoutMetricSample.metric,
@@ -651,6 +837,7 @@ class HealthRepository:
         )
         return [
             WorkoutAnalysisSample(
+                source=row.source,
                 workout_id=row.workout_id,
                 timestamp=row.timestamp,
                 metric=row.metric,
@@ -663,15 +850,27 @@ class HealthRepository:
         ]
 
     def workout_metric_samples_for_workouts_raw(
-        self, user_id: str, workout_ids: list[str], limit: int = 2_000_000
+        self,
+        user_id: str,
+        workout_ids: list[str] | list[tuple[str, str]],
+        limit: int = 2_000_000,
+        source: str = "zepp",
     ) -> list[orm.WorkoutMetricSample]:
         if not workout_ids:
             return []
+        workout_keys = [
+            (source, item) if isinstance(item, str) else item
+            for item in workout_ids
+        ]
         return list(self.db.execute(
             select(orm.WorkoutMetricSample).where(
                 orm.WorkoutMetricSample.user_id == user_id,
-                orm.WorkoutMetricSample.workout_id.in_(workout_ids),
+                tuple_(
+                    orm.WorkoutMetricSample.source,
+                    orm.WorkoutMetricSample.workout_id,
+                ).in_(workout_keys),
             ).order_by(
+                orm.WorkoutMetricSample.source,
                 orm.WorkoutMetricSample.workout_id,
                 orm.WorkoutMetricSample.timestamp,
                 orm.WorkoutMetricSample.metric,
@@ -679,20 +878,23 @@ class HealthRepository:
         ).scalars().all())
 
     def workouts(self, user_id: str, start: date, end: date, limit: int = 500) -> list[orm.Workout]:
-        start_dt = datetime.combine(start, datetime.min.time())
-        end_dt = datetime.combine(end + timedelta(days=1), datetime.min.time())
+        start_at, _ = local_day_utc_bounds(start)
+        _, end_at = local_day_utc_bounds(end)
         return list(self.db.execute(
             select(orm.Workout).where(
                 orm.Workout.user_id == user_id,
-                orm.Workout.started_at >= start_dt,
-                orm.Workout.started_at < end_dt,
+                orm.Workout.started_at >= _naive_utc(start_at),
+                orm.Workout.started_at < _naive_utc(end_at),
             ).order_by(orm.Workout.started_at.desc()).limit(limit)
         ).scalars().all())
 
-    def workout(self, user_id: str, workout_id: str) -> orm.Workout | None:
+    def workout(
+        self, user_id: str, workout_id: str, source: str = "zepp"
+    ) -> orm.Workout | None:
         return self.db.execute(
             select(orm.Workout).where(
                 orm.Workout.user_id == user_id,
+                orm.Workout.source == source,
                 orm.Workout.workout_id == workout_id,
             )
         ).scalar_one_or_none()
@@ -730,7 +932,9 @@ class HealthRepository:
         row.fetched_at = _naive_utc(fetched_at) if fetched_at else None
         row.parsed_at = _naive_utc(parsed_at) if parsed_at else None
         row.written_at = _naive_utc(written_at) if written_at else None
-        row.last_sample_at = self.latest_stream_sample_at(user_id, stream)
+        row.last_sample_at = self.latest_stream_sample_at(
+            user_id, stream, source=source
+        )
         row.raw_records = raw_records
         row.records_written = records_written
         row.error_kind = error_kind
@@ -746,7 +950,9 @@ class HealthRepository:
             ).order_by(orm.SyncStreamState.stream)
         ).scalars().all())
 
-    def latest_stream_sample_at(self, user_id: str, stream: str) -> datetime | None:
+    def latest_stream_sample_at(
+        self, user_id: str, stream: str, source: str = "zepp"
+    ) -> datetime | None:
         metric_by_stream = {
             "heart_rate": "heart_rate",
             "heart_rate/minute_endpoint": "heart_rate",
@@ -764,21 +970,25 @@ class HealthRepository:
         if metric in {"heart_rate", "hrv_sdnn", "hrv_rmssd", "spo2", "spo2_apnea_low"}:
             return self.db.execute(select(func.max(orm.MetricSample.timestamp)).where(
                 orm.MetricSample.user_id == user_id,
+                orm.MetricSample.source == source,
                 orm.MetricSample.metric == metric,
             )).scalar_one_or_none()
         if metric:
             value = self.db.execute(select(func.max(orm.DailyMetric.date)).where(
                 orm.DailyMetric.user_id == user_id,
+                orm.DailyMetric.source == source,
                 orm.DailyMetric.metric == metric,
             )).scalar_one_or_none()
             return datetime.combine(value, datetime.min.time()) if value else None
         if stream == "workout_detail":
             return self.db.execute(select(func.max(orm.WorkoutMetricSample.timestamp)).where(
-                orm.WorkoutMetricSample.user_id == user_id
+                orm.WorkoutMetricSample.user_id == user_id,
+                orm.WorkoutMetricSample.source == source,
             )).scalar_one_or_none()
         if stream == "workouts":
             return self.db.execute(select(func.max(orm.Workout.started_at)).where(
-                orm.Workout.user_id == user_id
+                orm.Workout.user_id == user_id,
+                orm.Workout.source == source,
             )).scalar_one_or_none()
         if stream == "sleep":
             value = self.db.execute(select(func.max(orm.SleepRecord.date)).where(
@@ -787,12 +997,14 @@ class HealthRepository:
             return datetime.combine(value, datetime.min.time()) if value else None
         if stream == "daily_summary":
             value = self.db.execute(select(func.max(orm.DailyMetric.date)).where(
-                orm.DailyMetric.user_id == user_id
+                orm.DailyMetric.user_id == user_id,
+                orm.DailyMetric.source == source,
             )).scalar_one_or_none()
             return datetime.combine(value, datetime.min.time()) if value else None
         if stream in {"dense_files", "heart_rate/dense_file"}:
             return self.db.execute(select(func.max(orm.DenseDataFile.end_utc)).where(
-                orm.DenseDataFile.user_id == user_id
+                orm.DenseDataFile.user_id == user_id,
+                orm.DenseDataFile.source == source,
             )).scalar_one_or_none()
         return None
 
@@ -801,9 +1013,11 @@ class HealthRepository:
         user_id: str,
         workout_id: str,
         exercises: list[StrengthExerciseRecord],
+        workout_source: str = "zepp",
     ) -> list[StrengthExerciseRecord]:
         self.db.execute(delete(orm.StrengthExercise).where(
             orm.StrengthExercise.user_id == user_id,
+            orm.StrengthExercise.workout_source == workout_source,
             orm.StrengthExercise.workout_id == workout_id,
         ))
         self.db.add_all([
@@ -814,22 +1028,39 @@ class HealthRepository:
         return exercises
 
     def strength_exercises_for_workouts(
-        self, user_id: str, workout_ids: list[str]
+        self, user_id: str, workout_ids: list[str], source: str = "zepp"
     ) -> dict[str, list[StrengthExerciseRecord]]:
-        if not workout_ids:
+        keyed = self.strength_exercises_for_workout_keys(
+            user_id, [(source, workout_id) for workout_id in workout_ids]
+        )
+        return {
+            workout_id: values
+            for (_source, workout_id), values in keyed.items()
+        }
+
+    def strength_exercises_for_workout_keys(
+        self, user_id: str, workout_keys: list[tuple[str, str]]
+    ) -> dict[tuple[str, str], list[StrengthExerciseRecord]]:
+        if not workout_keys:
             return {}
         rows = self.db.execute(select(orm.StrengthExercise).where(
             orm.StrengthExercise.user_id == user_id,
-            orm.StrengthExercise.workout_id.in_(workout_ids),
+            tuple_(
+                orm.StrengthExercise.workout_source,
+                orm.StrengthExercise.workout_id,
+            ).in_(workout_keys),
         ).order_by(
+            orm.StrengthExercise.workout_source,
             orm.StrengthExercise.workout_id,
             orm.StrengthExercise.order,
         )).scalars().all()
-        output: dict[str, list[StrengthExerciseRecord]] = {}
+        output: dict[tuple[str, str], list[StrengthExerciseRecord]] = {}
         for row in rows:
-            output.setdefault(row.workout_id, []).append(StrengthExerciseRecord(
+            key = (row.workout_source, row.workout_id)
+            output.setdefault(key, []).append(StrengthExerciseRecord(
                 id=row.id,
                 user_id=row.user_id,
+                workout_source=row.workout_source,
                 workout_id=row.workout_id,
                 order=row.order,
                 exercise_name=row.exercise_name,
@@ -1117,6 +1348,7 @@ class HealthRepository:
             user_id=recommendation.user_id,
             date=recommendation.date,
             decision=recommendation.decision.model_dump(mode="json"),
+            linked_workout_source=recommendation.linked_workout_source,
             linked_workout_id=recommendation.linked_workout_id,
             completion_status=recommendation.completion_status.value,
             created_at=_naive_utc(recommendation.created_at),
@@ -1147,37 +1379,61 @@ class HealthRepository:
         return [_recommendation_from_row(row) for row in rows]
 
     def recommendations_for_workouts(
-        self, user_id: str, workout_ids: list[str]
+        self, user_id: str, workout_ids: list[str], source: str = "zepp"
     ) -> dict[str, str]:
-        if not workout_ids:
+        keyed = self.recommendations_for_workout_keys(
+            user_id, [(source, workout_id) for workout_id in workout_ids]
+        )
+        return {
+            workout_id: recommendation_id
+            for (_source, workout_id), recommendation_id in keyed.items()
+        }
+
+    def recommendations_for_workout_keys(
+        self, user_id: str, workout_keys: list[tuple[str, str]]
+    ) -> dict[tuple[str, str], str]:
+        if not workout_keys:
             return {}
         rows = self.db.execute(select(orm.RecommendationInstance).where(
             orm.RecommendationInstance.user_id == user_id,
-            orm.RecommendationInstance.linked_workout_id.in_(workout_ids),
+            tuple_(
+                orm.RecommendationInstance.linked_workout_source,
+                orm.RecommendationInstance.linked_workout_id,
+            ).in_(workout_keys),
         )).scalars().all()
         return {
-            row.linked_workout_id: row.id
+            (row.linked_workout_source, row.linked_workout_id): row.id
             for row in rows
-            if row.linked_workout_id is not None
+            if row.linked_workout_source is not None
+            and row.linked_workout_id is not None
         }
 
     def link_recommendation(
-        self, user_id: str, recommendation_id: str, workout_id: str
+        self,
+        user_id: str,
+        recommendation_id: str,
+        workout_id: str,
+        workout_source: str = "zepp",
     ) -> RecommendationInstance:
         row = self.db.get(orm.RecommendationInstance, recommendation_id)
         if row is None or row.user_id != user_id:
             raise ValueError("训练建议不存在或不属于当前用户")
-        if self.workout(user_id, workout_id) is None:
+        if self.workout(user_id, workout_id, source=workout_source) is None:
             raise ValueError("指定训练不存在或不属于当前用户")
         existing = self.db.execute(select(orm.RecommendationInstance).where(
             orm.RecommendationInstance.user_id == user_id,
+            orm.RecommendationInstance.linked_workout_source == workout_source,
             orm.RecommendationInstance.linked_workout_id == workout_id,
             orm.RecommendationInstance.id != recommendation_id,
         )).scalar_one_or_none()
         if existing is not None:
             raise ValueError("该训练已关联其他训练建议")
-        if row.linked_workout_id and row.linked_workout_id != workout_id:
+        if row.linked_workout_id and (
+            row.linked_workout_source != workout_source
+            or row.linked_workout_id != workout_id
+        ):
             raise ValueError("训练建议已关联其他训练")
+        row.linked_workout_source = workout_source
         row.linked_workout_id = workout_id
         row.completion_status = RecommendationStatus.COMPLETED.value
         row.completed_at = row.completed_at or datetime.now(timezone.utc).replace(tzinfo=None)
@@ -1448,6 +1704,7 @@ def _recommendation_from_row(row: orm.RecommendationInstance) -> RecommendationI
         user_id=row.user_id,
         date=row.date,
         decision=row.decision,
+        linked_workout_source=row.linked_workout_source,
         linked_workout_id=row.linked_workout_id,
         completion_status=RecommendationStatus(row.completion_status),
         created_at=row.created_at.replace(tzinfo=timezone.utc),

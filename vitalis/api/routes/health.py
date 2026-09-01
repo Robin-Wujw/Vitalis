@@ -12,6 +12,7 @@ from vitalis.connectors.zepp import ZeppAuthError, ZeppConnector
 from vitalis.models import User
 from vitalis.services.aggregation_service import AggregationService, Granularity
 from vitalis.storage import HealthRepository, session_scope
+from vitalis.time import local_day
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -67,14 +68,22 @@ def health_sync(
                 repo=repo,
                 decode_dense_files=decode_dense_files,
             )
-        if any(stream.needs_reauth for stream in report.streams):
+        if report.needs_reauth:
             raise ZeppAuthError(
                 "Zepp 数据流返回凭据失效",
                 needs_reauth=True,
             )
+        if not report.success:
+            with session_scope() as db:
+                repo = HealthRepository(db)
+                link = repo.latest_browser_link(user_id)
+                if link:
+                    repo.mark_browser_link_sync_failed(
+                        link.token_digest, "手动同步不完整，将稍后重试"
+                    )
         return {
             "user_id": user_id,
-            "status": "synced",
+            "status": "synced" if report.success else "incomplete",
             "success": report.success,
             "streams": [
                 {
@@ -85,6 +94,7 @@ def health_sync(
                     "parse_status": s.parse_status,
                     "write_status": s.write_status,
                     "needs_reauth": s.needs_reauth,
+                    "error_kind": s.error_kind,
                     "message": s.message,
                 }
                 for s in report.streams
@@ -105,16 +115,25 @@ def health_sync(
                 written_at=None,
                 raw_records=0,
                 records_written=0,
-                error_kind="auth" if exc.needs_reauth else "network",
+                error_kind=exc.kind,
                 message=str(exc),
             )
-        if not exc.needs_reauth:
+        if exc.kind in {"network", "service", "timeout"}:
             return {
                 "user_id": user_id,
                 "status": "transient_error",
                 "retryable": True,
+                "error_kind": exc.kind,
                 "detail": str(exc),
                 "hint": "Zepp 暂时不可用，稍后会自动重试",
+            }
+        if not exc.needs_reauth:
+            return {
+                "user_id": user_id,
+                "status": "error",
+                "retryable": False,
+                "error_kind": exc.kind,
+                "detail": str(exc),
             }
         with session_scope() as db:
             HealthRepository(db).mark_user_browser_links_reauth(
@@ -123,6 +142,7 @@ def health_sync(
         return {
             "user_id": user_id,
             "status": "needs_reauth",
+            "error_kind": "auth",
             "detail": str(exc),
             "hint": "Zepp 登录已失效，请在官方登录页重新登录；浏览器扩展会自动恢复连接",
         }
@@ -144,7 +164,9 @@ def health_token_status(user_id: str = Depends(require_user_id)) -> dict:
             "detail": "未导入凭据",
             "import_page": "/api/v1/connect/zepp/scan",
         }
-    # 尝试验证 token 有效性
+    # 尝试验证 token 有效性；只有明确认证失败才使浏览器链接失效。
+    retryable = False
+    error_kind: str | None = None
     try:
         connector.authenticate()
         with session_scope() as db:
@@ -156,16 +178,24 @@ def health_token_status(user_id: str = Depends(require_user_id)) -> dict:
                 repo.mark_browser_link_verified(link.token_digest)
         valid = True
         detail = "凭据有效"
+    except ZeppAuthError as exc:
+        valid = False
+        detail = str(exc)
+        error_kind = exc.kind
+        retryable = exc.kind in {"network", "service", "timeout"}
+        if exc.needs_reauth:
+            with session_scope() as db:
+                HealthRepository(db).mark_user_browser_links_reauth(
+                    user_id, "Zepp 连接验证失败，请重新登录"
+                )
     except Exception as exc:
         valid = False
         detail = str(exc)
-        with session_scope() as db:
-            HealthRepository(db).mark_user_browser_links_reauth(
-                user_id, "Zepp 连接验证失败，请重新登录"
-            )
+        error_kind = "unknown"
 
     with session_scope() as db:
         link = HealthRepository(db).latest_browser_link(user_id)
+    needs_login = bool(link and link.status == "needs_login") or error_kind == "auth"
 
     return {
         "user_id": user_id,
@@ -174,8 +204,10 @@ def health_token_status(user_id: str = Depends(require_user_id)) -> dict:
         "vendor_user_id": auth.source_user_id,
         "region_host": auth.region_host,
         "detail": detail,
-        "connection_status": link.status if link else ("connected" if valid else "needs_login"),
-        "needs_login": bool(link and link.status == "needs_login") or not valid,
+        "error_kind": error_kind,
+        "retryable": retryable,
+        "connection_status": link.status if link else ("needs_login" if needs_login else "connected"),
+        "needs_login": needs_login,
         "connection_message": link.message if link else detail,
         "last_verified_at": (
             link.last_verified_at.isoformat() + "Z" if link and link.last_verified_at else None
@@ -264,40 +296,53 @@ def health_metric_series(
     if end - start > timedelta(days=730):
         raise HTTPException(status_code=400, detail="查询跨度不能超过 730 天")
     with session_scope() as db:
-        rows = HealthRepository(db).metric_samples(user_id, metric, start, end)
-
-    if resolution == "raw":
-        points = [
-            {
-                "timestamp": _iso_utc(row.timestamp),
-                "value": row.value,
-                "unit": row.unit,
-                "source_scope": row.source_scope,
-                "device_id": row.device_id,
-            }
-            for row in rows
-        ]
-    else:
-        buckets: dict[str, list[float]] = defaultdict(list)
-        units: dict[str, str] = {}
-        for row in rows:
-            if resolution == "1h":
-                key = row.timestamp.replace(minute=0, second=0, microsecond=0).isoformat() + "Z"
-            else:
-                key = row.timestamp.date().isoformat()
-            buckets[key].append(row.value)
-            units[key] = row.unit
-        points = [
-            {
-                "timestamp": key,
-                "value": round(sum(values) / len(values), 2),
-                "min": min(values),
-                "max": max(values),
-                "count": len(values),
-                "unit": units[key],
-            }
-            for key, values in sorted(buckets.items())
-        ]
+        repo = HealthRepository(db)
+        if resolution == "raw":
+            rows = repo.metric_samples(user_id, metric, start, end)
+            points = [
+                {
+                    "timestamp": _iso_utc(row.timestamp),
+                    "value": row.value,
+                    "unit": row.unit,
+                    "source": row.source,
+                    "source_scope": row.source_scope,
+                    "device_id": row.device_id or None,
+                }
+                for row in rows
+            ]
+        else:
+            buckets: dict[tuple[str, str, str, str, str], list[float]] = defaultdict(list)
+            for row in repo.metric_sample_rows(user_id, metric, start, end):
+                if resolution == "1h":
+                    timestamp = (
+                        row.timestamp.replace(
+                            minute=0, second=0, microsecond=0
+                        ).isoformat() + "Z"
+                    )
+                else:
+                    timestamp = local_day(row.timestamp).isoformat()
+                key = (
+                    timestamp,
+                    row.source,
+                    row.source_scope,
+                    row.device_id or "",
+                    row.unit,
+                )
+                buckets[key].append(row.value)
+            points = [
+                {
+                    "timestamp": key[0],
+                    "value": round(sum(values) / len(values), 2),
+                    "min": min(values),
+                    "max": max(values),
+                    "count": len(values),
+                    "unit": key[4],
+                    "source": key[1],
+                    "source_scope": key[2],
+                    "device_id": key[3] or None,
+                }
+                for key, values in sorted(buckets.items())
+            ]
     return {
         "user_id": user_id,
         "metric": metric,
@@ -332,8 +377,9 @@ def health_daily_metrics(
                 "metric": row.metric,
                 "value": row.value,
                 "unit": row.unit,
+                "source": row.source,
                 "source_scope": row.source_scope,
-                "device_id": row.device_id,
+                "device_id": row.device_id or None,
             }
             for row in rows
         ],
@@ -393,21 +439,32 @@ def health_workouts(
     return {
         "user_id": user_id,
         "workouts": [
-            {**row.data, "detail_available": row.detail_synced}
+            {
+                **row.data,
+                "source": row.source,
+                "workout_id": row.workout_id,
+                "detail_available": row.detail_synced,
+            }
             for row in rows
         ],
     }
 
 
 @router.get("/workouts/{workout_id}")
-def health_workout_detail(workout_id: str, user_id: str = Depends(require_user_id)) -> dict:
+def health_workout_detail(
+    workout_id: str,
+    source: str = Query(..., min_length=1, max_length=32),
+    user_id: str = Depends(require_user_id),
+) -> dict:
     with session_scope() as db:
         repo = HealthRepository(db)
-        row = repo.workout(user_id, workout_id)
+        row = repo.workout(user_id, workout_id, source=source)
         if row is None:
             raise HTTPException(status_code=404, detail="运动记录不存在")
         detail = dict(row.detail or {})
-        samples = repo.workout_metric_samples(user_id, workout_id)
+        samples = repo.workout_metric_samples(
+            user_id, workout_id, source=source
+        )
         if samples:
             detail["samples"] = [
                 {
@@ -422,7 +479,8 @@ def health_workout_detail(workout_id: str, user_id: str = Depends(require_user_i
             ]
         return {
             "user_id": user_id,
-            "workout": row.data,
+            "source": row.source,
+            "workout": {**row.data, "source": row.source, "workout_id": row.workout_id},
             "detail_available": row.detail_synced,
             "detail": detail or None,
         }

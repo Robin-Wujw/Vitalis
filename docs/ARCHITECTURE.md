@@ -59,6 +59,29 @@ configured application timezone (`VITALIS_TIMEZONE`, currently `Asia/Shanghai`).
 clock times use the vendor-provided offset, and workout summaries are assigned to the
 local date on which the session started.
 
+`workouts` is the canonical training fact table. A Zepp sport page only upserts canonical
+workout identities; every affected local day is then rebuilt from all stored workouts in
+that configured-timezone interval. `training_records` is therefore a derived daily
+summary, never a page-level accumulator. Because it fuses every canonical workout source,
+its analysis provenance is `canonical_workouts`, not a vendor name. A corrected workout
+timestamp rebuilds both its old and new local dates.
+
+Normalized stream identity includes provenance. Timestamped metrics use `(user, source,
+metric, timestamp, source_scope, device_id)`; sparse daily metrics use `(user, source,
+date, metric, source_scope, device_id)`. Workout-detail samples also include canonical
+workout source in their identity, so equal vendor workout IDs from different connectors
+cannot delete or merge one another's measurements. The same `(source, workout_id)` key is
+used by detail APIs, ProfileLoader, feedback, recommendations, strength confirmation,
+training response, and timeline references. A missing device is stored internally
+as an empty non-null identity so SQLite and PostgreSQL apply the same uniqueness
+semantics, but API and intelligence boundaries expose it as absent rather than as a
+device name.
+
+Zepp failures carry a machine-readable kind. Only an explicit `not_available` response
+may be treated as an unsupported optional capability; authentication, network, service,
+and vendor-response failures remain failures. Empty successful cloud responses and
+non-empty unrecognized payloads keep distinct fetch/parse/write states.
+
 Workout detail is current-contract-only (`schema_version=4.0`). Rows from older detail
 contracts are fetched and replaced in bounded batches during subsequent synchronization
 windows so a historical upgrade cannot consume the whole health-sync budget. Zepp delta/time series
@@ -332,8 +355,11 @@ automatically labeled fitness improvement or deterioration.
 `sync_stream_states` records the latest fetch, parse, and write status independently
 for each user-owned source stream, together with the latest stored sample timestamp.
 An empty cloud response, an unrecognized non-empty payload, and a storage write are
-different states. `GET /health/data-health` exposes this diagnostic contract without
-measurement values or private file identifiers.
+different states. A synchronization is complete only when every stream is successful or
+explicitly unavailable as a whole. Mixed successful/unavailable chunks are partial, and
+optional network, service, parse, or authentication failures block overall success while
+preserving earlier successful writes. `GET /health/data-health` exposes this diagnostic
+contract without measurement values or private file identifiers.
 
 The running prescription consumes those session facts. It chooses among recovery,
 easy, steady, threshold, and long-easy sessions using recent hard-session timing,
@@ -406,7 +432,7 @@ POST /api/v1/intelligence/feedback
 GET  /api/v1/intelligence/feedback
 GET  /api/v1/intelligence/training-preferences
 PUT  /api/v1/intelligence/training-preferences
-POST /api/v1/intelligence/workouts/{workout_id}/strength-exercises
+POST /api/v1/intelligence/workouts/{workout_id}/strength-exercises?source=
 POST /api/v1/intelligence/events/{event_id}/acknowledge
 ```
 

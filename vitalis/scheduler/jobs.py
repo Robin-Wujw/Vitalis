@@ -10,16 +10,22 @@ log = logging.getLogger("vitalis.scheduler")
 
 def _record_browser_link_sync(repo, user_id: str, report, label: str) -> None:
     reauth = next((stream for stream in report.streams if stream.needs_reauth), None)
-    if reauth:
+    if report.needs_reauth:
         repo.mark_user_browser_links_reauth(
-            user_id, f"Zepp 登录已失效，请重新登录：{reauth.message}"
+            user_id,
+            f"Zepp 登录已失效，请重新登录：{reauth.message if reauth else report.message or ''}",
         )
         return
     link = repo.latest_browser_link(user_id)
     if link:
-        repo.mark_browser_link_synced(
-            link.token_digest, f"{label}完成，写入 {report.records_written} 条记录"
-        )
+        if report.success:
+            repo.mark_browser_link_synced(
+                link.token_digest, f"{label}完成，写入 {report.records_written} 条记录"
+            )
+        else:
+            repo.mark_browser_link_sync_failed(
+                link.token_digest, f"{label}不完整，将稍后重试"
+            )
 
 
 def _get_authorized_users() -> set[str]:
@@ -79,7 +85,8 @@ def _profile_push_job(period: str, sync_days: int) -> None:
     push = PushService()
     for user_id in user_ids:
         try:
-            _sync_user(user_id, days=sync_days, label=f"{period}同步")
+            if not _sync_user(user_id, days=sync_days, label=f"{period}同步"):
+                continue
             result = command.analyze(user_id)
             profile = result.daily
             push.push_daily_profile(user_id, profile, period=period)

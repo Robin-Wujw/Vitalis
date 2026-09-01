@@ -125,6 +125,7 @@ class Workout(BaseModel):
 class WorkoutMetricSample(BaseModel):
     """One typed metric observation within a workout."""
 
+    source: str = "zepp"
     workout_id: str = ""
     timestamp: datetime
     metric: Literal[
@@ -239,6 +240,7 @@ class TrainingRecord(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     user_id: str
+    source: str = "zepp"
     date: Optional[DateType] = None
     workout_count: int = 0
     total_duration: int = 0  # 分钟

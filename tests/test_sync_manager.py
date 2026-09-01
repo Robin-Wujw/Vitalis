@@ -10,7 +10,13 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 from vitalis.connectors.zepp.client import ZeppAuthError
-from vitalis.connectors.zepp.fetcher import FetchWindow, FetchedRecord, RawRecord
+from vitalis.connectors.zepp.fetcher import (
+    FetchBatch,
+    FetchedRecord,
+    FetchWindow,
+    PartialFetchError,
+    RawRecord,
+)
 from vitalis.connectors.zepp.sync_manager import SyncManager
 from vitalis.models import User, Workout, WorkoutType
 from vitalis.storage import HealthRepository, init_db, session_scope
@@ -197,7 +203,7 @@ class TestSyncManager:
         assert duplicate.write_status == "success"
         assert duplicate.error_kind is None
 
-    def test_aggregate_success_is_not_overwritten_by_unrecognized_child(
+    def test_aggregate_marks_partial_unrecognized_core_data_unverified(
         self, mock_fetcher, setup_db
     ):
         manager = SyncManager(mock_fetcher)
@@ -220,11 +226,12 @@ class TestSyncManager:
             manager._save_stream_health(repo, user, [aggregate])
             state = repo.sync_stream_states(user.id)[0]
 
-        assert aggregate.status == "success"
-        assert aggregate.parse_status == "success"
+        assert aggregate.status == "unverified"
+        assert aggregate.parse_status == "unrecognized"
         assert state.stream == "heart_rate"
-        assert state.parse_status == "success"
+        assert state.parse_status == "unrecognized"
         assert state.write_status == "success"
+        assert state.error_kind == "unrecognized_payload"
 
     def test_sync_refreshes_device_inventory_for_analysis_labels(
         self, mock_fetcher, setup_db
@@ -297,6 +304,93 @@ class TestSyncManager:
         report = manager._unavailable_report("test_stream", err)
         assert report.stream == "test_stream"
         assert report.status == "unavailable"
+
+    def test_partial_fetch_batch_is_unverified_and_blocks_success(self, mock_fetcher):
+        window = FetchWindow.days_back(2)
+        batch = FetchBatch(expected_chunks=2)
+        batch.add_success(mock_fetcher.fetch_heart_rate_records(window)[0])
+        batch.add_unavailable(FetchWindow(start=window.start, end=window.start + timedelta(days=1)))
+
+        stream = SyncManager(mock_fetcher)._persist_records(
+            "heart_rate", batch, None, User(id="partial-user")
+        )
+
+        assert stream.status == "unverified"
+        assert stream.fetch_status == "partial"
+        assert stream.error_kind == "partial_coverage"
+
+    def test_terminal_fetch_failure_persists_completed_chunks(
+        self, mock_fetcher, setup_db
+    ):
+        window = FetchWindow.days_back(2)
+        batch = FetchBatch(expected_chunks=2)
+        batch.add_success(mock_fetcher.fetch_heart_rate_records(window)[0])
+
+        def fail_heart_rate(_window):
+            raise PartialFetchError(
+                ZeppAuthError("offline", kind="network"), batch
+            )
+
+        mock_fetcher.fetch_heart_rate_records = fail_heart_rate
+        user = User(id="partial-network-user")
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            report = SyncManager(mock_fetcher).sync_report(user, days=2, repo=repo)
+            samples = repo.metric_samples(
+                user.id,
+                "heart_rate",
+                datetime(1970, 1, 1, tzinfo=timezone.utc),
+                datetime(1970, 1, 2, tzinfo=timezone.utc),
+            )
+
+        heart_rate = next(item for item in report.streams if item.stream == "heart_rate")
+        assert report.success is False
+        assert heart_rate.status == "failed"
+        assert heart_rate.records_written == 1
+        assert heart_rate.error_kind == "network"
+        assert len(samples) == 1
+
+    def test_unavailable_daily_capability_is_saved_as_diagnostic(self, mock_fetcher):
+        batch = FetchBatch(expected_chunks=1)
+        batch.add_success(mock_fetcher.fetch_daily_statistics_records(
+            FetchWindow.days_back(1)
+        )[0])
+        batch.add_unavailable_capability(
+            "daily_summary/readiness_watch_score", "not supported"
+        )
+
+        report = SyncManager(mock_fetcher)._persist_records(
+            "daily_summary", batch, None, User(id="daily-capability-user")
+        )
+
+        assert report.status == "success"
+        diagnostic = next(
+            item for item in report.diagnostics
+            if item.diagnostic_stream == "daily_summary/readiness_watch_score"
+        )
+        assert diagnostic.status == "unavailable"
+        assert diagnostic.error_kind == "not_available"
+
+    @pytest.mark.parametrize("kind", ["service", "network", "auth"])
+    def test_optional_stream_failure_blocks_complete_sync(
+        self, mock_fetcher, setup_db, kind
+    ):
+        def fail_wellness(_window):
+            raise ZeppAuthError("optional stream failed", kind=kind)
+
+        mock_fetcher.fetch_wellness_records = fail_wellness
+        user = User(id=f"optional-{kind}-user")
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            report = SyncManager(mock_fetcher).sync_report(user, days=1, repo=repo)
+
+        assert report.success is False
+        assert report.error_kind == kind
+        assert report.needs_reauth is (kind == "auth")
+        wellness = next(item for item in report.streams if item.stream == "wellness")
+        assert wellness.status == "failed"
 
     def test_workout_detail_is_decoded_and_persisted(self, mock_fetcher, setup_db):
         manager = SyncManager(mock_fetcher)
@@ -381,11 +475,14 @@ class TestSyncManager:
         assert fetched_ids == ["run-0", "run-1", "run-2", "run-3"]
         assert len(records) == 4
 
-    def test_workout_detail_timeout_does_not_fail_core_health_sync(
+    def test_workout_detail_timeout_reports_incomplete_sync(
         self, mock_fetcher, setup_db
     ):
         mock_fetcher.fetch_workout_detail = lambda *_args: (_ for _ in ()).throw(
-            ZeppAuthError("同步超时，已停止后续请求")
+            ZeppAuthError(
+                "同步超时，已停止后续请求",
+                kind="timeout",
+            )
         )
         user = User(id="detail-timeout-user")
         started_at = datetime.now(timezone.utc) - timedelta(days=1)
@@ -404,14 +501,17 @@ class TestSyncManager:
             report = SyncManager(mock_fetcher).sync_report(user, days=7, repo=repo)
             states = {row.stream: row for row in repo.sync_stream_states(user.id)}
 
-        assert report.success is True
+        assert report.success is False
+        assert "时间预算" in report.message
         assert mock_fetcher.calls == [
             "heart_rate", "daily_summary", "workouts", "sleep", "hrv",
             "wellness", "dense_files",
         ]
         detail = next(item for item in report.streams if item.stream == "workout_detail")
         assert detail.status == "failed"
+        assert detail.error_kind == "timeout"
         assert states["workout_detail"].fetch_status == "failed"
+        assert states["workout_detail"].error_kind == "timeout"
         assert states["heart_rate"].write_status == "success"
 
     def test_workout_training_record_uses_shanghai_start_day(self, mock_fetcher, setup_db):
@@ -486,6 +586,65 @@ class TestSyncManager:
         assert files[0].parse_status == "decoded"
         assert files[0].sample_count == 2
         assert [sample.value for sample in samples] == [72, 74]
+
+    def test_dense_archive_download_failure_is_a_fetch_failure(
+        self, mock_fetcher, setup_db
+    ):
+        manager = SyncManager(mock_fetcher, dense_archive_budget=1)
+        user = User(id="dense-fetch-failure-user")
+        start = datetime(2026, 8, 26, 6, 0, tzinfo=timezone.utc)
+        mock_fetcher.fetch_dense_file_archive = lambda *_args: (_ for _ in ()).throw(
+            ZeppAuthError("archive offline", kind="network")
+        )
+        record = FetchedRecord(raw=RawRecord(
+            stream="dense_files",
+            source_key="file_info:second_heart_rate:2026-08-26:2026-08-27",
+            start_utc=start,
+            end_utc=start + timedelta(days=1),
+            payload={"items": [{"value": {
+                "startTime": int(start.timestamp() * 1000),
+                "deviceId": "1,A1B2C3D4E5F60708",
+                "samples": [{
+                    "s": 0,
+                    "e": 2_000,
+                    "fileId": "offline-archive",
+                    "fileType": "SEC_HR",
+                    "dateString": "2026-08-26",
+                }],
+            }}]},
+        ))
+
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            report = manager._persist_record(record, repo, user)
+
+        assert report.status == "failed"
+        assert report.diagnostic_stream == "heart_rate/dense_archive"
+        assert report.fetch_status == "failed"
+        assert report.parse_status == "not_run"
+        assert report.error_kind == "network"
+
+    def test_unknown_dense_payload_is_unverified(self, mock_fetcher, setup_db):
+        manager = SyncManager(mock_fetcher, dense_archive_budget=0)
+        user = User(id="dense-unknown-user")
+        now = datetime.now(timezone.utc)
+        record = FetchedRecord(raw=RawRecord(
+            stream="dense_files",
+            source_key="file_info:second_heart_rate:unknown",
+            start_utc=now,
+            end_utc=now,
+            payload={"items": [{"unexpected": "shape"}]},
+        ))
+
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            report = manager._persist_record(record, repo, user)
+
+        assert report.status == "unverified"
+        assert report.parse_status == "unrecognized"
+        assert report.error_kind == "unrecognized_payload"
 
     def test_standard_sync_indexes_dense_file_without_downloading_archive(
         self, mock_fetcher, setup_db
@@ -580,3 +739,110 @@ class TestSyncManager:
             SyncManager(MockDataFetcher())._persist_record(
                 record, LockedRepository(), User(id="locked-user")
             )
+
+    def test_workout_pages_rebuild_one_canonical_local_day(self, mock_fetcher, setup_db):
+        manager = SyncManager(mock_fetcher)
+        user = User(id="canonical-workout-day-user")
+        first_start = datetime(2026, 8, 27, 16, 30, tzinfo=timezone.utc)
+        second_start = datetime(2026, 8, 28, 1, 0, tzinfo=timezone.utc)
+        records = [
+            FetchedRecord(raw=RawRecord(
+                stream="workouts",
+                source_key="sport_history:run:first",
+                start_utc=first_start,
+                end_utc=second_start,
+                payload={"data": {"summary": [{
+                    "trackid": int(first_start.timestamp()),
+                    "end_time": int((first_start + timedelta(minutes=30)).timestamp()),
+                    "type": 1,
+                    "exercise_load": 40,
+                }]}},
+            )),
+            FetchedRecord(raw=RawRecord(
+                stream="workouts",
+                source_key="sport_history:strength:second",
+                start_utc=first_start,
+                end_utc=second_start,
+                payload={"data": {"summary": [{
+                    "trackid": int(second_start.timestamp()),
+                    "end_time": int((second_start + timedelta(minutes=45)).timestamp()),
+                    "type": 204,
+                    "exercise_load": 30,
+                }]}},
+            )),
+        ]
+
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            first = manager._persist_records("workouts", records, repo, user)
+            second = manager._persist_records("workouts", records, repo, user)
+            workouts = repo.workouts(
+                user.id, date(2026, 8, 28), date(2026, 8, 28)
+            )
+            training = repo.training_range(
+                user.id, date(2026, 8, 28), date(2026, 8, 28)
+            )
+
+        assert first.status == "success"
+        assert second.status == "success"
+        assert len(workouts) == 2
+        assert training == [{
+            "user_id": user.id,
+            "source": "canonical_workouts",
+            "date": "2026-08-28",
+            "workout_count": 2,
+            "total_duration": 75,
+            "total_load": 70,
+            "training_status": "moderate",
+        }]
+
+    def test_workout_time_correction_rebuilds_old_and_new_days(
+        self, mock_fetcher, setup_db
+    ):
+        manager = SyncManager(mock_fetcher)
+        user = User(id="corrected-workout-day-user")
+        old_start = datetime(2026, 8, 27, 8, 0, tzinfo=timezone.utc)
+        new_start = datetime(2026, 8, 28, 8, 0, tzinfo=timezone.utc)
+
+        def record(start, load):
+            return FetchedRecord(raw=RawRecord(
+                stream="workouts",
+                source_key="sport_history:run:corrected",
+                start_utc=start,
+                end_utc=start + timedelta(minutes=20),
+                payload={"data": {"summary": [{
+                    "trackid": "stable-workout-id",
+                    "start_time": int(start.timestamp()),
+                    "end_time": int((start + timedelta(minutes=20)).timestamp()),
+                    "type": 1,
+                    "exercise_load": load,
+                }]}},
+            ))
+
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            manager._persist_record(record(old_start, 10), repo, user)
+            manager._persist_record(record(new_start, 20), repo, user)
+            old_rows = repo.training_range(
+                user.id, date(2026, 8, 27), date(2026, 8, 27)
+            )
+            new_rows = repo.training_range(
+                user.id, date(2026, 8, 28), date(2026, 8, 28)
+            )
+
+        assert old_rows == []
+        assert new_rows[0]["workout_count"] == 1
+        assert new_rows[0]["total_load"] == 20
+
+    def test_empty_record_batch_has_consistent_successful_empty_stages(self):
+        report = SyncManager(MockDataFetcher())._persist_records(
+            "workouts", [], None, User(id="empty-workouts-user")
+        )
+
+        assert report.status == "success"
+        assert report.fetch_status == "success"
+        assert report.parse_status == "empty"
+        assert report.write_status == "not_run"
+        assert report.error_kind is None

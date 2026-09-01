@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from vitalis.connectors.zepp.client import ZeppAPIClient, ZeppAuthError
+from vitalis.time import local_day, local_day_utc_bounds
 
 MAX_SYNC_DAYS = 730  # 2 年
 CHUNK_DAYS = 7
@@ -29,16 +30,33 @@ class FetchWindow:
     @classmethod
     def days_back(cls, days: int) -> "FetchWindow":
         if not 1 <= days <= MAX_SYNC_DAYS:
-            raise ZeppAuthError(f"同步天数必须在 1..{MAX_SYNC_DAYS} 之间")
+            raise ZeppAuthError(
+                f"同步天数必须在 1..{MAX_SYNC_DAYS} 之间",
+                kind="invalid_request",
+            )
         end = datetime.now(timezone.utc)
         start = end - timedelta(days=days)
         return cls(start=start, end=end)
 
+    @classmethod
+    def local_dates(cls, start: date, end: date) -> "FetchWindow":
+        if start > end:
+            start, end = end, start
+        days = (end - start).days + 1
+        if days > MAX_SYNC_DAYS:
+            raise ZeppAuthError(
+                f"同步天数必须在 1..{MAX_SYNC_DAYS} 之间",
+                kind="invalid_request",
+            )
+        start_utc, _ = local_day_utc_bounds(start)
+        _, end_utc = local_day_utc_bounds(end)
+        return cls(start=start_utc, end=end_utc)
+
     def start_day(self) -> str:
-        return self.start.strftime("%Y-%m-%d")
+        return local_day(self.start).isoformat()
 
     def end_day(self) -> str:
-        return self.end.strftime("%Y-%m-%d")
+        return local_day(self.end - timedelta(microseconds=1)).isoformat()
 
     def chunks(self, chunk_days: int = CHUNK_DAYS) -> list["FetchWindow"]:
         chunk_days = max(1, chunk_days)
@@ -73,6 +91,45 @@ class FetchedRecord:
     raw: RawRecord
 
 
+class FetchBatch(list[FetchedRecord]):
+    """Fetched records plus in-memory coverage for one logical stream."""
+
+    def __init__(self, *, expected_chunks: int = 0):
+        super().__init__()
+        self.expected_chunks = expected_chunks
+        self.successful_chunks = 0
+        self.unavailable_ranges: list[tuple[datetime, datetime]] = []
+        self.unavailable_capabilities: list[tuple[str, str]] = []
+
+    @property
+    def unavailable_chunks(self) -> int:
+        return len(self.unavailable_ranges)
+
+    @property
+    def partial(self) -> bool:
+        return self.successful_chunks > 0 and self.unavailable_chunks > 0
+
+    def add_success(self, record: FetchedRecord) -> None:
+        self.append(record)
+        self.successful_chunks += 1
+
+    def add_unavailable(self, window: FetchWindow) -> None:
+        self.unavailable_ranges.append((window.start, window.end))
+
+    def add_unavailable_capability(self, name: str, message: str) -> None:
+        self.unavailable_capabilities.append((name, message))
+
+
+class PartialFetchError(ZeppAuthError):
+    """A terminal fetch error after earlier chunks completed."""
+
+    def __init__(self, error: ZeppAuthError, records: list[FetchedRecord]):
+        super().__init__(
+            str(error), kind=error.kind, needs_reauth=error.needs_reauth
+        )
+        self.records = records
+
+
 def _heart_rate_items(payload: dict) -> list[dict]:
     """从心率响应中提取样本列表（防御多种 payload 形状）。"""
     if isinstance(payload, list):
@@ -101,18 +158,26 @@ def _heart_rate_cursor(items: list[dict]) -> int | None:
         if not isinstance(item, dict):
             continue
         item_ts: int | None = None
-        for key in ("timestamp", "time", "timeStamp", "startTime"):
-            val = item.get(key)
-            if val is None:
-                continue
-            if isinstance(val, (int, float)):
-                item_ts = int(val)
+        candidates = [item]
+        if isinstance(item.get("value"), dict):
+            candidates.append(item["value"])
+        for candidate in candidates:
+            for key in (
+                "timestamp", "time", "timeStamp", "startTime", "generatedTime"
+            ):
+                val = candidate.get(key)
+                if val is None:
+                    continue
+                if isinstance(val, (int, float)):
+                    item_ts = int(val)
+                    break
+                try:
+                    item_ts = int(str(val).strip())
+                    break
+                except ValueError:
+                    continue
+            if item_ts is not None:
                 break
-            try:
-                item_ts = int(str(val).strip())
-                break
-            except ValueError:
-                continue
         if item_ts is not None:
             max_ts = item_ts if max_ts is None else max(max_ts, item_ts)
     if max_ts is None:
@@ -146,15 +211,19 @@ class DataFetcher:
     # ---- heart_rate ----
 
     def fetch_heart_rate_records(self, window: FetchWindow) -> list[FetchedRecord]:
-        records: list[FetchedRecord] = []
+        chunks = window.chunks(CHUNK_DAYS)
+        records = FetchBatch(expected_chunks=len(chunks))
         last_error: Exception | None = None
-        for chunk in window.chunks(CHUNK_DAYS):
+        for chunk in chunks:
             try:
-                records.append(self._fetch_heart_rate_record(chunk))
+                records.add_success(self._fetch_heart_rate_record(chunk))
             except ZeppAuthError as exc:
-                if "Unavailable" in str(exc) or "unavailable" in str(exc).lower():
+                if exc.kind == "not_available":
                     last_error = exc
+                    records.add_unavailable(chunk)
                     continue
+                if records:
+                    raise PartialFetchError(exc, records) from exc
                 raise
         if not records:
             raise last_error or ZeppAuthError("心率窗口没有可识别记录")
@@ -164,6 +233,7 @@ class DataFetcher:
         end = int(window.end.timestamp())
         cursor = int(window.start.timestamp())
         merged: list[dict] = []
+        payload: dict = {}
         while True:
             payload = self.connector.fetch_heart_rate(
                 cursor, end, HEART_RATE_PAGE_LIMIT, 2
@@ -179,10 +249,8 @@ class DataFetcher:
             cursor = nxt
         out_payload: dict
         if not merged:
-            # 保留原始空响应形状
-            out_payload = self.connector.fetch_heart_rate(
-                int(window.start.timestamp()), int(window.end.timestamp())
-            )
+            # Preserve the successful empty response; do not refetch the same chunk.
+            out_payload = payload
         else:
             out_payload = {"items": merged}
         return FetchedRecord(
@@ -198,15 +266,19 @@ class DataFetcher:
     # ---- sleep ----
 
     def fetch_sleep_records(self, window: FetchWindow) -> list[FetchedRecord]:
-        records: list[FetchedRecord] = []
+        chunks = window.chunks(CHUNK_DAYS)
+        records = FetchBatch(expected_chunks=len(chunks))
         last_error: Exception | None = None
-        for chunk in window.chunks(CHUNK_DAYS):
+        for chunk in chunks:
             try:
-                records.append(self._fetch_sleep_record(chunk))
+                records.add_success(self._fetch_sleep_record(chunk))
             except ZeppAuthError as exc:
-                if "Unavailable" in str(exc) or "unavailable" in str(exc).lower():
+                if exc.kind == "not_available":
                     last_error = exc
+                    records.add_unavailable(chunk)
                     continue
+                if records:
+                    raise PartialFetchError(exc, records) from exc
                 raise
         if not records:
             raise last_error or ZeppAuthError("睡眠窗口没有可识别记录")
@@ -239,23 +311,27 @@ class DataFetcher:
     def fetch_workout_records(self, window: FetchWindow) -> list[FetchedRecord]:
         start_ts = int(window.start.timestamp())
         end_ts = int(window.end.timestamp())
-        records: list[FetchedRecord] = []
-        last_error: Exception | None = None
         from vitalis.connectors.zepp.client import SPORTS
 
+        records = FetchBatch(expected_chunks=len(SPORTS))
+        last_error: Exception | None = None
         for sport in SPORTS:
             stop_track_id = end_ts
+            sport_available = False
             while True:
                 try:
                     payload = self.connector.fetch_sport_history(
                         sport, start_ts, stop_track_id, 1
                     )
                 except ZeppAuthError as exc:
-                    msg = str(exc).lower()
-                    if "unavailable" in msg or "http 404" in msg or "not found" in msg:
+                    if exc.kind == "not_available":
                         last_error = exc
+                        records.add_unavailable(window)
                         break
+                    if records:
+                        raise PartialFetchError(exc, records) from exc
                     raise
+                sport_available = True
                 data = payload.get("data") or {}
                 nxt = data.get("next")
                 records.append(
@@ -272,22 +348,25 @@ class DataFetcher:
                 if nxt is None or int(nxt) <= 0 or int(nxt) >= stop_track_id or int(nxt) <= start_ts:
                     break
                 stop_track_id = int(nxt)
+            if sport_available:
+                records.successful_chunks += 1
         if not records:
-            # 所有运动类型都不可用（如全部 404），返回空列表而非失败
-            if last_error is not None:
-                return []
-            raise ZeppAuthError("sport history 没有可用种类")
+            raise last_error or ZeppAuthError(
+                "sport history 没有可用种类",
+                kind="not_available",
+            )
         return records
 
     # ---- hrv ----
 
     def fetch_hrv_records(self, window: FetchWindow) -> list[FetchedRecord]:
-        records: list[FetchedRecord] = []
+        chunks = window.chunks(CHUNK_DAYS)
+        records = FetchBatch(expected_chunks=len(chunks))
         last_error: Exception | None = None
-        for chunk in window.chunks(CHUNK_DAYS):
+        for chunk in chunks:
             try:
                 payload = self.connector.fetch_hrv(chunk.start_day(), chunk.end_day())
-                records.append(
+                records.add_success(
                     FetchedRecord(
                         raw=RawRecord(
                             stream="hrv",
@@ -299,9 +378,12 @@ class DataFetcher:
                     )
                 )
             except ZeppAuthError as exc:
-                if "Unavailable" in str(exc) or "unavailable" in str(exc).lower():
+                if exc.kind == "not_available":
                     last_error = exc
+                    records.add_unavailable(chunk)
                     continue
+                if records:
+                    raise PartialFetchError(exc, records) from exc
                 raise
         if not records:
             raise last_error or ZeppAuthError("HRV 窗口没有可识别记录")
@@ -310,12 +392,20 @@ class DataFetcher:
     # ---- daily statistics ----
 
     def fetch_daily_statistics_records(self, window: FetchWindow) -> list[FetchedRecord]:
-        records: list[FetchedRecord] = []
-        for chunk in window.chunks(CHUNK_DAYS):
+        chunks = window.chunks(CHUNK_DAYS)
+        records = FetchBatch(expected_chunks=len(chunks))
+        for chunk in chunks:
             from_ms = int(chunk.start.timestamp() * 1000)
             to_ms = int(chunk.end.timestamp() * 1000)
-            event = self.connector.fetch_events("DailyHealth", "summary", from_ms, to_ms, 2000, True)
-            records.append(FetchedRecord(raw=RawRecord(
+            try:
+                event = self.connector.fetch_events(
+                    "DailyHealth", "summary", from_ms, to_ms, 2000, True
+                )
+            except ZeppAuthError as exc:
+                if records:
+                    raise PartialFetchError(exc, records) from exc
+                raise
+            records.add_success(FetchedRecord(raw=RawRecord(
                 stream="daily_summary",
                 source_key=f"events:DailyHealth:summary:{from_ms}:{to_ms}",
                 start_utc=chunk.start,
@@ -328,6 +418,7 @@ class DataFetcher:
                 ("Charge", "insight_data"),
                 ("readiness", "watch_score"),
             ):
+                diagnostic = f"daily_summary/{event_type.lower()}_{sub_type}"
                 try:
                     payload = self.connector.fetch_events(
                         event_type, sub_type, from_ms, to_ms, 2000, True
@@ -340,11 +431,13 @@ class DataFetcher:
                         payload=payload,
                     )))
                 except ZeppAuthError as exc:
-                    if "Unavailable" in str(exc) or "unavailable" in str(exc).lower():
+                    if exc.kind == "not_available":
+                        records.add_unavailable_capability(diagnostic, str(exc))
                         continue
-                    raise
+                    raise PartialFetchError(exc, records) from exc
         # WatchSportStatistics: SPORT_LOAD / VO2_MAX
         for statistic in ("SPORT_LOAD", "VO2_MAX"):
+            diagnostic = f"daily_summary/{statistic.lower()}"
             try:
                 payload = self.connector.fetch_watch_statistics(
                     statistic, window.start_day(), window.end_day(), 900, True
@@ -361,9 +454,10 @@ class DataFetcher:
                     )
                 )
             except ZeppAuthError as exc:
-                if "Unavailable" in str(exc) or "unavailable" in str(exc).lower():
+                if exc.kind == "not_available":
+                    records.add_unavailable_capability(diagnostic, str(exc))
                     continue
-                raise
+                raise PartialFetchError(exc, records) from exc
         return records
 
     # ---- optional wellness metrics ----
@@ -378,9 +472,18 @@ class DataFetcher:
             ("spo2", "user", "blood_oxygen", None, CHUNK_DAYS),
             ("pai", "user", "PaiHealthInfo", None, None),
         )
-        records: list[FetchedRecord] = []
+        records = FetchBatch()
+
+        def merge_capability(batch: FetchBatch) -> None:
+            records.extend(batch)
+            if batch.partial:
+                records.expected_chunks += batch.expected_chunks
+                records.successful_chunks += batch.successful_chunks
+                records.unavailable_ranges.extend(batch.unavailable_ranges)
+
         for label, surface, event_type, sub_type, chunk_days in specs:
             chunks = window.chunks(chunk_days or CHUNK_DAYS)
+            capability = FetchBatch(expected_chunks=len(chunks))
             for chunk in chunks:
                 from_ms = int(chunk.start.timestamp() * 1000)
                 to_ms = int(chunk.end.timestamp() * 1000)
@@ -393,10 +496,17 @@ class DataFetcher:
                         payload = self.connector.fetch_events(
                             event_type, sub_type or "real_data", from_ms, to_ms, 1000, True
                         )
-                except ZeppAuthError:
-                    # Every wellness stream is optional and account/device dependent.
-                    continue
-                records.append(FetchedRecord(raw=RawRecord(
+                except ZeppAuthError as exc:
+                    # Each wellness capability is optional; only an incomplete range
+                    # within one capability is partial coverage.
+                    if exc.kind == "not_available":
+                        capability.add_unavailable(chunk)
+                        continue
+                    records.extend(capability)
+                    if records:
+                        raise PartialFetchError(exc, records) from exc
+                    raise
+                capability.add_success(FetchedRecord(raw=RawRecord(
                     stream="wellness",
                     source_key=f"wellness:{label}:{surface}:{chunk.start_day()}:{chunk.end_day()}",
                     start_utc=chunk.start,
@@ -404,8 +514,11 @@ class DataFetcher:
                     payload=payload,
                     capability="unverified",
                 )))
+            merge_capability(capability)
         for sub_type in ("odi", "osa_event"):
-            for chunk in window.chunks(CHUNK_DAYS):
+            chunks = window.chunks(CHUNK_DAYS)
+            capability = FetchBatch(expected_chunks=len(chunks))
+            for chunk in chunks:
                 try:
                     payload = self.connector.fetch_user_events_date_string(
                         "blood_oxygen",
@@ -413,9 +526,15 @@ class DataFetcher:
                         chunk.start.isoformat().replace("+00:00", "Z"),
                         chunk.end.isoformat().replace("+00:00", "Z"),
                     )
-                except ZeppAuthError:
-                    continue
-                records.append(FetchedRecord(raw=RawRecord(
+                except ZeppAuthError as exc:
+                    if exc.kind == "not_available":
+                        capability.add_unavailable(chunk)
+                        continue
+                    records.extend(capability)
+                    if records:
+                        raise PartialFetchError(exc, records) from exc
+                    raise
+                capability.add_success(FetchedRecord(raw=RawRecord(
                     stream="wellness",
                     source_key=f"wellness:spo2:user_day:{chunk.start_day()}:{chunk.end_day()}:{sub_type}",
                     start_utc=chunk.start,
@@ -423,22 +542,29 @@ class DataFetcher:
                     payload=payload,
                     capability="unverified",
                 )))
+            merge_capability(capability)
         return records
 
     # ---- dense measurement file indexes ----
 
     def fetch_dense_file_records(self, window: FetchWindow) -> list[FetchedRecord]:
-        records: list[FetchedRecord] = []
-        for chunk in window.chunks(CHUNK_DAYS):
+        chunks = window.chunks(CHUNK_DAYS)
+        records = FetchBatch(expected_chunks=len(chunks))
+        for chunk in chunks:
             from_ms = int(chunk.start.timestamp() * 1000)
             to_ms = int(chunk.end.timestamp() * 1000)
             try:
                 payload = self.connector.fetch_file_info_events(
                     "second_heart_rate", "real_data", from_ms, to_ms, 2000
                 )
-            except ZeppAuthError:
-                continue
-            records.append(FetchedRecord(raw=RawRecord(
+            except ZeppAuthError as exc:
+                if exc.kind == "not_available":
+                    records.add_unavailable(chunk)
+                    continue
+                if records:
+                    raise PartialFetchError(exc, records) from exc
+                raise
+            records.add_success(FetchedRecord(raw=RawRecord(
                 stream="dense_files",
                 source_key=f"file_info:second_heart_rate:{chunk.start_day()}:{chunk.end_day()}",
                 start_utc=chunk.start,

@@ -218,5 +218,11 @@ same-time metrics from different sources/scopes/devices remain separate, that so
 workout details and user links resolve independently, and that each daily training summary
 matches all canonical workouts grouped by `VITALIS_TIMEZONE`.
 
+Open Health Insights also requires the current workout-detail schema, including
+`workout_metric_samples.source`. Before enabling it on a real installation, rebuild a fresh
+schema, re-synchronize at least the desired 42-day load window (180 days recommended), then
+PATCH the user-confirmed profile fields such as `sex` and `confirmed_hrmax_bpm`. Do not let
+workout observations or device-zone candidates silently populate confirmed profile values.
+
 See [SYSTEM.md](../SYSTEM.md) for the required plan, test, documentation, commit, and
 delivery workflow.

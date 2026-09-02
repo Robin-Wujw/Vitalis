@@ -1,15 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/weekly-profile-3.0.json",
-  "title": "Vitalis WeeklyProfile 3.0",
+  "$id": "https://vitalis.local/schemas/weekly-profile-4.0.json",
+  "title": "Vitalis WeeklyProfile 4.0",
   "type": "object",
-  "required": ["schema_version", "analysis_run_id", "intelligence_version", "decision_policy_version", "evidence_version", "user_id", "period_start", "period_end", "generated_at", "data_quality", "facts", "inferences", "actions", "evidence_refs"],
+  "required": ["schema_version", "analysis_run_id", "intelligence_version", "decision_policy_version", "evidence_version", "user_id", "period_start", "period_end", "generated_at", "data_quality", "facts", "inferences", "actions", "evidence_refs", "open_health_period_summary", "open_health_coverage"],
   "properties": {
-    "schema_version": {"const": "3.0"},
+    "schema_version": {"const": "4.0"},
     "analysis_run_id": {"type": "string"},
-    "intelligence_version": {"const": "9.0"},
+    "intelligence_version": {"const": "10.0"},
     "decision_policy_version": {"const": "7.0"},
-    "evidence_version": {"const": "2026-08e"},
+    "evidence_version": {"const": "2026-09a"},
     "user_id": {"type": "string"},
     "period_start": {"type": "string", "format": "date"},
     "period_end": {"type": "string", "format": "date"},
@@ -30,6 +30,8 @@
         "recommendations": {"type": "array", "items": {"type": "object", "required": ["priority", "code", "title", "action", "reasons"]}}
       }
     },
-    "evidence_refs": {"type": "array", "items": {"type": "object"}}
+    "evidence_refs": {"type": "array", "items": {"type": "object"}},
+    "open_health_period_summary": {"type": ["object", "null"]},
+    "open_health_coverage": {"type": "object", "additionalProperties": {"type": "object"}}
   }
 }

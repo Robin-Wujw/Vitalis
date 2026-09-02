@@ -31,7 +31,7 @@ def test_skill_has_all_workflows_and_valid_schema():
     for name in ("morning.md", "evening.md", "weekly.md", "monthly.md", "on_demand.md"):
         assert (SKILL / "workflows" / name).is_file()
     schema = json.loads((SKILL / "schemas" / "daily_profile.json").read_text())
-    assert schema["properties"]["schema_version"]["const"] == "9.0"
+    assert schema["properties"]["schema_version"]["const"] == "10.0"
     assert "analysis_run_id" in schema["required"]
     assert "model_version" not in schema["required"]
     actions = schema["properties"]["decision"]["properties"]["action"]["enum"]
@@ -45,14 +45,22 @@ def test_skill_has_all_workflows_and_valid_schema():
     )
     assert {"sport_mode_label", "recognition_confidence_label"} <= set(workout_required)
     assert {"trends", "events"} <= set(schema["required"])
+    assert "open_health_insights" in schema["required"]
     weekly = json.loads((SKILL / "schemas" / "weekly_profile.json").read_text())
     assert {"facts", "inferences", "actions"} <= set(weekly["required"])
     monthly = json.loads((SKILL / "schemas" / "monthly_profile.json").read_text())
     assert {"facts", "inferences", "actions"} <= set(monthly["required"])
+    assert "open_health_insights" not in weekly["required"]
+    assert "open_health_insights" not in monthly["required"]
+    assert "open_health_period_summary" in weekly["required"]
+    assert "open_health_period_summary" in monthly["required"]
+    context = json.loads((SKILL / "schemas" / "context.json").read_text())
+    assert {"open_health_summary", "insights_stale"} <= set(context["required"])
     for name in (
         "trends.json", "health_events.json", "context.json",
         "training_responses.json", "personal_model.json", "personal_associations.json",
         "timeline.json", "training_preferences.json", "strength_exercises.json",
+        "profile.json",
     ):
         json.loads((SKILL / "schemas" / name).read_text())
 
@@ -63,10 +71,24 @@ def test_skill_exposes_read_analyze_and_act_tools():
         "sync.py", "analyze.py", "feedback.py", "acknowledge_event.py",
         "training_responses.py", "personal_model.py", "personal_associations.py", "timeline.py",
         "complete_recommendation.py",
-        "training_preferences.py", "strength_exercises.py",
+        "training_preferences.py", "strength_exercises.py", "profile.py",
         "daily_push.py",
     }
     assert expected <= {path.name for path in (SKILL / "tools").glob("*.py")}
+    complete = (SKILL / "tools" / "complete_recommendation.py").read_text()
+    feedback = (SKILL / "tools" / "feedback.py").read_text()
+    strength = (SKILL / "tools" / "strength_exercises.py").read_text()
+    preferences = (SKILL / "tools" / "training_preferences.py").read_text()
+    assert 'add_argument("--workout-source", required=True)' in complete
+    assert '"workout_source": args.workout_source' in complete
+    assert 'add_argument("--workout-source")' in feedback
+    assert '"workout_source": args.workout_source' in feedback
+    assert 'add_argument("--source", required=True)' in strength
+    assert 'params={"source": args.source}' in strength
+    assert 'request("PATCH", "training-preferences"' in preferences
+    assert 'choices=(' in preferences and '"pain_or_injury_notes"' in preferences
+    assert 'body[field] = None' in preferences
+    assert "exclude_none" not in preferences
 
 
 def test_skill_runtime_requires_explicit_user_and_uses_loopback_default(monkeypatch):

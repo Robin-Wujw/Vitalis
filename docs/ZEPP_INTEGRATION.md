@@ -160,6 +160,8 @@ compares each stream with its own baseline and fuses only the resulting directio
 Upper-arm evidence can choose Helio as the display stream when equivalent baselines are
 available, but it does not override cross-device disagreement or imply ECG equivalence.
 
+User physiology such as sex, confirmed HRmax, and sleep target is stored separately in a revisioned Vitalis `UserProfile`. The current regional `apptoken` client does not call a guessed Zepp profile endpoint. Historical OAuth profile fields and Zepp OS device profile/zone settings are only future candidate sources; they never override `USER_CONFIRMED` values. Workout maximum heart rate and zone boundaries remain observations or device settings, not confirmed HRmax.
+
 ## Canonical Persistence and Sync Outcomes
 
 Workout history can repeat the same day or workout across sport endpoints, pages, and

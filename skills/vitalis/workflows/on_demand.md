@@ -1,6 +1,8 @@
 # 按需解释
 
-全程使用中文。回答“为什么”时优先使用 `tools/explain.py` 返回的三级链路：
+全程使用中文。用户明确回答个人资料问题后，使用 `tools/profile.py patch` 写入并携带当前
+revision；遇到 409 时重新读取 profile，不覆盖其他更新。回答“为什么”时优先使用
+`tools/explain.py` 返回的三级链路：
 
 `facts -> inferences -> action`
 

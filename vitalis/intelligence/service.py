@@ -1,6 +1,7 @@
 """Explicit intelligence commands, read-only queries, and user actions."""
 
 from datetime import date, datetime, timedelta, timezone
+import logging
 from uuid import uuid4
 
 from vitalis.storage import HealthRepository, session_scope
@@ -38,9 +39,14 @@ from .contracts import (
     SubjectiveFeedbackInput,
     TrendResponse,
     TrainingPreferenceInput,
+    TrainingPreferencePatch,
     TrainingPreferences,
     TrainingResponseProfile,
+    UserProfile,
+    UserProfilePatch,
+    ProfileRevisionConflict,
     WeeklyProfile,
+    OpenHealthBundle,
 )
 from .decision import DecisionEngine
 from .association import PersonalAssociationEngine
@@ -55,6 +61,10 @@ from .strength import normalize_exercise
 from .timeline import HealthTimelineEngine
 from .trend import TrendEngine
 from .weekly import WeeklyProfileEngine
+from .open_health import OpenHealthEngine
+
+
+log = logging.getLogger("vitalis.intelligence.service")
 
 
 EVIDENCE_REFS = [
@@ -188,15 +198,17 @@ class IntelligenceCommand:
             status=AnalysisRunStatus.RUNNING,
             started_at=datetime.now(timezone.utc),
         )
-        with session_scope() as db:
-            repo = HealthRepository(db)
-            repo.upsert_user(user_id)
-            repo.create_analysis_run(run)
-
         try:
             with session_scope() as db:
                 repo = HealthRepository(db)
-                raw = ProfileLoader(repo).load(user_id, target)
+                repo.upsert_user(user_id)
+                profile = repo.user_profile(user_id)
+                run.profile_revision_used = profile.revision
+                repo.create_analysis_run(run)
+
+            with session_scope() as db:
+                repo = HealthRepository(db)
+                raw = ProfileLoader(repo).load(user_id, target, profile=profile)
                 identity = repo.identity_context(user_id)
                 response_feedback = repo.subjective_feedback(
                     user_id, target - timedelta(days=179), target
@@ -225,6 +237,43 @@ class IntelligenceCommand:
                 )
 
             daily = self._build_daily_from_raw(run.id, raw, identity)
+            open_health_bundle = None
+            open_health_failed = raw.open_health_input_failed
+            if not raw.open_health_input_failed:
+                try:
+                    open_health_engine = OpenHealthEngine()
+                    open_health_bundle = open_health_engine.analyze(
+                        raw.open_health_observations,
+                        profile,
+                        target_date=target,
+                    )
+                    open_health_load = open_health_engine.analyze_load(
+                        raw.open_health_load_workouts,
+                        profile,
+                        target_date=target,
+                        period_start=target - timedelta(days=41),
+                        queried_days=raw.open_health_load_queried_days,
+                        rhr_by_day=raw.open_health_rhr_by_day,
+                        input_truncated=raw.open_health_load_truncated,
+                    )
+                    open_health_bundle = open_health_bundle.model_copy(
+                        update={"training_load": open_health_load}
+                    )
+                except Exception:
+                    open_health_failed = True
+                    log.exception(
+                        "shadow open health calculation failed: user=%s day=%s",
+                        user_id,
+                        target,
+                    )
+            if open_health_bundle is not None:
+                daily = daily.model_copy(
+                    update={"open_health_insights": open_health_bundle}
+                )
+            elif open_health_failed:
+                metadata = dict(daily.metadata)
+                metadata["open_health_status"] = "REFUSED_INTERNAL_ERROR"
+                daily = daily.model_copy(update={"metadata": metadata})
             training_responses = TrainingResponseEngine().build(
                 run.id,
                 raw,
@@ -267,6 +316,7 @@ class IntelligenceCommand:
                     weekly_events,
                     feedback=weekly_feedback,
                     evidence_refs=EVIDENCE_REFS,
+                    open_health_insights=open_health_bundle,
                 )
                 monthly_events = repo.health_events(
                     user_id, target - timedelta(days=27), target
@@ -279,6 +329,7 @@ class IntelligenceCommand:
                     association_profile.associations,
                     feedback=monthly_feedback,
                     evidence_refs=EVIDENCE_REFS,
+                    open_health_insights=open_health_bundle,
                 )
                 repo.save_recommendation(recommendation)
                 self._save_snapshot(repo, run.id, daily, "daily", target, target)
@@ -333,6 +384,7 @@ class IntelligenceCommand:
                 training_responses=training_responses,
                 personal_model=personal_model,
                 personal_associations=association_profile,
+                open_health_insights=open_health_bundle,
             )
         except Exception as exc:
             with session_scope() as db:
@@ -397,6 +449,8 @@ class IntelligenceCommand:
             evidence_refs=EVIDENCE_REFS,
             metadata={
                 "identity": identity,
+                "profile_revision_used": raw.user_profile.revision,
+                "user_profile": raw.user_profile.model_dump(mode="json"),
                 "baseline_policy": {
                     "windows_days": [7, 28],
                     "minimum_distinct_days": {"7": 3, "28": 14},
@@ -409,6 +463,10 @@ class IntelligenceCommand:
 
 class IntelligenceQuery:
     """Read already persisted intelligence without triggering analysis."""
+
+    def profile(self, user_id: str) -> UserProfile:
+        with session_scope() as db:
+            return HealthRepository(db).user_profile(user_id)
 
     def daily(self, user_id: str, day: date | None = None) -> DailyProfile | None:
         target = day or local_today()
@@ -502,8 +560,9 @@ class IntelligenceQuery:
             repo = HealthRepository(db)
             feedback = repo.subjective_feedback(user_id, target - timedelta(days=6), target)
             events = repo.active_health_events(user_id)
+            profile = repo.user_profile(user_id)
         return AgentContextEngine().build(
-            daily, weekly, events, feedback, personal_model
+            daily, weekly, events, feedback, personal_model, profile
         )
 
     def timeline(
@@ -599,6 +658,14 @@ class IntelligenceQuery:
 class IntelligenceAction:
     """Persist explicit user actions without running health analysis."""
 
+    def patch_profile(
+        self, user_id: str, profile_patch: UserProfilePatch
+    ) -> UserProfile:
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user_id)
+            return repo.patch_user_profile(user_id, profile_patch)
+
     def acknowledge_event(self, user_id: str, event_id: str) -> HealthEvent | None:
         with session_scope() as db:
             return HealthRepository(db).acknowledge_health_event(user_id, event_id)
@@ -686,6 +753,15 @@ class IntelligenceAction:
             repo.upsert_user(user_id)
             return repo.save_training_preferences(user_id, preferences)
 
+    def patch_training_preferences(
+        self, user_id: str, patch: TrainingPreferencePatch
+    ) -> TrainingPreferences:
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user_id)
+            return repo.patch_training_preferences(user_id, patch)
+
+
 def _run_from_row(row) -> AnalysisRun:
     return AnalysisRun(
         id=row.id,
@@ -700,4 +776,5 @@ def _run_from_row(row) -> AnalysisRun:
         decision_policy_version=row.decision_policy_version,
         evidence_version=row.evidence_version,
         error=row.error,
+        profile_revision_used=row.profile_revision_used,
     )

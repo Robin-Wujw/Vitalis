@@ -11,13 +11,14 @@ def main() -> int:
     user = configured_user()
     parser.add_argument("recommendation_id")
     parser.add_argument("workout_id")
+    parser.add_argument("--workout-source", required=True)
     parser.add_argument("--user", default=user, required=not user)
     args = parser.parse_args()
     print_json(request(
         "POST",
         f"recommendations/{args.recommendation_id}/complete",
         args.user,
-        json={"workout_id": args.workout_id},
+        json={"workout_source": args.workout_source, "workout_id": args.workout_id},
     ))
     return 0
 

@@ -262,3 +262,43 @@ establish beat-to-beat or ECG equivalence, and neither HRV stream is converted i
 stress, recovery, or emotion claim;
 context-dependent daytime interpretation remains blocked by the activity, posture,
 respiration, and time-of-day reference requirements above.
+
+## 2026-09-02: OpenStrap And Public WHOOP-style Insights
+
+### Evidence boundary
+
+WHOOP publicly describes Recovery, Strain, Sleep and coaching inputs, product ranges and high-level architecture, but does not publish the production weights, normalization, calibration or recommendation model. Independent studies primarily validate underlying HR/HRV/sleep measurements, not the composite Recovery or Strain scores. Vitalis therefore does not reproduce WHOOP 0–100 Recovery, 0–21 Strain, WHOOP Age or AI Coach decisions.
+
+OpenStrap separates Flutter collection/UI in `OpenStrap/edge` from MIT-licensed formulas in `OpenStrap/analytics`. Vitalis pins upstream commit `45d72ed989c004008b919b366cd5ceda7061b7df` and ports only transparent methods: robust EWMA conventions, nightly lnRMSSD readiness, robust multivariate anomaly screening, sleep timing/regularity, and Banister TRIMP with ATL/CTL/TSB. `THIRD_PARTY_NOTICES.md` records the license and modifications.
+
+### Current data audit
+
+The current stored dataset can support the implemented shadow algorithms after a fresh-schema rebuild:
+
+- last 28 days: 28 sleep days, 28 RMSSD days, 27 sleep-HRV/RHR days, 28 heart-rate days and 28 respiratory-rate days;
+- 42-day load window: 26 workouts with detailed heart rate and 31 device-zone/max anchors;
+- user-confirmed profile: `sex=MALE`, `HRmax=190 bpm`;
+- unavailable inputs: sleep target, naps, Journal behaviors, RR/IBI and accelerometer data.
+
+The current live database still uses the superseded workout-detail schema without `workout_metric_samples.source`. It must not be upgraded in place. Real activation requires a separate authorized fresh-schema rebuild and re-ingestion.
+
+### Product policy
+
+- Open Health Insights is `shadow_only=true` and does not change Decision Policy 7.0.
+- User-confirmed physiology has priority over vendor/device candidates and workout observations.
+- Nightly RMSSD never mixes source/device streams or substitutes SDNN/sleepHRV.
+- TRIMP uses one workout HR stream, same-day canonical RHR and confirmed HRmax. Missing upstream coverage produces a lower-bound PARTIAL result.
+- ATL/CTL/TSB is descriptive load, not recovery, form, overtraining or injury risk.
+- Sleep target gaps exclude nap credit until nap data exists and are not called physiological sleep debt.
+- Multivariate anomaly flags only sustained deviation from personal history and is not diagnostic.
+
+### Primary sources
+
+- OpenStrap Analytics: <https://github.com/OpenStrap/analytics>
+- OpenStrap algorithm catalog: <https://github.com/OpenStrap/analytics/blob/main/ALGORITHMS.md>
+- WHOOP Recovery API: <https://developer.whoop.com/docs/developing/user-data/recovery/>
+- WHOOP Sleep API: <https://developer.whoop.com/docs/developing/user-data/sleep/>
+- WHOOP Strain overview: <https://www.whoop.com/us/en/thelocker/how-does-whoop-strain-work-101/>
+- Bellenger et al. wearable HR/HRV validation: <https://pmc.ncbi.nlm.nih.gov/articles/PMC8160717/>
+- Miller et al. WHOOP sleep validation: <https://pubmed.ncbi.nlm.nih.gov/32713257/>
+- Morton, Fitz-Clarke and Banister load model: <https://pubmed.ncbi.nlm.nih.gov/2246166/>

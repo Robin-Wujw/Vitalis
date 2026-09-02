@@ -1,15 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/daily-profile-9.0.json",
-  "title": "Vitalis DailyProfile 9.0",
+  "$id": "https://vitalis.local/schemas/daily-profile-10.0.json",
+  "title": "Vitalis DailyProfile 10.0",
   "type": "object",
-  "required": ["schema_version", "analysis_run_id", "intelligence_version", "decision_policy_version", "evidence_version", "user_id", "date", "generated_at", "data_quality", "facts", "baselines", "features", "trends", "events", "states", "decision", "evidence_refs", "metadata"],
+  "required": ["schema_version", "analysis_run_id", "intelligence_version", "decision_policy_version", "evidence_version", "user_id", "date", "generated_at", "data_quality", "facts", "baselines", "features", "trends", "events", "states", "decision", "evidence_refs", "metadata", "open_health_insights"],
   "properties": {
-    "schema_version": {"const": "9.0"},
+    "schema_version": {"const": "10.0"},
     "analysis_run_id": {"type": "string"},
-    "intelligence_version": {"const": "9.0"},
+    "intelligence_version": {"const": "10.0"},
     "decision_policy_version": {"const": "7.0"},
-    "evidence_version": {"const": "2026-08e"},
+    "evidence_version": {"const": "2026-09a"},
     "user_id": {"type": "string"},
     "date": {"type": "string", "format": "date"},
     "generated_at": {"type": "string", "format": "date-time"},
@@ -259,6 +259,22 @@
       }
     },
     "evidence_refs": {"type": "array", "items": {"type": "object"}},
-    "metadata": {"type": "object"}
+    "metadata": {"type": "object"},
+    "open_health_insights": {"$ref": "#/definitions/open_health_bundle"}
+  },
+  "definitions": {
+    "open_health_bundle": {
+      "type": ["object", "null"],
+      "required": ["schema_version", "target_date", "profile_revision_used"],
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "target_date": {"type": "string", "format": "date"},
+        "profile_revision_used": {"type": "integer", "minimum": 0},
+        "readiness": {"type": ["object", "null"]},
+        "anomaly": {"type": ["object", "null"]},
+        "sleep": {"type": ["object", "null"]},
+        "training_load": {"type": ["object", "null"]}
+      }
+    }
   }
 }

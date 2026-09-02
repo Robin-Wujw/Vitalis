@@ -24,7 +24,11 @@ from vitalis.intelligence.contracts import (
     SubjectiveFeedbackInput,
     TrendResponse,
     TrainingPreferenceInput,
+    TrainingPreferencePatch,
     TrainingPreferences,
+    UserProfile,
+    UserProfilePatch,
+    ProfileRevisionConflict,
     TrainingResponseProfile,
     WeeklyProfile,
 )
@@ -39,6 +43,22 @@ def _snapshot_or_404(value):
     if value is None:
         raise HTTPException(status_code=404, detail="指定日期尚未生成分析快照")
     return value
+
+
+@router.get("/profile", response_model=UserProfile, summary="Read the user-confirmed profile")
+def profile(user_id: str = Depends(require_user_id)) -> UserProfile:
+    return IntelligenceQuery().profile(user_id)
+
+
+@router.patch("/profile", response_model=UserProfile, summary="Patch the user-confirmed profile")
+def patch_profile(
+    payload: UserProfilePatch,
+    user_id: str = Depends(require_user_id),
+) -> UserProfile:
+    try:
+        return IntelligenceAction().patch_profile(user_id, payload)
+    except ProfileRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post(
@@ -255,6 +275,21 @@ def set_training_preferences(
     user_id: str = Depends(require_user_id),
 ) -> TrainingPreferences:
     return IntelligenceAction().set_training_preferences(user_id, payload)
+
+
+@router.patch(
+    "/training-preferences",
+    response_model=TrainingPreferences,
+    summary="Patch only provided training preference fields",
+)
+def patch_training_preferences(
+    payload: TrainingPreferencePatch,
+    user_id: str = Depends(require_user_id),
+) -> TrainingPreferences:
+    try:
+        return IntelligenceAction().patch_training_preferences(user_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post(

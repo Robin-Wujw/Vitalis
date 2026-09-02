@@ -1,5 +1,9 @@
 # 晨间分析
 
+当返回 `open_health_insights` 时，可在不超过两条的范围内展示 readiness 与已标记异常的主要
+驱动，并明确写出“开放洞察，不参与今日训练决策”。拒绝或缺输入只复述返回的原因；不得把它
+并入 `decision`。
+
 Use the requested date, or today's date when none is given.
 
 全程使用普通中文，像教练给用户说明今天怎么做。按以下顺序渲染：

@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/context-4.0.json",
-  "title": "Vitalis AgentContext 4.0",
+  "$id": "https://vitalis.local/schemas/context-5.0.json",
+  "title": "Vitalis AgentContext 5.0",
   "type": "object",
-  "required": ["schema_version", "user_id", "date", "current", "recent", "trend", "personal"],
+  "required": ["schema_version", "user_id", "date", "current", "recent", "trend", "personal", "profile", "missing_inputs", "open_health_summary", "insights_stale"],
   "properties": {
-    "schema_version": {"const": "4.0"},
+    "schema_version": {"const": "5.0"},
     "user_id": {"type": "string"},
     "date": {"type": "string", "format": "date"},
     "current": {"type": "object", "required": ["analysis_run_id", "action", "action_label", "recommendation_id"]},
@@ -25,6 +25,13 @@
         "patterns": {"type": "array", "maxItems": 6},
         "associations": {"type": "array", "maxItems": 6}
       }
-    }
+    },
+    "profile": {
+      "type": "object",
+      "required": ["revision", "sex", "confirmed_hrmax_bpm", "sleep_target_minutes"]
+    },
+    "missing_inputs": {"type": "array", "maxItems": 3},
+    "open_health_summary": {"type": ["object", "null"]},
+    "insights_stale": {"type": "boolean"}
   }
 }

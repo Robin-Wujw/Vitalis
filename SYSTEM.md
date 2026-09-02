@@ -86,15 +86,16 @@ Vitalis 仍处于预生产阶段。所有实现只面向当前契约和当前契
 
 ## 9. 最近验证结果
 
-最近两项任务的最终验证：
+最近任务的最终验证：
 
 - Zepp 数据正确性审查后针对性测试：157 项通过。
 - Windows daily push 权限契约针对性测试：16 项通过。
-- Windows 完整测试套件：309 项全部通过。
+- Open Health Insights 完整测试套件：345 项全部通过。
 - Linux 继续严格验证状态目录 `0700` 和标记文件 `0600`；Windows 验证代码请求了相同权限，并由 NTFS ACL 继承负责实际访问控制。
-- Python 编译通过。
-- OpenAPI 生成 42 条路径，训练明细和力量操作要求提供 workout source。
-- 全新内存 SQLite schema 的来源感知唯一约束通过验证。
+- Python 与 Skill 工具编译通过。
+- OpenAPI 生成 43 条路径，包含 revision-aware UserProfile PATCH 和训练偏好 PATCH。
+- 全部 13 个 Skill JSON schema 解析通过。
+- 全新内存 SQLite schema 的 UserProfile 修订、AnalysisRun profile revision 和来源感知 workout 约束通过验证。
 - `git diff --check` 通过。
 
 ## 10. 已知未完成事项
@@ -141,3 +142,36 @@ Vitalis 仍处于预生产阶段。所有实现只面向当前契约和当前契
 - `tests/test_daily_push.py` 16 项测试通过。
 - Windows 完整测试套件 309 项全部通过，产生 472 条既有 `datetime.utcnow()` 弃用警告。
 - 本任务只修改测试和执行契约，不改变 daily push 运行时权限调用。
+
+## 13. 开放健康洞察与用户档案
+
+日期：2026-09-02
+
+目标：基于现有规范化数据和用户确认的 `MALE/HRmax 190`，增加透明、可审计、shadow-only 的公开算法洞察，并让 Agent 对缺失档案字段进行明确追问和持久化。
+
+### TODO
+
+- [x] 新增 revision-aware UserProfile GET/PATCH、审计历史和 typed missing inputs。
+- [x] 实现稳健 EWMA、nightly lnRMSSD readiness、多信号异常和睡眠基础洞察。
+- [x] 实现用户确认 HRmax 驱动的 Banister TRIMP、ATL、CTL 和 TSB。
+- [x] 接入 Daily 10.0、Weekly 4.0、Monthly 2.0、Agent Context 5.0 和晨晚报。
+- [x] 修复 Hermes workout source 与训练偏好 PATCH 契约。
+- [x] 验证算法、API、Skill schema、fresh schema 和完整测试套件。
+
+### 安全边界
+
+- 所有 Open Health 输出均为 `shadow_only=true`，Decision Policy 保持 7.0，现有恢复状态、动作、规则和 ActionPlan 不变。
+- 不复刻 WHOOP 0–100/0–21 分数，不实现 Healthspan Age、Journal 因果结论、RR/加速度睡眠分期或 ACWR 伤病阈值。
+- 当前 Zepp apptoken 云端不调用未经验证的 profile endpoint；用户确认值优先于设备/训练观测候选。
+- 上游同步覆盖未由持久 chunk 账本验证时，训练负荷只能标记为 PARTIAL 下界估计。
+- 当前真实数据库仍是旧 schema；本任务未连接、迁移、清理或启动真实数据库。真实启用需要另行授权的 fresh-schema 重建和重新摄取。
+
+### 验证日志
+
+- Open Health/档案/报告/Skill 相关回归通过，Windows UTF-8 完整套件 345 项全部通过。
+- Python 与 Skill 工具编译通过；OpenAPI 43 条路径；13 个 Skill JSON schema 解析通过。
+- fresh SQLite schema 验证了 UserProfile 修订表、AnalysisRun profile revision 和 `workout_metric_samples.source`。
+- `THIRD_PARTY_NOTICES.md` 保留 OpenStrap analytics MIT 许可、固定上游 commit 和 Vitalis 修改边界。
+- `git diff --check` 通过。
+
+交付步骤：本任务使用一个提交推送 `feat/open-health-insights`；是否合并 `main` 由用户单独确认。

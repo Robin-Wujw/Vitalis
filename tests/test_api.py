@@ -45,10 +45,10 @@ def test_daily_profile_after_sync(client):
     resp = client.get("/api/v1/intelligence/daily", headers={"X-User-Id": "001"})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["schema_version"] == "9.0"
-    assert body["intelligence_version"] == "9.0"
+    assert body["schema_version"] == "10.0"
+    assert body["intelligence_version"] == "10.0"
     assert body["decision_policy_version"] == "7.0"
-    assert body["evidence_version"] == "2026-08e"
+    assert body["evidence_version"] == "2026-09a"
     assert body["features"]["overnight_vitals"]["status"] == "INSUFFICIENT_DATA"
     assert body["analysis_run_id"]
     assert body["decision"]["action"] in {
@@ -404,6 +404,62 @@ def test_training_preferences_are_health_first_and_user_scoped(client):
     assert other["pain_or_injury_status"] == "UNKNOWN"
     assert other["rotation_policy"] == "BALANCE"
     assert other["bad_weather_running_policy"] == "DEFER"
+
+
+def test_training_preference_patch_validates_merged_state_and_nulls(client):
+    headers = {"X-User-Id": "training-patch-user"}
+    created = client.request(
+        "PUT",
+        "/api/v1/intelligence/training-preferences",
+        headers=headers,
+        json={
+            "weekly_running_target": 3,
+            "weekly_strength_target": 3,
+            "rotation_policy": "BALANCE",
+            "treadmill_available": False,
+            "bad_weather_running_policy": "DEFER",
+            "available_weekdays": [],
+            "max_session_minutes": 60,
+            "equipment": [],
+            "pain_or_injury_status": "PRESENT",
+            "pain_or_injury_notes": "膝部疼痛",
+        },
+    )
+    assert created.status_code == 200
+
+    idempotent = client.request(
+        "PATCH",
+        "/api/v1/intelligence/training-preferences",
+        headers=headers,
+        json={"pain_or_injury_status": "PRESENT"},
+    )
+    assert idempotent.status_code == 200
+    assert idempotent.json()["pain_or_injury_notes"] == "膝部疼痛"
+
+    invalid_clear = client.request(
+        "PATCH",
+        "/api/v1/intelligence/training-preferences",
+        headers=headers,
+        json={"pain_or_injury_notes": None},
+    )
+    assert invalid_clear.status_code == 422
+
+    invalid_required_null = client.request(
+        "PATCH",
+        "/api/v1/intelligence/training-preferences",
+        headers=headers,
+        json={"weekly_running_target": None},
+    )
+    assert invalid_required_null.status_code == 422
+
+    nullable_clear = client.request(
+        "PATCH",
+        "/api/v1/intelligence/training-preferences",
+        headers=headers,
+        json={"max_session_minutes": None},
+    )
+    assert nullable_clear.status_code == 200
+    assert nullable_clear.json()["max_session_minutes"] is None
 
 
 def test_health_event_acknowledgement_api_is_user_scoped(client):

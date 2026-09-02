@@ -10,3 +10,4 @@
    关联。关联不代表因果，不得据此新建建议。
 5. 按 `actions.recommendations.priority` 展示 Vitalis 已给出的行动和依据，并展示
    `inferences.limitations`。不得从周报、日报或关联系数自行计算月度结论。
+6. 可复述 `open_health_period_summary` 与 `open_health_coverage` 中已返回的目标日摘要和周期覆盖，不得自行计算或改写状态。

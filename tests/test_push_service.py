@@ -553,6 +553,54 @@ def test_missing_values_do_not_render_dangling_units():
         assert dangling not in body
 
 
+def test_open_health_rendering_uses_localized_shadow_wording():
+    payload = deepcopy(_profile_payload())
+    payload["open_health_insights"] = {
+        "readiness": {
+            "status": "AVAILABLE",
+            "drivers": ["lnRMSSD delta=-0.123456", "SWC=0.042"],
+            "payload": {"state": "suppressed"},
+        },
+        "anomaly": {
+            "status": "AVAILABLE",
+            "drivers": ["ln_rmssd:|z|=2.731"],
+            "payload": {"flagged": True},
+        },
+        "sleep": {"status": "PARTIAL", "payload": {}},
+        "training_load": {
+            "status": "PARTIAL",
+            "payload": {
+                "lower_bound": True,
+                "atl": 20.0,
+                "ctl": 15.0,
+                "tsb": -5.0,
+                "daily_points": [{
+                    "date": "2026-08-28", "status": "SCORED", "trimp": 42.5,
+                }],
+            },
+        },
+    }
+    morning = []
+    service = PushService(pushplus_token="")
+    service.add_handler(morning.append)
+    service.push_daily_profile("test-user", payload, period="morning")
+    morning_text = _visible_text(morning[0].body)
+    assert "夜间 RMSSD 相对近期个人范围偏低" in morning_text
+    assert "夜间多个生理信号连续偏离个人常态" in morning_text
+    assert "开放洞察，不参与今日训练决策" in morning_text
+    assert "lnRMSSD delta" not in morning_text
+    assert "ln_rmssd" not in morning_text
+
+    evening = []
+    service = PushService(pushplus_token="")
+    service.add_handler(evening.append)
+    service.push_daily_profile("test-user", payload, period="evening")
+    evening_text = _visible_text(evening[0].body)
+    assert "当日 TRIMP：42.5" in evening_text
+    assert "下界估计，上游同步覆盖尚未完全验证" in evening_text
+    assert "恢复良好" not in evening_text
+
+
 def test_morning_push_mentions_device_disagreement_only_when_consequential():
     received = []
     payload = _profile_payload()

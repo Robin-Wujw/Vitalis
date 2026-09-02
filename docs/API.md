@@ -26,7 +26,9 @@ semantics.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | POST | `/intelligence/analyze?day=YYYY-MM-DD` | Run deterministic analysis and persist immutable snapshots |
-| GET | `/intelligence/daily?day=YYYY-MM-DD` | Read DailyProfile facts, baselines, states, and decision |
+| GET | `/intelligence/profile` | Read the revisioned user-confirmed physiology and sleep profile |
+| PATCH | `/intelligence/profile` | Patch explicit profile fields with `expected_revision` conflict protection |
+| GET | `/intelligence/daily?day=YYYY-MM-DD` | Read DailyProfile 10.0 facts, decisions, and shadow-only open health insights |
 | GET | `/intelligence/weekly?day=YYYY-MM-DD` | Read the 7-day profile and prior-week comparison |
 | GET | `/intelligence/monthly?day=YYYY-MM-DD` | Read the directly computed 28-day profile |
 | GET | `/intelligence/trends?day=YYYY-MM-DD` | Read device-isolated 7/28/90-day trends |
@@ -42,7 +44,8 @@ semantics.
 | POST | `/intelligence/feedback` | Record feedback; workout-linked input requires `workout_source` plus `workout_id` |
 | GET | `/intelligence/feedback?start=&end=` | Read subjective feedback |
 | GET | `/intelligence/training-preferences` | Read health-first running/strength targets, rotation, weather fallback, and constraints |
-| PUT | `/intelligence/training-preferences` | Replace rotation, treadmill/weather policy, weekly availability, experience, equipment, and pain/injury state |
+| PUT | `/intelligence/training-preferences` | Replace the complete training-preference document |
+| PATCH | `/intelligence/training-preferences` | Update only explicitly provided training-preference fields |
 | POST | `/intelligence/workouts/{workout_id}/strength-exercises?source=` | Replace confirmed exercises for one source-qualified strength workout |
 | POST | `/intelligence/events/{id}/acknowledge` | Acknowledge a user-scoped event |
 
@@ -71,6 +74,19 @@ curl -X POST 'http://localhost:8000/api/v1/health/sync?days=7' \
 
 curl -X POST 'http://localhost:8000/api/v1/intelligence/analyze?day=2026-08-28' \
   -H 'X-User-Id: <local-user-id>'
+```
+
+Store user-confirmed physiology inputs. These values take precedence over workout observations or device-zone candidates:
+
+```bash
+curl -X PATCH 'http://localhost:8000/api/v1/intelligence/profile' \
+  -H 'Content-Type: application/json' \
+  -H 'X-User-Id: <local-user-id>' \
+  -d '{
+    "expected_revision": 0,
+    "sex": "MALE",
+    "confirmed_hrmax_bpm": 190
+  }'
 ```
 
 Read daily, weekly, and monthly intelligence:
@@ -128,7 +144,9 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/st
 - Daily, Weekly, Monthly, Training Response, Personal Association, and Personal Model
   snapshots share one AnalysisRun identity.
 - Facts, inferences, and actions remain distinct in period profiles.
-- Missing measurements remain null or produce explicit insufficient-data state.
+- `open_health_insights` is shadow-only. It may explain readiness, sleep, TRIMP, ATL, CTL, and TSB, but it does not change Decision Policy 7.0, recovery state, action, rule IDs, or ActionPlan.
+- User-confirmed profile values have revisioned provenance. Age formulas, workout maximum heart rate, Zepp scores, and device-zone boundaries never silently populate confirmed HRmax.
+- Missing measurements remain null or produce explicit insufficient-data/refusal state.
 - Canonical workout identity is `(source, workout_id)`. Detail reads, recommendation
   completion, feedback, strength confirmation, timeline references, and analysis outputs
   retain both fields.

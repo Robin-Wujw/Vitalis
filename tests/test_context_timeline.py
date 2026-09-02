@@ -23,7 +23,8 @@ def test_agent_context_is_layered_bounded_and_contains_no_full_profiles():
     encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
     assert set(payload) == {
-        "schema_version", "user_id", "date", "current", "recent", "trend", "personal"
+        "schema_version", "user_id", "date", "current", "recent", "trend", "personal",
+        "profile", "missing_inputs", "open_health_summary", "insights_stale"
     }
     assert "facts" not in payload
     assert "baselines" not in payload

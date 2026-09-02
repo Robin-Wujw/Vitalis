@@ -6,6 +6,7 @@ import hashlib
 from uuid import uuid4
 
 from sqlalchemy import Integer, case, cast, delete, func, or_, select, text, tuple_, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from vitalis.models import (
@@ -27,7 +28,21 @@ from vitalis.intelligence.contracts import (
     StrengthExerciseRecord,
     SubjectiveFeedback,
     TrainingPreferenceInput,
+    TrainingPreferencePatch,
     TrainingPreferences,
+    DAILY_SCHEMA_VERSION,
+    WEEKLY_SCHEMA_VERSION,
+    MONTHLY_SCHEMA_VERSION,
+    INTELLIGENCE_VERSION,
+    DECISION_POLICY_VERSION,
+    EVIDENCE_VERSION,
+    ConfidenceBand,
+    ProfileRevisionConflict,
+    ProfileSource,
+    ProfileField,
+    Sex,
+    UserProfile,
+    UserProfilePatch,
 )
 
 from vitalis.time import local_day, local_day_utc_bounds
@@ -45,6 +60,16 @@ class WorkoutAnalysisSample:
     unit: str
     source_scope: str
     device_id: str | None
+
+
+_CURRENT_SNAPSHOT_SCHEMAS = {
+    "daily": DAILY_SCHEMA_VERSION,
+    "weekly": WEEKLY_SCHEMA_VERSION,
+    "monthly": MONTHLY_SCHEMA_VERSION,
+    "training_responses": "1.0",
+    "personal_model": "2.0",
+    "personal_associations": "1.0",
+}
 
 
 class HealthRepository:
@@ -888,6 +913,171 @@ class HealthRepository:
             ).order_by(orm.Workout.started_at.desc()).limit(limit)
         ).scalars().all())
 
+    def open_health_load_inputs(
+        self,
+        user_id: str,
+        start: date,
+        end: date,
+        *,
+        metric: str = "heart_rate",
+        source: str | None = None,
+        limit: int = 200,
+    ):
+        """Return source-qualified workouts with only the requested metric samples.
+
+        This loader deliberately does not use the general 28-day profile loader or
+        fetch any other workout metric.  ``metric`` remains explicit for query tests;
+        the TRIMP algorithm always calls it with ``heart_rate``.
+        """
+        from vitalis.intelligence.open_health.load import (
+            HeartRatePoint,
+            LoadWorkout,
+            LoadWorkoutBatch,
+            PauseInterval,
+        )
+
+        start_at, _ = local_day_utc_bounds(start)
+        _, end_at = local_day_utc_bounds(end)
+        statement = select(orm.Workout).where(
+            orm.Workout.user_id == user_id,
+            orm.Workout.started_at >= _naive_utc(start_at),
+            orm.Workout.started_at < _naive_utc(end_at),
+        )
+        if source is not None:
+            statement = statement.where(orm.Workout.source == source)
+        workouts = list(self.db.execute(
+            statement.order_by(orm.Workout.started_at, orm.Workout.source, orm.Workout.workout_id).limit(limit)
+        ).scalars().all())
+        if not workouts:
+            return []
+        keys = [(row.source, row.workout_id) for row in workouts]
+        max_points = 1_000_000
+        dialect = self.db.get_bind().dialect.name
+        if dialect == "sqlite":
+            epoch = cast(func.strftime("%s", orm.WorkoutMetricSample.timestamp), Integer)
+        elif dialect == "postgresql":
+            epoch = cast(func.extract("epoch", orm.WorkoutMetricSample.timestamp), Integer)
+        else:
+            epoch = None
+        if epoch is not None:
+            bucket = cast(epoch / 5, Integer)
+            statement = (
+                select(
+                    orm.WorkoutMetricSample.source,
+                    orm.WorkoutMetricSample.workout_id,
+                    func.min(orm.WorkoutMetricSample.timestamp).label("timestamp"),
+                    func.avg(orm.WorkoutMetricSample.value).label("value"),
+                    orm.WorkoutMetricSample.unit,
+                    orm.WorkoutMetricSample.source_scope,
+                    orm.WorkoutMetricSample.device_id,
+                )
+                .where(
+                    orm.WorkoutMetricSample.user_id == user_id,
+                    orm.WorkoutMetricSample.metric == metric,
+                    tuple_(
+                        orm.WorkoutMetricSample.source,
+                        orm.WorkoutMetricSample.workout_id,
+                    ).in_(keys),
+                )
+                .group_by(
+                    orm.WorkoutMetricSample.source,
+                    orm.WorkoutMetricSample.workout_id,
+                    orm.WorkoutMetricSample.unit,
+                    orm.WorkoutMetricSample.source_scope,
+                    orm.WorkoutMetricSample.device_id,
+                    bucket,
+                )
+                .order_by(
+                    orm.WorkoutMetricSample.source,
+                    orm.WorkoutMetricSample.workout_id,
+                    func.min(orm.WorkoutMetricSample.timestamp),
+                )
+                .limit(max_points + 1)
+            )
+            sample_rows = list(self.db.execute(statement))
+        else:
+            sample_rows = list(self.db.execute(
+                select(
+                    orm.WorkoutMetricSample.source,
+                    orm.WorkoutMetricSample.workout_id,
+                    orm.WorkoutMetricSample.timestamp,
+                    orm.WorkoutMetricSample.value,
+                    orm.WorkoutMetricSample.unit,
+                    orm.WorkoutMetricSample.source_scope,
+                    orm.WorkoutMetricSample.device_id,
+                ).where(
+                    orm.WorkoutMetricSample.user_id == user_id,
+                    orm.WorkoutMetricSample.metric == metric,
+                    tuple_(
+                        orm.WorkoutMetricSample.source,
+                        orm.WorkoutMetricSample.workout_id,
+                    ).in_(keys),
+                ).order_by(
+                    orm.WorkoutMetricSample.source,
+                    orm.WorkoutMetricSample.workout_id,
+                    orm.WorkoutMetricSample.timestamp,
+                ).limit(max_points + 1)
+            ))
+        truncated = len(sample_rows) > max_points
+        sample_rows = sample_rows[:max_points]
+        samples_by_key: dict[tuple[str, str], list[HeartRatePoint]] = {}
+        for row in sample_rows:
+            timestamp = row.timestamp.replace(tzinfo=timezone.utc)
+            samples_by_key.setdefault((row.source, row.workout_id), []).append(
+                HeartRatePoint(
+                    timestamp=timestamp,
+                    value=float(row.value),
+                    source=row.source,
+                    source_scope=row.source_scope,
+                    device_id=row.device_id or None,
+                    unit=row.unit,
+                )
+            )
+
+        def parse_datetime(value):
+            if isinstance(value, datetime):
+                return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+            if isinstance(value, str):
+                try:
+                    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                except ValueError:
+                    return None
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+            return None
+
+        output = []
+        for row in workouts:
+            data = row.data if isinstance(row.data, dict) else {}
+            detail = row.detail if isinstance(row.detail, dict) else {}
+            started = row.started_at.replace(tzinfo=timezone.utc) if row.started_at else None
+            ended = parse_datetime(data.get("ended_at"))
+            duration = data.get("duration")
+            try:
+                duration = float(duration) if duration is not None else None
+            except (TypeError, ValueError):
+                duration = None
+            pauses = []
+            for item in (detail.get("pauses") or []):
+                if not isinstance(item, dict):
+                    continue
+                pause_start = parse_datetime(item.get("started_at"))
+                try:
+                    pause_duration = float(item.get("duration_seconds") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if pause_start is not None and pause_duration > 0:
+                    pauses.append(PauseInterval(pause_start, pause_duration))
+            output.append(LoadWorkout(
+                source=row.source,
+                workout_id=row.workout_id,
+                started_at=started,
+                ended_at=ended,
+                duration_minutes=duration,
+                heart_rate=tuple(samples_by_key.get((row.source, row.workout_id), [])),
+                pauses=tuple(pauses),
+            ))
+        return LoadWorkoutBatch(output, truncated=truncated)
+
     def workout(
         self, user_id: str, workout_id: str, source: str = "zepp"
     ) -> orm.Workout | None:
@@ -1098,6 +1288,31 @@ class HealthRepository:
         self.db.flush()
         return self.training_preferences(user_id)
 
+    def patch_training_preferences(
+        self, user_id: str, patch: TrainingPreferencePatch
+    ) -> TrainingPreferences:
+        current = self.training_preferences(user_id)
+        merged = current.model_dump(
+            mode="python",
+            exclude={
+                "user_id", "primary_goal", "primary_goal_label",
+                "running_required", "strength_required", "updated_at",
+            },
+        )
+        merged.update(patch.model_dump(mode="python", exclude_unset=True))
+        validated = TrainingPreferenceInput.model_validate(merged)
+        row = self.db.get(orm.TrainingPreference, user_id)
+        values = validated.model_dump(mode="python")
+        if row is None:
+            row = orm.TrainingPreference(user_id=user_id, **values)
+            self.db.add(row)
+        else:
+            for field, value in values.items():
+                setattr(row, field, value)
+        row.updated_at = datetime.utcnow()
+        self.db.flush()
+        return self.training_preferences(user_id)
+
     def training_preferences(self, user_id: str) -> TrainingPreferences:
         row = self.db.get(orm.TrainingPreference, user_id)
         if row is None:
@@ -1120,6 +1335,111 @@ class HealthRepository:
                 row.updated_at.replace(tzinfo=timezone.utc) if row.updated_at else None
             ),
         )
+
+    # ---- 用户档案 ----
+
+    def user_profile(self, user_id: str) -> UserProfile:
+        row = self.db.get(orm.UserProfile, user_id)
+        if row is None:
+            return UserProfile(user_id=user_id)
+        return _user_profile_from_row(row)
+
+    def get_user_profile(self, user_id: str) -> UserProfile:
+        return self.user_profile(user_id)
+
+    def patch_user_profile(
+        self, user_id: str, patch: UserProfilePatch
+    ) -> UserProfile:
+        row = self.db.get(orm.UserProfile, user_id)
+        current = _user_profile_from_row(row) if row else UserProfile(user_id=user_id)
+        if patch.expected_revision != current.revision:
+            raise ProfileRevisionConflict(patch.expected_revision, current.revision)
+
+        values = patch.model_dump(
+            mode="python", exclude={"expected_revision"}, exclude_unset=True
+        )
+        changed_fields = [
+            field for field, value in values.items()
+            if _profile_field_value(getattr(current, field)) != value
+        ]
+        if not changed_fields:
+            return current
+
+        revision = current.revision + 1
+        now = datetime.now(timezone.utc)
+        naive_now = _naive_utc(now)
+        payload = current.model_dump(
+            mode="json", exclude={"schema_version", "user_id", "revision"}
+        )
+        for field in changed_fields:
+            value = values[field]
+            if value is None:
+                payload.pop(field, None)
+                continue
+            payload[field] = ProfileField(
+                value=value,
+                source=ProfileSource.USER_CONFIRMED,
+                confidence=ConfidenceBand.HIGH,
+                revision=revision,
+                updated_at=now,
+            ).model_dump(mode="json")
+
+        revision_row = orm.UserProfileRevision(
+            user_id=user_id,
+            revision=revision,
+            changed_fields=changed_fields,
+            payload=payload,
+            created_at=naive_now,
+        )
+        if row is None:
+            try:
+                with self.db.begin_nested():
+                    self.db.add(orm.UserProfile(
+                        user_id=user_id,
+                        payload=payload,
+                        revision=revision,
+                        schema_version="1.0",
+                        updated_at=naive_now,
+                    ))
+                    self.db.add(revision_row)
+                    self.db.flush()
+            except IntegrityError as exc:
+                actual = self.db.get(orm.UserProfile, user_id)
+                raise ProfileRevisionConflict(
+                    patch.expected_revision,
+                    actual.revision if actual is not None else revision,
+                ) from exc
+        else:
+            result = self.db.execute(
+                update(orm.UserProfile)
+                .where(
+                    orm.UserProfile.user_id == user_id,
+                    orm.UserProfile.revision == patch.expected_revision,
+                )
+                .values(
+                    payload=payload,
+                    revision=revision,
+                    schema_version="1.0",
+                    updated_at=naive_now,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            if not result.rowcount:
+                self.db.expire(row)
+                actual = self.db.get(orm.UserProfile, user_id)
+                raise ProfileRevisionConflict(
+                    patch.expected_revision,
+                    actual.revision if actual is not None else revision,
+                )
+            self.db.add(revision_row)
+            self.db.flush()
+        updated = self.db.get(orm.UserProfile, user_id)
+        assert updated is not None
+        self.db.refresh(updated)
+        return _user_profile_from_row(updated)
+
+    def patch_profile(self, user_id: str, patch: UserProfilePatch) -> UserProfile:
+        return self.patch_user_profile(user_id, patch)
 
     # ---- 健康智能事件 ----
 
@@ -1248,6 +1568,7 @@ class HealthRepository:
             decision_policy_version=run.decision_policy_version,
             evidence_version=run.evidence_version,
             error=run.error,
+            profile_revision_used=run.profile_revision_used,
         )
         self.db.add(row)
         self.db.flush()
@@ -1313,12 +1634,21 @@ class HealthRepository:
         profile_type: str,
         period_end: date,
     ) -> orm.AnalysisSnapshot | None:
+        conditions = [
+            orm.AnalysisSnapshot.user_id == user_id,
+            orm.AnalysisSnapshot.profile_type == profile_type,
+            orm.AnalysisSnapshot.period_end == period_end,
+            orm.AnalysisSnapshot.intelligence_version == INTELLIGENCE_VERSION,
+            orm.AnalysisSnapshot.decision_policy_version == DECISION_POLICY_VERSION,
+            orm.AnalysisSnapshot.evidence_version == EVIDENCE_VERSION,
+        ]
+        schema = _CURRENT_SNAPSHOT_SCHEMAS.get(profile_type)
+        if schema is not None:
+            conditions.append(orm.AnalysisSnapshot.schema_version == schema)
         return self.db.execute(
-            select(orm.AnalysisSnapshot).where(
-                orm.AnalysisSnapshot.user_id == user_id,
-                orm.AnalysisSnapshot.profile_type == profile_type,
-                orm.AnalysisSnapshot.period_end == period_end,
-            ).order_by(orm.AnalysisSnapshot.generated_at.desc(), orm.AnalysisSnapshot.id.desc())
+            select(orm.AnalysisSnapshot).where(*conditions).order_by(
+                orm.AnalysisSnapshot.generated_at.desc(), orm.AnalysisSnapshot.id.desc()
+            )
         ).scalars().first()
 
     def latest_analysis_snapshot_on_or_before(
@@ -1327,12 +1657,19 @@ class HealthRepository:
         profile_type: str,
         period_end: date,
     ) -> orm.AnalysisSnapshot | None:
+        conditions = [
+            orm.AnalysisSnapshot.user_id == user_id,
+            orm.AnalysisSnapshot.profile_type == profile_type,
+            orm.AnalysisSnapshot.period_end <= period_end,
+            orm.AnalysisSnapshot.intelligence_version == INTELLIGENCE_VERSION,
+            orm.AnalysisSnapshot.decision_policy_version == DECISION_POLICY_VERSION,
+            orm.AnalysisSnapshot.evidence_version == EVIDENCE_VERSION,
+        ]
+        schema = _CURRENT_SNAPSHOT_SCHEMAS.get(profile_type)
+        if schema is not None:
+            conditions.append(orm.AnalysisSnapshot.schema_version == schema)
         return self.db.execute(
-            select(orm.AnalysisSnapshot).where(
-                orm.AnalysisSnapshot.user_id == user_id,
-                orm.AnalysisSnapshot.profile_type == profile_type,
-                orm.AnalysisSnapshot.period_end <= period_end,
-            ).order_by(
+            select(orm.AnalysisSnapshot).where(*conditions).order_by(
                 orm.AnalysisSnapshot.period_end.desc(),
                 orm.AnalysisSnapshot.generated_at.desc(),
                 orm.AnalysisSnapshot.id.desc(),
@@ -1447,12 +1784,21 @@ class HealthRepository:
         start: date,
         end: date,
     ) -> list[orm.AnalysisSnapshot]:
+        conditions = [
+            orm.AnalysisSnapshot.user_id == user_id,
+            orm.AnalysisSnapshot.profile_type == profile_type,
+            orm.AnalysisSnapshot.period_end.between(start, end),
+            orm.AnalysisSnapshot.intelligence_version == INTELLIGENCE_VERSION,
+            orm.AnalysisSnapshot.decision_policy_version == DECISION_POLICY_VERSION,
+            orm.AnalysisSnapshot.evidence_version == EVIDENCE_VERSION,
+        ]
+        schema = _CURRENT_SNAPSHOT_SCHEMAS.get(profile_type)
+        if schema is not None:
+            conditions.append(orm.AnalysisSnapshot.schema_version == schema)
         return list(self.db.execute(
-            select(orm.AnalysisSnapshot).where(
-                orm.AnalysisSnapshot.user_id == user_id,
-                orm.AnalysisSnapshot.profile_type == profile_type,
-                orm.AnalysisSnapshot.period_end.between(start, end),
-            ).order_by(orm.AnalysisSnapshot.period_end, orm.AnalysisSnapshot.generated_at)
+            select(orm.AnalysisSnapshot).where(*conditions).order_by(
+                orm.AnalysisSnapshot.period_end, orm.AnalysisSnapshot.generated_at
+            )
         ).scalars().all())
 
     def save_subjective_feedback(self, feedback: SubjectiveFeedback) -> SubjectiveFeedback:
@@ -1682,6 +2028,7 @@ class HealthRepository:
             orm.MetricSample, orm.DailyMetric, orm.DenseDataFile,
             orm.WorkoutMetricSample, orm.StrengthExercise, orm.Workout,
             orm.TrainingPreference,
+            orm.UserProfileRevision, orm.UserProfile,
             orm.HealthEventObservation, orm.HealthEventRecord, orm.AnalysisSnapshot,
             orm.RecommendationInstance,
             orm.AnalysisRun,
@@ -1689,6 +2036,22 @@ class HealthRepository:
             orm.ZeppDeviceLink,
         ):
             self.db.execute(delete(model).where(model.user_id == user_id))
+
+
+def _profile_field_value(field: ProfileField | None):
+    return field.value if field is not None else None
+
+
+def _user_profile_from_row(row: orm.UserProfile) -> UserProfile:
+    payload = dict(row.payload or {})
+    values = {"user_id": row.user_id, "revision": row.revision}
+    for field in ("sex", "confirmed_hrmax_bpm", "sleep_target_minutes"):
+        raw = payload.get(field)
+        if raw is not None:
+            values[field] = ProfileField.model_validate(raw)
+        else:
+            values[field] = None
+    return UserProfile.model_validate(values)
 
 
 def _naive_utc(value: datetime) -> datetime:

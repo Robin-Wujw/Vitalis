@@ -2,23 +2,27 @@
 
 from datetime import date, datetime, timezone
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Generic, Literal, TypeVar
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "9.0"
-WEEKLY_SCHEMA_VERSION = "3.0"
-MONTHLY_SCHEMA_VERSION = "1.0"
-INTELLIGENCE_VERSION = "9.0"
+DAILY_SCHEMA_VERSION = "10.0"
+WEEKLY_SCHEMA_VERSION = "4.0"
+MONTHLY_SCHEMA_VERSION = "2.0"
+INTELLIGENCE_VERSION = "10.0"
 DECISION_POLICY_VERSION = "7.0"
-EVIDENCE_VERSION = "2026-08e"
+EVIDENCE_VERSION = "2026-09a"
 TRAINING_RESPONSE_SCHEMA_VERSION = "1.0"
 PERSONAL_MODEL_SCHEMA_VERSION = "2.0"
 ASSOCIATION_SCHEMA_VERSION = "1.0"
+USER_PROFILE_SCHEMA_VERSION = "1.0"
+AGENT_CONTEXT_SCHEMA_VERSION = "5.0"
+
+ProfileValue = TypeVar("ProfileValue")
 
 
 class Availability(str, Enum):
@@ -86,6 +90,78 @@ class AnalysisRunStatus(str, Enum):
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
+
+
+class Sex(str, Enum):
+    FEMALE = "FEMALE"
+    MALE = "MALE"
+    INTERSEX = "INTERSEX"
+    PREFER_NOT_TO_SAY = "PREFER_NOT_TO_SAY"
+
+
+class ProfileSource(str, Enum):
+    USER_CONFIRMED = "USER_CONFIRMED"
+
+
+class ProfileField(BaseModel, Generic[ProfileValue]):
+    value: ProfileValue
+    source: ProfileSource
+    confidence: ConfidenceBand
+    revision: int = Field(ge=1)
+    updated_at: datetime
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def validate_source(cls, value: object) -> ProfileSource:
+        try:
+            source = ProfileSource(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("profile field source must be USER_CONFIRMED") from exc
+        if source is not ProfileSource.USER_CONFIRMED:
+            raise ValueError("profile field source must be USER_CONFIRMED")
+        return source
+
+
+class UserProfile(BaseModel):
+    schema_version: Literal["1.0"] = USER_PROFILE_SCHEMA_VERSION
+    user_id: str
+    revision: int = Field(default=0, ge=0)
+    sex: ProfileField[Sex] | None = None
+    confirmed_hrmax_bpm: ProfileField[int] | None = None
+    sleep_target_minutes: ProfileField[int] | None = None
+
+
+class UserProfilePatch(BaseModel):
+    expected_revision: int = Field(ge=0)
+    sex: Sex | None = None
+    confirmed_hrmax_bpm: int | None = Field(default=None, ge=100, le=240)
+    sleep_target_minutes: int | None = Field(default=None, ge=180, le=900)
+
+
+class ProfileRevisionConflict(ValueError):
+    def __init__(self, expected: int, actual: int):
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            f"用户档案版本冲突：期望 revision {expected}，当前为 {actual}"
+        )
+
+
+class MissingUserInput(BaseModel):
+    field: Literal["sex", "confirmed_hrmax_bpm", "sleep_target_minutes"]
+    label: str
+    question: str
+    reason: str
+    blocking: bool = True
+    required_for: list[str] = Field(default_factory=list, max_length=4)
+    patch_path: Literal["/api/v1/intelligence/profile"] = "/api/v1/intelligence/profile"
+
+
+class ContextProfile(BaseModel):
+    revision: int = Field(ge=0)
+    sex: Sex | None = None
+    confirmed_hrmax_bpm: int | None = Field(default=None, ge=100, le=240)
+    sleep_target_minutes: int | None = Field(default=None, ge=180, le=900)
 
 
 class RecommendationStatus(str, Enum):
@@ -811,6 +887,32 @@ class TrainingPreferenceInput(BaseModel):
         return self
 
 
+class TrainingPreferencePatch(BaseModel):
+    """Partial preference update; cross-field rules are checked after merge."""
+
+    weekly_running_target: int | None = Field(default=None, ge=1, le=7)
+    weekly_strength_target: int | None = Field(default=None, ge=1, le=7)
+    rotation_policy: Literal["BALANCE", "ALTERNATE"] | None = None
+    treadmill_available: bool | None = None
+    bad_weather_running_policy: Literal["DEFER", "STRENGTH", "RECOVERY"] | None = None
+    available_weekdays: list[int] | None = Field(default=None, max_length=7)
+    max_session_minutes: int | None = Field(default=None, ge=20, le=180)
+    running_experience: Literal["BEGINNER", "INTERMEDIATE", "ADVANCED"] | None = None
+    strength_experience: Literal["BEGINNER", "INTERMEDIATE", "ADVANCED"] | None = None
+    equipment: list[str] | None = Field(default=None, max_length=30)
+    pain_or_injury_status: Literal["NONE", "PRESENT", "UNKNOWN"] | None = None
+    pain_or_injury_notes: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_patch(self):
+        if self.available_weekdays is not None:
+            if len(set(self.available_weekdays)) != len(self.available_weekdays):
+                raise ValueError("available_weekdays must not contain duplicates")
+            if any(day < 1 or day > 7 for day in self.available_weekdays):
+                raise ValueError("available_weekdays must use ISO weekday values 1 through 7")
+        return self
+
+
 class TrainingPreferences(TrainingPreferenceInput):
     user_id: str
     primary_goal: Literal["HEALTH"] = "HEALTH"
@@ -1001,6 +1103,8 @@ class WeeklyProfile(BaseModel):
     inferences: WeeklyInferences
     actions: WeeklyActions
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+    open_health_period_summary: "OpenHealthPeriodSummary | None" = None
+    open_health_coverage: dict[str, "OpenHealthCoverage"] = Field(default_factory=dict)
 
 
 class MonthlyDataQuality(BaseModel):
@@ -1159,6 +1263,8 @@ class MonthlyProfile(BaseModel):
     inferences: MonthlyInferences
     actions: MonthlyActions
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+    open_health_period_summary: "OpenHealthPeriodSummary | None" = None
+    open_health_coverage: dict[str, "OpenHealthCoverage"] = Field(default_factory=dict)
 
 
 class SubjectiveFeedbackInput(BaseModel):
@@ -1211,11 +1317,11 @@ class SubjectiveFeedback(BaseModel):
 
 
 class DailyProfile(BaseModel):
-    schema_version: Literal["9.0"] = DAILY_SCHEMA_VERSION
+    schema_version: Literal["10.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
-    intelligence_version: Literal["9.0"] = INTELLIGENCE_VERSION
+    intelligence_version: Literal["10.0"] = INTELLIGENCE_VERSION
     decision_policy_version: Literal["7.0"] = DECISION_POLICY_VERSION
-    evidence_version: Literal["2026-08e"] = EVIDENCE_VERSION
+    evidence_version: Literal["2026-09a"] = EVIDENCE_VERSION
     user_id: str
     date: DateValue
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -1229,6 +1335,7 @@ class DailyProfile(BaseModel):
     decision: TrainingDecision
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    open_health_insights: "OpenHealthBundle | None" = None
 
 
 class TrendResponse(BaseModel):
@@ -1302,6 +1409,7 @@ class ContextEvent(BaseModel):
 class ContextFeedback(BaseModel):
     id: str
     date: DateValue
+    workout_source: str | None = None
     workout_id: str | None = None
     session_rpe: float | None = None
     physical_fatigue: int | None = None
@@ -1357,7 +1465,11 @@ class ContextAssociation(BaseModel):
     id: str
     predictor_metric_label: str
     outcome_metric_label: str
+    predictor_source: str
+    predictor_source_scope: str
     predictor_device_id: str | None = None
+    outcome_source: str
+    outcome_source_scope: str
     outcome_device_id: str | None = None
     lag_days: Literal[0, 1]
     window_days: Literal[60, 90]
@@ -1376,13 +1488,17 @@ class ContextPersonal(BaseModel):
 
 
 class AgentContext(BaseModel):
-    schema_version: Literal["4.0"] = "4.0"
+    schema_version: Literal["5.0"] = AGENT_CONTEXT_SCHEMA_VERSION
     user_id: str
     date: DateValue
     current: ContextCurrent
     recent: ContextRecent
     trend: list[ContextTrend] = Field(default_factory=list, max_length=12)
     personal: ContextPersonal
+    profile: ContextProfile
+    missing_inputs: list[MissingUserInput] = Field(default_factory=list, max_length=3)
+    open_health_summary: "OpenHealthSummary | None" = None
+    insights_stale: bool = False
 
 
 class TimelineItem(BaseModel):
@@ -1544,6 +1660,7 @@ class AnalysisRun(BaseModel):
     decision_policy_version: str = DECISION_POLICY_VERSION
     evidence_version: str = EVIDENCE_VERSION
     error: str | None = None
+    profile_revision_used: int | None = Field(default=0, ge=0)
 
 
 class AnalysisResult(BaseModel):
@@ -1555,3 +1672,248 @@ class AnalysisResult(BaseModel):
     training_responses: list[TrainingResponse] = Field(default_factory=list)
     personal_model: PersonalModel
     personal_associations: PersonalAssociationProfile
+    open_health_insights: "OpenHealthBundle | None" = None
+
+
+# Open Health Insights 1.0 is intentionally isolated from the Daily/Weekly/Monthly
+# schemas. It is a shadow-only contract and must not drive DecisionEngine actions.
+OPEN_HEALTH_SCHEMA_VERSION = "1.0"
+
+
+class OpenHealthStatus(str, Enum):
+    AVAILABLE = "AVAILABLE"
+    PARTIAL = "PARTIAL"
+    REFUSED = "REFUSED"
+
+
+class OpenHealthRefusalReason(BaseModel):
+    code: str
+    detail: str
+    missing_inputs: list[str] = Field(default_factory=list)
+
+
+class OpenHealthProvenance(BaseModel):
+    source: str
+    source_scope: str = "unknown"
+    device_id: str | None = None
+    module: str | None = None
+    algorithm: str | None = None
+    upstream_revision: str | None = None
+
+
+class ReadinessInsight(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_date: DateValue
+    stream: Literal["ln_rmssd"] = "ln_rmssd"
+    ln_rmssd: float | None = None
+    baseline_ln_rmssd: float | None = None
+    delta: float | None = None
+    swc: float | None = None
+    state: Literal["suppressed", "normal", "elevated", "unavailable"] = "unavailable"
+    history_nights: int = Field(default=0, ge=0)
+    prior_nights: int = Field(default=0, ge=0)
+    rr_available: bool = True
+
+
+class AnomalyInsight(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_date: DateValue
+    dimensions: list[Literal["ln_rmssd", "rhr", "resp"]] = Field(default_factory=list)
+    score: float | None = None
+    threshold: float | None = None
+    flagged: bool = False
+    streak_days: int = Field(default=0, ge=0)
+    gap_reset: bool = False
+    dimension_scores: dict[str, float] = Field(default_factory=dict)
+    method: Literal["robust_mahalanobis"] = "robust_mahalanobis"
+    diagnostic: Literal[False] = False
+
+
+class SleepRegularityInsight(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    window_days: Literal[7, 28]
+    minimum_nights: Literal[5, 14]
+    available_nights: int = Field(default=0, ge=0)
+    bedtime_circular_mad_minutes: float | None = None
+    wake_circular_mad_minutes: float | None = None
+    midpoint_circular_mad_minutes: float | None = None
+    status: Literal["AVAILABLE", "REFUSED"] = "REFUSED"
+
+
+class SleepInsight(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_date: DateValue
+    time_in_bed_minutes: float | None = None
+    sleep_minutes: float | None = None
+    efficiency: float | None = None
+    bedtime: str | None = None
+    wake_time: str | None = None
+    midpoint: str | None = None
+    regularity: list[SleepRegularityInsight] = Field(default_factory=list)
+    target_minutes: int | None = None
+    target_met: bool | None = None
+    target_gap_minutes: float | None = None
+    target_status: Literal["AVAILABLE", "REFUSED"] = "REFUSED"
+    naps_known: bool = False
+    nap_minutes: float | None = None
+
+
+class WorkoutTrimpInsight(BaseModel):
+    """One workout's Banister TRIMP result, independent of report wording."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    workout_id: str
+    source: str
+    date: DateValue
+    trimp: float | None = Field(default=None, ge=0)
+    rhr_bpm: float | None = Field(default=None, ge=1)
+    hrmax_bpm: float | None = Field(default=None, ge=1)
+    selected_source_scope: str | None = None
+    selected_device_id: str | None = None
+    sample_count: int = Field(default=0, ge=0)
+    credited_minutes: float = Field(default=0, ge=0)
+    active_duration_minutes: float = Field(default=0, ge=0)
+    coverage_ratio: float = Field(default=0, ge=0, le=1)
+    clamped_high_hr_points: int = Field(default=0, ge=0)
+    lower_bound: bool = False
+
+
+class TrainingLoadDailyPoint(BaseModel):
+    """A natural-calendar-day load value; unknown is distinct from zero rest."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    date: DateValue
+    status: Literal["REST", "SCORED", "UNKNOWN"]
+    trimp: float | None = Field(default=None, ge=0)
+    workout_count: int = Field(default=0, ge=0)
+    scored_workout_count: int = Field(default=0, ge=0)
+    unknown_workout_count: int = Field(default=0, ge=0)
+    atl: float | None = Field(default=None, ge=0)
+    ctl: float | None = Field(default=None, ge=0)
+    tsb: float | None = None
+    lower_bound: bool = False
+
+
+class TrainingLoadInsight(BaseModel):
+    """Forty-two natural days of TRIMP and Banister impulse-response load."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_date: DateValue
+    period_start: DateValue
+    period_end: DateValue
+    window_days: Literal[42] = 42
+    daily_points: list[TrainingLoadDailyPoint] = Field(default_factory=list, max_length=42)
+    atl: float | None = Field(default=None, ge=0)
+    ctl: float | None = Field(default=None, ge=0)
+    tsb: float | None = None
+    atl_tau_days: Literal[7] = 7
+    ctl_tau_days: Literal[42] = 42
+    coverage_ratio: float = Field(default=0, ge=0, le=1)
+    recent_7d_coverage_ratio: float = Field(default=0, ge=0, le=1)
+    detail_coverage_ratio: float = Field(default=0, ge=0, le=1)
+    unknown_dates: list[DateValue] = Field(default_factory=list, max_length=42)
+    workout_trimp: list[WorkoutTrimpInsight] = Field(default_factory=list)
+    lower_bound: bool = False
+
+
+# Stable aliases for callers that use the shorter daily-point terminology.
+DailyTrimpPoint = TrainingLoadDailyPoint
+DailyLoadPoint = TrainingLoadDailyPoint
+DailyTrainingLoadPoint = TrainingLoadDailyPoint
+
+
+OpenHealthPayload = (
+    ReadinessInsight
+    | AnomalyInsight
+    | SleepInsight
+    | WorkoutTrimpInsight
+    | TrainingLoadInsight
+)
+
+
+class OpenHealthInsights(BaseModel):
+    schema_version: Literal["1.0"] = OPEN_HEALTH_SCHEMA_VERSION
+    algorithm_id: str
+    version: Literal["1.0"] = OPEN_HEALTH_SCHEMA_VERSION
+    upstream_revision: str
+    shadow_only: Literal[True] = True
+    status: OpenHealthStatus
+    tier: str
+    inputs_used: list[str] = Field(default_factory=list)
+    coverage: dict[str, Any] = Field(default_factory=dict)
+    confidence: float | ConfidenceBand = ConfidenceBand.NONE
+    drivers: list[str] = Field(default_factory=list)
+    note: str | None = None
+    refusal_reason: OpenHealthRefusalReason | None = None
+    provenance: list[OpenHealthProvenance] = Field(default_factory=list)
+    profile_revision_used: int = Field(default=0, ge=0)
+    payload: OpenHealthPayload | None = None
+
+
+class OpenHealthBundle(BaseModel):
+    schema_version: Literal["1.0"] = OPEN_HEALTH_SCHEMA_VERSION
+    target_date: DateValue
+    profile_revision_used: int = Field(default=0, ge=0)
+    readiness: OpenHealthInsights | None = None
+    anomaly: OpenHealthInsights | None = None
+    sleep: OpenHealthInsights | None = None
+    training_load: OpenHealthInsights | None = None
+
+
+class OpenHealthCoverage(BaseModel):
+    """Typed coverage summary used by period reports, not a recomputation."""
+
+    window_days: int = Field(ge=0)
+    observed_days: int = Field(ge=0)
+    required_days: int = Field(ge=0)
+    ratio: float = Field(ge=0, le=1)
+    status: OpenHealthStatus
+
+
+class OpenHealthPeriodSummary(BaseModel):
+    period_start: DateValue
+    period_end: DateValue
+    period_days: int = Field(ge=0)
+    scope: Literal["TARGET_DAY_WITH_PERIOD_COVERAGE"] = "TARGET_DAY_WITH_PERIOD_COVERAGE"
+    target_date: DateValue
+    status: OpenHealthStatus
+    drivers: list[str] = Field(default_factory=list, max_length=4)
+    refusal_reasons: list[OpenHealthRefusalReason] = Field(default_factory=list, max_length=4)
+
+
+class OpenHealthSummary(BaseModel):
+    """Compact Context projection; never contains the full OpenHealthBundle."""
+
+    profile_revision_used: int = Field(default=0, ge=0)
+    status: OpenHealthStatus
+    readiness_state: str | None = None
+    anomaly_flagged: bool | None = None
+    load_status: OpenHealthStatus | None = None
+    drivers: list[str] = Field(default_factory=list, max_length=2)
+    refusal_reasons: list[OpenHealthRefusalReason] = Field(default_factory=list, max_length=4)
+    missing_inputs: list[str] = Field(default_factory=list, max_length=8)
+
+
+# Stable aliases for callers that use the generic envelope terminology.
+OpenHealthInsight = OpenHealthInsights
+OpenHealthEnvelope = OpenHealthInsights
+InsightStatus = OpenHealthStatus
+OpenHealthInsightStatus = OpenHealthStatus
+OpenHealthReadiness = ReadinessInsight
+OpenHealthAnomaly = AnomalyInsight
+OpenHealthSleep = SleepInsight
+
+
+# Resolve forward references used by the versioned report/context contracts.
+DailyProfile.model_rebuild()
+WeeklyProfile.model_rebuild()
+MonthlyProfile.model_rebuild()
+AgentContext.model_rebuild()
+AnalysisResult.model_rebuild()

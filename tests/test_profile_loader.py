@@ -79,6 +79,48 @@ def test_profile_loader_keeps_device_streams_and_local_identities_separate():
     assert any(flag.code == "SOURCE_IDENTITY_SHARED" for flag in raw.data_quality.flags)
 
 
+def test_open_health_groups_pre_midnight_rmssd_into_wake_date_sleep_window():
+    user_id = "open-health-cross-midnight"
+    day = date(2026, 9, 2)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+        repo.save_daily(NormalizedDaily(
+            user_id=user_id,
+            date=day,
+            sleep=SleepRecord(
+                user_id=user_id,
+                date=day,
+                sleep_duration=450,
+                bedtime=datetime.strptime("23:00", "%H:%M").time(),
+                wake_time=datetime.strptime("07:00", "%H:%M").time(),
+            ),
+        ))
+        repo.save_metric_samples([
+            MetricSample(
+                user_id=user_id,
+                metric="hrv_rmssd",
+                timestamp=timestamp,
+                value=value,
+                unit="ms",
+                source_scope="device",
+                device_id="strap",
+            )
+            for timestamp, value in (
+                (datetime(2026, 9, 1, 15, 30, tzinfo=timezone.utc), 90),
+                (datetime(2026, 9, 1, 16, 30, tzinfo=timezone.utc), 100),
+                (datetime(2026, 9, 1, 17, 30, tzinfo=timezone.utc), 110),
+            )
+        ])
+        raw = ProfileLoader(repo).load(user_id, day)
+
+    target = next(item for item in raw.open_health_observations if item.date == day)
+    assert target.rmssd_ms == 100
+    assert target.sample_count == 3
+    assert target.model_extra["span_minutes"] == 120
+
+
 def test_profile_loader_groups_utc_samples_by_shanghai_natural_day():
     user_id = "intelligence-local-day"
     day = date(2026, 8, 28)

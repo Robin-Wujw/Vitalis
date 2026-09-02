@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vitalis.local/schemas/user-profile-1.0.json",
+  "title": "Vitalis UserProfile 1.0",
+  "type": "object",
+  "required": ["schema_version", "user_id", "revision", "sex", "confirmed_hrmax_bpm", "sleep_target_minutes"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "user_id": {"type": "string"},
+    "revision": {"type": "integer", "minimum": 0},
+    "sex": {
+      "allOf": [
+        {"$ref": "#/$defs/profile_field"},
+        {"properties": {"value": {"enum": ["FEMALE", "MALE", "INTERSEX", "PREFER_NOT_TO_SAY"]}}}
+      ]
+    },
+    "confirmed_hrmax_bpm": {
+      "allOf": [
+        {"$ref": "#/$defs/profile_field"},
+        {"properties": {"value": {"type": "integer", "minimum": 100, "maximum": 240}}}
+      ]
+    },
+    "sleep_target_minutes": {
+      "allOf": [
+        {"$ref": "#/$defs/profile_field"},
+        {"properties": {"value": {"type": "integer", "minimum": 180, "maximum": 900}}}
+      ]
+    }
+  },
+  "$defs": {
+    "profile_field": {
+      "type": ["object", "null"],
+      "required": ["value", "source", "confidence", "revision", "updated_at"],
+      "properties": {
+        "value": {},
+        "source": {"const": "USER_CONFIRMED"},
+        "confidence": {"const": "HIGH"},
+        "revision": {"type": "integer", "minimum": 1},
+        "updated_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

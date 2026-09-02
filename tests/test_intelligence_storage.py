@@ -94,10 +94,10 @@ def test_analysis_snapshots_are_immutable_per_run():
                 "daily",
                 TARGET,
                 TARGET,
-                "1.0",
-                "4.0",
-                "4.0",
-                "2026-08",
+                "10.0",
+                "10.0",
+                "7.0",
+                "2026-09a",
                 {"generated_at": "2026-08-28T01:00:00Z", "marker": marker},
             )
         rows = repo.analysis_snapshots(
@@ -107,6 +107,21 @@ def test_analysis_snapshots_are_immutable_per_run():
     assert len(rows) == 2
     assert {row.payload["marker"] for row in rows} == {"first", "second"}
     assert rows[0].analysis_run_id != rows[1].analysis_run_id
+
+
+def test_legacy_snapshot_is_filtered_before_model_validation():
+    user_id = "legacy-snapshot-user"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+        repo.save_analysis_snapshot(
+            "legacy-run", user_id, "daily", TARGET, TARGET,
+            "9.0", "9.0", "7.0", "2026-08e",
+            {"schema_version": "9.0"},
+        )
+        assert repo.latest_analysis_snapshot(user_id, "daily", TARGET) is None
+        assert repo.latest_analysis_snapshot_on_or_before(user_id, "daily", TARGET) is None
 
 
 def test_command_persists_one_run_and_all_intelligence_snapshots():

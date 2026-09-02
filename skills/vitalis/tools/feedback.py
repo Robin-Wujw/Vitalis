@@ -13,6 +13,7 @@ def main() -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     add = subparsers.add_parser("add", help="记录反馈")
     add.add_argument("--date")
+    add.add_argument("--workout-source")
     add.add_argument("--workout-id")
     add.add_argument("--recommendation-id")
     add.add_argument("--rpe", type=float, choices=range(1, 11))
@@ -28,6 +29,7 @@ def main() -> int:
     if args.command == "add":
         payload = {key: value for key, value in {
             "date": args.date,
+            "workout_source": args.workout_source,
             "workout_id": args.workout_id,
             "recommendation_id": args.recommendation_id,
             "session_rpe": args.rpe,

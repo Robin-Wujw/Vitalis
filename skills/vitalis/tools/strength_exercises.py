@@ -12,6 +12,7 @@ def main() -> int:
     user = configured_user()
     parser.add_argument("--user", default=user, required=not user)
     parser.add_argument("--workout-id", required=True)
+    parser.add_argument("--source", required=True)
     parser.add_argument(
         "--focus",
         choices=("PUSH", "PULL", "LEGS", "UPPER", "LOWER", "FULL_BODY", "CHEST", "BACK", "SHOULDERS", "ARMS"),
@@ -29,6 +30,7 @@ def main() -> int:
         "POST",
         f"workouts/{args.workout_id}/strength-exercises",
         args.user,
+        params={"source": args.source},
         json=payload,
     ))
     return 0

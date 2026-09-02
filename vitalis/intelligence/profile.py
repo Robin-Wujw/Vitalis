@@ -3,6 +3,7 @@
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
+import logging
 from statistics import median
 
 from vitalis.intelligence.contracts import (
@@ -13,11 +14,15 @@ from vitalis.intelligence.contracts import (
     Provenance,
     QualityFlag,
     QualityStatus,
+    ProfileSource,
+    Sex,
     TrainingPreferences,
+    UserProfile,
 )
 from vitalis.storage import HealthRepository
 from vitalis.time import local_day, local_day_utc_bounds, local_sleep_window
 from .localization import QUALITY_LABELS, SIGNAL_LABELS, labels
+from .open_health.common import OpenHealthObservation
 
 
 SAMPLE_METRICS = (
@@ -29,6 +34,7 @@ SAMPLE_METRICS = (
 MAX_SAMPLES_PER_METRIC = 1_000_000
 PROFILE_HISTORY_DAYS = 180
 DETAIL_WORKOUTS_PER_FAMILY = 8
+log = logging.getLogger("vitalis.intelligence.profile")
 
 
 @dataclass(frozen=True)
@@ -55,10 +61,17 @@ class RawDailyProfile:
     workouts: list[dict] = field(default_factory=list)
     feedback_by_workout: dict[tuple[str, str], list] = field(default_factory=dict)
     training_preferences: TrainingPreferences | None = None
+    user_profile: UserProfile = field(default_factory=lambda: UserProfile(user_id=""))
     device_models: dict[str, str] = field(default_factory=dict)
     dense_heart_rate_coverage: dict[str, dict] = field(default_factory=dict)
     facts: dict[str, list[MeasurementFact]] = field(default_factory=dict)
     data_quality: DataQuality | None = None
+    open_health_observations: list[OpenHealthObservation] = field(default_factory=list)
+    open_health_load_workouts: list = field(default_factory=list)
+    open_health_load_queried_days: list[date] = field(default_factory=list)
+    open_health_load_truncated: bool = False
+    open_health_rhr_by_day: dict[date, float] = field(default_factory=dict)
+    open_health_input_failed: bool = False
 
 
 class ProfileLoader:
@@ -72,9 +85,11 @@ class ProfileLoader:
         user_id: str,
         day: date,
         history_days: int = PROFILE_HISTORY_DAYS,
+        profile: UserProfile | None = None,
     ) -> RawDailyProfile:
         start = day - timedelta(days=history_days - 1)
         raw = RawDailyProfile(user_id=user_id, day=day)
+        raw.user_profile = profile or self.repo.user_profile(user_id)
         raw.training_preferences = self.repo.training_preferences(user_id)
         raw.sleep_by_day = _records_by_day(self.repo.sleep_range(user_id, start, day))
         raw.activity_by_day = _records_by_day(self.repo.activity_range(user_id, start, day))
@@ -84,6 +99,12 @@ class ProfileLoader:
         self._add_daily_metrics(raw, start)
         self._add_sample_metrics(raw, start)
         self._add_heart_rate_samples(raw, start)
+        try:
+            self._add_open_health_inputs(raw)
+        except Exception:
+            # Shadow-only inputs must never prevent the core profile from loading.
+            raw.open_health_input_failed = True
+            log.exception("open health input loading failed: user=%s day=%s", user_id, day)
         self._add_device_context(raw)
         workout_rows = [
             row
@@ -132,6 +153,126 @@ class ProfileLoader:
         raw.facts = self._facts_for_day(raw)
         raw.data_quality = self._quality(raw)
         return raw
+
+    def _add_open_health_inputs(self, raw: RawDailyProfile) -> None:
+        """Build isolated nightly observations and the explicit 42-day load input."""
+        nightly_start = raw.day - timedelta(days=27)
+        nightly_days = [
+            nightly_start + timedelta(days=index) for index in range(28)
+        ]
+
+        def stream_key(point: SeriesPoint) -> tuple[str, str, str | None]:
+            return point.source, point.source_scope, point.device_id
+
+        rmssd_streams: dict[tuple[str, str, str | None], dict[date, list[SeriesPoint]]] = defaultdict(lambda: defaultdict(list))
+        for point in raw.series.get("hrv_rmssd", []):
+            sleep_day = _sleep_day_for_point(point, raw.sleep_by_day)
+            if (
+                sleep_day is not None
+                and nightly_start <= sleep_day <= raw.day
+                and point.value > 0
+            ):
+                rmssd_streams[stream_key(point)][sleep_day].append(point)
+
+        valid_rmssd_streams = {}
+        for key, by_day in rmssd_streams.items():
+            valid_days = {
+                observation_day: points
+                for observation_day, points in by_day.items()
+                if len(points) >= 3 and _observed_span_minutes(points) >= 30
+            }
+            if valid_days:
+                valid_rmssd_streams[key] = valid_days
+        canonical_rmssd = _canonical_stream(
+            valid_rmssd_streams, required_day=raw.day
+        )
+
+        rhr_streams: dict[tuple[str, str, str | None], dict[date, list[SeriesPoint]]] = defaultdict(lambda: defaultdict(list))
+        for metric in ("sleep_rhr", "resting_hr"):
+            candidate: dict[tuple[str, str, str | None], dict[date, list[SeriesPoint]]] = defaultdict(lambda: defaultdict(list))
+            for point in raw.series.get(metric, []):
+                if nightly_start <= point.day <= raw.day and point.value > 0:
+                    candidate[stream_key(point)][point.day].append(point)
+            if candidate:
+                rhr_streams = candidate
+                break
+        canonical_rhr = _canonical_stream(rhr_streams, required_day=raw.day)
+        resp_streams: dict[tuple[str, str, str | None], dict[date, list[SeriesPoint]]] = defaultdict(lambda: defaultdict(list))
+        for point in raw.series.get("respiratory_rate", []):
+            if nightly_start <= point.day <= raw.day and point.value > 0:
+                resp_streams[stream_key(point)][point.day].append(point)
+        canonical_resp = _canonical_stream(resp_streams, required_day=raw.day)
+
+        observations = []
+        for observation_day in nightly_days:
+            sleep = raw.sleep_by_day.get(observation_day, {})
+            rmssd_points = (valid_rmssd_streams.get(canonical_rmssd, {}) if canonical_rmssd else {}).get(observation_day, [])
+            if not (
+                len(rmssd_points) >= 3
+                and _observed_span_minutes(rmssd_points) >= 30
+            ):
+                rmssd_points = []
+            source_key = canonical_rmssd or canonical_rhr or canonical_resp
+            rhr_key = canonical_rhr if canonical_rhr == source_key else None
+            resp_key = canonical_resp if canonical_resp == source_key else None
+            rhr_points = (rhr_streams.get(rhr_key, {}) if rhr_key else {}).get(observation_day, [])
+            resp_points = (resp_streams.get(resp_key, {}) if resp_key else {}).get(observation_day, [])
+            observations.append(OpenHealthObservation.model_validate({
+                "date": observation_day,
+                "rmssd_ms": _median_value(rmssd_points),
+                "rhr_bpm": _median_value(rhr_points),
+                "respiratory_rate": _median_value(resp_points),
+                "sleep_minutes": _numeric(sleep.get("sleep_duration")),
+                "time_in_bed_minutes": _numeric(sleep.get("time_in_bed_minutes")),
+                "bedtime": sleep.get("bedtime"),
+                "wake_time": sleep.get("wake_time"),
+                "nap_minutes": _numeric(sleep.get("nap_minutes")),
+                "naps_known": "nap_minutes" in sleep or "has_nap" in sleep,
+                "source": source_key[0] if source_key else str(sleep.get("source", "zepp")),
+                "source_scope": source_key[1] if source_key else "nightly_observation",
+                "device_id": source_key[2] if source_key else None,
+                "sleep_source": str(sleep.get("source", "zepp")),
+                "sleep_source_scope": str(sleep.get("source_scope", "normalized_daily_record")),
+                "sleep_device_id": sleep.get("device_id") or None,
+                "sample_count": len(rmssd_points) or None,
+                "span_minutes": _observed_span_minutes(rmssd_points) if rmssd_points else None,
+            }))
+        raw.open_health_observations = observations
+
+        load_start = raw.day - timedelta(days=41)
+        sex = raw.user_profile.sex
+        hrmax = raw.user_profile.confirmed_hrmax_bpm
+        load_profile_ready = (
+            sex is not None
+            and sex.value == Sex.MALE
+            and sex.source == ProfileSource.USER_CONFIRMED
+            and hrmax is not None
+            and hrmax.source == ProfileSource.USER_CONFIRMED
+        )
+        raw.open_health_load_workouts = (
+            self.repo.open_health_load_inputs(
+                raw.user_id,
+                load_start,
+                raw.day,
+                metric="heart_rate",
+            )
+            if load_profile_ready
+            else []
+        )
+        raw.open_health_load_truncated = bool(
+            getattr(raw.open_health_load_workouts, "truncated", False)
+        )
+        # A local database range query does not prove vendor coverage. The durable
+        # sync ledger will populate verified calendar days in a later task.
+        raw.open_health_load_queried_days = []
+        raw.open_health_rhr_by_day = {}
+        for metric in ("sleep_rhr", "resting_hr"):
+            values = _canonical_daily_values(
+                raw.series.get(metric, []), load_start, raw.day
+            )
+            if values:
+                raw.open_health_rhr_by_day = values
+                break
 
     def _add_device_context(self, raw: RawDailyProfile) -> None:
         raw.device_models = {
@@ -419,6 +560,83 @@ class ProfileLoader:
             flags=flags,
             device_validity=[_device_validity(raw, device_id) for device_id in device_ids],
         )
+
+
+def _numeric(value) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _in_sleep_window(
+    point: SeriesPoint, record: dict, *, sleep_day: date | None = None
+) -> bool:
+    if not isinstance(point.observed_at, datetime):
+        return False
+    window = local_sleep_window(
+        sleep_day or point.day, record.get("bedtime"), record.get("wake_time")
+    )
+    if window is None:
+        return False
+    start, end = window
+    timestamp = point.observed_at
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    return start <= timestamp.astimezone(timezone.utc) < end
+
+
+def _sleep_day_for_point(
+    point: SeriesPoint, records: dict[date, dict]
+) -> date | None:
+    for candidate in (point.day, point.day + timedelta(days=1)):
+        record = records.get(candidate)
+        if record and _in_sleep_window(point, record, sleep_day=candidate):
+            return candidate
+    return None
+
+
+def _observed_span_minutes(points: list[SeriesPoint]) -> float:
+    timestamps = [point.observed_at for point in points if isinstance(point.observed_at, datetime)]
+    if len(timestamps) < 2:
+        return 0.0
+    return (max(timestamps) - min(timestamps)).total_seconds() / 60.0
+
+
+def _median_value(points: list[SeriesPoint]) -> float | None:
+    return float(median(point.value for point in points)) if points else None
+
+
+def _canonical_stream(
+    streams: dict, *, required_day: date | None = None
+) -> tuple | None:
+    candidates = [
+        key for key in streams
+        if required_day is None or required_day in streams[key]
+    ]
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda key: (
+            len(streams[key]),
+            sum(len(points) for points in streams[key].values()),
+            tuple(value or "" for value in key),
+        ),
+    )
+
+
+def _canonical_daily_values(
+    points: list[SeriesPoint], start: date, end: date
+) -> dict[date, float]:
+    streams: dict[tuple[str, str, str | None], dict[date, list[SeriesPoint]]] = defaultdict(lambda: defaultdict(list))
+    for point in points:
+        if start <= point.day <= end and point.value > 0:
+            streams[(point.source, point.source_scope, point.device_id)][point.day].append(point)
+    key = _canonical_stream(streams)
+    if key is None:
+        return {}
+    return {
+        day: float(median(item.value for item in values))
+        for day, values in streams[key].items()
+    }
 
 
 def _records_by_day(records: list[dict]) -> dict[date, dict]:

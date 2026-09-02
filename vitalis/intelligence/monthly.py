@@ -24,8 +24,10 @@ from .contracts import (
     TrendDirection,
     TrendFeature,
     WeeklyRecommendation,
+    OpenHealthBundle,
 )
 from .localization import CONFIDENCE_LABELS, QUALITY_LABELS
+from .open_health.projection import coverage_summary, period_summary
 from .profile import RawDailyProfile
 from .trend import METRIC_LABELS, stream_daily_values
 
@@ -44,6 +46,7 @@ class MonthlyProfileEngine:
         associations: list[PersonalAssociation],
         feedback: list[dict] | None = None,
         evidence_refs: list | None = None,
+        open_health_insights: OpenHealthBundle | None = None,
     ) -> MonthlyProfile:
         period_start = raw.day - timedelta(days=PERIOD_DAYS - 1)
         previous_start = period_start - timedelta(days=PERIOD_DAYS)
@@ -94,6 +97,12 @@ class MonthlyProfileEngine:
             ),
             actions=MonthlyActions(recommendations=_recommend(facts, events)),
             evidence_refs=evidence_refs or [],
+            open_health_period_summary=period_summary(
+                open_health_insights, period_start, raw.day
+            ),
+            open_health_coverage=coverage_summary(
+                open_health_insights, period_days=28
+            ),
         )
 
 

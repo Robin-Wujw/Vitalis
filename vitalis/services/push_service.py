@@ -232,6 +232,9 @@ def _render_morning(payload: dict) -> tuple[str, list[str]]:
         "",
     ])
     lines.extend(_render_overnight_summary(sleep, hrv, overnight_vitals))
+    open_health_lines = _render_open_health_morning(payload)
+    if open_health_lines:
+        lines.extend(["", "## 开放洞察", "", *open_health_lines])
     lines.extend(["", "## 最近 7 天", ""])
     lines.extend(_render_weekly_training_summary(training))
     lines.extend(["", "## 今天安排", ""])
@@ -291,6 +294,9 @@ def _render_evening(payload: dict) -> tuple[str, list[str]]:
     daily_state = _render_evening_daily_state(payload, training)
     if daily_state:
         lines.extend(["", "## 全天状态", "", *daily_state])
+    open_health_lines = _render_open_health_evening(payload)
+    if open_health_lines:
+        lines.extend(["", "## 开放洞察", "", *open_health_lines])
 
     lines.extend([
         "",
@@ -518,6 +524,89 @@ def _sessions_on_day(feature: dict | None, report_date: str) -> list[dict]:
         item for item in (feature or {}).get("recent_sessions", [])
         if item.get("date") == report_date
     ]
+
+
+def _render_open_health_morning(payload: dict) -> list[str]:
+    bundle = payload.get("open_health_insights")
+    if not isinstance(bundle, dict):
+        return []
+    drivers: list[str] = []
+    readiness = bundle.get("readiness") or {}
+    readiness_payload = readiness.get("payload") or {}
+    if readiness.get("status") in {"AVAILABLE", "PARTIAL"}:
+        state = {
+            "suppressed": "夜间 RMSSD 相对近期个人范围偏低",
+            "elevated": "夜间 RMSSD 相对近期个人范围偏高",
+            "normal": "夜间 RMSSD 接近近期个人范围",
+        }.get(readiness_payload.get("state"))
+        if state:
+            drivers.append(state)
+    anomaly = bundle.get("anomaly") or {}
+    anomaly_payload = anomaly.get("payload") or {}
+    if anomaly.get("status") in {"AVAILABLE", "PARTIAL"} and anomaly_payload.get("flagged"):
+        drivers.append("夜间多个生理信号连续偏离个人常态")
+    lines = [f"- {item}" for item in drivers[:2]]
+    refusal_inputs = []
+    for name in ("readiness", "anomaly", "sleep", "training_load"):
+        refusal = (bundle.get(name) or {}).get("refusal_reason") or {}
+        refusal_inputs.extend(refusal.get("missing_inputs") or [])
+    if refusal_inputs:
+        missing = _open_health_missing_labels(refusal_inputs)
+        lines.append(f"- 开放洞察缺少输入：{'、'.join(missing)}。")
+    lines.append("开放洞察，不参与今日训练决策。")
+    return lines
+
+
+def _render_open_health_evening(payload: dict) -> list[str]:
+    bundle = payload.get("open_health_insights")
+    if not isinstance(bundle, dict):
+        return []
+    load = bundle.get("training_load") or {}
+    load_payload = load.get("payload") or {}
+    report_date = payload.get("date")
+    points = [
+        item for item in (load_payload.get("daily_points") or [])
+        if item.get("date") == report_date
+    ]
+    point = points[-1] if points else None
+    lines = []
+    if point and point.get("status") == "SCORED" and point.get("trimp") is not None:
+        lines.append(f"- **当日 TRIMP**：{point['trimp']:.1f}。")
+    values = []
+    for label, key in (("ATL", "atl"), ("CTL", "ctl"), ("TSB", "tsb")):
+        value = (point or {}).get(key)
+        if value is None:
+            value = load_payload.get(key)
+        if value is not None:
+            values.append(f"{label} {float(value):.1f}")
+    if values:
+        suffix = (
+            "（下界估计，上游同步覆盖尚未完全验证）"
+            if load.get("status") == "PARTIAL" or load_payload.get("lower_bound")
+            else ""
+        )
+        lines.append(f"- **描述性训练负荷**：{'；'.join(values)}{suffix}。")
+    if not lines:
+        refusal = load.get("refusal_reason") or {}
+        missing = refusal.get("missing_inputs") or []
+        if missing:
+            lines.append(
+                f"- 训练负荷开放洞察缺少输入：{'、'.join(_open_health_missing_labels(missing))}。"
+            )
+    return lines
+
+
+def _open_health_missing_labels(values: list[str]) -> list[str]:
+    labels = {
+        "UserProfile.sex": "已确认性别",
+        "UserProfile.confirmed_hrmax_bpm": "确认最大心率",
+        "UserProfile.sex=MALE": "支持的性别档案",
+        "UserProfile.sex.source=USER_CONFIRMED": "性别确认来源",
+        "UserProfile.confirmed_hrmax_bpm.source=USER_CONFIRMED": "最大心率确认来源",
+        "queried_history_days>=14": "至少 14 个已查询自然日",
+    }
+    output = [labels[item] for item in dict.fromkeys(values) if item in labels]
+    return output or ["部分结构化输入"]
 
 
 def _fact_value(payload: dict, metric: str) -> float | None:

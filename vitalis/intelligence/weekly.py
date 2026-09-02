@@ -23,8 +23,10 @@ from .contracts import (
     WeeklyRecoveryFacts,
     WeeklySleepFacts,
     WeeklyTrainingFacts,
+    OpenHealthBundle,
 )
 from .localization import CONFIDENCE_LABELS, QUALITY_LABELS
+from .open_health.projection import coverage_summary, period_summary
 from .profile import RawDailyProfile
 
 
@@ -37,6 +39,7 @@ class WeeklyProfileEngine:
         events: list[HealthEvent],
         feedback: list[dict] | None = None,
         evidence_refs: list | None = None,
+        open_health_insights: OpenHealthBundle | None = None,
     ) -> WeeklyProfile:
         period_start = raw.day - timedelta(days=6)
         previous_start = period_start - timedelta(days=7)
@@ -83,6 +86,12 @@ class WeeklyProfileEngine:
                 recommendations=_recommend(facts, events)
             ),
             evidence_refs=evidence_refs or [],
+            open_health_period_summary=period_summary(
+                open_health_insights, period_start, raw.day
+            ),
+            open_health_coverage=coverage_summary(
+                open_health_insights, period_days=7
+            ),
         )
 
 

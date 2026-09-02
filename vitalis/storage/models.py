@@ -285,6 +285,34 @@ class TrainingPreference(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class UserProfile(Base):
+    """Current user-confirmed profile values, versioned as one aggregate."""
+
+    __tablename__ = "user_profiles"
+
+    user_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    schema_version: Mapped[str] = mapped_column(String(16), default="1.0")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class UserProfileRevision(Base):
+    """Immutable change record for one user profile revision."""
+
+    __tablename__ = "user_profile_revisions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "revision", name="uq_user_profile_revision"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    revision: Mapped[int] = mapped_column(Integer)
+    changed_fields: Mapped[list] = mapped_column(JSON, default=list)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class HealthEventRecord(Base):
     """A deterministic, explainable event emitted by the intelligence engine."""
 
@@ -338,6 +366,7 @@ class AnalysisRun(Base):
     decision_policy_version: Mapped[str] = mapped_column(String(32))
     evidence_version: Mapped[str] = mapped_column(String(32))
     error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    profile_revision_used: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
 
 
 class AnalysisSnapshot(Base):

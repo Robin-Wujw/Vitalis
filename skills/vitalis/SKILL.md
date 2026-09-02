@@ -17,8 +17,13 @@ personal models, and snapshots. Never reproduce those calculations in the model.
    `tools/analyze.py` only when the user requests a fresh analysis or after an explicit
    synchronization; use `tools/context.py` only for broad, layered context.
 3. Select exactly one workflow from `workflows/`.
-4. Render only facts, inferences, actions, comparisons, drivers, limitations, and
-   recommendations already present in the response.
+4. If the user explicitly provides sex, confirmed maximum heart rate, or sleep target,
+   call `tools/profile.py patch` with the current profile revision; otherwise call
+   `tools/profile.py get` when profile state is needed.
+5. Render only facts, inferences, actions, comparisons, drivers, limitations, and
+   recommendations already present in the response. Open Health fields are descriptive
+   shadow insights only; render `open_health_insights` and typed period/context summaries
+   without recomputing or using them to alter `decision`.
 
 All user-visible content must be Chinese. Render `*_label`, `*_labels`, workout
 `sport_mode_label`, recognition labels, and the structured `decision.action_plan`.
@@ -55,7 +60,8 @@ Internal enum codes exist only for program control and must never appear in the 
 - Trends or recent changes: call `tools/trends.py` or `tools/events.py`, then
   `workflows/on_demand.md`.
 - "Why this recommendation?": call `tools/explain.py`, then `workflows/on_demand.md`.
-- Broad health context: call `tools/context.py`, then the closest matching workflow.
+- Broad health context: call `tools/context.py`, then the closest matching workflow. Context contains only
+  the compact latest Open Health summary; use `insights_stale` and refusal/missing-input fields as returned.
 - Fresh deterministic analysis: call `tools/analyze.py`; subsequent reads may select
   the returned Daily, Weekly, response, or personal result.
 - Training response: call `tools/training_responses.py`, then `workflows/on_demand.md`.
@@ -69,7 +75,8 @@ Internal enum codes exist only for program control and must never appear in the 
 - List feedback: call `tools/feedback.py list`.
 - Read or replace running/strength targets, rotation, treadmill/weather fallback,
   availability, experience, equipment, and pain/injury state with
-  `tools/training_preferences.py`.
+  `tools/training_preferences.py`; use `set` for explicit full replacement or `patch` to update
+  only explicitly supplied fields. `workout_source` is required whenever a workout is linked.
 - Confirm exact exercises for a strength workout only from the user's statement by
   calling `tools/strength_exercises.py`; never derive an exercise from heart rate.
 - Acknowledge an event only after the user asks: call `tools/acknowledge_event.py`.

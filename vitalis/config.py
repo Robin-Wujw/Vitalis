@@ -28,6 +28,7 @@ class Settings:
     # Development remains backwards compatible when unset; production should set it.
     token_encryption_key: str = os.getenv("VITALIS_TOKEN_ENCRYPTION_KEY", "")
     pairing_ttl_minutes: int = int(os.getenv("ZEPP_PAIRING_TTL_MINUTES", "10"))
+    pairing_processing_lease_seconds: int = int(os.getenv("ZEPP_PAIRING_PROCESSING_LEASE_SECONDS", "120"))
 
     # LLM
     llm_provider: str = os.getenv("LLM_PROVIDER", "openai_compatible")
@@ -38,6 +39,10 @@ class Settings:
     # 调度
     sync_cron_hour: int = int(os.getenv("SYNC_CRON_HOUR", "2"))
     sync_cron_minute: int = int(os.getenv("SYNC_CRON_MINUTE", "0"))
+    sync_dispatcher_interval_seconds: int = int(os.getenv("SYNC_DISPATCHER_INTERVAL_SECONDS", "60"))
+    sync_dispatcher_batch_chunks: int = int(os.getenv("SYNC_DISPATCHER_BATCH_CHUNKS", "16"))
+    sync_lease_seconds: int = int(os.getenv("SYNC_LEASE_SECONDS", "120"))
+    sync_attempt_lease_seconds: int = int(os.getenv("SYNC_ATTEMPT_LEASE_SECONDS", "300"))
 
     # 服务
     host: str = os.getenv("HOST", "127.0.0.1")

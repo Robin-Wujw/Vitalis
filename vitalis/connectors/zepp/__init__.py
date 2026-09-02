@@ -148,38 +148,101 @@ class ZeppConnector(HealthConnector):
         wo_n = sum((d.training.workout_count or 0) for d in days if d.training)
         return ConnectorSyncResult(user.id, self.source, len(days), sleep_n, wo_n, act_n)
 
+    def create_attempt(
+        self, user_id: str, *, days: int = 730, window: FetchWindow | None = None,
+        trigger: str = "manual", trigger_ref: str | None = None,
+        decode_dense_files: bool = False,
+    ):
+        """Create/reuse a durable attempt without doing network work."""
+        from vitalis.services.zepp_sync_coordinator import ZeppSyncCoordinator
+
+        coordinator = ZeppSyncCoordinator(
+            connector=self,
+            lease_seconds=getattr(settings, "sync_lease_seconds", 120),
+            attempt_lease_seconds=getattr(settings, "sync_attempt_lease_seconds", 300),
+        )
+        return coordinator.create_attempt(
+            user_id,
+            days=days,
+            window=window,
+            trigger=trigger,
+            trigger_ref=trigger_ref,
+            timezone_name=settings.timezone,
+            options={"decode_dense_files": decode_dense_files},
+        )
+
     def sync_with_report(
         self, user: User, days: int = 730, repo=None,
-        on_progress=None, decode_dense_files: bool = False,
-        window: FetchWindow | None = None,
+        decode_dense_files: bool = False, max_chunks: int | None = None,
+        window: FetchWindow | None = None, trigger: str = "manual",
+        trigger_ref: str | None = None, attempt_id: str | None = None,
     ) -> SyncReport:
-        """完整同步并返回逐流报告（支持最长 730 天 / 2 年）。"""
+        """Coordinator facade; ``repo`` remains only for legacy mock callers."""
         if self.mock:
-            # mock 模式走简化逻辑
+            if attempt_id is None:
+                attempt = self.create_attempt(
+                    user.id, days=days, window=window, trigger=trigger,
+                    trigger_ref=trigger_ref, decode_dense_files=decode_dense_files,
+                )
+                attempt_id = attempt.id
             end = local_today()
-            start = end - timedelta(days=min(days, 14))
+            start = end - timedelta(days=min(days, 14) - 1)
             dailies = self._mock_fetch(user, start, end)
             if repo:
                 for d in dailies:
                     repo.save_daily(d)
+            progress = {"attempt_id": attempt_id, "status": "succeeded", "retry": 0}
+            if attempt_id:
+                from uuid import uuid4
+                from vitalis.storage import HealthRepository, session_scope
+                now = datetime.now(timezone.utc)
+                with session_scope() as db:
+                    ledger = HealthRepository(db)
+                    attempt = ledger.sync_attempt(attempt_id)
+                    if attempt and attempt.status in ("queued", "retry_wait"):
+                        token = uuid4().hex
+                        if ledger.claim_sync_attempt(attempt_id, token, now=now):
+                            for chunk in ledger.sync_chunks(attempt_id):
+                                if ledger.claim_sync_chunk(chunk.id, uuid4().hex, now=now):
+                                    claimed = ledger.sync_chunk(attempt_id, chunk.stable_key)
+                                    if claimed:
+                                        ledger.finalize_chunk(
+                                            claimed.id, claimed.lease_token, claimed.lease_epoch,
+                                            "succeeded", now=now,
+                                            stages={
+                                                **dict(claimed.stages or {}),
+                                                "fetch_status": "success",
+                                                "parse_status": "success",
+                                                "write_status": "success",
+                                            },
+                                        )
+                            ledger.finalize_attempt(attempt_id, token, attempt.lease_epoch, "succeeded", now=now)
+                    final = ledger.sync_attempt(attempt_id)
+                    progress = {"attempt_id": attempt_id, "status": final.status if final else "succeeded", "retry": 0}
             return SyncReport(
                 success=True,
                 streams=[StreamReport(stream="mock", status="success", records_written=len(dailies))],
-                records_written=len(dailies),
+                records_written=len(dailies), progress=progress,
             )
-        client = self._client_for(repo, user)
-        fetcher = DataFetcher(client)
-        manager = SyncManager(
-            fetcher,
-            dense_archive_budget=DENSE_ARCHIVE_BATCH_SIZE if decode_dense_files else 0,
+        from vitalis.services.zepp_sync_coordinator import ZeppSyncCoordinator
+
+        coordinator = ZeppSyncCoordinator(
+            connector=self,
+            lease_seconds=getattr(settings, "sync_lease_seconds", 120),
+            attempt_lease_seconds=getattr(settings, "sync_attempt_lease_seconds", 300),
         )
-        return manager.sync_report(
-            user,
-            days,
-            repo=repo,
-            on_progress=on_progress,
-            window=window,
-        )
+        if attempt_id is None:
+            attempt = coordinator.create_attempt(
+                user.id,
+                days=days,
+                window=window,
+                trigger=trigger,
+                trigger_ref=trigger_ref,
+                timezone_name=settings.timezone,
+                options={"decode_dense_files": decode_dense_files},
+            )
+            attempt_id = attempt.id
+        return coordinator.run_attempt(attempt_id, max_chunks=max_chunks)
 
     def fetch(
         self, user: User, start: date | None = None, end: date | None = None, repo=None
@@ -190,18 +253,18 @@ class ZeppConnector(HealthConnector):
             start, end = end, start
         if self.mock:
             return self._mock_fetch(user, start, end)
-        if repo is None:
-            raise AuthRequired("fetch 真实数据需要提供 repo 会话")
-        # Real mode synchronizes the requested local-date interval before rebuilding.
+        # Real mode synchronizes first, then rebuilds using a separate read-only session.
         window = FetchWindow.local_dates(start, end)
-        report = self.sync_with_report(user, repo=repo, window=window)
+        report = self.sync_with_report(user, window=window)
         if not report.success:
             raise ZeppAuthError(
                 report.message or "Zepp 同步失败或数据不完整",
                 kind=report.error_kind or "unknown",
                 needs_reauth=report.needs_reauth,
             )
-        return self._rebuild_dailies(repo, user.id, start, end)
+        from vitalis.storage import session_scope, HealthRepository
+        with session_scope() as db:
+            return self._rebuild_dailies(HealthRepository(db), user.id, start, end)
 
     def _mock_fetch(self, user: User, start: date, end: date) -> list[NormalizedDaily]:
         """mock 模式保持原有逻辑（确定性模拟数据）。"""

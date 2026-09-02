@@ -8,11 +8,11 @@ SKILL = ROOT / "skills" / "vitalis"
 
 
 def test_skill_is_renderer_only_and_uses_current_intelligence_contracts():
-    skill = (SKILL / "SKILL.md").read_text()
-    daily = (SKILL / "tools" / "daily.py").read_text()
-    weekly = (SKILL / "tools" / "weekly.py").read_text()
-    monthly = (SKILL / "tools" / "monthly.py").read_text()
-    explain = (SKILL / "tools" / "explain.py").read_text()
+    skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+    daily = (SKILL / "tools" / "daily.py").read_text(encoding="utf-8")
+    weekly = (SKILL / "tools" / "weekly.py").read_text(encoding="utf-8")
+    monthly = (SKILL / "tools" / "monthly.py").read_text(encoding="utf-8")
+    explain = (SKILL / "tools" / "explain.py").read_text(encoding="utf-8")
     assert "Never reproduce those calculations" in skill
     assert "INSUFFICIENT_DATA" in skill
     assert 'request("GET", "daily"' in daily
@@ -20,7 +20,7 @@ def test_skill_is_renderer_only_and_uses_current_intelligence_contracts():
     assert 'request("GET", "monthly"' in monthly
     assert 'request("GET", "explain"' in explain
     assert not (SKILL / "tools" / "daily_profile.py").exists()
-    analyze = (SKILL / "tools" / "analyze.py").read_text()
+    analyze = (SKILL / "tools" / "analyze.py").read_text(encoding="utf-8")
     assert "request(" in analyze and '"POST"' in analyze and '"analyze"' in analyze
     assert not (SKILL / "tools" / "health_query.py").exists()
     assert "All user-visible content must be Chinese" in skill
@@ -30,7 +30,7 @@ def test_skill_is_renderer_only_and_uses_current_intelligence_contracts():
 def test_skill_has_all_workflows_and_valid_schema():
     for name in ("morning.md", "evening.md", "weekly.md", "monthly.md", "on_demand.md"):
         assert (SKILL / "workflows" / name).is_file()
-    schema = json.loads((SKILL / "schemas" / "daily_profile.json").read_text())
+    schema = json.loads((SKILL / "schemas" / "daily_profile.json").read_text(encoding="utf-8"))
     assert schema["properties"]["schema_version"]["const"] == "10.0"
     assert "analysis_run_id" in schema["required"]
     assert "model_version" not in schema["required"]
@@ -46,15 +46,15 @@ def test_skill_has_all_workflows_and_valid_schema():
     assert {"sport_mode_label", "recognition_confidence_label"} <= set(workout_required)
     assert {"trends", "events"} <= set(schema["required"])
     assert "open_health_insights" in schema["required"]
-    weekly = json.loads((SKILL / "schemas" / "weekly_profile.json").read_text())
+    weekly = json.loads((SKILL / "schemas" / "weekly_profile.json").read_text(encoding="utf-8"))
     assert {"facts", "inferences", "actions"} <= set(weekly["required"])
-    monthly = json.loads((SKILL / "schemas" / "monthly_profile.json").read_text())
+    monthly = json.loads((SKILL / "schemas" / "monthly_profile.json").read_text(encoding="utf-8"))
     assert {"facts", "inferences", "actions"} <= set(monthly["required"])
     assert "open_health_insights" not in weekly["required"]
     assert "open_health_insights" not in monthly["required"]
     assert "open_health_period_summary" in weekly["required"]
     assert "open_health_period_summary" in monthly["required"]
-    context = json.loads((SKILL / "schemas" / "context.json").read_text())
+    context = json.loads((SKILL / "schemas" / "context.json").read_text(encoding="utf-8"))
     assert {"open_health_summary", "insights_stale"} <= set(context["required"])
     for name in (
         "trends.json", "health_events.json", "context.json",
@@ -62,7 +62,7 @@ def test_skill_has_all_workflows_and_valid_schema():
         "timeline.json", "training_preferences.json", "strength_exercises.json",
         "profile.json",
     ):
-        json.loads((SKILL / "schemas" / name).read_text())
+        json.loads((SKILL / "schemas" / name).read_text(encoding="utf-8"))
 
 
 def test_skill_exposes_read_analyze_and_act_tools():
@@ -75,10 +75,10 @@ def test_skill_exposes_read_analyze_and_act_tools():
         "daily_push.py",
     }
     assert expected <= {path.name for path in (SKILL / "tools").glob("*.py")}
-    complete = (SKILL / "tools" / "complete_recommendation.py").read_text()
-    feedback = (SKILL / "tools" / "feedback.py").read_text()
-    strength = (SKILL / "tools" / "strength_exercises.py").read_text()
-    preferences = (SKILL / "tools" / "training_preferences.py").read_text()
+    complete = (SKILL / "tools" / "complete_recommendation.py").read_text(encoding="utf-8")
+    feedback = (SKILL / "tools" / "feedback.py").read_text(encoding="utf-8")
+    strength = (SKILL / "tools" / "strength_exercises.py").read_text(encoding="utf-8")
+    preferences = (SKILL / "tools" / "training_preferences.py").read_text(encoding="utf-8")
     assert 'add_argument("--workout-source", required=True)' in complete
     assert '"workout_source": args.workout_source' in complete
     assert 'add_argument("--workout-source")' in feedback

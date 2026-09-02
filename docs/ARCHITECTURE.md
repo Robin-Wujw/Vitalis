@@ -362,6 +362,14 @@ automatically labeled fitness improvement or deterioration.
 
 ### 3.10.1 Synchronization Data Health
 
+`sync_attempts` and `sync_chunks` form the durable execution ledger. Stable chunk keys
+make repeated planning idempotent; attempt and chunk lease tokens/epochs fence stale
+workers; completed chunks survive later failures; transient failures enter bounded
+`retry_wait`; cancellation and restart recovery are persistent. The dispatcher processes
+a bounded batch and orders due attempts by last update so one large history import does
+not monopolize all users. Long fetch/decode/write operations renew both leases while in
+flight.
+
 `sync_stream_states` records the latest fetch, parse, and write status independently
 for each user-owned source stream, together with the latest stored sample timestamp.
 An empty cloud response, an unrecognized non-empty payload, and a storage write are
@@ -369,7 +377,9 @@ different states. A synchronization is complete only when every stream is succes
 explicitly unavailable as a whole. Mixed successful/unavailable chunks are partial, and
 optional network, service, parse, or authentication failures block overall success while
 preserving earlier successful writes. `GET /health/data-health` exposes this diagnostic
-contract without measurement values or private file identifiers.
+contract without measurement values, lease tokens, raw errors, or private file identifiers;
+`GET /health/sync/{attempt_id}` exposes user-scoped progress and
+`POST /health/sync/{attempt_id}/cancel` persists cancellation.
 
 The running prescription consumes those session facts. It chooses among recovery,
 easy, steady, threshold, and long-easy sessions using recent hard-session timing,

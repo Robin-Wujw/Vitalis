@@ -7,7 +7,6 @@
 """
 
 import logging
-import os
 
 import uvicorn
 
@@ -18,15 +17,7 @@ log = logging.getLogger("vitalis.main")
 
 
 def main() -> None:
-    # 启动每日同步调度（生产环境建议独立 worker 常驻）
-    if os.getenv("VITALIS_NO_SCHEDULER", "0") != "1":
-        try:
-            from vitalis.scheduler import start_scheduler
-
-            start_scheduler()
-        except Exception as exc:  # 调度器故障不阻塞 API
-            log.warning("scheduler start skipped: %s", exc)
-
+    # FastAPI lifespan owns scheduler startup/shutdown for every ASGI launch path.
     uvicorn.run("vitalis.api.app:app", host=settings.host, port=settings.port, reload=False)
 
 

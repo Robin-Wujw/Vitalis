@@ -39,10 +39,30 @@ class SyncService:
         from vitalis.models import User
 
         with session_scope() as db:
-            repo = HealthRepository(db)
-            repo.upsert_user(user_id, name=name, source=self.connector.source)
-            user = User(id=user_id, name=name, source=self.connector.source)
+            HealthRepository(db).upsert_user(user_id, name=name, source=self.connector.source)
+        user = User(id=user_id, name=name, source=self.connector.source)
 
+        if (
+            self.connector.source == "zepp"
+            and not getattr(self.connector, "mock", False)
+            and hasattr(self.connector, "sync_with_report")
+        ):
+            from vitalis.connectors.zepp.fetcher import FetchWindow
+            report = self.connector.sync_with_report(
+                user, window=FetchWindow.local_dates(start, end),
+                days=(end - start).days + 1, trigger="service"
+            )
+            return {
+                "user_id": user_id, "source": self.connector.source,
+                "start": start.isoformat(), "end": end.isoformat(),
+                "days_synced": (end - start).days + 1 if report.success else 0,
+                "attempt_id": report.progress.get("attempt_id") if report.progress else None,
+                "attempt_status": report.progress.get("status") if report.progress else None,
+                "success": report.success,
+            }
+
+        with session_scope() as db:
+            repo = HealthRepository(db)
             dailies: list[NormalizedDaily] = self.connector.fetch(user, start, end, repo=repo)
             days = 0
             for d in dailies:
@@ -50,11 +70,8 @@ class SyncService:
                 days += 1
 
         return {
-            "user_id": user_id,
-            "source": self.connector.source,
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-            "days_synced": days,
+            "user_id": user_id, "source": self.connector.source,
+            "start": start.isoformat(), "end": end.isoformat(), "days_synced": days,
         }
 
     def preview(self, user_id: str, start: date | None = None, end: date | None = None) -> list[dict]:

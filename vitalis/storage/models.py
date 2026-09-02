@@ -13,7 +13,7 @@
 
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
 
@@ -226,7 +226,156 @@ class SyncStreamState(Base):
     records_written: Mapped[int] = mapped_column(Integer, default=0)
     error_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempt_id: Mapped[str | None] = mapped_column(
+        ForeignKey("sync_attempts.id"), nullable=True, index=True
+    )
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class SyncAttempt(Base):
+    """Durable owner record for one source synchronization attempt."""
+
+    __tablename__ = "sync_attempts"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'running', 'retry_wait', 'succeeded', "
+            "'partial', 'failed', 'needs_reauth', 'cancelled')",
+            name="ck_sync_attempt_status",
+        ),
+        CheckConstraint("window_end > window_start", name="ck_sync_attempt_window"),
+        CheckConstraint(
+            "attempt_count >= 0 AND retry_count >= 0 AND chunk_count >= 0 "
+            "AND completed_count >= 0 AND raw_records >= 0 AND records_written >= 0",
+            name="ck_sync_attempt_counts",
+        ),
+        CheckConstraint(
+            "(lease_token IS NULL AND lease_expires_at IS NULL) OR "
+            "(lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)",
+            name="ck_sync_attempt_lease",
+        ),
+        CheckConstraint(
+            "status != 'retry_wait' OR next_retry_at IS NOT NULL",
+            name="ck_sync_attempt_retry_time",
+        ),
+        Index("ix_sync_attempts_user_source_status", "user_id", "source", "status"),
+        Index("ix_sync_attempts_lease", "status", "lease_expires_at"),
+        Index(
+            "uq_sync_attempt_running",
+            "user_id",
+            "source",
+            unique=True,
+            sqlite_where=text("status = 'running'"),
+            postgresql_where=text("status = 'running'"),
+        ),
+        Index(
+            "uq_sync_attempt_active_request",
+            "user_id",
+            "source",
+            "request_key",
+            unique=True,
+            sqlite_where=text("status IN ('queued', 'running', 'retry_wait')"),
+            postgresql_where=text("status IN ('queued', 'running', 'retry_wait')"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    source: Mapped[str] = mapped_column(String(32), default="zepp", index=True)
+    trigger: Mapped[str] = mapped_column(String(24), default="manual")
+    trigger_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    plan_version: Mapped[str] = mapped_column(String(32), default="zepp-sync-v1")
+    request_key: Mapped[str] = mapped_column(String(64), index=True)
+    window_start: Mapped[datetime] = mapped_column(DateTime, index=True)
+    window_end: Mapped[datetime] = mapped_column(DateTime, index=True)
+    timezone: Mapped[str] = mapped_column(String(64), default="UTC")
+    options: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
+    deadline_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    lease_token: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_epoch: Mapped[int] = mapped_column(Integer, default=0)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    completed_count: Mapped[int] = mapped_column(Integer, default=0)
+    raw_records: Mapped[int] = mapped_column(Integer, default=0)
+    records_written: Mapped[int] = mapped_column(Integer, default=0)
+    error_kind: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class SyncChunk(Base):
+    """Durable manifest item and independently leased source work unit."""
+
+    __tablename__ = "sync_chunks"
+    __table_args__ = (
+        UniqueConstraint("attempt_id", "stable_key", name="uq_sync_chunk_stable_key"),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'retry_wait', 'succeeded', "
+            "'unavailable', 'failed', 'cancelled')",
+            name="ck_sync_chunk_status",
+        ),
+        CheckConstraint(
+            "(window_start IS NULL AND window_end IS NULL) OR "
+            "(window_start IS NOT NULL AND window_end IS NOT NULL AND window_end > window_start)",
+            name="ck_sync_chunk_window",
+        ),
+        CheckConstraint(
+            "ordinal >= 0 AND attempt_count >= 0 AND raw_records >= 0 "
+            "AND records_written >= 0",
+            name="ck_sync_chunk_counts",
+        ),
+        CheckConstraint(
+            "(lease_token IS NULL AND lease_expires_at IS NULL) OR "
+            "(lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)",
+            name="ck_sync_chunk_lease",
+        ),
+        CheckConstraint(
+            "status != 'retry_wait' OR next_retry_at IS NOT NULL",
+            name="ck_sync_chunk_retry_time",
+        ),
+        Index("ix_sync_chunks_attempt_status", "attempt_id", "status"),
+        Index("ix_sync_chunks_lease", "status", "lease_expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    attempt_id: Mapped[str] = mapped_column(
+        ForeignKey("sync_attempts.id", ondelete="CASCADE"), index=True
+    )
+    stable_key: Mapped[str] = mapped_column(String(256))
+    stream: Mapped[str] = mapped_column(String(96), index=True)
+    health_stream: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    partition: Mapped[str] = mapped_column(String(128), default="")
+    ordinal: Mapped[int] = mapped_column(Integer, default=0)
+    window_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    window_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cursor: Mapped[object | None] = mapped_column(JSON, nullable=True)
+    allow_unavailable: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
+    fetch_status: Mapped[str] = mapped_column(String(24), default="never")
+    parse_status: Mapped[str] = mapped_column(String(24), default="never")
+    write_status: Mapped[str] = mapped_column(String(24), default="never")
+    stages: Mapped[dict] = mapped_column(JSON, default=dict)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    lease_token: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_epoch: Mapped[int] = mapped_column(Integer, default=0)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    raw_records: Mapped[int] = mapped_column(Integer, default=0)
+    records_written: Mapped[int] = mapped_column(Integer, default=0)
+    error_kind: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
 class StrengthExercise(Base):
@@ -471,6 +620,10 @@ class ZeppPairingSession(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    processing_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sync_attempt_id: Mapped[str | None] = mapped_column(
+        ForeignKey("sync_attempts.id"), nullable=True, index=True
+    )
 
 
 class ZeppBrowserLink(Base):
@@ -487,6 +640,9 @@ class ZeppBrowserLink(Base):
     last_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sync_attempt_id: Mapped[str | None] = mapped_column(
+        ForeignKey("sync_attempts.id"), nullable=True, index=True
+    )
 
 
 class ZeppDeviceLink(Base):

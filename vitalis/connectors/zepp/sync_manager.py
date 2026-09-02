@@ -70,6 +70,7 @@ class SyncReport:
     streams: list[StreamReport] = field(default_factory=list)
     records_written: int = 0
     message: str | None = None
+    progress: dict = field(default_factory=dict)
 
     @property
     def needs_reauth(self) -> bool:

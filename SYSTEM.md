@@ -77,7 +77,7 @@ Vitalis 仍处于预生产阶段。所有实现只面向当前契约和当前契
 
 日期：2026-09-01
 
-- Zepp 浏览器配对、凭证续期、重新登录状态和按用户串行同步已经实现。
+- Zepp 浏览器配对、凭证续期、重新登录状态，以及带稳定 chunk、重试退避、续租 fencing、取消和重启恢复的按用户持久同步已经实现。
 - 规范化健康数据、设备隔离、训练明细、确定性健康智能、跑步/力量分析、训练响应、个人模型、时间线和 Hermes 渲染边界已经实现。
 - 当前 canonical workout 身份为 `(source, workout_id)`；指标 provenance 保留 `source`、`source_scope`、`device_id` 和 `unit`。
 - 当前训练日汇总来自所有 canonical workout，并使用 `VITALIS_TIMEZONE` 的本地日期边界。
@@ -88,6 +88,7 @@ Vitalis 仍处于预生产阶段。所有实现只面向当前契约和当前契
 
 最近任务的最终验证：
 
+- Zepp 持久同步可靠性完整测试套件：368 项全部通过；OpenAPI 45 条路径。
 - Zepp 数据正确性审查后针对性测试：157 项通过。
 - Windows daily push 权限契约针对性测试：16 项通过。
 - Open Health Insights 完整测试套件：345 项全部通过。
@@ -101,7 +102,7 @@ Vitalis 仍处于预生产阶段。所有实现只面向当前契约和当前契
 ## 10. 已知未完成事项
 
 - [ ] 完成共享核心/平台适配层审计，明确 Linux 与 Windows 的服务、安全和文件权限验证矩阵。
-- [ ] 设计持久化 chunk coverage ledger、重试/退避、备份/恢复和数据保留策略；这些不属于当前 Zepp 正确性批次。
+- [ ] 为持久同步账本补充生产备份/恢复演练和长期数据保留策略；chunk ledger、重试/退避和进程重启恢复已实现。
 
 ## 11. 当前文档精简任务
 
@@ -175,3 +176,34 @@ Vitalis 仍处于预生产阶段。所有实现只面向当前契约和当前契
 - `git diff --check` 通过。
 
 交付步骤：本任务使用一个提交推送 `feat/open-health-insights`；是否合并 `main` 由用户单独确认。
+
+## 14. Zepp 持久同步可靠性
+
+日期：2026-09-02
+
+目标：让 API 配对、手动同步和定时同步共享可恢复的持久 attempt/chunk 账本，并在并发、失败、取消和进程重启后保持正确状态。
+
+### TODO
+
+- [x] 接入配对、手动 API、浏览器续期和调度器 attempt 创建/状态/取消流程。
+- [x] 实现稳定 chunk、条件 claim/finalize、attempt/chunk 续租 fencing、重试退避和成功 chunk 隔离提交。
+- [x] 修复全窗口统计/训练请求放大、dense 归档选择、设备清单刷新和 calendar-day 结果语义。
+- [x] 将 dispatcher 收敛为有界公平批次，并由 FastAPI lifespan 统一启动/关闭以支持直接 uvicorn 重启恢复。
+- [x] 恢复 nightly 分析与 morning/evening 分析推送终态动作，并统一浏览器 link 状态投影。
+- [x] 补齐可靠性、调度、API 和 Windows UTF-8 契约测试并更新公开文档。
+- [x] 运行完整测试、编译、OpenAPI 和 diff 验证。
+
+### 安全与数据边界
+
+- lease token/epoch 是内部 fencing 信息，不通过公开状态 API 返回；过期 worker 不能继续 claim、finalize 或覆盖 stream diagnostics。
+- transient failure 保留已完成 chunk 并进入 `retry_wait`；明确 authentication rejection 才进入 `needs_reauth`。
+- 同一 stream 混合 success/unavailable 是 `partial`，不会伪装为完整覆盖。
+- 当前仍执行预生产 fresh-schema 策略；新增表/列不提供旧数据库在线迁移，升级前按本文第 4 节重建并重新摄取。
+
+### 验证日志
+
+- 同步 coordinator、账本、scheduler 和 API 针对性回归 72 项通过。
+- Windows 完整测试套件 368 项全部通过；剩余 2521 条警告来自既有 `datetime.utcnow()`、SQLite adapter 和 pytest cache 权限提示。
+- Python 与 Skill 工具 `compileall` 通过。
+- OpenAPI 生成 45 条路径，包含 `POST /health/sync`、`GET /health/sync/{attempt_id}` 和 `POST /health/sync/{attempt_id}/cancel`。
+- `git diff --check` 通过，仅保留 Windows 的 LF/CRLF 标准化提示。

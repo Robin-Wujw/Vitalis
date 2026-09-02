@@ -23,7 +23,10 @@ The pairing implementation:
 - probes the supported Zepp regional hosts and selects the working region;
 - updates credentials when the official browser cookie changes and checks the browser
   session periodically;
-- serializes first-time, renewal, manual, and scheduled synchronization per user;
+- records first-time, renewal, manual, and scheduled synchronization in a persistent attempt/chunk ledger;
+- fences attempt and chunk ownership with renewable leases so expired workers cannot commit or claim more work;
+- resumes queued, retry-wait, expired, and explicitly cancelled work through the ASGI-owned dispatcher after restart;
+- applies bounded exponential backoff to transient network/service failures while preserving completed chunks;
 - reports `needs_login=true` only after an explicit vendor authentication rejection;
 - issues a separate high-entropy browser-link token and stores only its SHA-256 digest;
 - accepts synchronization windows up to 730 days and fetches history in bounded chunks;

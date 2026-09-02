@@ -74,10 +74,17 @@ def zepp_pairing_status(pairing_id: str, user_id: str = Depends(require_user_id)
         if status not in ("connected", "expired") and row.expires_at <= datetime.utcnow():
             row.status = status = "expired"
             row.message = message = "配对码已过期，请刷新页面重试"
+        sync_status = None
+        if row.sync_attempt_id:
+            attempt = HealthRepository(db).sync_attempt(row.sync_attempt_id, user_id=user_id)
+            sync_status = attempt.status if attempt else None
         return {
             "status": status,
             "message": message,
             "expires_at": row.expires_at.isoformat() + "Z",
+            "sync_attempt_id": row.sync_attempt_id,
+            "sync_status": sync_status,
+            "attempt_status": sync_status,
         }
 
 
@@ -104,7 +111,9 @@ def submit_zepp_pairing_credentials(
             raise HTTPException(status_code=410, detail="配对码已过期")
         user_id = row.user_id
         sync_days = row.sync_days
-        if not repo.claim_pairing_session(pairing_id):
+        if not repo.claim_pairing_session(
+            pairing_id, settings.pairing_processing_lease_seconds
+        ):
             raise HTTPException(status_code=409, detail="配对正在处理中，请稍候")
 
     extracted = extract_from_login_info(body.cookie)
@@ -137,19 +146,31 @@ def submit_zepp_pairing_credentials(
                 )
         browser_link_token = secrets.token_urlsafe(32)
         link_digest = _token_digest(browser_link_token)
+        sync_attempt_id = None
+        connector_for_sync = connector
+        if hasattr(connector_for_sync, "create_attempt"):
+            attempt = connector_for_sync.create_attempt(
+                user_id, days=sync_days, trigger="pairing_initial",
+                trigger_ref=f"{pairing_id}|{link_digest}",
+            )
+            sync_attempt_id = attempt.id
         with session_scope() as db:
             repo = HealthRepository(db)
-            repo.finish_pairing_session(pairing_id, "Zepp 已连接，云端正在同步")
-            repo.create_browser_link(link_digest, user_id)
+            repo.finish_pairing_session(pairing_id, "Zepp 已连接，云端正在同步", sync_attempt_id)
+            repo.create_browser_link(link_digest, user_id, sync_attempt_id)
     except (ZeppAuthError, RuntimeError) as exc:
         _pairing_failed(pairing_id, str(exc))
         raise HTTPException(status_code=400, detail="Zepp 凭据验证失败，请重新登录后重试") from exc
 
-    background_tasks.add_task(_initial_pairing_sync, user_id, sync_days, pairing_id, link_digest)
+    background_tasks.add_task(
+        _initial_pairing_sync, user_id, sync_days, pairing_id, link_digest, sync_attempt_id
+    )
     return {
         "status": "connected",
         "message": "凭据已安全交给 Vitalis，云端同步已启动",
         "browser_link_token": browser_link_token,
+        "sync_attempt_id": sync_attempt_id,
+        "sync_status": "queued" if sync_attempt_id else None,
     }
 
 
@@ -230,7 +251,8 @@ def update_linked_credentials(
                     )
             else:
                 with session_scope() as db:
-                    connector._client_for(HealthRepository(db), User(id=user_id)).verify()
+                    client = connector._client_for(HealthRepository(db), User(id=user_id))
+                client.verify()
         with session_scope() as db:
             HealthRepository(db).mark_browser_link_verified(
                 link_digest,
@@ -239,12 +261,24 @@ def update_linked_credentials(
     except RuntimeError as exc:
         _raise_link_validation_error(link_digest, exc)
 
+    sync_attempt_id = None
+    if changed and hasattr(connector, "create_attempt"):
+        attempt = connector.create_attempt(
+            user_id, days=7, trigger="link_refresh", trigger_ref=link_digest
+        )
+        sync_attempt_id = attempt.id
+        with session_scope() as db:
+            link = HealthRepository(db).browser_link(link_digest)
+            if link:
+                link.sync_attempt_id = sync_attempt_id
     if changed:
-        background_tasks.add_task(_linked_incremental_sync, user_id, link_digest)
+        background_tasks.add_task(_linked_incremental_sync, user_id, link_digest, sync_attempt_id)
     return {
         "status": "connected",
         "credential_updated": changed,
         "message": "登录凭据已更新，正在同步数据" if changed else "登录状态有效",
+        "sync_attempt_id": sync_attempt_id,
+        "sync_status": "queued" if sync_attempt_id else None,
     }
 
 
@@ -271,8 +305,10 @@ def validate_linked_credentials(
             repo = HealthRepository(db)
             if repo.get_token(user_id, "zepp") is None:
                 raise ZeppAuthError("Zepp 凭据不存在", kind="auth")
-            connector._client_for(repo, User(id=user_id)).verify()
-            repo.mark_browser_link_verified(link_digest, "云端登录凭据仍然有效")
+            client = connector._client_for(repo, User(id=user_id))
+        client.verify()
+        with session_scope() as db:
+            HealthRepository(db).mark_browser_link_verified(link_digest, "云端登录凭据仍然有效")
     except RuntimeError as exc:
         _raise_link_validation_error(link_digest, exc)
     return {"status": "connected", "message": "云端登录凭据仍然有效"}
@@ -366,16 +402,26 @@ def _device_linked_user(authorization: str) -> tuple[str, str, str]:
 
 
 def _initial_pairing_sync(
-    user_id: str, sync_days: int, pairing_id: str, link_digest: str
+    user_id: str, sync_days: int, pairing_id: str, link_digest: str,
+    sync_attempt_id: str | None = None,
 ) -> None:
     sync_succeeded = False
     needs_reauth = False
     try:
         connector: ZeppConnector = get_connector("zepp")  # type: ignore[assignment]
-        with session_scope() as db:
-            report = connector.sync_with_report(
-                User(id=user_id), days=sync_days, repo=HealthRepository(db)
+        if sync_attempt_id and not getattr(connector, "mock", False):
+            from vitalis.services.zepp_sync_coordinator import ZeppSyncCoordinator
+
+            ZeppSyncCoordinator(connector=connector).run_attempt(
+                sync_attempt_id, max_chunks=1
             )
+            return
+        else:
+            with session_scope() as db:
+                report = connector.sync_with_report(
+                    User(id=user_id), days=sync_days, repo=HealthRepository(db),
+                    attempt_id=sync_attempt_id,
+                )
         sync_succeeded = report.success
         needs_reauth = report.needs_reauth
         message = (
@@ -409,13 +455,24 @@ def _initial_pairing_sync(
             repo.mark_browser_link_sync_failed(link_digest, message)
 
 
-def _linked_incremental_sync(user_id: str, link_digest: str) -> None:
+def _linked_incremental_sync(
+    user_id: str, link_digest: str, sync_attempt_id: str | None = None
+) -> None:
     try:
         connector: ZeppConnector = get_connector("zepp")  # type: ignore[assignment]
-        with session_scope() as db:
-            report = connector.sync_with_report(
-                User(id=user_id), days=7, repo=HealthRepository(db)
+        if sync_attempt_id and not getattr(connector, "mock", False):
+            from vitalis.services.zepp_sync_coordinator import ZeppSyncCoordinator
+
+            ZeppSyncCoordinator(connector=connector).run_attempt(
+                sync_attempt_id, max_chunks=1
             )
+            return
+        else:
+            with session_scope() as db:
+                report = connector.sync_with_report(
+                    User(id=user_id), days=7, repo=HealthRepository(db),
+                    attempt_id=sync_attempt_id,
+                )
         message = (
             f"登录凭据已更新，同步写入 {report.records_written} 条记录"
             if report.success

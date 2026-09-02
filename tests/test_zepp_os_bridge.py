@@ -8,7 +8,7 @@ APP = Path(__file__).parents[1] / "zepp_os" / "balance2_bridge"
 
 
 def test_balance2_manifest_targets_supported_api_and_background_heart_rate_only():
-    manifest = json.loads((APP / "app.json").read_text())
+    manifest = json.loads((APP / "app.json").read_text(encoding="utf-8"))
     api = manifest["runtime"]["apiVersion"]
     assert api["target"] == "4.2"
     assert "app-service/heart_rate_service" in manifest["targets"]["common"]["module"]["app-service"]["services"]
@@ -18,9 +18,9 @@ def test_balance2_manifest_targets_supported_api_and_background_heart_rate_only(
 
 
 def test_balance2_queue_is_bounded_and_upload_is_https_authenticated():
-    queue = (APP / "shared" / "queue.js").read_text()
-    service = (APP / "app-service" / "heart_rate_service.js").read_text()
-    side = (APP / "app-side" / "index.js").read_text()
+    queue = (APP / "shared" / "queue.js").read_text(encoding="utf-8")
+    service = (APP / "app-service" / "heart_rate_service.js").read_text(encoding="utf-8")
+    side = (APP / "app-side" / "index.js").read_text(encoding="utf-8")
     assert "MAX_SAMPLES = 3600" in queue
     assert ".slice(-MAX_SAMPLES)" in queue
     assert "onCurrentChange" in service
@@ -34,7 +34,7 @@ def test_balance2_queue_is_bounded_and_upload_is_https_authenticated():
 
 
 def test_balance2_readme_does_not_claim_fixed_one_hertz_or_helio_support():
-    readme = (APP / "README.md").read_text()
+    readme = (APP / "README.md").read_text(encoding="utf-8")
     assert "not a guaranteed 1 Hz stream" in readme
     assert "Helio Strap cannot run Zepp OS apps" in readme
     assert "Accelerometer collection is intentionally absent" in readme

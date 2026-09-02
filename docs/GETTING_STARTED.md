@@ -33,8 +33,12 @@ Important configuration:
 | `VITALIS_TIMEZONE` | Local-day boundary used by intelligence calculations |
 | `HOST` / `PORT` | Application listener |
 | `VITALIS_PUBLIC_URL` | Public HTTPS origin used by pairing pages |
-| `SYNC_CRON_HOUR` / `SYNC_CRON_MINUTE` | Nightly synchronization time |
-| `VITALIS_NO_SCHEDULER` | Disable background jobs when set to `1` |
+| `ZEPP_PAIRING_PROCESSING_LEASE_SECONDS` | Time before an interrupted pairing submission can be reclaimed |
+| `SYNC_CRON_HOUR` / `SYNC_CRON_MINUTE` | Nightly synchronization enqueue time |
+| `SYNC_DISPATCHER_INTERVAL_SECONDS` | Interval between durable-ledger dispatcher passes |
+| `SYNC_DISPATCHER_BATCH_CHUNKS` | Maximum chunks processed per fair dispatcher pass |
+| `SYNC_LEASE_SECONDS` / `SYNC_ATTEMPT_LEASE_SECONDS` | Chunk and attempt fencing lease durations |
+| `VITALIS_NO_SCHEDULER` | Disable background jobs and retry recovery when set to `1` |
 
 The deterministic analysis engine does not require an LLM. Hermes or another agent
 consumes structured Vitalis results and renders them separately.
@@ -152,9 +156,16 @@ Synchronization, analysis, and push rendering are separate stages:
 
 | Local time | Job | Behavior |
 | --- | --- | --- |
-| 02:00 | Nightly sync | Synchronize 7 days and persist a fresh analysis run |
-| 09:30-21:30 hourly | Morning retry | Send once after today's sleep has a wake time |
-| 22:30 | Evening | Synchronize 1 day and send the distinct Evening profile once |
+| 02:00 | Nightly sync | Enqueue 7 days; analyze after the durable attempt succeeds |
+| 09:30-21:30 hourly | Morning retry | Enqueue 2 days; analyze and send once after successful sync and complete sleep |
+| 22:30 | Evening | Enqueue 1 day; analyze and send the distinct Evening profile after successful sync |
+
+FastAPI lifespan owns scheduler startup and shutdown, so both `python -m vitalis.main` and
+direct `uvicorn vitalis.api.app:app` launches recover persisted work. Each dispatcher pass
+processes at most `SYNC_DISPATCHER_BATCH_CHUNKS` due chunks and rotates attempts by their
+last update. Network work runs outside database transactions; renewable attempt/chunk
+leases prevent a stale process from claiming or finalizing additional work after takeover.
+Set `VITALIS_NO_SCHEDULER=1` only when a separate process owns dispatch and recovery.
 
 An insufficient profile remains insufficient. The scheduler does not replace it with
 an older result, a default score, or a generic training template.

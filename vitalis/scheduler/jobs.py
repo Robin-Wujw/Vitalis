@@ -1,133 +1,128 @@
-"""Scheduled synchronization and renderer-only daily profile pushes."""
+"""Scheduled durable synchronization and profile jobs."""
 
 import logging
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
+
+from vitalis.config import settings
 
 log = logging.getLogger("vitalis.scheduler")
 
 
-def _record_browser_link_sync(repo, user_id: str, report, label: str) -> None:
-    reauth = next((stream for stream in report.streams if stream.needs_reauth), None)
-    if report.needs_reauth:
-        repo.mark_user_browser_links_reauth(
-            user_id,
-            f"Zepp 登录已失效，请重新登录：{reauth.message if reauth else report.message or ''}",
-        )
-        return
-    link = repo.latest_browser_link(user_id)
-    if link:
-        if report.success:
-            repo.mark_browser_link_synced(
-                link.token_digest, f"{label}完成，写入 {report.records_written} 条记录"
-            )
-        else:
-            repo.mark_browser_link_sync_failed(
-                link.token_digest, f"{label}不完整，将稍后重试"
-            )
-
-
 def _get_authorized_users() -> set[str]:
     from sqlalchemy import select
-
     from vitalis.storage import session_scope
     from vitalis.storage.models import AuthToken as OrmAuthToken
 
     with session_scope() as db:
-        rows = db.execute(select(OrmAuthToken.user_id).distinct())
-        return {row[0] for row in rows}
+        return {row[0] for row in db.execute(select(OrmAuthToken.user_id).distinct())}
 
 
-def _sync_user(user_id: str, days: int, label: str) -> bool:
+def _create_attempt(user_id: str, days: int, trigger: str):
     from vitalis.connectors import get_connector
-    from vitalis.connectors.zepp import ZeppConnector
-    from vitalis.models import User
-    from vitalis.storage import HealthRepository, session_scope
+    connector = get_connector("zepp")
+    create = getattr(connector, "create_attempt", None)
+    if create is None:
+        return None
+    return create(user_id, days=days, trigger=trigger, trigger_ref=user_id)
 
-    connector: ZeppConnector = get_connector("zepp")  # type: ignore[assignment]
-    with session_scope() as db:
-        repo = HealthRepository(db)
-        report = connector.sync_with_report(User(id=user_id), days=days, repo=repo)
-        _record_browser_link_sync(repo, user_id, report, label)
-        log.info(
-            "%s: user=%s success=%s records=%s",
-            label, user_id, report.success, report.records_written,
-        )
-        return report.success
+
+def _sync_user(user_id: str, days: int, label: str) -> str | None:
+    """Create a ledger entry only; the dispatcher owns network execution."""
+    attempt = _create_attempt(user_id, days, trigger=label)
+    attempt_id = attempt.id if attempt is not None else None
+    log.info("%s queued: user=%s attempt=%s", label, user_id, attempt_id)
+    return attempt_id
 
 
 def nightly_sync_job() -> None:
-    """02:00: synchronize and independently persist the latest analysis."""
-    from vitalis.intelligence.service import IntelligenceCommand
-
-    user_ids = _get_authorized_users()
-    if not user_ids:
-        log.info("nightly sync: no authorized users")
-        return
-    for user_id in user_ids:
+    """Create the configured nightly attempts."""
+    for user_id in _get_authorized_users():
         try:
-            if _sync_user(user_id, days=7, label="夜间同步"):
-                IntelligenceCommand().analyze(user_id)
+            _sync_user(user_id, days=7, label="nightly")
         except Exception:
-            log.exception("nightly sync failed: user=%s", user_id)
+            log.exception("nightly sync enqueue failed: user=%s", user_id)
+    dispatcher_job()
 
 
 def _profile_push_job(period: str, sync_days: int) -> None:
-    from vitalis.intelligence.service import IntelligenceCommand
-    from vitalis.services.push_service import PushService
-
-    user_ids = _get_authorized_users()
-    if not user_ids:
-        log.info("%s profile: no authorized users", period)
-        return
-    command = IntelligenceCommand()
-    push = PushService()
-    for user_id in user_ids:
+    """Queue the morning/evening attempt at its existing local time."""
+    for user_id in _get_authorized_users():
         try:
-            if not _sync_user(user_id, days=sync_days, label=f"{period}同步"):
-                continue
-            result = command.analyze(user_id)
-            profile = result.daily
-            push.push_daily_profile(user_id, profile, period=period)
-            log.info(
-                "%s profile pushed: user=%s action=%s quality=%s",
-                period, user_id, profile.decision.action, profile.data_quality.status,
-            )
+            _sync_user(user_id, days=sync_days, label=period)
         except Exception:
-            log.exception("%s profile failed: user=%s", period, user_id)
+            log.exception("%s sync enqueue failed: user=%s", period, user_id)
+    dispatcher_job()
 
 
 def morning_analysis_job() -> None:
-    """09:30: synchronize and push the morning profile."""
     _profile_push_job("morning", sync_days=2)
 
 
 def evening_analysis_job() -> None:
-    """21:30: synchronize and push the evening profile."""
     _profile_push_job("evening", sync_days=1)
 
 
+def dispatcher_job() -> int:
+    """Drain due attempts; DB leases make concurrent dispatchers safe."""
+    from vitalis.connectors import get_connector
+    from vitalis.services.zepp_sync_coordinator import ZeppSyncCoordinator
+
+    coordinator = ZeppSyncCoordinator(
+        connector=get_connector("zepp"),
+        lease_seconds=getattr(settings, "sync_lease_seconds", 120),
+        attempt_lease_seconds=getattr(settings, "sync_attempt_lease_seconds", 300),
+    )
+    drained = 0
+    # A bounded, fair pass prevents one backlog from monopolizing the worker.
+    for _ in range(max(1, settings.sync_dispatcher_batch_chunks)):
+        report = coordinator.drain_once()
+        if report is None:
+            break
+        drained += 1
+    if drained:
+        log.info("sync dispatcher drained chunks=%s", drained)
+    return drained
+
+
 def start_scheduler() -> BackgroundScheduler:
-    scheduler = BackgroundScheduler()
+    scheduler = BackgroundScheduler(timezone=settings.timezone)
     scheduler.add_job(
         nightly_sync_job,
-        CronTrigger(hour=2, minute=0),
-        id="nightly_sync",
-        misfire_grace_time=3600,
+        CronTrigger(
+            hour=settings.sync_cron_hour, minute=settings.sync_cron_minute,
+            timezone=settings.timezone,
+        ),
+        id="nightly_sync", misfire_grace_time=3600,
+        max_instances=1, coalesce=True,
     )
     scheduler.add_job(
         morning_analysis_job,
-        CronTrigger(hour=9, minute=30),
-        id="morning_analysis",
-        misfire_grace_time=1800,
+        CronTrigger(hour=9, minute=30, timezone=settings.timezone),
+        id="morning_analysis", misfire_grace_time=1800,
+        max_instances=1, coalesce=True,
     )
     scheduler.add_job(
         evening_analysis_job,
-        CronTrigger(hour=21, minute=30),
-        id="evening_analysis",
-        misfire_grace_time=1800,
+        CronTrigger(hour=21, minute=30, timezone=settings.timezone),
+        id="evening_analysis", misfire_grace_time=1800,
+        max_instances=1, coalesce=True,
+    )
+    scheduler.add_job(
+        dispatcher_job,
+        IntervalTrigger(
+            seconds=max(1, settings.sync_dispatcher_interval_seconds),
+            timezone=settings.timezone,
+        ),
+        id="sync_dispatcher", misfire_grace_time=60,
+        max_instances=1, coalesce=True,
     )
     scheduler.start()
-    log.info("scheduler started: sync 02:00, morning 09:30, evening 21:30")
+    log.info(
+        "scheduler started: nightly %02d:%02d, dispatcher every %ss, timezone=%s",
+        settings.sync_cron_hour, settings.sync_cron_minute,
+        settings.sync_dispatcher_interval_seconds, settings.timezone,
+    )
     return scheduler

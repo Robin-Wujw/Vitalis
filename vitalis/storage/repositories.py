@@ -1,8 +1,9 @@
 """仓储层：封装对 ORM 的读写，业务层只依赖仓储接口。"""
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import hashlib
+import json
 from uuid import uuid4
 
 from sqlalchemy import Integer, case, cast, delete, func, or_, select, text, tuple_, update
@@ -45,6 +46,7 @@ from vitalis.intelligence.contracts import (
     UserProfilePatch,
 )
 
+from .sync_types import SyncAttemptAggregate, SyncLease
 from vitalis.time import local_day, local_day_utc_bounds
 
 from . import models as orm
@@ -707,7 +709,8 @@ class HealthRepository:
             select(orm.Workout).where(
                 orm.Workout.user_id == user_id,
                 orm.Workout.source == source,
-                orm.Workout.started_at.between(_naive_utc(start), _naive_utc(end)),
+                orm.Workout.started_at >= _naive_utc(start),
+                orm.Workout.started_at < _naive_utc(end),
                 orm.Workout.vendor_source.is_not(None),
             ).order_by(orm.Workout.started_at)
         ).scalars().all())
@@ -1089,6 +1092,638 @@ class HealthRepository:
             )
         ).scalar_one_or_none()
 
+    # ---- 持久同步账本 ----
+
+    def create_or_reuse_sync_attempt(
+        self,
+        user_id: str,
+        source: str = "zepp",
+        trigger: str = "manual",
+        trigger_ref: str | None = None,
+        plan_version: str = "zepp-sync-v1",
+        window_start: datetime | None = None,
+        window_end: datetime | None = None,
+        timezone_name: str = "UTC",
+        options: dict | None = None,
+        deadline_at: datetime | None = None,
+        manifest: list[object] | None = None,
+        attempt_id: str | None = None,
+    ) -> orm.SyncAttempt:
+        """Create one active attempt, or return the user's existing active attempt."""
+        now = datetime.utcnow()
+        if window_start is None or window_end is None:
+            raise ValueError("同步尝试必须提供非空时间窗口")
+        window_start = _naive_utc(window_start)
+        window_end = _naive_utc(window_end)
+        if window_end <= window_start:
+            raise ValueError("同步尝试结束时间必须晚于开始时间")
+        deadline_at = _naive_utc(deadline_at) if deadline_at else None
+        options = dict(options or {})
+        request_payload = {
+            "source": source,
+            "trigger": trigger,
+            "trigger_ref": trigger_ref,
+            "plan_version": plan_version,
+            "window_start": window_start.isoformat(),
+            "window_end": window_end.isoformat(),
+            "timezone": timezone_name,
+            "options": options,
+        }
+        request_key = hashlib.sha256(
+            json.dumps(
+                request_payload, sort_keys=True, separators=(",", ":"), default=str
+            ).encode("utf-8")
+        ).hexdigest()
+        self.upsert_user(user_id, source=source)
+
+        if attempt_id:
+            existing = self.db.get(orm.SyncAttempt, attempt_id)
+            if existing is not None:
+                if existing.user_id != user_id or existing.source != source:
+                    raise ValueError("同步尝试不属于当前用户或数据源")
+                self._ensure_sync_chunks(existing, manifest)
+                return existing
+
+        active = self.db.execute(
+            select(orm.SyncAttempt).where(
+                orm.SyncAttempt.user_id == user_id,
+                orm.SyncAttempt.source == source,
+                orm.SyncAttempt.request_key == request_key,
+                orm.SyncAttempt.status.in_(("queued", "running", "retry_wait")),
+            ).order_by(orm.SyncAttempt.created_at.desc()).with_for_update()
+        ).scalars().first()
+        if active is not None:
+            self._ensure_sync_chunks(active, manifest)
+            return active
+
+        values = dict(
+            id=attempt_id or uuid4().hex,
+            user_id=user_id,
+            source=source,
+            trigger=trigger,
+            trigger_ref=trigger_ref,
+            plan_version=plan_version,
+            request_key=request_key,
+            window_start=window_start,
+            window_end=window_end,
+            timezone=timezone_name,
+            options=options,
+            status="queued",
+            deadline_at=deadline_at,
+            created_at=now,
+            updated_at=now,
+        )
+        try:
+            with self.db.begin_nested():
+                self.db.add(orm.SyncAttempt(**values))
+                self.db.flush()
+        except IntegrityError:
+            active = self.db.execute(
+                select(orm.SyncAttempt).where(
+                    orm.SyncAttempt.user_id == user_id,
+                    orm.SyncAttempt.source == source,
+                    orm.SyncAttempt.request_key == request_key,
+                    orm.SyncAttempt.status.in_(("queued", "running", "retry_wait")),
+                ).order_by(orm.SyncAttempt.created_at.desc())
+            ).scalars().first()
+            if active is None:
+                raise
+            self._ensure_sync_chunks(active, manifest)
+            return active
+        attempt = self.db.get(orm.SyncAttempt, values["id"])
+        assert attempt is not None
+        self._ensure_sync_chunks(attempt, manifest)
+        return attempt
+
+    def create_sync_attempt(self, *args, **kwargs) -> orm.SyncAttempt:
+        """Compatibility spelling for the coordinator-facing create operation."""
+        return self.create_or_reuse_sync_attempt(*args, **kwargs)
+
+    def create_or_reuse_attempt(self, *args, **kwargs) -> orm.SyncAttempt:
+        return self.create_or_reuse_sync_attempt(*args, **kwargs)
+
+    def _ensure_sync_chunks(
+        self, attempt: orm.SyncAttempt, manifest: list[object] | None
+    ) -> None:
+        if manifest:
+            values = []
+            for item in manifest:
+                if isinstance(item, dict):
+                    get = item.get
+                else:
+                    get = lambda key, default=None: getattr(item, key, default)
+                stable_key = get("stable_key") or get("key")
+                stream = get("stream")
+                if not stable_key or not stream:
+                    raise ValueError("同步 chunk 必须包含 stable_key 和 stream")
+                values.append({
+                    "attempt_id": attempt.id,
+                    "stable_key": str(stable_key),
+                    "stream": str(stream),
+                    "health_stream": get("health_stream"),
+                    "partition": str(get("partition", "") or ""),
+                    "ordinal": int(get("ordinal", 0) or 0),
+                    "window_start": (
+                        _naive_utc(get("window_start")) if get("window_start") else None
+                    ),
+                    "window_end": (
+                        _naive_utc(get("window_end")) if get("window_end") else None
+                    ),
+                    "cursor": get("cursor"),
+                    "allow_unavailable": bool(get("allow_unavailable", False)),
+                    "status": "queued",
+                    "fetch_status": get("fetch_status", "never"),
+                    "parse_status": get("parse_status", "never"),
+                    "write_status": get("write_status", "never"),
+                    "stages": dict(get("stages", {}) or {}),
+                })
+            dialect = self.db.get_bind().dialect.name
+            if dialect in ("sqlite", "postgresql"):
+                if dialect == "sqlite":
+                    from sqlalchemy.dialects.sqlite import insert
+                else:
+                    from sqlalchemy.dialects.postgresql import insert
+                statement = insert(orm.SyncChunk).values(values)
+                self.db.execute(statement.on_conflict_do_nothing(
+                    index_elements=["attempt_id", "stable_key"]
+                ))
+            else:
+                for value in values:
+                    exists = self.db.execute(select(orm.SyncChunk).where(
+                        orm.SyncChunk.attempt_id == attempt.id,
+                        orm.SyncChunk.stable_key == value["stable_key"],
+                    )).scalar_one_or_none()
+                    if exists is None:
+                        self.db.add(orm.SyncChunk(**value))
+            self.db.flush()
+        attempt.chunk_count = self.db.execute(
+            select(func.count(orm.SyncChunk.id)).where(orm.SyncChunk.attempt_id == attempt.id)
+        ).scalar_one()
+        attempt.updated_at = datetime.utcnow()
+        self.db.flush()
+
+    def sync_attempt(self, attempt_id: str, user_id: str | None = None) -> orm.SyncAttempt | None:
+        row = self.db.get(orm.SyncAttempt, attempt_id)
+        if row is None or (user_id is not None and row.user_id != user_id):
+            return None
+        return row
+
+    def get_sync_attempt(self, attempt_id: str, user_id: str | None = None) -> orm.SyncAttempt | None:
+        return self.sync_attempt(attempt_id, user_id=user_id)
+
+    def sync_attempts(
+        self, user_id: str, source: str | None = None, statuses: tuple[str, ...] | None = None,
+        limit: int = 100,
+    ) -> list[orm.SyncAttempt]:
+        statement = select(orm.SyncAttempt).where(orm.SyncAttempt.user_id == user_id)
+        if source is not None:
+            statement = statement.where(orm.SyncAttempt.source == source)
+        if statuses:
+            statement = statement.where(orm.SyncAttempt.status.in_(statuses))
+        return list(self.db.execute(
+            statement.order_by(orm.SyncAttempt.created_at.desc()).limit(limit)
+        ).scalars().all())
+
+    def sync_chunks(
+        self, attempt_id: str, user_id: str | None = None, status: str | None = None
+    ) -> list[orm.SyncChunk]:
+        statement = select(orm.SyncChunk).where(orm.SyncChunk.attempt_id == attempt_id)
+        if user_id is not None:
+            statement = statement.join(
+                orm.SyncAttempt, orm.SyncAttempt.id == orm.SyncChunk.attempt_id
+            ).where(orm.SyncAttempt.user_id == user_id)
+        if status is not None:
+            statement = statement.where(orm.SyncChunk.status == status)
+        return list(self.db.execute(
+            statement.order_by(orm.SyncChunk.ordinal, orm.SyncChunk.stable_key)
+        ).scalars().all())
+
+    def get_sync_chunks(
+        self, attempt_id: str, user_id: str | None = None, status: str | None = None
+    ) -> list[orm.SyncChunk]:
+        return self.sync_chunks(attempt_id, user_id=user_id, status=status)
+
+    def sync_chunk(
+        self, attempt_id: str, stable_key: str, user_id: str | None = None
+    ) -> orm.SyncChunk | None:
+        return self.db.execute(
+            select(orm.SyncChunk).join(
+                orm.SyncAttempt, orm.SyncAttempt.id == orm.SyncChunk.attempt_id
+            ).where(
+                orm.SyncChunk.attempt_id == attempt_id,
+                orm.SyncChunk.stable_key == stable_key,
+                *([orm.SyncAttempt.user_id == user_id] if user_id is not None else []),
+            )
+        ).scalar_one_or_none()
+
+    def claim_sync_attempt(
+        self, attempt_id: str, lease_token: str, *, now: datetime | None = None,
+        lease_seconds: int = 60,
+    ) -> bool:
+        now = _naive_utc(now or datetime.now(timezone.utc))
+        other = orm.SyncAttempt.__table__.alias("other_sync_attempt")
+        no_other_running = ~select(other.c.id).where(
+            other.c.user_id == orm.SyncAttempt.user_id,
+            other.c.source == orm.SyncAttempt.source,
+            other.c.status == "running",
+            other.c.id != orm.SyncAttempt.id,
+        ).exists()
+        try:
+            with self.db.begin_nested():
+                result = self.db.execute(update(orm.SyncAttempt).where(
+                    orm.SyncAttempt.id == attempt_id,
+                    no_other_running,
+                    orm.SyncAttempt.status.in_(("queued", "running", "retry_wait")),
+                    orm.SyncAttempt.cancel_requested_at.is_(None),
+                    or_(orm.SyncAttempt.next_retry_at.is_(None), orm.SyncAttempt.next_retry_at <= now),
+                    or_(orm.SyncAttempt.lease_expires_at.is_(None), orm.SyncAttempt.lease_expires_at <= now),
+                ).values(
+                    status="running",
+                    lease_token=lease_token,
+                    lease_epoch=orm.SyncAttempt.lease_epoch + 1,
+                    attempt_count=orm.SyncAttempt.attempt_count + 1,
+                    lease_expires_at=now + timedelta(seconds=lease_seconds),
+                    started_at=func.coalesce(orm.SyncAttempt.started_at, now),
+                    next_retry_at=None,
+                    updated_at=now,
+                ))
+                self.db.flush()
+        except IntegrityError:
+            # The partial unique running-attempt index is the final cross-worker fence.
+            return False
+        return bool(result.rowcount)
+
+    def claim_attempt(self, *args, **kwargs) -> bool:
+        return self.claim_sync_attempt(*args, **kwargs)
+
+    def takeover_expired_attempt(self, *args, **kwargs) -> bool:
+        return self.claim_sync_attempt(*args, **kwargs)
+
+    def acquire_sync_attempt_lease(
+        self, attempt_id: str, *, now: datetime | None = None, lease_seconds: int = 60
+    ) -> SyncLease | None:
+        token = uuid4().hex
+        if not self.claim_sync_attempt(
+            attempt_id, token, now=now, lease_seconds=lease_seconds
+        ):
+            return None
+        row = self.sync_attempt(attempt_id)
+        assert row is not None
+        return SyncLease(row.id, token, row.lease_epoch, row.lease_expires_at)
+
+    def claim_sync_chunk(
+        self, chunk_id: int, lease_token: str, *, now: datetime | None = None,
+        lease_seconds: int = 60, attempt_lease_token: str | None = None,
+        attempt_lease_epoch: int | None = None,
+    ) -> bool:
+        now = _naive_utc(now or datetime.now(timezone.utc))
+        active_conditions = [
+            orm.SyncAttempt.id == orm.SyncChunk.attempt_id,
+            orm.SyncAttempt.status == "running",
+            orm.SyncAttempt.cancel_requested_at.is_(None),
+        ]
+        if attempt_lease_token is not None:
+            active_conditions.extend([
+                orm.SyncAttempt.lease_token == attempt_lease_token,
+                orm.SyncAttempt.lease_epoch == attempt_lease_epoch,
+                orm.SyncAttempt.lease_expires_at > now,
+            ])
+        active_attempt = select(orm.SyncAttempt.id).where(*active_conditions)
+        result = self.db.execute(update(orm.SyncChunk).where(
+            orm.SyncChunk.id == chunk_id,
+            orm.SyncChunk.attempt_id.in_(active_attempt),
+            orm.SyncChunk.status.in_(("queued", "running", "retry_wait")),
+            or_(orm.SyncChunk.next_retry_at.is_(None), orm.SyncChunk.next_retry_at <= now),
+            or_(orm.SyncChunk.lease_expires_at.is_(None), orm.SyncChunk.lease_expires_at <= now),
+        ).values(
+            status="running",
+            lease_token=lease_token,
+            lease_epoch=orm.SyncChunk.lease_epoch + 1,
+            lease_expires_at=now + timedelta(seconds=lease_seconds),
+            started_at=func.coalesce(orm.SyncChunk.started_at, now),
+            next_retry_at=None,
+            attempt_count=orm.SyncChunk.attempt_count + 1,
+            updated_at=now,
+        ))
+        self.db.flush()
+        return bool(result.rowcount)
+
+    def claim_chunk(self, *args, **kwargs) -> bool:
+        return self.claim_sync_chunk(*args, **kwargs)
+
+    def takeover_expired_chunk(self, *args, **kwargs) -> bool:
+        return self.claim_sync_chunk(*args, **kwargs)
+
+    def acquire_sync_chunk_lease(
+        self, chunk_id: int, *, now: datetime | None = None, lease_seconds: int = 60
+    ) -> SyncLease | None:
+        token = uuid4().hex
+        if not self.claim_sync_chunk(chunk_id, token, now=now, lease_seconds=lease_seconds):
+            return None
+        row = self.db.get(orm.SyncChunk, chunk_id)
+        assert row is not None
+        return SyncLease(row.id, token, row.lease_epoch, row.lease_expires_at)
+
+    def renew_sync_attempt_lease(
+        self, attempt_id: str, lease_token: str, lease_epoch: int, *,
+        now: datetime | None = None, lease_seconds: int = 60
+    ) -> bool:
+        now = _naive_utc(now or datetime.now(timezone.utc))
+        result = self.db.execute(update(orm.SyncAttempt).where(
+            orm.SyncAttempt.id == attempt_id,
+            orm.SyncAttempt.status == "running",
+            orm.SyncAttempt.lease_token == lease_token,
+            orm.SyncAttempt.lease_epoch == lease_epoch,
+            orm.SyncAttempt.lease_expires_at > now,
+        ).values(
+            lease_expires_at=now + timedelta(seconds=lease_seconds),
+            updated_at=now,
+        ))
+        self.db.flush()
+        return bool(result.rowcount)
+
+    def renew_attempt_lease(self, *args, **kwargs) -> bool:
+        return self.renew_sync_attempt_lease(*args, **kwargs)
+
+    def renew_sync_chunk_lease(
+        self, chunk_id: int, lease_token: str, lease_epoch: int, *,
+        now: datetime | None = None, lease_seconds: int = 60
+    ) -> bool:
+        now = _naive_utc(now or datetime.now(timezone.utc))
+        result = self.db.execute(update(orm.SyncChunk).where(
+            orm.SyncChunk.id == chunk_id,
+            orm.SyncChunk.status == "running",
+            orm.SyncChunk.lease_token == lease_token,
+            orm.SyncChunk.lease_epoch == lease_epoch,
+            orm.SyncChunk.lease_expires_at > now,
+        ).values(
+            lease_expires_at=now + timedelta(seconds=lease_seconds),
+            updated_at=now,
+        ))
+        self.db.flush()
+        return bool(result.rowcount)
+
+    def renew_chunk_lease(self, *args, **kwargs) -> bool:
+        return self.renew_sync_chunk_lease(*args, **kwargs)
+
+    def release_sync_attempt_lease(
+        self, attempt_id: str, lease_token: str, lease_epoch: int, *,
+        now: datetime | None = None, status: str = "queued"
+    ) -> bool:
+        now = _naive_utc(now or datetime.now(timezone.utc))
+        result = self.db.execute(update(orm.SyncAttempt).where(
+            orm.SyncAttempt.id == attempt_id,
+            orm.SyncAttempt.status == "running",
+            orm.SyncAttempt.lease_token == lease_token,
+            orm.SyncAttempt.lease_epoch == lease_epoch,
+        ).values(
+            status=status,
+            lease_token=None,
+            lease_expires_at=None,
+            updated_at=now,
+        ))
+        self.db.flush()
+        return bool(result.rowcount)
+
+    def release_attempt_lease(self, *args, **kwargs) -> bool:
+        return self.release_sync_attempt_lease(*args, **kwargs)
+
+    def release_sync_chunk_lease(
+        self, chunk_id: int, lease_token: str, lease_epoch: int, *,
+        now: datetime | None = None, status: str = "queued"
+    ) -> bool:
+        now = _naive_utc(now or datetime.now(timezone.utc))
+        result = self.db.execute(update(orm.SyncChunk).where(
+            orm.SyncChunk.id == chunk_id,
+            orm.SyncChunk.status == "running",
+            orm.SyncChunk.lease_token == lease_token,
+            orm.SyncChunk.lease_epoch == lease_epoch,
+        ).values(
+            status=status,
+            lease_token=None,
+            lease_expires_at=None,
+            updated_at=now,
+        ))
+        self.db.flush()
+        return bool(result.rowcount)
+
+    def release_chunk_lease(self, *args, **kwargs) -> bool:
+        return self.release_sync_chunk_lease(*args, **kwargs)
+
+    def request_sync_cancel(
+        self, attempt_id: str, *, now: datetime | None = None
+    ) -> bool:
+        now = _naive_utc(now or datetime.now(timezone.utc))
+        result = self.db.execute(update(orm.SyncAttempt).where(
+            orm.SyncAttempt.id == attempt_id,
+            orm.SyncAttempt.status.in_(("queued", "running", "retry_wait")),
+            orm.SyncAttempt.cancel_requested_at.is_(None),
+        ).values(
+            cancel_requested_at=now,
+            updated_at=now,
+        ))
+        self.db.flush()
+        return bool(result.rowcount)
+
+    def request_cancel(self, *args, **kwargs) -> bool:
+        return self.request_sync_cancel(*args, **kwargs)
+
+    def cancel_sync_attempt(
+        self, attempt_id: str, *, now: datetime | None = None,
+        lease_token: str | None = None, lease_epoch: int | None = None
+    ) -> bool:
+        now = _naive_utc(now or datetime.now(timezone.utc))
+        conditions = [
+            orm.SyncAttempt.id == attempt_id,
+            orm.SyncAttempt.status.in_(("queued", "running", "retry_wait")),
+            orm.SyncAttempt.cancel_requested_at.is_not(None),
+        ]
+        if lease_token is not None:
+            conditions.extend([
+                orm.SyncAttempt.lease_token == lease_token,
+                orm.SyncAttempt.lease_epoch == lease_epoch,
+            ])
+        else:
+            conditions.append(or_(
+                orm.SyncAttempt.status.in_(("queued", "retry_wait")),
+                orm.SyncAttempt.lease_expires_at <= now,
+            ))
+        result = self.db.execute(update(orm.SyncAttempt).where(*conditions).values(
+            status="cancelled",
+            lease_token=None,
+            lease_expires_at=None,
+            cancelled_at=now,
+            finished_at=now,
+            updated_at=now,
+        ))
+        if result.rowcount:
+            self.db.execute(update(orm.SyncChunk).where(
+                orm.SyncChunk.attempt_id == attempt_id,
+                orm.SyncChunk.status.in_(("queued", "retry_wait")),
+            ).values(
+                status="cancelled",
+                lease_token=None,
+                lease_expires_at=None,
+                finished_at=now,
+                updated_at=now,
+            ))
+        self.db.flush()
+        return bool(result.rowcount)
+
+    def _finalize_sync_chunk(
+        self, chunk_id: int, lease_token: str, lease_epoch: int, status: str,
+        *, now: datetime | None = None, next_retry_at: datetime | None = None,
+        stages: dict | None = None, raw_records: int = 0, records_written: int = 0,
+        error_kind: str | None = None, error: str | None = None,
+    ) -> bool:
+        now = _naive_utc(now or datetime.now(timezone.utc))
+        if status == "retry_wait" and next_retry_at is None:
+            raise ValueError("重试等待 chunk 必须提供 next_retry_at")
+        values = {
+            "status": status,
+            "lease_token": None,
+            "lease_expires_at": None,
+            "next_retry_at": _naive_utc(next_retry_at) if next_retry_at else None,
+            "raw_records": raw_records,
+            "records_written": records_written,
+            "error_kind": error_kind,
+            "error": error[:2000] if error else None,
+            "finished_at": now if status in ("succeeded", "unavailable", "failed", "cancelled") else None,
+            "updated_at": now,
+        }
+        if stages is not None:
+            values["stages"] = dict(stages)
+            for stage_name in ("fetch_status", "parse_status", "write_status"):
+                if stage_name in stages:
+                    values[stage_name] = stages[stage_name]
+        result = self.db.execute(update(orm.SyncChunk).where(
+            orm.SyncChunk.id == chunk_id,
+            orm.SyncChunk.status == "running",
+            orm.SyncChunk.lease_token == lease_token,
+            orm.SyncChunk.lease_epoch == lease_epoch,
+            *([orm.SyncChunk.allow_unavailable.is_(True)] if status == "unavailable" else []),
+        ).values(**values))
+        self.db.flush()
+        return bool(result.rowcount)
+
+    def finalize_sync_chunk_success(self, *args, **kwargs) -> bool:
+        return self._finalize_sync_chunk(*args, "succeeded", **kwargs)
+
+    def finalize_sync_chunk_unavailable(self, *args, **kwargs) -> bool:
+        return self._finalize_sync_chunk(*args, "unavailable", **kwargs)
+
+    def finalize_sync_chunk_retry(self, *args, **kwargs) -> bool:
+        return self._finalize_sync_chunk(*args, "retry_wait", **kwargs)
+
+    def finalize_sync_chunk_failure(self, *args, **kwargs) -> bool:
+        return self._finalize_sync_chunk(*args, "failed", **kwargs)
+
+    def finalize_chunk(self, chunk_id, lease_token, lease_epoch, status, **kwargs) -> bool:
+        return self._finalize_sync_chunk(
+            chunk_id, lease_token, lease_epoch, status, **kwargs
+        )
+
+    def _finalize_sync_attempt(
+        self, attempt_id: str, lease_token: str, lease_epoch: int, status: str,
+        *, now: datetime | None = None, next_retry_at: datetime | None = None,
+        error_kind: str | None = None, error: str | None = None,
+    ) -> bool:
+        now = _naive_utc(now or datetime.now(timezone.utc))
+        if status == "retry_wait" and next_retry_at is None:
+            raise ValueError("重试等待 attempt 必须提供 next_retry_at")
+        aggregate = self.aggregate_sync_attempt(attempt_id)
+        if status == "succeeded" and (
+            not aggregate.complete or aggregate.failed_chunks
+        ):
+            return False
+        result = self.db.execute(update(orm.SyncAttempt).where(
+            orm.SyncAttempt.id == attempt_id,
+            orm.SyncAttempt.status == "running",
+            orm.SyncAttempt.cancel_requested_at.is_(None),
+            orm.SyncAttempt.lease_token == lease_token,
+            orm.SyncAttempt.lease_epoch == lease_epoch,
+        ).values(
+            status=status,
+            lease_token=None,
+            lease_expires_at=None,
+            next_retry_at=_naive_utc(next_retry_at) if next_retry_at else None,
+            retry_count=(
+                orm.SyncAttempt.retry_count + 1 if status == "retry_wait"
+                else orm.SyncAttempt.retry_count
+            ),
+            completed_count=aggregate.completed_count,
+            chunk_count=aggregate.total_chunks,
+            raw_records=aggregate.raw_records,
+            records_written=aggregate.records_written,
+            error_kind=error_kind,
+            error=error[:4000] if error else None,
+            finished_at=(
+                now if status in ("succeeded", "partial", "failed", "needs_reauth", "cancelled")
+                else None
+            ),
+            updated_at=now,
+        ))
+        self.db.flush()
+        return bool(result.rowcount)
+
+    def finalize_sync_attempt_success(self, *args, **kwargs) -> bool:
+        return self._finalize_sync_attempt(*args, "succeeded", **kwargs)
+
+    def finalize_sync_attempt_retry(self, *args, **kwargs) -> bool:
+        return self._finalize_sync_attempt(*args, "retry_wait", **kwargs)
+
+    def finalize_sync_attempt_failure(self, *args, **kwargs) -> bool:
+        return self._finalize_sync_attempt(*args, "failed", **kwargs)
+
+    def finalize_sync_attempt_partial(self, *args, **kwargs) -> bool:
+        return self._finalize_sync_attempt(*args, "partial", **kwargs)
+
+    def finalize_sync_attempt_needs_reauth(self, *args, **kwargs) -> bool:
+        return self._finalize_sync_attempt(*args, "needs_reauth", **kwargs)
+
+    def finalize_attempt_success(self, *args, **kwargs) -> bool:
+        return self.finalize_sync_attempt_success(*args, **kwargs)
+
+    def finalize_attempt_retry(self, *args, **kwargs) -> bool:
+        return self.finalize_sync_attempt_retry(*args, **kwargs)
+
+    def finalize_attempt_failure(self, *args, **kwargs) -> bool:
+        return self.finalize_sync_attempt_failure(*args, **kwargs)
+
+    def finalize_attempt(self, attempt_id, lease_token, lease_epoch, status, **kwargs) -> bool:
+        return self._finalize_sync_attempt(
+            attempt_id, lease_token, lease_epoch, status, **kwargs
+        )
+
+    def aggregate_sync_attempt(self, attempt_id: str) -> SyncAttemptAggregate:
+        attempt = self.db.get(orm.SyncAttempt, attempt_id)
+        if attempt is None:
+            raise ValueError("同步尝试不存在")
+        rows = self.sync_chunks(attempt_id)
+        counts = {status: 0 for status in (
+            "succeeded", "unavailable", "failed", "cancelled",
+            "retry_wait", "running", "queued"
+        )}
+        for row in rows:
+            counts[row.status] = counts.get(row.status, 0) + 1
+        return SyncAttemptAggregate(
+            attempt_id=attempt.id,
+            status=attempt.status,
+            total_chunks=len(rows),
+            succeeded_chunks=counts["succeeded"],
+            unavailable_chunks=counts["unavailable"],
+            failed_chunks=counts["failed"],
+            cancelled_chunks=counts["cancelled"],
+            retrying_chunks=counts["retry_wait"],
+            running_chunks=counts["running"],
+            queued_chunks=counts["queued"],
+            raw_records=sum(row.raw_records or 0 for row in rows),
+            records_written=sum(row.records_written or 0 for row in rows),
+        )
+
+    def sync_attempt_aggregate(self, *args, **kwargs) -> SyncAttemptAggregate:
+        return self.aggregate_sync_attempt(*args, **kwargs)
+
     # ---- 同步数据健康 ----
 
     def save_sync_stream_state(
@@ -1107,15 +1742,33 @@ class HealthRepository:
         error_kind: str | None = None,
         message: str | None = None,
         source: str = "zepp",
+        attempt_id: str | None = None,
     ) -> orm.SyncStreamState:
+        incoming_attempt = None
+        if attempt_id is not None:
+            incoming_attempt = self.sync_attempt(attempt_id, user_id=user_id)
+            if incoming_attempt is None or incoming_attempt.source != source:
+                raise ValueError("同步投影的 attempt 不属于当前用户或数据源")
         row = self.db.execute(select(orm.SyncStreamState).where(
             orm.SyncStreamState.user_id == user_id,
             orm.SyncStreamState.source == source,
             orm.SyncStreamState.stream == stream,
         )).scalar_one_or_none()
         if row is None:
-            row = orm.SyncStreamState(user_id=user_id, source=source, stream=stream)
+            row = orm.SyncStreamState(
+                user_id=user_id, source=source, stream=stream, attempt_id=attempt_id
+            )
             self.db.add(row)
+        elif attempt_id is not None and row.attempt_id is not None:
+            current_attempt = self.sync_attempt(row.attempt_id)
+            if (
+                current_attempt is not None
+                and incoming_attempt is not None
+                and current_attempt.created_at > incoming_attempt.created_at
+            ):
+                return row
+        if attempt_id is not None:
+            row.attempt_id = attempt_id
         row.fetch_status = fetch_status
         row.parse_status = parse_status
         row.write_status = write_status
@@ -1897,24 +2550,41 @@ class HealthRepository:
     def pairing_session(self, pairing_id: str) -> orm.ZeppPairingSession | None:
         return self.db.get(orm.ZeppPairingSession, pairing_id)
 
-    def claim_pairing_session(self, pairing_id: str) -> bool:
+    def claim_pairing_session(
+        self, pairing_id: str, processing_lease_seconds: int = 120
+    ) -> bool:
         now = datetime.utcnow()
+        reclaim_before = now - timedelta(seconds=max(1, processing_lease_seconds))
         result = self.db.execute(
             update(orm.ZeppPairingSession).where(
                 orm.ZeppPairingSession.id == pairing_id,
-                orm.ZeppPairingSession.status.in_(("waiting", "failed")),
+                or_(
+                    orm.ZeppPairingSession.status.in_(("waiting", "failed")),
+                    (
+                        (orm.ZeppPairingSession.status == "processing")
+                        & (orm.ZeppPairingSession.processing_started_at <= reclaim_before)
+                    ),
+                ),
                 orm.ZeppPairingSession.expires_at > now,
-            ).values(status="processing", message="正在验证 Zepp 凭据")
+            ).values(
+                status="processing", message="正在验证 Zepp 凭据",
+                processing_started_at=now,
+            )
         )
         self.db.flush()
         return bool(result.rowcount)
 
-    def finish_pairing_session(self, pairing_id: str, message: str = "已连接") -> None:
+    def finish_pairing_session(
+        self, pairing_id: str, message: str = "已连接", sync_attempt_id: str | None = None
+    ) -> None:
         row = self.db.get(orm.ZeppPairingSession, pairing_id)
         if row:
             row.status = "connected"
             row.message = message
             row.consumed_at = datetime.utcnow()
+            row.processing_started_at = None
+            if sync_attempt_id is not None:
+                row.sync_attempt_id = sync_attempt_id
             self.db.flush()
 
     def fail_pairing_session(self, pairing_id: str, message: str) -> None:
@@ -1922,11 +2592,14 @@ class HealthRepository:
         if row and row.status != "connected":
             row.status = "failed"
             row.message = message[:512]
+            row.processing_started_at = None
             self.db.flush()
 
     # ---- Zepp 浏览器持续连接 ----
 
-    def create_browser_link(self, token_digest: str, user_id: str) -> orm.ZeppBrowserLink:
+    def create_browser_link(
+        self, token_digest: str, user_id: str, sync_attempt_id: str | None = None
+    ) -> orm.ZeppBrowserLink:
         self.upsert_user(user_id)
         row = orm.ZeppBrowserLink(
             token_digest=token_digest,
@@ -1934,6 +2607,7 @@ class HealthRepository:
             status="connected",
             message="浏览器已连接",
             last_verified_at=datetime.utcnow(),
+            sync_attempt_id=sync_attempt_id,
         )
         self.db.add(row)
         self.db.flush()
@@ -1982,13 +2656,17 @@ class HealthRepository:
             row.last_seen_at = now
         self.db.flush()
 
-    def mark_browser_link_synced(self, token_digest: str, message: str) -> None:
+    def mark_browser_link_synced(
+        self, token_digest: str, message: str, sync_attempt_id: str | None = None
+    ) -> None:
         row = self.browser_link(token_digest)
         if row and row.revoked_at is None:
             if row.status != "needs_login":
                 row.status = "connected"
                 row.message = message[:512]
             row.last_sync_at = datetime.utcnow()
+            if sync_attempt_id is not None:
+                row.sync_attempt_id = sync_attempt_id
             self.db.flush()
 
     def mark_browser_link_sync_failed(self, token_digest: str, message: str) -> None:
@@ -2033,9 +2711,13 @@ class HealthRepository:
             orm.RecommendationInstance,
             orm.AnalysisRun,
             orm.SubjectiveFeedback,
-            orm.ZeppDeviceLink,
+            orm.SyncStreamState,
+            orm.ZeppDeviceLink, orm.ZeppBrowserLink, orm.ZeppPairingSession,
         ):
             self.db.execute(delete(model).where(model.user_id == user_id))
+        attempt_ids = select(orm.SyncAttempt.id).where(orm.SyncAttempt.user_id == user_id)
+        self.db.execute(delete(orm.SyncChunk).where(orm.SyncChunk.attempt_id.in_(attempt_ids)))
+        self.db.execute(delete(orm.SyncAttempt).where(orm.SyncAttempt.user_id == user_id))
 
 
 def _profile_field_value(field: ProfileField | None):

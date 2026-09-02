@@ -3,12 +3,14 @@
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from vitalis.api.deps import require_user_id
 from vitalis.connectors import get_connector
 from vitalis.connectors.zepp import ZeppAuthError, ZeppConnector
+from vitalis.config import settings
 from vitalis.models import User
 from vitalis.services.aggregation_service import AggregationService, Granularity
 from vitalis.storage import HealthRepository, session_scope
@@ -19,11 +21,43 @@ router = APIRouter(prefix="/health", tags=["health"])
 
 @router.get("/data-health")
 def health_data_health(user_id: str = Depends(require_user_id)) -> dict:
-    """Explain the latest Zepp fetch, parse and write state per stream."""
+    """Explain the latest Zepp fetch and durable attempt progress."""
     with session_scope() as db:
-        rows = HealthRepository(db).sync_stream_states(user_id)
+        repo = HealthRepository(db)
+        rows = repo.sync_stream_states(user_id)
+        attempts = repo.sync_attempts(user_id, source="zepp", limit=1)
+        latest = attempts[0] if attempts else None
+        chunk_rows = repo.sync_chunks(latest.id, user_id=user_id) if latest else []
+    chunk_summary: dict[str, dict] = {}
+    for row in chunk_rows:
+        stream = row.health_stream or row.stream
+        summary = chunk_summary.setdefault(stream, {"total": 0, "succeeded": 0, "unavailable": 0, "failed": 0, "retry_wait": 0, "running": 0, "queued": 0, "records_written": 0, "raw_records": 0})
+        summary["total"] += 1
+        if row.status in summary:
+            summary[row.status] += 1
+        summary["records_written"] += row.records_written or 0
+        summary["raw_records"] += row.raw_records or 0
+    latest_payload = None
+    if latest is not None:
+        counts = {key: 0 for key in ("succeeded", "unavailable", "failed", "retry_wait", "running", "queued", "cancelled")}
+        for row in chunk_rows:
+            counts[row.status] = counts.get(row.status, 0) + 1
+        latest_payload = {
+            "attempt_id": latest.id,
+            "status": latest.status,
+            "trigger": latest.trigger,
+            "window": {"start": _iso_utc(latest.window_start), "end": _iso_utc(latest.window_end)},
+            "window_start": _iso_utc(latest.window_start),
+            "window_end": _iso_utc(latest.window_end),
+            "deadline": _iso_utc(latest.deadline_at) if latest.deadline_at else None,
+            "retry": {"count": latest.retry_count, "next_at": _iso_utc(latest.next_retry_at) if latest.next_retry_at else None},
+            "next_retry": _iso_utc(latest.next_retry_at) if latest.next_retry_at else None,
+            "progress": {"total_chunks": len(chunk_rows), **counts, "completed_count": counts["succeeded"] + counts["unavailable"]},
+            "chunks_by_stream": chunk_summary,
+        }
     return {
         "user_id": user_id,
+        "latest_attempt": latest_payload,
         "streams": [
             {
                 "stream": row.stream,
@@ -34,7 +68,6 @@ def health_data_health(user_id: str = Depends(require_user_id)) -> dict:
                 "raw_records": row.raw_records,
                 "records_written": row.records_written,
                 "error_kind": row.error_kind,
-                "message": row.message,
             }
             for row in rows
         ],
@@ -44,59 +77,55 @@ def health_data_health(user_id: str = Depends(require_user_id)) -> dict:
 @router.post("/sync")
 def health_sync(
     days: int = Query(7, ge=1, le=730, description="同步天数"),
-    decode_dense_files: bool = Query(
-        False,
-        description="显式解码最多一个秒级心率归档；普通日报同步只更新索引",
-    ),
+    decode_dense_files: bool = Query(False, description="显式解码最多一个秒级心率归档"),
     user_id: str = Depends(require_user_id),
 ) -> dict:
-    """手动触发增量同步（不局限于凌晨自动调度）。"""
+    """Check the token in a short session, then run the coordinator outside it."""
     connector: ZeppConnector = get_connector("zepp")  # type: ignore[assignment]
     try:
         with session_scope() as db:
-            repo = HealthRepository(db)
-            auth = connector.load_token(repo, user_id)
-            if auth is None:
-                return {
-                    "user_id": user_id,
-                    "status": "token_required",
-                    "detail": "尚未导入 Zepp 凭据，请先访问 /connect/zepp/scan 导入",
-                }
-            report = connector.sync_with_report(
-                User(id=user_id),
-                days=days,
-                repo=repo,
-                decode_dense_files=decode_dense_files,
-            )
-        if report.needs_reauth:
-            raise ZeppAuthError(
-                "Zepp 数据流返回凭据失效",
-                needs_reauth=True,
-            )
-        if not report.success:
+            auth = connector.load_token(HealthRepository(db), user_id)
+        if auth is None and not getattr(connector, "mock", False):
+            return {"user_id": user_id, "status": "token_required", "detail": "尚未导入 Zepp 凭据，请先访问 /connect/zepp/scan 导入"}
+        if getattr(connector, "mock", False):
             with session_scope() as db:
-                repo = HealthRepository(db)
-                link = repo.latest_browser_link(user_id)
-                if link:
-                    repo.mark_browser_link_sync_failed(
-                        link.token_digest, "手动同步不完整，将稍后重试"
-                    )
+                report = connector.sync_with_report(
+                    User(id=user_id), days=days, repo=HealthRepository(db),
+                    decode_dense_files=decode_dense_files,
+                    max_chunks=max(1, settings.sync_dispatcher_batch_chunks),
+                    trigger="manual",
+                )
+        else:
+            report = connector.sync_with_report(
+                User(id=user_id), days=days,
+                decode_dense_files=decode_dense_files,
+                max_chunks=max(1, settings.sync_dispatcher_batch_chunks),
+                trigger="manual",
+            )
+        progress = report.progress or {}
+        attempt_status = progress.get("status")
+        status_map = {
+            "succeeded": "synced", "retry_wait": "transient_error",
+            "needs_reauth": "needs_reauth", "partial": "incomplete",
+            "failed": "failed", "cancelled": "cancelled", "queued": "queued",
+        }
+        response_status = status_map.get(attempt_status, "synced" if report.success else "incomplete")
+        if report.needs_reauth:
+            response_status = "needs_reauth"
         return {
             "user_id": user_id,
-            "status": "synced" if report.success else "incomplete",
+            "status": response_status,
             "success": report.success,
+            "attempt_id": progress.get("attempt_id"),
+            "attempt_status": attempt_status,
+            "progress": progress,
+            "next_retry": progress.get("next_retry_at"),
+            "retryable": response_status == "transient_error",
             "streams": [
-                {
-                    "stream": s.stream,
-                    "status": s.status,
-                    "records_written": s.records_written,
-                    "fetch_status": s.fetch_status,
-                    "parse_status": s.parse_status,
-                    "write_status": s.write_status,
-                    "needs_reauth": s.needs_reauth,
-                    "error_kind": s.error_kind,
-                    "message": s.message,
-                }
+                {"stream": s.stream, "status": s.status, "records_written": s.records_written,
+                 "fetch_status": s.fetch_status, "parse_status": s.parse_status,
+                 "write_status": s.write_status, "needs_reauth": s.needs_reauth,
+                 "error_kind": s.error_kind, "message": s.message}
                 for s in report.streams
             ],
             "records_written": report.records_written,
@@ -105,49 +134,41 @@ def health_sync(
     except ZeppAuthError as exc:
         with session_scope() as db:
             HealthRepository(db).save_sync_stream_state(
-                user_id,
-                "sync",
-                fetch_status="failed",
-                parse_status="not_run",
-                write_status="not_run",
-                fetched_at=datetime.now(timezone.utc),
-                parsed_at=None,
-                written_at=None,
-                raw_records=0,
-                records_written=0,
-                error_kind=exc.kind,
-                message=str(exc),
+                user_id, "sync", fetch_status="failed", parse_status="not_run", write_status="not_run",
+                fetched_at=datetime.now(timezone.utc), parsed_at=None, written_at=None,
+                raw_records=0, records_written=0, error_kind=exc.kind, message=str(exc),
             )
+        if exc.needs_reauth:
+            with session_scope() as db:
+                HealthRepository(db).mark_user_browser_links_reauth(user_id, "Zepp 登录已失效，请重新登录")
+            return {"user_id": user_id, "status": "needs_reauth", "retryable": False, "error_kind": "auth", "detail": str(exc)}
         if exc.kind in {"network", "service", "timeout"}:
-            return {
-                "user_id": user_id,
-                "status": "transient_error",
-                "retryable": True,
-                "error_kind": exc.kind,
-                "detail": str(exc),
-                "hint": "Zepp 暂时不可用，稍后会自动重试",
-            }
-        if not exc.needs_reauth:
-            return {
-                "user_id": user_id,
-                "status": "error",
-                "retryable": False,
-                "error_kind": exc.kind,
-                "detail": str(exc),
-            }
-        with session_scope() as db:
-            HealthRepository(db).mark_user_browser_links_reauth(
-                user_id, "Zepp 登录已失效，请重新登录"
-            )
-        return {
-            "user_id": user_id,
-            "status": "needs_reauth",
-            "error_kind": "auth",
-            "detail": str(exc),
-            "hint": "Zepp 登录已失效，请在官方登录页重新登录；浏览器扩展会自动恢复连接",
-        }
+            return {"user_id": user_id, "status": "transient_error", "retryable": True, "error_kind": exc.kind, "detail": str(exc)}
+        return {"user_id": user_id, "status": "failed", "retryable": False, "error_kind": exc.kind, "detail": str(exc)}
     except Exception as exc:
-        return {"user_id": user_id, "status": "error", "detail": str(exc)}
+        return {"user_id": user_id, "status": "failed", "retryable": False, "detail": str(exc)}
+
+
+@router.get("/sync/{attempt_id}")
+def health_sync_status(attempt_id: str, user_id: str = Depends(require_user_id)) -> dict:
+    from vitalis.services.zepp_sync_coordinator import ZeppSyncCoordinator
+    connector = get_connector("zepp")
+    state = ZeppSyncCoordinator(connector=connector).public_status(attempt_id, user_id=user_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="同步尝试不存在")
+    state["user_id"] = user_id
+    return state
+
+
+@router.post("/sync/{attempt_id}/cancel")
+def health_sync_cancel(attempt_id: str, user_id: str = Depends(require_user_id)) -> dict:
+    from vitalis.services.zepp_sync_coordinator import ZeppSyncCoordinator
+    coordinator = ZeppSyncCoordinator(connector=get_connector("zepp"))
+    state = coordinator.public_status(attempt_id, user_id=user_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="同步尝试不存在")
+    changed = coordinator.request_cancel(attempt_id)
+    return {"user_id": user_id, "attempt_id": attempt_id, "cancel_requested": changed, "attempt_status": "cancel_requested" if changed else state["attempt"]["status"]}
 
 
 @router.get("/token-status")
@@ -169,13 +190,21 @@ def health_token_status(user_id: str = Depends(require_user_id)) -> dict:
     error_kind: str | None = None
     try:
         connector.authenticate()
+        if hasattr(connector, "_client_for"):
+            with session_scope() as db:
+                client = connector._client_for(HealthRepository(db), User(id=user_id))
+        else:
+            from vitalis.connectors.zepp.client import ZeppAPIClient
+            client = ZeppAPIClient(
+                app_token=getattr(auth, "access_token", ""),
+                user_id=getattr(auth, "source_user_id", None) or "me",
+                region_host=getattr(auth, "region_host", "") or "api-mifitcn.zepp.com",
+            )
+        client.verify()
         with session_scope() as db:
-            repo = HealthRepository(db)
-            client = connector._client_for(repo, User(id=user_id))
-            client.verify()
-            link = repo.latest_browser_link(user_id)
+            link = HealthRepository(db).latest_browser_link(user_id)
             if link and link.status != "needs_login":
-                repo.mark_browser_link_verified(link.token_digest)
+                HealthRepository(db).mark_browser_link_verified(link.token_digest)
         valid = True
         detail = "凭据有效"
     except ZeppAuthError as exc:
@@ -213,7 +242,7 @@ def health_token_status(user_id: str = Depends(require_user_id)) -> dict:
             link.last_verified_at.isoformat() + "Z" if link and link.last_verified_at else None
         ),
         "last_sync_at": link.last_sync_at.isoformat() + "Z" if link and link.last_sync_at else None,
-        "next_auto_sync": "每天凌晨 02:00",
+        "next_auto_sync": _next_auto_sync(),
         "manual_sync": f"POST /api/v1/health/sync?days=7 (X-User-Id: {user_id})",
     }
 
@@ -490,3 +519,15 @@ def _iso_utc(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _next_auto_sync() -> str:
+    from vitalis.config import settings
+    now = datetime.now(ZoneInfo(settings.timezone))
+    candidate = now.replace(
+        hour=settings.sync_cron_hour, minute=settings.sync_cron_minute,
+        second=0, microsecond=0,
+    )
+    if candidate <= now:
+        candidate += timedelta(days=1)
+    return candidate.isoformat()

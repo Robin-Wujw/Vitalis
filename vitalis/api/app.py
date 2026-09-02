@@ -2,6 +2,8 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import logging
+import os
 
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,12 +20,26 @@ api.include_router(zepp_pairing_router)
 api.include_router(health_router)
 api.include_router(intelligence_router)
 
+log = logging.getLogger("vitalis.api")
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Prepare persistent storage for every supported ASGI launch command."""
+    """Prepare storage and recovery dispatch for every supported ASGI launch."""
     init_db()
-    yield
+    scheduler = None
+    if os.getenv("VITALIS_NO_SCHEDULER", "0") != "1":
+        try:
+            from vitalis.scheduler import start_scheduler
+
+            scheduler = start_scheduler()
+        except Exception as exc:
+            log.warning("scheduler start skipped: %s", exc)
+    try:
+        yield
+    finally:
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
 
 
 def create_app() -> FastAPI:

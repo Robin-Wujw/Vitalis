@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 import qrcode
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
@@ -37,6 +37,12 @@ class ConnectRequest(BaseModel):
 
 def _connector() -> ZeppConnector:
     return get_connector("zepp")  # type: ignore[return-value]
+
+
+def _kick_attempt(attempt_id: str) -> None:
+    from vitalis.services.zepp_sync_coordinator import ZeppSyncCoordinator
+
+    ZeppSyncCoordinator(connector=_connector()).run_attempt(attempt_id, max_chunks=1)
 
 
 @router.get("/zepp/authorize", summary="扫码授权：返回二维码 URL")
@@ -338,6 +344,7 @@ def zepp_callback(
     request: Request,
     code: str,
     state: str,
+    background_tasks: BackgroundTasks,
     connector: ZeppConnector = Depends(_connector),
 ) -> Response:
     """Zepp 授权回调入口（redirect_uri）。
@@ -355,8 +362,16 @@ def zepp_callback(
                     kind="invalid_request",
                 )
             auth = connector.exchange_and_save(repo, user_id, code)
-        # 授权事务已提交（释放 SQLite 写锁），再执行数据同步
-        sync = SyncService(connector).sync_user(user_id, start=local_today() - timedelta(days=7))
+        # Token commit is complete before any coordinator work starts.
+        sync = None
+        if connector.mock:
+            sync = SyncService(connector).sync_user(user_id, start=local_today() - timedelta(days=7))
+        elif hasattr(connector, "create_attempt"):
+            attempt = connector.create_attempt(
+                user_id, days=7, trigger="oauth_callback", trigger_ref=state
+            )
+            background_tasks.add_task(_kick_attempt, attempt.id)
+            sync = {"attempt_id": attempt.id, "attempt_status": attempt.status}
         if "text/html" in request.headers.get("accept", "*/*"):
             base = str(request.url).split("/api/v1")[0]
             body = f"""<!DOCTYPE html>
@@ -400,6 +415,10 @@ def zepp_token_status(user_id: str = Depends(require_user_id)) -> dict:
         repo = HealthRepository(db)
         auth = repo.get_token(user_id, connector.source)
         link = repo.latest_browser_link(user_id)
+        sync_attempt = (
+            repo.sync_attempt(link.sync_attempt_id, user_id=user_id)
+            if link and link.sync_attempt_id else None
+        )
     if auth is None:
         return {
             "user_id": user_id,
@@ -423,6 +442,9 @@ def zepp_token_status(user_id: str = Depends(require_user_id)) -> dict:
             link.last_verified_at.isoformat() + "Z" if link and link.last_verified_at else None
         ),
         "last_sync_at": link.last_sync_at.isoformat() + "Z" if link and link.last_sync_at else None,
+        "sync_attempt_id": link.sync_attempt_id if link else None,
+        "sync_status": sync_attempt.status if sync_attempt else None,
+        "attempt_status": sync_attempt.status if sync_attempt else None,
     }
 
 
@@ -495,7 +517,11 @@ def _probe_region_hosts(user_id: str, app_token: str, region_hint: str | None, s
 
 
 @router.post("/zepp/token", summary="导入 Zepp 凭据（真实接入主入口）")
-def import_zepp_token(req: ImportTokenRequest, vitalis_user: str = Depends(require_user_id)) -> dict:
+def import_zepp_token(
+    req: ImportTokenRequest,
+    background_tasks: BackgroundTasks,
+    vitalis_user: str = Depends(require_user_id),
+) -> dict:
     """导入并验证 Zepp 凭据，随后同步历史数据。
 
     凭据来源：浏览器登录 watchface.zepp.com 后，F12 -> Application -> Cookies
@@ -555,40 +581,18 @@ def import_zepp_token(req: ImportTokenRequest, vitalis_user: str = Depends(requi
         "token_saved": True,
     }
 
-    # 4. 同步
-    if req.sync_history:
+    # 4. Create the durable attempt after the token commit; dispatcher performs network work.
+    if req.sync_history and hasattr(connector, "create_attempt"):
         try:
-            from vitalis.models import User
-            with session_scope() as db:
-                repo = HealthRepository(db)
-                report = connector.sync_with_report(
-                    User(id=vitalis_user),
-                    days=req.sync_days,
-                    repo=repo,
-                )
+            attempt = connector.create_attempt(
+                vitalis_user, days=req.sync_days, trigger="token_import",
+            )
+            background_tasks.add_task(_kick_attempt, attempt.id)
             response["sync"] = {
-                "success": report.success,
-                "streams": [
-                    {
-                        "stream": s.stream,
-                        "status": s.status,
-                        "records_written": s.records_written,
-                        "message": s.message,
-                    }
-                    for s in report.streams
-                ],
-                "records_written": report.records_written,
-                "message": report.message,
+                "attempt_id": attempt.id,
+                "attempt_status": attempt.status,
+                "progress": {"attempt_id": attempt.id, "status": attempt.status},
             }
-            if report.success:
-                from vitalis.services import IntelligenceCommand
-                result = IntelligenceCommand().analyze(vitalis_user)
-                response["analysis_run_id"] = result.run.id
-                response["profile"] = result.daily.model_dump(mode="json")
-            else:
-                response["status"] = (
-                    "needs_reauth" if report.needs_reauth else "sync_incomplete"
-                )
         except Exception as exc:
             response["sync_error"] = str(exc)
     return response
@@ -652,7 +656,11 @@ def zepp_connect_browser(user: str = Query(..., min_length=1)) -> RedirectRespon
 
 
 @router.post("/zepp")
-def connect_zepp(req: ConnectRequest, user_id: str = Depends(require_user_id)) -> dict:
+def connect_zepp(
+    req: ConnectRequest,
+    background_tasks: BackgroundTasks,
+    user_id: str = Depends(require_user_id),
+) -> dict:
     """连接 Zepp 并同步数据。
 
     有已保存 token（或 mock）：直接同步；
@@ -673,59 +681,36 @@ def connect_zepp(req: ConnectRequest, user_id: str = Depends(require_user_id)) -
         )
         try:
             with session_scope() as db:
-                repo = HealthRepository(db)
-                auth = connector.load_token(repo, user_id)
-                if auth is None and not connector.mock:
-                    return {
-                        "status": "token_required",
-                        "user_id": user_id,
-                        "detail": "尚未导入 Zepp 凭据",
-                        "import_page": f"/api/v1/connect/zepp/import",
-                        "howto": "登录 watchface.zepp.com 后从 cookie hm-user-login-info 取 userid+apptoken，POST /api/v1/connect/zepp/token 导入",
-                    }
-                from vitalis.models import User
-                if connector.mock:
-                    dailies = connector.fetch(
-                        User(id=user_id), start=sync_start, end=sync_end, repo=repo
-                    )
+                auth = connector.load_token(HealthRepository(db), user_id)
+            if auth is None and not connector.mock:
+                return {
+                    "status": "token_required",
+                    "user_id": user_id,
+                    "detail": "尚未导入 Zepp 凭据",
+                    "import_page": f"/api/v1/connect/zepp/import",
+                    "howto": "登录 watchface.zepp.com 后从 cookie hm-user-login-info 取 userid+apptoken，POST /api/v1/connect/zepp/token 导入",
+                }
+            from vitalis.models import User
+            if connector.mock:
+                with session_scope() as db:
+                    repo = HealthRepository(db)
+                    dailies = connector.fetch(User(id=user_id), start=sync_start, end=sync_end, repo=repo)
                     for d in dailies:
                         repo.save_daily(d)
-                    response["sync"] = {
-                        "days_synced": len(dailies),
-                        "start": str(sync_start),
-                        "end": str(sync_end),
-                    }
-                else:
-                    from vitalis.connectors.zepp.fetcher import FetchWindow
-                    report = connector.sync_with_report(
-                        User(id=user_id),
-                        repo=repo,
-                        window=FetchWindow.local_dates(sync_start, sync_end),
-                    )
-                    sync_succeeded = report.success
-                    if not report.success:
-                        response["status"] = (
-                            "needs_reauth" if report.needs_reauth else "sync_incomplete"
-                        )
-                    response["sync"] = {
-                        "success": report.success,
-                        "streams": [
-                            {
-                                "stream": s.stream,
-                                "status": s.status,
-                                "fetch_status": s.fetch_status,
-                                "parse_status": s.parse_status,
-                                "write_status": s.write_status,
-                                "records_written": s.records_written,
-                                "error_kind": s.error_kind,
-                                "needs_reauth": s.needs_reauth,
-                                "message": s.message,
-                            }
-                            for s in report.streams
-                        ],
-                        "records_written": report.records_written,
-                        "message": report.message,
-                    }
+                response["sync"] = {"days_synced": len(dailies), "start": str(sync_start), "end": str(sync_end)}
+            else:
+                from vitalis.connectors.zepp.fetcher import FetchWindow
+                attempt = connector.create_attempt(
+                    user_id, window=FetchWindow.local_dates(sync_start, sync_end),
+                    trigger="connect", trigger_ref=user_id,
+                )
+                background_tasks.add_task(_kick_attempt, attempt.id)
+                response["sync"] = {
+                    "attempt_id": attempt.id,
+                    "attempt_status": attempt.status,
+                    "progress": {"attempt_id": attempt.id, "status": attempt.status},
+                }
+                sync_succeeded = False
             # 只有完整同步后才运行分析，避免基于旧数据或部分写入推送结论。
             if sync_succeeded:
                 from vitalis.services import IntelligenceCommand

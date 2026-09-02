@@ -230,6 +230,14 @@ class ZeppAPIClient:
         self._request_seq += 1
         return f"ZEPBRIDGE-{self._request_seq:016X}"
 
+    def set_timeout(self, timeout: float | None) -> None:
+        """Set the per-request timeout for bounded coordinator slices."""
+        self._client.timeout = timeout
+
+    def close(self) -> None:
+        """Close the underlying HTTP client explicitly."""
+        self._client.close()
+
     # ---- 数据接口 ----
     def fetch_devices(self) -> dict:
         return self._get(
@@ -480,6 +488,14 @@ class MockZeppClient:
     def refresh_token(self, refresh_token: str) -> "MockOAuthToken":
         return MockOAuthToken(access_token="mock-access-refreshed")
 
+    def set_timeout(self, timeout: float | None) -> None:
+        """Match the real client timeout control used by the coordinator."""
+        return None
+
+    def close(self) -> None:
+        """Mock clients do not own network resources."""
+        return None
+
     def verify(self) -> dict:
         return {"data": {"devices": [{"name": "Mock Amazfit"}]}}
 
@@ -487,6 +503,24 @@ class MockZeppClient:
         return {"user_id": "mock-user-001", "nickname": "Mock User"}
 
     # ---- 同构模拟数据 ----
+    def fetch_heart_rate(self, start_time: int, end_time: int, limit: int = 1000, hr_type: int = 2) -> dict:
+        return {"items": [{"timestamp": start_time, "value": 62}]}
+
+    def fetch_file_info_events(self, event_type: str, sub_type: str, from_ms: int, to_ms: int, limit: int = 2000) -> dict:
+        return {"items": []}
+
+    def fetch_user_events(self, event_type: str, sub_type: str | None, from_ms: int, to_ms: int, limit: int = 1000, reverse: bool = True) -> dict:
+        return {"items": []}
+
+    def fetch_user_events_date_string(self, event_type: str, sub_type: str, from_iso: str, to_iso: str, time_zone: str = "Asia/Shanghai", limit: int = 1000) -> dict:
+        return {"items": []}
+
+    def fetch_sport_detail(self, track_id: str, source: str) -> dict:
+        return {"data": {"trackid": track_id, "source": source}}
+
+    def download_dense_file(self, file_type: str, file_id: str) -> bytes:
+        raise ZeppAuthError("mock 没有高频心率归档", kind="not_available")
+
     def fetch_devices(self) -> dict:
         return {"data": {"items": [{"model": "Amazfit GTR 4", "serial_number": "MOCK-DEV-1"}]}}
 

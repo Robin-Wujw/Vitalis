@@ -53,8 +53,10 @@ semantics.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/health/sync?days=7` | Run an incremental source synchronization |
-| GET | `/health/data-health` | Read per-stream fetch, parse, write, and sample freshness state |
+| POST | `/health/sync?days=7` | Create or reuse a durable incremental synchronization attempt |
+| GET | `/health/sync/{attempt_id}` | Read user-scoped attempt, aggregate progress, retries, and chunk outcomes |
+| POST | `/health/sync/{attempt_id}/cancel` | Persist a cancellation request; queued or expired work is finalized immediately |
+| GET | `/health/data-health` | Read latest attempt plus per-stream fetch, parse, write, error, and sample freshness state |
 | GET | `/health/token-status` | Read credential state and next synchronization time |
 | GET | `/health/range?from=&to=&granularity=` | Read 180d/90d/30d/7d/1d aggregate blocks |
 | GET | `/health/workouts?from=&to=` | List workout summaries and detail availability |
@@ -63,6 +65,15 @@ semantics.
 | GET | `/health/daily-metrics?metric=&from=&to=` | Read sparse daily metrics with source provenance |
 | GET | `/health/dense-files/second_heart_rate?from=&to=` | Read high-frequency file coverage without file IDs |
 | POST | `/health/sync?days=&decode_dense_files=false` | Sync health data; dense archives are index-only unless one-file decoding is explicitly enabled |
+
+Attempts use local-date windows, so repeated equivalent requests reuse an active ledger
+entry instead of differing by request-time seconds. Public status omits lease tokens,
+internal stages, and raw vendor errors. `retry_wait` retains completed chunks and the next
+retry timestamp; `needs_reauth` is reserved for classified authentication rejection;
+`partial` includes mixed success/unavailable coverage or an explicit caller deadline.
+Cancellation is idempotent and survives process restart. A manual request advances at
+most `SYNC_DISPATCHER_BATCH_CHUNKS` chunks before returning; a `queued` response is normal
+for larger windows, and the lifespan-owned dispatcher continues the same attempt.
 
 ## Examples
 

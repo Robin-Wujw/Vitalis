@@ -173,6 +173,7 @@ def _weekly_sleep_hrv_daily(
     (_, _, device_id), points = max(
         streams.items(),
         key=lambda item: (
+            int(_is_vendor_fused_stream(item[0])),
             int(item[0][2] == preferred_device_id and preferred_device_id is not None),
             len({point.day for point in item[1]}),
             len(item[1]),
@@ -409,10 +410,22 @@ def _best_weekly_trend(
         candidates,
         key=lambda item: (
             -metrics.index(item.metric),
+            int(_is_vendor_fused_stream((
+                item.source, item.source_scope, item.device_id
+            ))),
             item.current_distinct_days,
             item.coverage_ratio,
             item.device_id or "",
         ),
+    )
+
+
+def _is_vendor_fused_stream(stream: tuple[str, str, str | None]) -> bool:
+    source, scope, device_id = stream
+    return (
+        source == "zepp"
+        and device_id is None
+        and scope in {"user_fused", "unknown"}
     )
 
 

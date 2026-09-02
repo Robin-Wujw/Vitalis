@@ -488,6 +488,11 @@ def test_daily_push_does_not_fallback_when_stream_reports_reauth(
     [
         {"status": "synced", "success": False, "message": "1 个数据流超时"},
         {
+            "status": "incomplete",
+            "success": False,
+            "message": "部分数据流不可用；成功数据已保存",
+        },
+        {
             "status": "transient_error",
             "retryable": True,
             "detail": "同步超时",

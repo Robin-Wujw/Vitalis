@@ -593,6 +593,29 @@ def test_parse_sdnn_samples_and_readiness_extensions():
     assert {sample.device_id for sample in readiness_samples} == {"A1B2C3D4E5F60708"}
 
 
+def test_readiness_without_device_is_preserved_as_vendor_fused():
+    raw = {"items": [{
+        "eventType": "readiness",
+        "timestamp": 1_777_334_400_000,
+        "value": {
+            "sleepHRV": 65,
+            "sleepRHR": 48,
+        },
+    }]}
+
+    daily = ZeppParser.parse_daily_metrics(raw)
+    samples = ZeppParser.parse_readiness_samples(raw)
+
+    assert {(row.metric, row.source_scope, row.device_id) for row in daily} == {
+        ("sleep_hrv", "user_fused", None),
+        ("sleep_rhr", "user_fused", None),
+    }
+    assert {(row.metric, row.source_scope, row.device_id) for row in samples} == {
+        ("sleep_hrv", "user_fused", None),
+        ("sleep_rhr", "user_fused", None),
+    }
+
+
 def test_parse_lactate_threshold_and_full_stress_summary():
     lactate, _ = ZeppParser.parse_wellness({"items": [{
         "value": {"samples": [{

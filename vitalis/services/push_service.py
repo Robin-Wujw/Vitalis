@@ -530,30 +530,56 @@ def _render_open_health_morning(payload: dict) -> list[str]:
     bundle = payload.get("open_health_insights")
     if not isinstance(bundle, dict):
         return []
-    drivers: list[str] = []
+    lines: list[str] = []
     readiness = bundle.get("readiness") or {}
     readiness_payload = readiness.get("payload") or {}
     if readiness.get("status") in {"AVAILABLE", "PARTIAL"}:
-        state = {
-            "suppressed": "夜间 RMSSD 相对近期个人范围偏低",
-            "elevated": "夜间 RMSSD 相对近期个人范围偏高",
-            "normal": "夜间 RMSSD 接近近期个人范围",
-        }.get(readiness_payload.get("state"))
-        if state:
-            drivers.append(state)
+        state = readiness_payload.get("state")
+        current_ln = readiness_payload.get("ln_rmssd")
+        baseline_ln = readiness_payload.get("baseline_ln_rmssd")
+        swc = readiness_payload.get("swc")
+        numeric = (current_ln, baseline_ln, swc)
+        if all(isinstance(value, (int, float)) for value in numeric):
+            from math import exp
+
+            current = exp(current_ln)
+            baseline = exp(baseline_ln)
+            lower = exp(baseline_ln - swc)
+            upper = exp(baseline_ln + swc)
+            relation = {
+                "suppressed": "低于动态参考范围",
+                "elevated": "高于动态参考范围",
+                "normal": "位于近期动态范围内",
+            }.get(state)
+            if relation:
+                prior_nights = readiness_payload.get("prior_nights")
+                history_label = (
+                    f"此前 {prior_nights} 夜"
+                    if isinstance(prior_nights, int) and prior_nights > 0
+                    else "近期夜间"
+                )
+                lines.append(
+                    f"- **实验性 RMSSD 观察**：Zepp 夜间汇总 "
+                    f"{current:.1f} 毫秒；{history_label}基线约 {baseline:.1f} "
+                    f"毫秒，动态参考范围 {lower:.1f}-{upper:.1f} 毫秒，"
+                    f"{relation}。"
+                )
     anomaly = bundle.get("anomaly") or {}
     anomaly_payload = anomaly.get("payload") or {}
     if anomaly.get("status") in {"AVAILABLE", "PARTIAL"} and anomaly_payload.get("flagged"):
-        drivers.append("夜间多个生理信号连续偏离个人常态")
-    lines = [f"- {item}" for item in drivers[:2]]
-    refusal_inputs = []
-    for name in ("readiness", "anomaly", "sleep", "training_load"):
-        refusal = (bundle.get(name) or {}).get("refusal_reason") or {}
-        refusal_inputs.extend(refusal.get("missing_inputs") or [])
-    if refusal_inputs:
-        missing = _open_health_missing_labels(refusal_inputs)
-        lines.append(f"- 开放洞察缺少输入：{'、'.join(missing)}。")
-    lines.append("开放洞察，不参与今日训练决策。")
+        lines.append("- **多指标观察**：多个夜间信号连续偏离个人常态。")
+    unavailable = []
+    if anomaly.get("status") == "REFUSED":
+        unavailable.append("多指标观察缺少可比的同源信号")
+    load = bundle.get("training_load") or {}
+    if load.get("status") == "REFUSED":
+        unavailable.append("训练负荷因上游同步覆盖尚未完整验证而不输出")
+    if unavailable:
+        lines.append(f"- **暂未生成**：{'；'.join(unavailable)}。")
+    lines.append(
+        "参考范围按此前最多 7 夜的 lnRMSSD 均值和波动计算；"
+        "以上是非诊断性实验观察，不参与今日训练决策。"
+    )
     return lines
 
 
@@ -795,7 +821,12 @@ def _render_overnight_summary(
 
     cardiovascular = []
     if hrv.get("value_ms") is not None:
-        text = f"心率变异性 {hrv['value_ms']:g} 毫秒"
+        label = (
+            "Zepp 睡眠心率变异性"
+            if hrv.get("fusion_method") == "vendor_fused_with_device_audit"
+            else "心率变异性"
+        )
+        text = f"{label} {hrv['value_ms']:g} 毫秒"
         hrv_deviation = hrv.get("deviation") or {}
         if hrv_deviation.get("percent") is not None:
             text += f"（较个人基线 {hrv_deviation['percent']:+.1f}%）"
@@ -805,7 +836,12 @@ def _render_overnight_summary(
             f"近 7 天较此前 7 天 {hrv['recent_7d_change_percent']:+.1f}%"
         )
     if hrv.get("rhr_bpm") is not None:
-        text = f"静息心率 {hrv['rhr_bpm']:g} 次/分钟"
+        label = {
+            "sleep_rhr": "Zepp 睡眠静息心率",
+            "resting_hr": "Zepp 日静息心率",
+            "nocturnal_heart_rate": "分设备整夜心率中位数",
+        }.get(hrv.get("rhr_metric"), "静息心率")
+        text = f"{label} {hrv['rhr_bpm']:g} 次/分钟"
         rhr_deviation = hrv.get("rhr_deviation") or {}
         if rhr_deviation.get("percent") is not None:
             text += f"（较个人基线 {rhr_deviation['percent']:+.1f}%）"
@@ -814,7 +850,10 @@ def _render_overnight_summary(
         lines.append(f"- **恢复相关**：{'；'.join(cardiovascular)}。")
 
     night = hrv.get("nocturnal_heart_rate") or {}
-    if night.get("status") == "AVAILABLE":
+    if (
+        night.get("status") == "AVAILABLE"
+        and hrv.get("rhr_metric") == "nocturnal_heart_rate"
+    ):
         parts = [f"中位数 {night['median_bpm']:g} 次/分钟"]
         if night.get("low_5m_bpm") is not None:
             low = f"稳定 5 分钟低点 {night['low_5m_bpm']:g} 次/分钟"
@@ -826,7 +865,7 @@ def _render_overnight_summary(
             movement = "回落" if delta < 0 else "升高" if delta > 0 else "持平"
             amount = f" {abs(delta):g} 次/分钟" if delta else ""
             parts.append(f"后半夜较前半夜{movement}{amount}")
-        lines.append(f"- **睡眠中心率**：{'；'.join(parts)}。")
+        lines.append(f"- **分设备整夜心率**：{'；'.join(parts)}。")
 
     vitals = _render_overnight_vitals_reason(overnight_vitals)
     if vitals:

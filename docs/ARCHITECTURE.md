@@ -189,8 +189,10 @@ merges history automatically.
 ### 3.3 Baselines
 
 Baseline keys include local user, metric, source, source scope, device ID, window, and
-model version. RMSSD, SDNN, sleep HRV, and RHR never share numerical baselines; device
-streams are never averaged together.
+model version. RMSSD, SDNN, sleep HRV, and RHR never share numerical baselines. Zepp
+account-level sleep HRV/RHR summaries (`source_scope=user_fused`, no device ID) are the
+primary report and decision streams when available. Per-device streams remain isolated
+and auditable; Vitalis never averages them or lets them overwrite the vendor summary.
 
 Within each stream, high-frequency samples are reduced to one daily median before
 history eligibility is counted. The engine computes:
@@ -282,13 +284,15 @@ embedded Daily/Weekly/Monthly payloads.
 
 ### 3.9 Feature and Decision Policy
 
-The preferred HRV stream must have a target-day observation. Selection ranks usable
-28-day coverage first, then recovery-metric preference (nightly sleep HRV, sleep-oriented
-SDNN, then all-day RMSSD only when the overnight metrics are absent). Every current
-device stream for the selected metric remains visible with its own baseline deviation;
-deterministic selection does not claim that one device is more accurate. RHR is paired
-conservatively and is not substituted into an HRV baseline. All-day visualization has
-its own RMSSD-only source policy and never changes the recovery metric.
+The preferred HRV stream must have a target-day observation. Selection first prefers
+Zepp's account-level nightly sleep HRV summary, then falls back by recovery-metric
+preference (nightly sleep HRV, sleep-oriented SDNN, then all-day RMSSD) and usable
+personal-baseline coverage. Every current device stream for the selected metric remains
+visible with its own baseline deviation, but a device disagreement is audit evidence and
+does not invalidate an available vendor summary. Zepp's account-level sleep RHR is paired
+the same way and is not replaced by a median derived from minute heart-rate samples.
+All-day visualization has its own RMSSD-only source policy and never changes the recovery
+metric.
 
 Recovery requires at least two baseline-interpretable signals from HRV, RHR, sleep,
 and recent training load. Multi-signal suppression can produce `RECOVERY` or `REST`;
@@ -507,11 +511,11 @@ channel strips styling. Daytime HRV interpretation is intentionally not part of 
 daily contract until the activity, posture, respiration, circadian-reference, and
 coverage gates in `RESEARCH_NOTES.md` can be satisfied.
 
-`HrvFeatures` keeps Zepp's algorithms separate. The recovery value prefers the nightly
-`sleepHRV` summary, then sleep-oriented SDNN when available. The evening PushPlus report
-renders seven nightly `sleepHRV` values from the single device stream with the strongest
-personal baseline; it does not merge device values. On the current account this selects
-Balance 2, which has complete seven-night coverage and a 28-day baseline. Timestamped
+`HrvFeatures` keeps Zepp's algorithms separate. The recovery value and seven-night trend
+prefer Zepp's account-level `sleepHRV` summary. Per-device values remain available for
+inspection and are never numerically merged by Vitalis. When the account-level summary
+is absent, the report falls back to one device stream with the strongest personal
+baseline. Timestamped
 `HRVRMSSD/real_data` remains available in the structured profile for inspection, but its
 sleep-only timeline is not included in the evening summary because it adds no useful
 all-day information. Neither sparse daytime RMSSD observations nor vendor stress are

@@ -797,7 +797,7 @@ class ZeppParser:
                         if minimum <= reading <= maximum:
                             store(DailyMetric(
                                 date=day, metric=metric, value=reading, unit=unit,
-                                source_scope="device" if device else "unknown",
+                                source_scope="device" if device else "user_fused",
                                 device_id=device,
                             ))
         return list(output.values())
@@ -878,7 +878,7 @@ class ZeppParser:
                 if minimum <= reading <= maximum:
                     output.append(MetricSample(
                         metric=metric, timestamp=timestamp, value=reading, unit=unit,
-                        source_scope="device" if device_id else "unknown",
+                        source_scope="device" if device_id else "user_fused",
                         device_id=device_id,
                     ))
         return output

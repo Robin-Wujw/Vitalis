@@ -1,5 +1,6 @@
 from copy import deepcopy
 from html.parser import HTMLParser
+from math import log
 
 from vitalis.services.push_service import PUSHPLUS_URL, PushMessage, PushService
 
@@ -126,6 +127,8 @@ def _profile_payload():
                     "payload_decoded": False,
                 }],
                 "rhr_bpm": 47,
+                "rhr_metric": "sleep_rhr",
+                "rhr_source_scope": "user_fused",
                 "rhr_deviation": {"direction": "near", "percent": -1.0},
             },
             "overnight_vitals": {
@@ -559,7 +562,13 @@ def test_open_health_rendering_uses_localized_shadow_wording():
         "readiness": {
             "status": "AVAILABLE",
             "drivers": ["lnRMSSD delta=-0.123456", "SWC=0.042"],
-            "payload": {"state": "suppressed"},
+            "payload": {
+                "state": "suppressed",
+                "ln_rmssd": log(63),
+                "baseline_ln_rmssd": log(65.5),
+                "swc": 0.03,
+                "prior_nights": 7,
+            },
         },
         "anomaly": {
             "status": "AVAILABLE",
@@ -585,9 +594,13 @@ def test_open_health_rendering_uses_localized_shadow_wording():
     service.add_handler(morning.append)
     service.push_daily_profile("test-user", payload, period="morning")
     morning_text = _visible_text(morning[0].body)
-    assert "夜间 RMSSD 相对近期个人范围偏低" in morning_text
-    assert "夜间多个生理信号连续偏离个人常态" in morning_text
-    assert "开放洞察，不参与今日训练决策" in morning_text
+    assert "实验性 RMSSD 观察" in morning_text
+    assert "Zepp 夜间汇总 63.0 毫秒" in morning_text
+    assert "此前 7 夜基线约 65.5 毫秒" in morning_text
+    assert "动态参考范围 63.6-67.5 毫秒" in morning_text
+    assert "按此前最多 7 夜的 lnRMSSD 均值和波动计算" in morning_text
+    assert "多指标观察：多个夜间信号连续偏离个人常态" in morning_text
+    assert "非诊断性实验观察，不参与今日训练决策" in morning_text
     assert "lnRMSSD delta" not in morning_text
     assert "ln_rmssd" not in morning_text
 
@@ -643,6 +656,7 @@ def test_morning_push_explains_nocturnal_pattern_and_personalized_session():
     payload["features"]["hrv"].update({
         "recent_7d_direction": "above",
         "recent_7d_change_percent": 12.5,
+        "rhr_metric": "nocturnal_heart_rate",
         "nocturnal_heart_rate": {
             "status": "AVAILABLE",
             "device_label": "Amazfit Helio Strap",
@@ -665,13 +679,42 @@ def test_morning_push_explains_nocturnal_pattern_and_personalized_session():
     body = received[0].body
     text = _visible_text(body)
     assert "近 7 天较此前 7 天 +12.5%" in text
-    assert "睡眠中心率：中位数 50 次/分钟" in text
+    assert "分设备整夜心率：中位数 50 次/分钟" in text
     assert "稳定 5 分钟低点 46 次/分钟" in text
     assert "后半夜较前半夜回落 1 次/分钟" in text
     assert "最近一次跑步为稳定跑，33 分钟" in text
     assert "Amazfit Helio Strap" not in text
     reasons = body.split(">为什么这样安排</h2>", 1)[1].split(">最近最值得注意</h2>", 1)[0]
     assert reasons.count("<li") <= 4
+
+
+def test_morning_push_prefers_vendor_sleep_rhr_and_keeps_device_detail_hidden():
+    received = []
+    payload = _profile_payload()
+    payload["features"]["hrv"].update({
+        "fusion_method": "vendor_fused_with_device_audit",
+        "value_ms": 65,
+        "rhr_bpm": 48,
+        "rhr_metric": "sleep_rhr",
+        "rhr_source_scope": "user_fused",
+        "nocturnal_heart_rate": {
+            "status": "AVAILABLE",
+            "device_label": "未识别设备 C",
+            "median_bpm": 51,
+            "low_5m_bpm": 47,
+            "second_minus_first_bpm": -4,
+        },
+    })
+    service = PushService(pushplus_token="")
+    service.add_handler(received.append)
+
+    service.push_daily_profile("test-user", payload, period="morning")
+
+    text = _visible_text(received[0].body)
+    assert "Zepp 睡眠心率变异性 65 毫秒" in text
+    assert "Zepp 睡眠静息心率 48 次/分钟" in text
+    assert "分设备整夜心率" not in text
+    assert "51 次/分钟" not in text
 
 
 def test_pushplus_delivery_keeps_token_in_json_body(monkeypatch):

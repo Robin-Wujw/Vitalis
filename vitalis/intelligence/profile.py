@@ -31,6 +31,12 @@ SAMPLE_METRICS = (
     "spo2",
     "spo2_apnea_low",
 )
+VENDOR_FUSED_DAILY_METRICS = {
+    "sleep_hrv",
+    "sleep_rhr",
+    "hrv_baseline",
+    "rhr_baseline",
+}
 MAX_SAMPLES_PER_METRIC = 1_000_000
 PROFILE_HISTORY_DAYS = 180
 DETAIL_WORKOUTS_PER_FAMILY = 8
@@ -164,6 +170,20 @@ class ProfileLoader:
         def stream_key(point: SeriesPoint) -> tuple[str, str, str | None]:
             return point.source, point.source_scope, point.device_id
 
+        fused_rmssd_streams: dict[
+            tuple[str, str, str | None], dict[date, list[SeriesPoint]]
+        ] = defaultdict(lambda: defaultdict(list))
+        for point in raw.series.get("sleep_hrv", []):
+            if (
+                nightly_start <= point.day <= raw.day
+                and point.value > 0
+                and _is_vendor_fused_stream(stream_key(point))
+            ):
+                fused_rmssd_streams[stream_key(point)][point.day].append(point)
+        canonical_fused_rmssd = _canonical_stream(
+            fused_rmssd_streams, required_day=raw.day
+        )
+
         rmssd_streams: dict[tuple[str, str, str | None], dict[date, list[SeriesPoint]]] = defaultdict(lambda: defaultdict(list))
         for point in raw.series.get("hrv_rmssd", []):
             sleep_day = _sleep_day_for_point(point, raw.sleep_by_day)
@@ -206,13 +226,30 @@ class ProfileLoader:
         observations = []
         for observation_day in nightly_days:
             sleep = raw.sleep_by_day.get(observation_day, {})
-            rmssd_points = (valid_rmssd_streams.get(canonical_rmssd, {}) if canonical_rmssd else {}).get(observation_day, [])
-            if not (
-                len(rmssd_points) >= 3
-                and _observed_span_minutes(rmssd_points) >= 30
-            ):
-                rmssd_points = []
-            source_key = canonical_rmssd or canonical_rhr or canonical_resp
+            source_key = (
+                canonical_fused_rmssd
+                or canonical_rmssd
+                or canonical_rhr
+                or canonical_resp
+            )
+            if canonical_fused_rmssd:
+                rmssd_points = fused_rmssd_streams.get(
+                    canonical_fused_rmssd, {}
+                ).get(observation_day, [])
+                rmssd_span = None
+            else:
+                rmssd_points = (
+                    valid_rmssd_streams.get(canonical_rmssd, {})
+                    if canonical_rmssd else {}
+                ).get(observation_day, [])
+                if not (
+                    len(rmssd_points) >= 3
+                    and _observed_span_minutes(rmssd_points) >= 30
+                ):
+                    rmssd_points = []
+                rmssd_span = (
+                    _observed_span_minutes(rmssd_points) if rmssd_points else None
+                )
             rhr_key = canonical_rhr if canonical_rhr == source_key else None
             resp_key = canonical_resp if canonical_resp == source_key else None
             rhr_points = (rhr_streams.get(rhr_key, {}) if rhr_key else {}).get(observation_day, [])
@@ -234,8 +271,10 @@ class ProfileLoader:
                 "sleep_source": str(sleep.get("source", "zepp")),
                 "sleep_source_scope": str(sleep.get("source_scope", "normalized_daily_record")),
                 "sleep_device_id": sleep.get("device_id") or None,
-                "sample_count": len(rmssd_points) or None,
-                "span_minutes": _observed_span_minutes(rmssd_points) if rmssd_points else None,
+                "sample_count": (
+                    None if canonical_fused_rmssd else len(rmssd_points) or None
+                ),
+                "span_minutes": rmssd_span,
             }))
         raw.open_health_observations = observations
 
@@ -363,6 +402,14 @@ class ProfileLoader:
 
     def _add_daily_metrics(self, raw: RawDailyProfile, start: date) -> None:
         for row in self.repo.daily_metrics(raw.user_id, start, raw.day):
+            source_scope = row.source_scope
+            if (
+                row.source == "zepp"
+                and row.metric in VENDOR_FUSED_DAILY_METRICS
+                and not row.device_id
+                and source_scope == "unknown"
+            ):
+                source_scope = "user_fused"
             _append(
                 raw,
                 row.metric,
@@ -370,7 +417,7 @@ class ProfileLoader:
                 row.unit,
                 row.date,
                 row.source,
-                row.source_scope,
+                source_scope,
                 row.device_id or None,
                 positive=False,
             )
@@ -616,10 +663,20 @@ def _canonical_stream(
     return max(
         candidates,
         key=lambda key: (
+            int(_is_vendor_fused_stream(key)),
             len(streams[key]),
             sum(len(points) for points in streams[key].values()),
             tuple(value or "" for value in key),
         ),
+    )
+
+
+def _is_vendor_fused_stream(key: tuple[str, str, str | None]) -> bool:
+    source, scope, device_id = key
+    return (
+        source == "zepp"
+        and device_id is None
+        and scope in {"user_fused", "unknown"}
     )
 
 

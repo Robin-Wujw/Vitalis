@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 from vitalis.intelligence.contracts import QualityStatus
 from vitalis.intelligence.profile import ProfileLoader
 from vitalis.models import (
+    DailyMetric,
     DenseDataFile,
     Device,
     MetricSample,
@@ -119,6 +120,57 @@ def test_open_health_groups_pre_midnight_rmssd_into_wake_date_sleep_window():
     assert target.rmssd_ms == 100
     assert target.sample_count == 3
     assert target.model_extra["span_minutes"] == 120
+
+
+def test_open_health_prefers_zepp_fused_sleep_hrv_over_device_samples():
+    user_id = "open-health-vendor-fused"
+    day = date(2026, 9, 2)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+        repo.save_daily(NormalizedDaily(
+            user_id=user_id,
+            date=day,
+            sleep=SleepRecord(
+                user_id=user_id,
+                date=day,
+                sleep_duration=450,
+                bedtime=datetime.strptime("23:00", "%H:%M").time(),
+                wake_time=datetime.strptime("07:00", "%H:%M").time(),
+            ),
+        ))
+        repo.save_daily_metrics([DailyMetric(
+            user_id=user_id,
+            date=day,
+            metric="sleep_hrv",
+            value=65,
+            unit="ms",
+            source_scope="user_fused",
+        )])
+        repo.save_metric_samples([
+            MetricSample(
+                user_id=user_id,
+                metric="hrv_rmssd",
+                timestamp=timestamp,
+                value=value,
+                unit="ms",
+                source_scope="device",
+                device_id="balance",
+            )
+            for timestamp, value in (
+                (datetime(2026, 9, 1, 15, 30, tzinfo=timezone.utc), 90),
+                (datetime(2026, 9, 1, 16, 30, tzinfo=timezone.utc), 100),
+                (datetime(2026, 9, 1, 17, 30, tzinfo=timezone.utc), 110),
+            )
+        ])
+        raw = ProfileLoader(repo).load(user_id, day)
+
+    target = next(item for item in raw.open_health_observations if item.date == day)
+    assert target.rmssd_ms == 65
+    assert target.source_scope == "user_fused"
+    assert target.device_id is None
+    assert target.sample_count is None
 
 
 def test_profile_loader_groups_utc_samples_by_shanghai_natural_day():

@@ -13,7 +13,7 @@ from vitalis.intelligence.weekly import WeeklyProfileEngine
 TARGET = date(2026, 8, 28)
 
 
-def _series(metric, values, unit, *, device=None):
+def _series(metric, values, unit, *, device=None, scope=None):
     return [
         SeriesPoint(
             metric=metric,
@@ -22,7 +22,7 @@ def _series(metric, values, unit, *, device=None):
             day=TARGET - timedelta(days=len(values) - index - 1),
             observed_at=TARGET - timedelta(days=len(values) - index - 1),
             source="zepp",
-            source_scope="device" if device else "normalized_daily_record",
+            source_scope=scope or ("device" if device else "normalized_daily_record"),
             device_id=device,
         )
         for index, value in enumerate(values)
@@ -142,3 +142,19 @@ def test_weekly_recovery_prefers_sleep_hrv_over_all_day_rmssd():
 
     assert profile.facts.recovery.hrv_metric == "sleep_hrv"
     assert profile.facts.recovery.hrv_median_ms == 68
+
+
+def test_weekly_recovery_prefers_zepp_fused_sleep_hrv_over_device_stream():
+    raw = _raw_week()
+    raw.series["sleep_hrv"] += _series(
+        "sleep_hrv", [64] * 7 + [66] * 7, "ms", scope="user_fused"
+    )
+
+    profile = WeeklyProfileEngine().build(
+        "weekly-run", raw, TrendEngine().calculate(raw), []
+    )
+
+    assert profile.facts.recovery.hrv_device_id is None
+    assert profile.facts.recovery.hrv_median_ms == 66
+    assert profile.facts.recovery.sleep_hrv_device_id is None
+    assert profile.facts.recovery.sleep_hrv_daily[-1].value_ms == 66

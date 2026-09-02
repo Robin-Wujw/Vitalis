@@ -455,7 +455,10 @@ class HrvFeatures(BaseModel):
     recent_7d_direction: Literal["above", "near", "below", "unknown"] = "unknown"
     recent_7d_days: int = Field(default=0, ge=0, le=7)
     previous_7d_days: int = Field(default=0, ge=0, le=7)
-    fusion_method: Literal["canonical_device_with_corroboration"] | None = None
+    fusion_method: Literal[
+        "vendor_fused_with_device_audit",
+        "canonical_device_with_corroboration",
+    ] | None = None
     fusion_direction: Literal["above", "near", "below", "unknown"] = "unknown"
     fusion_confidence: ConfidenceBand = ConfidenceBand.NONE
     fusion_confidence_label: str = ""
@@ -466,6 +469,9 @@ class HrvFeatures(BaseModel):
     corroborating_stream_count: int = Field(default=0, ge=0)
     corroboration_affects_decision: bool = False
     rhr_bpm: float | None = None
+    rhr_metric: Literal["sleep_rhr", "resting_hr", "nocturnal_heart_rate"] | None = None
+    rhr_source_scope: str | None = None
+    rhr_device_id: str | None = None
     rhr_deviation: Deviation | None = None
     nocturnal_heart_rate: NocturnalHeartRateFeature | None = None
     daily_curve: DailyHrvCurveFeature | None = None

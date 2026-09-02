@@ -151,7 +151,7 @@ def _assess_sync(sync: dict) -> tuple[bool, str, str | None]:
         raise RuntimeError(f"Vitalis sync did not complete: {status}")
     if status == "synced" and sync.get("success") is True:
         return False, status, None
-    if status == "synced" or sync.get("retryable") is True:
+    if status in {"synced", "incomplete"} or sync.get("retryable") is True:
         return True, status, sync.get("detail") or sync.get("message")
     raise RuntimeError(f"Vitalis sync did not complete: {status}")
 

@@ -774,6 +774,51 @@ def test_hrv_device_disagreement_is_not_averaged_into_a_recovery_signal():
     assert decision.confidence.value == "LOW"
 
 
+def test_zepp_fused_recovery_is_primary_and_device_conflict_is_audit_only():
+    raw = _profile(hrv_today=62)
+    raw.series["sleep_hrv"] = _series(
+        "sleep_hrv",
+        [50] + [66 + (i % 2) for i in range(1, 22)],
+        scope="user_fused",
+    ) + _series(
+        "sleep_hrv",
+        [80] + [60 + (i % 2) for i in range(1, 22)],
+        device="balance",
+        scope="device",
+    )
+    raw.series["sleep_rhr"] = _series(
+        "sleep_rhr",
+        [48] + [48 + (i % 2) for i in range(1, 22)],
+        scope="user_fused",
+        unit="bpm",
+    ) + _series(
+        "sleep_rhr",
+        [51] + [50 + (i % 2) for i in range(1, 22)],
+        device="balance",
+        scope="device",
+        unit="bpm",
+    )
+
+    hrv = HrvAnalyzer().analyze(
+        raw, BaselineEngine().build(raw.series, raw.day)
+    )
+
+    assert hrv.value_ms == 50
+    assert hrv.preferred_device_id is None
+    assert hrv.preferred_device_label == "Zepp 厂商汇总"
+    assert hrv.fusion_method == "vendor_fused_with_device_audit"
+    assert hrv.corroboration_status == "conflicting"
+    assert not hrv.corroboration_affects_decision
+    assert "multi_device_hrv_disagreement" not in hrv.limitations
+    assert hrv.rhr_bpm == 48
+    assert hrv.rhr_metric == "sleep_rhr"
+    assert hrv.rhr_source_scope == "user_fused"
+    assert hrv.rhr_device_id is None
+    assert hrv.sleep_hrv_daily_trend.device_id is None
+    assert hrv.sleep_hrv_daily_trend.device_label == "Zepp 厂商汇总"
+    assert hrv.sleep_hrv_daily_trend.today_value_ms == 50
+
+
 def test_hrv_near_and_above_are_not_treated_as_opposite_directions():
     raw = _profile(hrv_today=62)
     raw.series["hrv_rmssd"] += _series(

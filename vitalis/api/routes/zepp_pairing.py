@@ -7,8 +7,10 @@ reads the official login cookie and sends it through this short-lived channel.
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -32,13 +34,14 @@ class DisconnectNotice(BaseModel):
     reason: str = Field(default="Zepp 网页登录已失效，请重新登录", max_length=512)
 
 
-class DeviceHeartRateSample(BaseModel):
-    timestamp: int = Field(ge=1_500_000_000_000, le=4_102_444_800_000)
-    heart_rate: int = Field(ge=20, le=240)
-
-
 class DeviceHeartRateBatch(BaseModel):
-    samples: list[DeviceHeartRateSample] = Field(min_length=1, max_length=1000)
+    protocol_version: Literal[2]
+    samples: list[object] = Field(min_length=1, max_length=1000)
+
+
+_DEVICE_SAMPLE_ID = re.compile(
+    r"^z2:(\d{13}):(\d{1,3}):([a-z0-9]{4,32}):(\d+)$"
+)
 
 
 def create_pairing(user_id: str, sync_days: int = 30) -> dict:
@@ -329,7 +332,7 @@ def create_zepp_device_link(user_id: str = Depends(require_user_id)) -> dict:
     }
 
 
-@router.post("/device-link/heart-rate", summary="接收 Balance 2 心率回调批次")
+@router.post("/device-link/heart-rate", summary="逐条结算 Balance 2 心率回调批次")
 def upload_zepp_device_heart_rate(
     body: DeviceHeartRateBatch,
     authorization: str = Header(default="", alias="Authorization"),
@@ -337,27 +340,137 @@ def upload_zepp_device_heart_rate(
     digest, user_id, device_label = _device_linked_user(authorization)
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     minimum_ms = now_ms - 31 * 24 * 60 * 60 * 1000
+    maximum_ms = now_ms + 5 * 60 * 1000
+
+    sample_id_counts: dict[str, int] = {}
+    for raw in body.samples:
+        if not isinstance(raw, dict):
+            continue
+        sample_id = raw.get("sample_id")
+        if isinstance(sample_id, str) and len(sample_id) <= 128 and _DEVICE_SAMPLE_ID.fullmatch(sample_id):
+            sample_id_counts[sample_id] = sample_id_counts.get(sample_id, 0) + 1
+
+    rejected: list[dict] = []
+    accepted_entries: list[tuple[str, int, int, int]] = []
+    seen_sample_keys: set[tuple[int, int]] = set()
+    reported_duplicate_ids: set[str] = set()
+    for index, raw in enumerate(body.samples):
+        if not isinstance(raw, dict):
+            rejected.append(_device_sample_rejection(index, None, "invalid_sample"))
+            continue
+        raw_sample_id = raw.get("sample_id")
+        sample_id = (
+            raw_sample_id
+            if (
+                isinstance(raw_sample_id, str)
+                and len(raw_sample_id) <= 128
+                and _DEVICE_SAMPLE_ID.fullmatch(raw_sample_id)
+            )
+            else None
+        )
+        if sample_id is None:
+            rejected.append(_device_sample_rejection(index, None, "invalid_sample_id"))
+            continue
+        if sample_id_counts[sample_id] > 1:
+            if sample_id not in reported_duplicate_ids:
+                rejected.append(
+                    _device_sample_rejection(index, sample_id, "duplicate_sample_id")
+                )
+                reported_duplicate_ids.add(sample_id)
+            continue
+
+        timestamp = raw.get("timestamp")
+        if not isinstance(timestamp, int) or isinstance(timestamp, bool):
+            rejected.append(_device_sample_rejection(index, sample_id, "invalid_timestamp"))
+            continue
+        sample_ordinal = raw.get("sample_ordinal")
+        if (
+            not isinstance(sample_ordinal, int)
+            or isinstance(sample_ordinal, bool)
+            or not 0 <= sample_ordinal < 1000
+        ):
+            rejected.append(
+                _device_sample_rejection(index, sample_id, "invalid_sample_ordinal")
+            )
+            continue
+        identity = _DEVICE_SAMPLE_ID.fullmatch(sample_id)
+        if (
+            identity is None
+            or int(identity.group(1)) != timestamp
+            or int(identity.group(2)) != sample_ordinal
+        ):
+            rejected.append(
+                _device_sample_rejection(index, sample_id, "sample_identity_mismatch")
+            )
+            continue
+        heart_rate = raw.get("heart_rate")
+        if not isinstance(heart_rate, int) or isinstance(heart_rate, bool):
+            rejected.append(_device_sample_rejection(index, sample_id, "invalid_heart_rate"))
+            continue
+        if timestamp < minimum_ms:
+            rejected.append(_device_sample_rejection(index, sample_id, "timestamp_too_old"))
+            continue
+        if timestamp > maximum_ms:
+            rejected.append(_device_sample_rejection(index, sample_id, "timestamp_too_future"))
+            continue
+        if not 20 <= heart_rate <= 240:
+            rejected.append(_device_sample_rejection(index, sample_id, "heart_rate_out_of_range"))
+            continue
+        sample_key = (timestamp, sample_ordinal)
+        if sample_key in seen_sample_keys:
+            rejected.append(_device_sample_rejection(index, sample_id, "duplicate_sample_key"))
+            continue
+        seen_sample_keys.add(sample_key)
+        accepted_entries.append((sample_id, timestamp, sample_ordinal, heart_rate))
+
     normalized = [
         MetricSample(
             user_id=user_id,
             source="zepp_os",
             metric="heart_rate",
-            timestamp=datetime.fromtimestamp(sample.timestamp / 1000, tz=timezone.utc),
-            value=sample.heart_rate,
+            timestamp=(
+                datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc)
+                + timedelta(microseconds=sample_ordinal)
+            ),
+            value=heart_rate,
             unit="bpm",
             source_scope="device_callback",
             device_id=device_label,
         )
-        for sample in body.samples
-        if minimum_ms <= sample.timestamp <= now_ms + 5 * 60 * 1000
+        for _, timestamp, sample_ordinal, heart_rate in accepted_entries
     ]
-    if not normalized:
-        raise HTTPException(status_code=400, detail="批次中没有可接受时间范围内的样本")
     with session_scope() as db:
         repo = HealthRepository(db)
-        written = repo.save_metric_samples(normalized)
+        if normalized:
+            repo.save_metric_samples(normalized)
         repo.mark_device_link_seen(digest)
-    return {"status": "accepted", "accepted": written}
+
+    acknowledged = [
+        {
+            "sample_id": sample_id,
+            "timestamp": timestamp,
+            "sample_ordinal": sample_ordinal,
+        }
+        for sample_id, timestamp, sample_ordinal, _ in accepted_entries
+    ]
+    return {
+        "protocol_version": 2,
+        "status": "processed",
+        "received_count": len(body.samples),
+        "acknowledged_count": len(acknowledged),
+        "rejected_count": len(rejected),
+        "acknowledged": acknowledged,
+        "rejected": rejected,
+    }
+
+
+def _device_sample_rejection(index: int, sample_id: str | None, code: str) -> dict:
+    return {
+        "index": index,
+        "sample_id": sample_id,
+        "code": code,
+        "retryable": False,
+    }
 
 
 def _token_digest(token: str) -> str:
@@ -377,11 +490,15 @@ def _raise_link_validation_error(link_digest: str, error: RuntimeError) -> None:
     ) from error
 
 
-def _linked_user(authorization: str) -> tuple[str, str]:
+def _authorization_digest(authorization: str, detail: str) -> str:
     scheme, separator, token = authorization.partition(" ")
     if not separator or scheme.lower() != "bearer" or len(token) < 32:
-        raise HTTPException(status_code=401, detail="浏览器链接令牌无效")
-    digest = _token_digest(token)
+        raise HTTPException(status_code=401, detail=detail)
+    return _token_digest(token)
+
+
+def _linked_user(authorization: str) -> tuple[str, str]:
+    digest = _authorization_digest(authorization, "浏览器链接令牌无效")
     with session_scope() as db:
         row = HealthRepository(db).browser_link(digest)
         if row is None or row.revoked_at is not None:
@@ -390,10 +507,7 @@ def _linked_user(authorization: str) -> tuple[str, str]:
 
 
 def _device_linked_user(authorization: str) -> tuple[str, str, str]:
-    scheme, separator, token = authorization.partition(" ")
-    if not separator or scheme.lower() != "bearer" or len(token) < 32:
-        raise HTTPException(status_code=401, detail="设备上传令牌无效")
-    digest = _token_digest(token)
+    digest = _authorization_digest(authorization, "设备上传令牌无效")
     with session_scope() as db:
         row = HealthRepository(db).device_link(digest)
         if row is None or row.revoked_at is not None:

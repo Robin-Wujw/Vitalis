@@ -78,9 +78,13 @@ DRIVER_LABELS = {
     "RHR_ABOVE_BASELINE": "静息心率高于个人基线",
     "SLEEP_ABOVE_BASELINE": "睡眠高于个人基线",
     "SLEEP_BELOW_BASELINE": "睡眠低于个人基线",
+    "SLEEP_SHORT_DURATION": "睡眠时长低于 7 小时保守阈值",
     "TRAINING_LOAD_ELEVATED": "近期训练负荷偏高",
     "TRAINING_LOAD_LOW": "近期训练负荷较低",
     "RECOVERY_NORMAL": "恢复指标处于个人正常范围",
+    "PAIN_OR_INJURY_PRESENT": "已记录疼痛或伤病",
+    "TRAINING_DAY_UNAVAILABLE": "今天不在设定的可训练日内",
+    "HRV_RECENT_7D_BELOW": "近 7 天 HRV 低于前 7 天",
 }
 
 LIMITATION_LABELS = {

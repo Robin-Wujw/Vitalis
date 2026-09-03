@@ -22,9 +22,10 @@ from .contracts import (
     AnalysisRun,
     AnalysisRunStatus,
     DailyProfile,
+    DECISION_EXPLANATION_SCHEMA_VERSION,
     DecisionExplanation,
     EvidenceRef,
-    ExplanationFact,
+    ExplanationSnapshotProvenance,
     HealthEvent,
     HealthEventResponse,
     HealthTimeline,
@@ -420,6 +421,7 @@ class IntelligenceCommand:
         decision = DecisionEngine().decide(
             uuid4().hex,
             target,
+            sleep,
             sleep_state,
             hrv,
             recovery,
@@ -519,30 +521,21 @@ class IntelligenceQuery:
         profile = self.daily(user_id, day)
         if profile is None:
             return None
-        facts: list[ExplanationFact] = []
-        sleep = profile.features.sleep
-        hrv = profile.features.hrv
-        training = profile.features.training
-        if sleep.duration_minutes is not None:
-            facts.append(ExplanationFact(
-                code="sleep_duration", label="睡眠时长", value=sleep.duration_minutes, unit="分钟"
-            ))
-        if hrv.value_ms is not None:
-            facts.append(ExplanationFact(
-                code=hrv.preferred_metric or "hrv", label="心率变异性", value=hrv.value_ms, unit="毫秒"
-            ))
-        if hrv.rhr_bpm is not None:
-            facts.append(ExplanationFact(
-                code="resting_hr", label="静息心率", value=hrv.rhr_bpm, unit="次/分钟"
-            ))
-        if training.load_7d is not None:
-            facts.append(ExplanationFact(
-                code="training_load_7d", label="近 7 天训练负荷", value=training.load_7d
-            ))
         return DecisionExplanation(
+            schema_version=DECISION_EXPLANATION_SCHEMA_VERSION,
             user_id=user_id,
             date=profile.date,
-            facts=facts,
+            snapshot=ExplanationSnapshotProvenance(
+                analysis_run_id=profile.analysis_run_id,
+                generated_at=profile.generated_at,
+                schema_version=profile.schema_version,
+                intelligence_version=profile.intelligence_version,
+                decision_policy_version=profile.decision_policy_version,
+                evidence_version=profile.evidence_version,
+                data_quality=profile.data_quality,
+            ),
+            facts=profile.decision.evidence.facts,
+            gates=profile.decision.evidence.gates,
             inferences=profile.decision.driver_labels,
             limitations=profile.decision.limitation_labels,
             action=profile.decision,

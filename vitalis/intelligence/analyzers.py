@@ -1207,7 +1207,13 @@ class RecoveryAnalyzer:
         if sleep_state == SleepState.ABOVE_BASELINE:
             positive.append("SLEEP_ABOVE_BASELINE")
         elif sleep_state == SleepState.BELOW_BASELINE:
-            negative.append("SLEEP_BELOW_BASELINE")
+            if sleep.duration_minutes is not None and sleep.duration_minutes < 420 and (
+                sleep.duration_deviation is None
+                or sleep.duration_deviation.direction != "below"
+            ):
+                negative.append("SLEEP_SHORT_DURATION")
+            else:
+                negative.append("SLEEP_BELOW_BASELINE")
         if training.load_state == LoadState.ELEVATED:
             negative.append("TRAINING_LOAD_ELEVATED")
 

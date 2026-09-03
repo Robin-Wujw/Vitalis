@@ -85,17 +85,23 @@ class BaselineEngine:
 
     @staticmethod
     def deviation(value: float, baseline: BaselineStats) -> Deviation:
+        context = {
+            "metric": baseline.metric,
+            "baseline_window_days": baseline.window_days,
+            "baseline_reference": baseline.reference_value,
+            "unit": baseline.unit,
+            "source": baseline.source,
+            "source_scope": baseline.source_scope,
+            "device_id": baseline.device_id,
+        }
         if baseline.status != Availability.AVAILABLE or baseline.reference_value is None:
-            return Deviation(metric=baseline.metric, baseline_window_days=baseline.window_days)
+            return Deviation(**context)
         transformed = log(value) if baseline.transform == "natural_log" and value > 0 else value
         robust_z = None
         if baseline.median is not None and baseline.mad not in (None, 0):
             robust_z = 0.6745 * (transformed - baseline.median) / baseline.mad
         if baseline.reference_value == 0 and robust_z is None:
-            return Deviation(
-                metric=baseline.metric,
-                baseline_window_days=baseline.window_days,
-            )
+            return Deviation(**context)
         percent = (
             100 * (value - baseline.reference_value) / baseline.reference_value
             if baseline.reference_value != 0 else None
@@ -107,8 +113,7 @@ class BaselineEngine:
         elif comparison < -0.75:
             direction = "below"
         return Deviation(
-            metric=baseline.metric,
-            baseline_window_days=baseline.window_days,
+            **context,
             percent=round(percent, 1),
             robust_z=round(robust_z, 2) if robust_z is not None else None,
             direction=direction,

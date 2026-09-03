@@ -14,7 +14,7 @@ side-effect free and return `404` when the requested snapshot has not been gener
 | POST | `/connect/zepp/link/validate` | Validate a saved credential when browser cookies are temporarily unavailable |
 | POST | `/connect/zepp/link/disconnected` | Report an official browser logout |
 | POST | `/connect/zepp/device-link` | Create a Balance 2 upload token |
-| POST | `/connect/zepp/device-link/heart-rate` | Receive a device-side heart-rate batch |
+| POST | `/connect/zepp/device-link/heart-rate` | Settle a device heart-rate batch per sample ID |
 | GET | `/connect/zepp/token` | Read connection, renewal, and re-login state |
 | POST | `/connect/zepp` | Connect and synchronize up to 730 days |
 
@@ -28,12 +28,12 @@ semantics.
 | POST | `/intelligence/analyze?day=YYYY-MM-DD` | Run deterministic analysis and persist immutable snapshots |
 | GET | `/intelligence/profile` | Read the revisioned user-confirmed physiology and sleep profile |
 | PATCH | `/intelligence/profile` | Patch explicit profile fields with `expected_revision` conflict protection |
-| GET | `/intelligence/daily?day=YYYY-MM-DD` | Read DailyProfile 10.0 facts, decisions, and shadow-only open health insights |
+| GET | `/intelligence/daily?day=YYYY-MM-DD` | Read DailyProfile 11.0 facts, persisted decision evidence, and shadow-only open health insights |
 | GET | `/intelligence/weekly?day=YYYY-MM-DD` | Read the 7-day profile and prior-week comparison |
 | GET | `/intelligence/monthly?day=YYYY-MM-DD` | Read the directly computed 28-day profile |
 | GET | `/intelligence/trends?day=YYYY-MM-DD` | Read device-isolated 7/28/90-day trends |
 | GET | `/intelligence/events?start=&end=&event_type=` | Read health-event lifecycle state |
-| GET | `/intelligence/explain?day=YYYY-MM-DD` | Read fact → inference → action decision evidence |
+| GET | `/intelligence/explain?day=YYYY-MM-DD` | Read one persisted decision explanation, including snapshot provenance and data quality |
 | GET | `/intelligence/context?day=YYYY-MM-DD` | Read bounded Current/Recent/Trend/Personal agent context |
 | GET | `/intelligence/training-responses?day=YYYY-MM-DD` | Read T+1/T+2/T+3 post-workout responses |
 | GET | `/intelligence/personal-model?day=YYYY-MM-DD` | Read baselines, response distributions, and supported associations |
@@ -151,7 +151,8 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/st
 ## Contract Boundaries
 
 - `POST /intelligence/analyze` is the calculation command; GET endpoints do not run or
-  mutate analysis.
+  mutate analysis. `GET /intelligence/explain` returns 404 when no snapshot exists; a
+  Hermes explanation must report that state without synchronizing or analyzing.
 - Daily, Weekly, Monthly, Training Response, Personal Association, and Personal Model
   snapshots share one AnalysisRun identity.
 - Facts, inferences, and actions remain distinct in period profiles.

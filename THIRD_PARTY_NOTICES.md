@@ -1,5 +1,25 @@
 # Third-party notices
 
+## ZeppBridge integration provenance
+
+Some Zepp cloud endpoint, payload-normalization, and region-probing conventions in
+`vitalis/connectors/zepp/` were developed with reference to ZeppBridge.
+
+- Upstream repository: <https://github.com/lingcang728/ZeppBridge>
+- Reviewed release: `v2.1.0` (2026-09-02); the precise historical source revision for
+  existing translated conventions has not yet been reconstructed.
+- Vitalis modules with explicit ZeppBridge references: `auth_parser.py`, `client.py`,
+  `fetcher.py`, `parser.py`, `sync_manager.py`, and `api/routes/connect.py`.
+- Vitalis-specific changes: Python/FastAPI/SQLAlchemy architecture, typed normalized
+  contracts, source/scope/device provenance, bounded chunk orchestration, leases,
+  retries, diagnostics, and deterministic analysis boundaries.
+- Upstream license: MIT. ZeppBridge also identifies Apache-2.0-derived workout
+  decoding in its upstream notice file. Before copying or adapting additional upstream
+  code, record the exact revision and preserve all applicable MIT and Apache notices.
+
+This entry records provenance and does not claim that Vitalis is affiliated with,
+endorsed by, or functionally equivalent to ZeppBridge or Zepp Health.
+
 ## OpenStrap analytics
 
 Portions of the Open Health Insights shadow algorithms are ported or adapted from OpenStrap analytics.

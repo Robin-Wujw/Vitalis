@@ -1,7 +1,15 @@
 {
   "name": "vitalis-balance2-bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
+  "packageManager": "npm@11.12.1",
+  "engines": {
+    "node": ">=24 <25",
+    "npm": ">=11 <12"
+  },
+  "_moduleAliases": {
+    "zeppos-app-utils": "node_modules/@zeppos/zeus-cli/private-modules/zeppos-app-utils"
+  },
   "dependencies": {"@zeppos/zml": "0.0.43"},
   "devDependencies": {
     "@zeppos/device-types": "4.0.0",
@@ -9,6 +17,7 @@
   },
   "scripts": {
     "preview": "zeus preview",
-    "build": "zeus build"
+    "build": "zeus build",
+    "test": "node --test test/*.test.mjs"
   }
 }

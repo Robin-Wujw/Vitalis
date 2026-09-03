@@ -140,10 +140,20 @@ private and are not exposed through the health-query API.
 
 ## Balance 2 Bridge
 
-`zepp_os/balance2_bridge/` contains an API_LEVEL 4.2 Zepp OS application skeleton for
-Balance 2. Its background service listens only to system-permitted heart-rate callbacks,
-buffers at most 3,600 records locally, and uploads through the phone side over HTTPS
-using a one-time displayed device Bearer token.
+`zepp_os/balance2_bridge/` contains an API_LEVEL 4.2 Zepp OS application for Balance 2.
+Its background service is the sole writer of an append-only callback journal; the
+foreground page owns a separate acknowledgement checkpoint. Logical pending coverage is
+bounded to the newest 3,600 callback records, while compaction and recovery counters make
+capacity loss or storage damage visible. Zepp OS exposes no `fsync` durability guarantee.
+
+The phone side uploads fixed high-water batches over HTTPS with a one-time displayed
+Bearer token. The v2 endpoint settles exact client sample IDs after the metric transaction
+commits and separately identifies permanent validation rejections. Network, authentication,
+protocol, or server failures leave unsettled samples in place. Server-side `(user, source,
+metric, timestamp, source_scope, device)` identity keeps committed batch replay idempotent.
+For callbacks sharing one millisecond, the client sends `sample_ordinal`; persistence adds
+that ordinal as a microsecond tie-breaker while retaining the original millisecond and
+ordinal in the settlement response.
 
 Callback frequency is controlled by Zepp OS and is not claimed to be fixed at 1 Hz.
 The bridge does not continuously collect high-power accelerometer data. Helio Strap

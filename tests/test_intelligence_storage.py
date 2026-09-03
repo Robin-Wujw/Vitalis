@@ -94,7 +94,7 @@ def test_analysis_snapshots_are_immutable_per_run():
                 "daily",
                 TARGET,
                 TARGET,
-                "10.0",
+                "11.0",
                 "10.0",
                 "7.0",
                 "2026-09a",

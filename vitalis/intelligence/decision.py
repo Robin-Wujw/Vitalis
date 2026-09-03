@@ -12,11 +12,15 @@ from .contracts import (
     ConcurrentWeeklyBalance,
     ConfidenceBand,
     DecisionAction,
+    DecisionEvidence,
+    DecisionEvidenceFact,
+    DecisionGateEvidence,
     HrvFeatures,
     LoadState,
     PlannedSession,
     RecoveryFeatures,
     RecoveryState,
+    SleepFeatures,
     SleepState,
     TrainingDecision,
     TrainingFeatures,
@@ -52,6 +56,7 @@ class DecisionEngine:
         self,
         recommendation_id: str,
         day: date,
+        sleep: SleepFeatures,
         sleep_state: SleepState,
         hrv: HrvFeatures,
         recovery: RecoveryFeatures,
@@ -94,6 +99,20 @@ class DecisionEngine:
                 missing_input_gates=missing_gates,
             )
 
+        def evidence_for(
+            drivers: list[str],
+            gates: list[DecisionGateEvidence] | None = None,
+            extra_facts: list[DecisionEvidenceFact] | None = None,
+        ) -> DecisionEvidence:
+            return self._decision_evidence(
+                sleep,
+                hrv,
+                training,
+                drivers,
+                gates or [],
+                extra_facts or [],
+            )
+
         if recovery.state == RecoveryState.INSUFFICIENT_DATA:
             return self._decision(
                 recommendation_id,
@@ -102,6 +121,13 @@ class DecisionEngine:
                 [],
                 limitations,
                 ["DECISION.REQUIRED_RECOVERY_SIGNALS"],
+                evidence_for([], [DecisionGateEvidence(
+                    code="DECISION.REQUIRED_RECOVERY_SIGNALS",
+                    label="恢复决策所需信号不足",
+                    triggered=True,
+                    observed_value=recovery.state.value,
+                    expected_condition="至少两个可解释的恢复或负荷信号",
+                )]),
                 plan(None),
             )
 
@@ -113,9 +139,32 @@ class DecisionEngine:
                 recommendation_id,
                 DecisionAction.REST,
                 confidence,
-                recovery.negative_signals,
+                ["PAIN_OR_INJURY_PRESENT"],
                 limitations,
                 ["DECISION.PAIN_OR_INJURY_SAFETY_GATE"],
+                evidence_for(
+                    ["PAIN_OR_INJURY_PRESENT"],
+                    [DecisionGateEvidence(
+                        code="DECISION.PAIN_OR_INJURY_SAFETY_GATE",
+                        label="疼痛或伤病安全门控已触发",
+                        triggered=True,
+                        observed_value=preferences.pain_or_injury_status,
+                        expected_condition="疼痛或伤病状态不是 PRESENT",
+                        observed_at=preferences.updated_at,
+                    )],
+                    [
+                        DecisionEvidenceFact(
+                            code="pain_or_injury_status",
+                            label="疼痛或伤病状态",
+                            value=preferences.pain_or_injury_status,
+                        ),
+                        DecisionEvidenceFact(
+                            code="pain_or_injury_notes",
+                            label="疼痛或伤病说明",
+                            value=preferences.pain_or_injury_notes,
+                        ),
+                    ],
+                ),
                 plan(self._rest("已记录疼痛或伤病", stop)),
             )
 
@@ -124,18 +173,44 @@ class DecisionEngine:
                 recommendation_id,
                 DecisionAction.RECOVERY,
                 confidence,
-                recovery.positive_signals or ["RECOVERY_NORMAL"],
+                ["TRAINING_DAY_UNAVAILABLE"],
                 limitations,
                 ["DECISION.UNAVAILABLE_TRAINING_DAY"],
+                evidence_for(
+                    ["TRAINING_DAY_UNAVAILABLE"],
+                    [DecisionGateEvidence(
+                        code="DECISION.UNAVAILABLE_TRAINING_DAY",
+                        label="今天不在设定的可训练日内",
+                        triggered=True,
+                        observed_value=day.isoweekday(),
+                        expected_condition="目标日期属于已设置的可训练日",
+                        observed_at=preferences.updated_at,
+                    )],
+                    [
+                        DecisionEvidenceFact(
+                            code="target_iso_weekday",
+                            label="目标日期星期",
+                            value=day.isoweekday(),
+                        ),
+                        DecisionEvidenceFact(
+                            code="available_weekdays",
+                            label="已设置的可训练日",
+                            value=preferences.available_weekdays,
+                        ),
+                    ],
+                ),
                 plan(self._recovery(preferences, "今天不在设定的可训练日内")),
             )
 
         if recovery.state == RecoveryState.SUPPRESSED:
-            severe = {
-                "HRV_BELOW_BASELINE",
-                "RHR_ABOVE_BASELINE",
-                "SLEEP_BELOW_BASELINE",
-            }.issubset(recovery.negative_signals)
+            severe = (
+                "HRV_BELOW_BASELINE" in recovery.negative_signals
+                and "RHR_ABOVE_BASELINE" in recovery.negative_signals
+                and any(
+                    signal in recovery.negative_signals
+                    for signal in ("SLEEP_BELOW_BASELINE", "SLEEP_SHORT_DURATION")
+                )
+            )
             if severe:
                 return self._decision(
                     recommendation_id,
@@ -144,6 +219,13 @@ class DecisionEngine:
                     recovery.negative_signals,
                     limitations,
                     ["DECISION.MULTISIGNAL_SUPPRESSION_REST"],
+                    evidence_for(recovery.negative_signals, [DecisionGateEvidence(
+                        code="DECISION.MULTISIGNAL_SUPPRESSION_REST",
+                        label="HRV、静息心率和睡眠信号同时受抑制",
+                        triggered=True,
+                        observed_value=True,
+                        expected_condition="三项严重恢复信号不同时出现",
+                    )]),
                     plan(self._rest("多项恢复信号同时受抑制")),
                 )
             return self._decision(
@@ -153,11 +235,18 @@ class DecisionEngine:
                 recovery.negative_signals,
                 limitations,
                 ["DECISION.MULTISIGNAL_SUPPRESSION_RECOVERY"],
+                evidence_for(recovery.negative_signals, [DecisionGateEvidence(
+                    code="DECISION.MULTISIGNAL_SUPPRESSION_RECOVERY",
+                    label="多个恢复信号提示降低训练负担",
+                    triggered=True,
+                    observed_value=len(recovery.negative_signals),
+                    expected_condition="少于两个负向恢复信号",
+                )]),
                 plan(self._recovery(preferences, "当前恢复状态受抑制")),
             )
 
         conflicts = self._conflicts(day, training)
-        action = self._training_action(sleep_state, hrv, recovery, training)
+        action, action_drivers = self._training_action(sleep_state, hrv, recovery, training)
         intensity = {
             DecisionAction.TRAIN_HARD: "high",
             DecisionAction.TRAIN_NORMAL: "moderate",
@@ -172,20 +261,133 @@ class DecisionEngine:
             DecisionAction.TRAIN_NORMAL: "DECISION.CONCURRENT_BALANCE",
             DecisionAction.TRAIN_LIGHT: "DECISION.CONCURRENT_LOAD_REDUCTION",
         }[action]
-        drivers = list(recovery.positive_signals) or ["RECOVERY_NORMAL"]
+        drivers = list(recovery.positive_signals + recovery.negative_signals) or ["RECOVERY_NORMAL"]
+        drivers.extend(action_drivers)
         if training.load_state == LoadState.ELEVATED:
             drivers.append("TRAINING_LOAD_ELEVATED")
         elif training.load_state == LoadState.LOW:
             drivers.append("TRAINING_LOAD_LOW")
+        selected_drivers = list(dict.fromkeys(drivers))
         return self._decision(
             recommendation_id,
             action,
             confidence,
-            list(dict.fromkeys(drivers)),
+            selected_drivers,
             limitations,
             [rule],
+            evidence_for(selected_drivers, [DecisionGateEvidence(
+                code=rule,
+                label="训练动作规则已匹配",
+                triggered=True,
+                observed_value=action.value,
+                expected_condition="采用与恢复和负荷状态匹配的训练剂量",
+            )]),
             plan(primary, optional, relationship, conflicts),
         )
+
+    @staticmethod
+    def _evidence_fact(code, label, value, unit, deviation=None, direction=None):
+        return DecisionEvidenceFact(
+            code=code,
+            label=label,
+            value=value,
+            unit=unit,
+            baseline_reference=deviation.baseline_reference if deviation else None,
+            baseline_window_days=deviation.baseline_window_days if deviation else None,
+            deviation_percent=deviation.percent if deviation else None,
+            robust_z=deviation.robust_z if deviation else None,
+            direction=direction or (deviation.direction if deviation else None),
+            source=deviation.source if deviation else None,
+            source_scope=deviation.source_scope if deviation else None,
+            device_id=deviation.device_id if deviation else None,
+        )
+
+    @classmethod
+    def _decision_evidence(cls, sleep, hrv, training, drivers, gates, extra_facts):
+        facts = list(extra_facts)
+        for driver in drivers:
+            label = DRIVER_LABELS.get(driver, driver)
+            if driver in {"HRV_ABOVE_BASELINE", "HRV_BELOW_BASELINE"}:
+                facts.append(cls._evidence_fact(
+                    driver,
+                    label,
+                    hrv.value_ms,
+                    "毫秒",
+                    hrv.deviation,
+                    hrv.fusion_direction,
+                ))
+            elif driver in {"RHR_BELOW_BASELINE", "RHR_ABOVE_BASELINE"}:
+                facts.append(cls._evidence_fact(
+                    driver, label, hrv.rhr_bpm, "次/分钟", hrv.rhr_deviation
+                ))
+            elif driver in {
+                "SLEEP_ABOVE_BASELINE",
+                "SLEEP_BELOW_BASELINE",
+                "SLEEP_SHORT_DURATION",
+            }:
+                facts.append(cls._evidence_fact(
+                    driver,
+                    label,
+                    sleep.duration_minutes,
+                    "分钟",
+                    sleep.duration_deviation,
+                ))
+            elif driver in {"TRAINING_LOAD_ELEVATED", "TRAINING_LOAD_LOW"}:
+                fact = cls._evidence_fact(
+                    driver, label, training.load_7d, "负荷", training.load_deviation
+                )
+                if fact.baseline_reference is None:
+                    fact.baseline_reference = training.load_7d_reference
+                if fact.deviation_percent is None:
+                    fact.deviation_percent = training.load_7d_change_percent
+                facts.append(fact)
+            elif driver == "RECOVERY_NORMAL":
+                if hrv.fusion_direction == "near" and hrv.value_ms is not None:
+                    facts.append(cls._evidence_fact(
+                        "HRV_NEAR_BASELINE",
+                        "HRV 接近个人基线",
+                        hrv.value_ms,
+                        "毫秒",
+                        hrv.deviation,
+                        hrv.fusion_direction,
+                    ))
+                if hrv.rhr_deviation and hrv.rhr_deviation.direction == "near":
+                    facts.append(cls._evidence_fact(
+                        "RHR_NEAR_BASELINE",
+                        "静息心率接近个人基线",
+                        hrv.rhr_bpm,
+                        "次/分钟",
+                        hrv.rhr_deviation,
+                    ))
+                if sleep.duration_deviation and sleep.duration_deviation.direction == "near":
+                    facts.append(cls._evidence_fact(
+                        "SLEEP_NEAR_BASELINE",
+                        "睡眠接近个人基线",
+                        sleep.duration_minutes,
+                        "分钟",
+                        sleep.duration_deviation,
+                    ))
+                if training.load_state == LoadState.NORMAL:
+                    facts.append(cls._evidence_fact(
+                        "TRAINING_LOAD_NORMAL",
+                        "近期训练负荷处于正常范围",
+                        training.load_7d,
+                        "负荷",
+                        training.load_deviation,
+                    ))
+            elif driver == "HRV_RECENT_7D_BELOW":
+                facts.append(DecisionEvidenceFact(
+                    code=driver,
+                    label=label,
+                    value=hrv.recent_7d_median_ms,
+                    unit="毫秒",
+                    baseline_reference=hrv.previous_7d_median_ms,
+                    baseline_window_days=7,
+                    deviation_percent=hrv.recent_7d_change_percent,
+                    direction=hrv.recent_7d_direction,
+                ))
+        unique = {fact.code: fact for fact in facts}
+        return DecisionEvidence(facts=list(unique.values()), gates=gates)
 
     @staticmethod
     def _confidence(recovery, limitations) -> ConfidenceBand:
@@ -249,21 +451,23 @@ class DecisionEngine:
         return "CLEAR", "未记录疼痛或伤病限制"
 
     @staticmethod
-    def _training_action(sleep_state, hrv, recovery, training) -> DecisionAction:
+    def _training_action(
+        sleep_state, hrv, recovery, training
+    ) -> tuple[DecisionAction, list[str]]:
         if recovery.state == RecoveryState.NORMAL and training.load_state == LoadState.ELEVATED:
-            return DecisionAction.TRAIN_LIGHT
+            return DecisionAction.TRAIN_LIGHT, []
         if (
             hrv.recent_7d_direction == "below"
             and hrv.fusion_direction != "above"
         ):
-            return DecisionAction.TRAIN_LIGHT
+            return DecisionAction.TRAIN_LIGHT, ["HRV_RECENT_7D_BELOW"]
         if (
             recovery.state == RecoveryState.GOOD
             and sleep_state == SleepState.ABOVE_BASELINE
             and training.load_state == LoadState.LOW
         ):
-            return DecisionAction.TRAIN_HARD
-        return DecisionAction.TRAIN_NORMAL
+            return DecisionAction.TRAIN_HARD, []
+        return DecisionAction.TRAIN_NORMAL, []
 
     @staticmethod
     def _primary_type(training, balance, preferences) -> str:
@@ -717,6 +921,7 @@ class DecisionEngine:
         drivers,
         limitations,
         rule_ids,
+        evidence,
         action_plan,
     ) -> TrainingDecision:
         return TrainingDecision(
@@ -730,5 +935,6 @@ class DecisionEngine:
             limitations=limitations,
             limitation_labels=labels(limitations, LIMITATION_LABELS),
             rule_ids=rule_ids,
+            evidence=evidence,
             action_plan=action_plan,
         )

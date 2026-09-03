@@ -22,6 +22,12 @@ from vitalis.models import (
 from vitalis.storage import HealthRepository, session_scope
 
 
+def _device_sample_id(
+    timestamp: int, ordinal: int = 0, nonce: str = "test", sequence: int = 0
+) -> str:
+    return f"z2:{timestamp}:{ordinal}:{nonce}:{sequence}"
+
+
 def test_connect_and_sync(client):
     resp = client.post(
         "/api/v1/connect/zepp",
@@ -45,7 +51,7 @@ def test_daily_profile_after_sync(client):
     resp = client.get("/api/v1/intelligence/daily", headers={"X-User-Id": "001"})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["schema_version"] == "10.0"
+    assert body["schema_version"] == "11.0"
     assert body["intelligence_version"] == "10.0"
     assert body["decision_policy_version"] == "7.0"
     assert body["evidence_version"] == "2026-09a"
@@ -58,6 +64,58 @@ def test_daily_profile_after_sync(client):
     assert body["decision"]["confidence_label"]
     assert body["decision"]["action_plan"]["goal"] == "HEALTH_FIRST_CONCURRENT"
     assert "score" not in body["decision"]
+
+
+def test_decision_explanation_projects_persisted_snapshot(client):
+    user_id = "explanation-projection-user"
+    headers = {"X-User-Id": user_id}
+    client.post("/api/v1/connect/zepp", json={"sync_history": True}, headers=headers)
+    daily = client.get("/api/v1/intelligence/daily", headers=headers).json()
+    response = client.get("/api/v1/intelligence/explain", headers=headers)
+
+    assert response.status_code == 200
+    explanation = response.json()
+    assert explanation["schema_version"] == "1.0"
+    assert explanation["user_id"] == user_id
+    assert explanation["date"] == daily["date"]
+    assert explanation["snapshot"] == {
+        "analysis_run_id": daily["analysis_run_id"],
+        "generated_at": daily["generated_at"],
+        "schema_version": daily["schema_version"],
+        "intelligence_version": daily["intelligence_version"],
+        "decision_policy_version": daily["decision_policy_version"],
+        "evidence_version": daily["evidence_version"],
+        "data_quality": daily["data_quality"],
+    }
+    assert explanation["action"] == daily["decision"]
+    assert explanation["facts"] == daily["decision"]["evidence"]["facts"]
+    assert explanation["gates"] == daily["decision"]["evidence"]["gates"]
+    assert explanation["evidence_refs"] == daily["evidence_refs"]
+    assert "metadata" not in explanation
+    assert client.get(
+        "/api/v1/intelligence/explain", headers={"X-User-Id": "other-explanation-user"}
+    ).status_code == 404
+
+
+def test_decision_explanation_is_stable_after_preferences_change(client):
+    user_id = "explanation-immutable-user"
+    headers = {"X-User-Id": user_id}
+    client.post("/api/v1/connect/zepp", json={"sync_history": True}, headers=headers)
+    before = client.get("/api/v1/intelligence/explain", headers=headers).json()
+
+    changed = client.request(
+        "PATCH",
+        "/api/v1/intelligence/training-preferences",
+        headers=headers,
+        json={
+            "pain_or_injury_status": "PRESENT",
+            "pain_or_injury_notes": "分析后记录的疼痛",
+        },
+    )
+    after = client.get("/api/v1/intelligence/explain", headers=headers).json()
+
+    assert changed.status_code == 200
+    assert after == before
 
 
 def test_daily_profile_second_user_abstains(client):
@@ -87,6 +145,7 @@ def test_get_intelligence_without_snapshot_is_read_only(client):
     assert client.get("/api/v1/intelligence/daily", headers=headers).status_code == 404
     assert client.get("/api/v1/intelligence/weekly", headers=headers).status_code == 404
     assert client.get("/api/v1/intelligence/monthly", headers=headers).status_code == 404
+    assert client.get("/api/v1/intelligence/explain", headers=headers).status_code == 404
     assert client.get("/api/v1/intelligence/training-responses", headers=headers).status_code == 404
     assert client.get("/api/v1/intelligence/personal-model", headers=headers).status_code == 404
     assert client.get("/api/v1/intelligence/personal-associations", headers=headers).status_code == 404
@@ -1013,9 +1072,9 @@ def test_balance2_device_link_ingests_idempotent_callback_samples(client):
     assert len(token) >= 32
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     auth = {"Authorization": f"Bearer {token}"}
-    batch = {"samples": [
-        {"timestamp": now_ms - 2000, "heart_rate": 72},
-        {"timestamp": now_ms - 1000, "heart_rate": 73},
+    batch = {"protocol_version": 2, "samples": [
+        {"sample_id": _device_sample_id(now_ms - 2000), "timestamp": now_ms - 2000, "sample_ordinal": 0, "heart_rate": 72},
+        {"sample_id": _device_sample_id(now_ms - 2000, 1), "timestamp": now_ms - 2000, "sample_ordinal": 1, "heart_rate": 73},
     ]}
 
     first = client.post(
@@ -1026,7 +1085,8 @@ def test_balance2_device_link_ingests_idempotent_callback_samples(client):
     )
     assert first.status_code == 200
     assert second.status_code == 200
-    assert first.json()["accepted"] == 2
+    assert first.json()["acknowledged_count"] == 2
+    assert second.json()["acknowledged"] == first.json()["acknowledged"]
     with session_scope() as db:
         repo = HealthRepository(db)
         rows = repo.metric_samples(
@@ -1043,12 +1103,133 @@ def test_balance2_device_link_ingests_idempotent_callback_samples(client):
     assert link is not None and link.last_seen_at is not None
 
 
+def test_balance2_device_link_v2_settles_each_sample_without_partial_loss(client):
+    created = client.post(
+        "/api/v1/connect/zepp/device-link",
+        headers={"X-User-Id": "balance2-v2-user"},
+    )
+    token = created.json()["device_link_token"]
+    auth = {"Authorization": f"Bearer {token}"}
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    old_ms = now_ms - 32 * 24 * 60 * 60 * 1000
+    future_ms = now_ms + 10 * 60 * 1000
+    batch = {
+        "protocol_version": 2,
+        "samples": [
+            {"sample_id": _device_sample_id(now_ms - 1000), "timestamp": now_ms - 1000, "sample_ordinal": 0, "heart_rate": 72},
+            {"sample_id": _device_sample_id(old_ms), "timestamp": old_ms, "sample_ordinal": 0, "heart_rate": 70},
+            {"sample_id": _device_sample_id(future_ms), "timestamp": future_ms, "sample_ordinal": 0, "heart_rate": 71},
+            {"sample_id": _device_sample_id(now_ms - 2000), "timestamp": now_ms - 2000, "sample_ordinal": 0, "heart_rate": 10},
+            "not-an-object",
+        ],
+    }
+
+    response = client.post(
+        "/api/v1/connect/zepp/device-link/heart-rate", headers=auth, json=batch
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["protocol_version"] == 2
+    assert result["status"] == "processed"
+    assert result["received_count"] == 5
+    assert result["acknowledged"] == [
+        {
+            "sample_id": _device_sample_id(now_ms - 1000),
+            "timestamp": now_ms - 1000,
+            "sample_ordinal": 0,
+        }
+    ]
+    assert {item["code"] for item in result["rejected"]} == {
+        "timestamp_too_old",
+        "timestamp_too_future",
+        "heart_rate_out_of_range",
+        "invalid_sample",
+    }
+    assert all(item["retryable"] is False for item in result["rejected"])
+    with session_scope() as db:
+        rows = HealthRepository(db).metric_samples(
+            "balance2-v2-user",
+            "heart_rate",
+            datetime.fromtimestamp((now_ms - 3000) / 1000, tz=timezone.utc),
+            datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc),
+        )
+    assert [(row.timestamp, row.value) for row in rows] == [
+        (datetime.fromtimestamp((now_ms - 1000) / 1000, tz=timezone.utc).replace(tzinfo=None), 72.0)
+    ]
+
+
+def test_balance2_device_link_v2_replay_and_all_rejected_are_processed(client):
+    created = client.post(
+        "/api/v1/connect/zepp/device-link",
+        headers={"X-User-Id": "balance2-v2-replay-user"},
+    )
+    token = created.json()["device_link_token"]
+    auth = {"Authorization": f"Bearer {token}"}
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    valid = {
+        "protocol_version": 2,
+        "samples": [{
+            "sample_id": _device_sample_id(now_ms), "timestamp": now_ms,
+            "sample_ordinal": 0, "heart_rate": 75,
+        }],
+    }
+
+    first = client.post(
+        "/api/v1/connect/zepp/device-link/heart-rate", headers=auth, json=valid
+    )
+    replay = client.post(
+        "/api/v1/connect/zepp/device-link/heart-rate", headers=auth, json=valid
+    )
+    rejected = client.post(
+        "/api/v1/connect/zepp/device-link/heart-rate",
+        headers=auth,
+        json={
+            "protocol_version": 2,
+            "samples": [
+                {"sample_id": _device_sample_id(now_ms), "timestamp": now_ms, "sample_ordinal": 0, "heart_rate": 76},
+                {"sample_id": _device_sample_id(now_ms), "timestamp": now_ms + 1, "sample_ordinal": 0, "heart_rate": 77},
+            ],
+        },
+    )
+    mismatch = client.post(
+        "/api/v1/connect/zepp/device-link/heart-rate",
+        headers=auth,
+        json={
+            "protocol_version": 2,
+            "samples": [{
+                "sample_id": _device_sample_id(now_ms, nonce="other"),
+                "timestamp": now_ms + 1,
+                "sample_ordinal": 0,
+                "heart_rate": 78,
+            }],
+        },
+    )
+
+    assert first.status_code == replay.status_code == rejected.status_code == 200
+    assert mismatch.status_code == 200
+    assert first.json()["acknowledged"] == replay.json()["acknowledged"]
+    assert replay.json()["acknowledged_count"] == 1
+    assert rejected.json()["acknowledged"] == []
+    assert rejected.json()["rejected_count"] == 1
+    assert {item["code"] for item in rejected.json()["rejected"]} == {
+        "duplicate_sample_id"
+    }
+    assert mismatch.json()["rejected"][0]["code"] == "sample_identity_mismatch"
+
+
 def test_balance2_device_upload_rejects_invalid_link(client):
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     response = client.post(
         "/api/v1/connect/zepp/device-link/heart-rate",
         headers={"Authorization": f"Bearer {'x' * 48}"},
-        json={"samples": [{"timestamp": now_ms, "heart_rate": 72}]},
+        json={
+            "protocol_version": 2,
+            "samples": [{
+                "sample_id": _device_sample_id(now_ms), "timestamp": now_ms,
+                "sample_ordinal": 0, "heart_rate": 72,
+            }],
+        },
     )
     assert response.status_code == 401
 

@@ -2,6 +2,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+from vitalis.intelligence.schema_export import decision_explanation_schema
+
 
 ROOT = Path(__file__).parents[1]
 SKILL = ROOT / "skills" / "vitalis"
@@ -18,26 +20,29 @@ def test_skill_is_renderer_only_and_uses_current_intelligence_contracts():
     assert 'request("GET", "daily"' in daily
     assert 'request("GET", "weekly"' in weekly
     assert 'request("GET", "monthly"' in monthly
-    assert 'request("GET", "explain"' in explain
+    assert '"GET", "explain"' in explain
+    assert '"status": "snapshot_missing"' in explain
     assert not (SKILL / "tools" / "daily_profile.py").exists()
     analyze = (SKILL / "tools" / "analyze.py").read_text(encoding="utf-8")
     assert "request(" in analyze and '"POST"' in analyze and '"analyze"' in analyze
     assert not (SKILL / "tools" / "health_query.py").exists()
     assert "All user-visible content must be Chinese" in skill
     assert "decision.action_plan" in skill
+    assert "daily_explanation.md" in skill
+    assert "tools/analyze.py" in skill and "tools/sync.py" in skill
 
 
 def test_skill_has_all_workflows_and_valid_schema():
-    for name in ("morning.md", "evening.md", "weekly.md", "monthly.md", "on_demand.md"):
+    for name in ("morning.md", "evening.md", "weekly.md", "monthly.md", "on_demand.md", "daily_explanation.md"):
         assert (SKILL / "workflows" / name).is_file()
     schema = json.loads((SKILL / "schemas" / "daily_profile.json").read_text(encoding="utf-8"))
-    assert schema["properties"]["schema_version"]["const"] == "10.0"
+    assert schema["properties"]["schema_version"]["const"] == "11.0"
     assert "analysis_run_id" in schema["required"]
     assert "model_version" not in schema["required"]
     actions = schema["properties"]["decision"]["properties"]["action"]["enum"]
     assert "INSUFFICIENT_DATA" in actions
     decision_required = schema["properties"]["decision"]["required"]
-    assert {"action_label", "confidence_label", "action_plan"} <= set(decision_required)
+    assert {"action_label", "confidence_label", "evidence", "action_plan"} <= set(decision_required)
     assert "prescriptions" not in decision_required
     workout_required = (
         schema["properties"]["features"]["properties"]["training"]["properties"]
@@ -56,13 +61,31 @@ def test_skill_has_all_workflows_and_valid_schema():
     assert "open_health_period_summary" in monthly["required"]
     context = json.loads((SKILL / "schemas" / "context.json").read_text(encoding="utf-8"))
     assert {"open_health_summary", "insights_stale"} <= set(context["required"])
+    explanation = json.loads(
+        (SKILL / "schemas" / "decision_explanation.json").read_text(encoding="utf-8")
+    )
+    assert explanation == decision_explanation_schema()
+    assert {
+        "schema_version", "user_id", "date", "snapshot", "facts", "gates",
+        "action", "evidence_refs",
+    } <= set(explanation["required"])
     for name in (
-        "trends.json", "health_events.json", "context.json",
+        "trends.json", "health_events.json", "context.json", "decision_explanation.json",
         "training_responses.json", "personal_model.json", "personal_associations.json",
         "timeline.json", "training_preferences.json", "strength_exercises.json",
         "profile.json",
     ):
         json.loads((SKILL / "schemas" / name).read_text(encoding="utf-8"))
+
+
+def test_daily_explanation_workflow_is_read_only():
+    workflow = (SKILL / "workflows" / "daily_explanation.md").read_text(encoding="utf-8")
+    assert "tools/explain.py" in workflow
+    assert "tools/analyze.py" in workflow
+    assert "tools/sync.py" in workflow
+    assert "INSUFFICIENT_DATA" in workflow
+    assert "status=snapshot_missing" in workflow
+    assert "不得改用昨天的数据" in workflow
 
 
 def test_skill_exposes_read_analyze_and_act_tools():

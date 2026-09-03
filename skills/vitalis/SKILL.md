@@ -45,6 +45,9 @@ Internal enum codes exist only for program control and must never appear in the 
 - Do not treat vendor readiness, Charge, sleep score, or sleep stages as Vitalis truth.
 - If action is `INSUFFICIENT_DATA`, name the missing signals and stop. Do not infer a
   training decision from general advice or prior days.
+- If a read tool returns 404, state in Chinese that the requested date has no generated
+  analysis snapshot. Do not fall back to yesterday, call `tools/analyze.py`, call
+  `tools/sync.py`, or offer an inferred health conclusion.
 - Do not diagnose disease. Persistent deviations may be described only as observations;
   urgent symptoms or medical questions require professional care.
 - Do not silently merge local users or device streams.
@@ -59,7 +62,8 @@ Internal enum codes exist only for program control and must never appear in the 
   `workflows/monthly.md`.
 - Trends or recent changes: call `tools/trends.py` or `tools/events.py`, then
   `workflows/on_demand.md`.
-- "Why this recommendation?": call `tools/explain.py`, then `workflows/on_demand.md`.
+- "Why this recommendation?" or "Explain today's plan": call `tools/explain.py`, then
+  `workflows/daily_explanation.md`. This is a fixed read-only workflow.
 - Broad health context: call `tools/context.py`, then the closest matching workflow. Context contains only
   the compact latest Open Health summary; use `insights_stale` and refusal/missing-input fields as returned.
 - Fresh deterministic analysis: call `tools/analyze.py`; subsequent reads may select

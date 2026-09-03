@@ -3,6 +3,8 @@
 
 import argparse
 
+import httpx
+
 from _client import configured_user, print_json, request
 
 
@@ -12,7 +14,20 @@ def main() -> int:
     parser.add_argument("--user", default=user, required=not user)
     parser.add_argument("--date", help="YYYY-MM-DD，默认今天")
     args = parser.parse_args()
-    print_json(request("GET", "explain", args.user, params={"day": args.date} if args.date else {}))
+    try:
+        payload = request(
+            "GET", "explain", args.user,
+            params={"day": args.date} if args.date else {},
+        )
+    except httpx.HTTPStatusError as error:
+        if error.response.status_code != 404:
+            raise
+        payload = {
+            "status": "snapshot_missing",
+            "http_status": 404,
+            "date": args.date,
+        }
+    print_json(payload)
     return 0
 
 

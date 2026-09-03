@@ -73,6 +73,7 @@ def _analyze(raw):
     decision = DecisionEngine().decide(
         "analyzer-recommendation",
         TARGET,
+        sleep,
         sleep_state,
         hrv,
         recovery,
@@ -581,6 +582,61 @@ def test_recorded_pain_blocks_planned_training():
     assert decision.action_plan.safety_status == "LIMITED"
     assert decision.action_plan.primary_session.session_type == "REST"
     assert decision.action_plan.optional_session is None
+    assert decision.drivers == ["PAIN_OR_INJURY_PRESENT"]
+    assert {fact.code: fact.value for fact in decision.evidence.facts} == {
+        "pain_or_injury_status": "PRESENT",
+        "pain_or_injury_notes": "膝部疼痛",
+    }
+    assert decision.evidence.gates[0].code == "DECISION.PAIN_OR_INJURY_SAFETY_GATE"
+
+
+def test_unavailable_weekday_persists_the_evaluated_schedule_gate():
+    raw = _with_genuinely_low_recent_load(
+        _profile(hrv_today=62, rhr_today=50, sleep_today=510, load_today=0)
+    )
+    raw.training_preferences = TrainingPreferences(user_id="u", available_weekdays=[1])
+
+    *_, decision = _analyze(raw)
+
+    assert TARGET.isoweekday() != 1
+    assert decision.action == DecisionAction.RECOVERY
+    assert decision.drivers == ["TRAINING_DAY_UNAVAILABLE"]
+    facts = {fact.code: fact.value for fact in decision.evidence.facts}
+    assert facts["target_iso_weekday"] == TARGET.isoweekday()
+    assert facts["available_weekdays"] == [1]
+    assert decision.evidence.gates[0].code == "DECISION.UNAVAILABLE_TRAINING_DAY"
+
+
+def test_short_sleep_near_personal_baseline_is_not_mislabeled_below_baseline():
+    raw = _profile(hrv_today=55, rhr_today=56, sleep_today=400, load_today=20)
+    raw.series["sleep_duration"] = _series(
+        "sleep_duration", [400] * 22, unit="min"
+    )
+    raw.sleep_by_day = {
+        point.day: {"date": point.day, "sleep_duration": int(point.value), "source": "zepp"}
+        for point in raw.series["sleep_duration"]
+    }
+
+    sleep, sleep_state, _, _, recovery, decision = _analyze(raw)
+
+    assert sleep.duration_deviation.direction == "near"
+    assert sleep_state == SleepState.BELOW_BASELINE
+    assert "SLEEP_SHORT_DURATION" in recovery.negative_signals
+    assert "SLEEP_BELOW_BASELINE" not in recovery.negative_signals
+    evidence = {fact.code: fact for fact in decision.evidence.facts}
+    if "SLEEP_SHORT_DURATION" in decision.drivers:
+        assert evidence["SLEEP_SHORT_DURATION"].baseline_reference == 400
+
+
+def test_normal_recovery_driver_keeps_the_near_baseline_facts():
+    raw = _profile(hrv_today=51, rhr_today=56, sleep_today=455, load_today=30)
+
+    *_, recovery, decision = _analyze(raw)
+
+    assert recovery.state == RecoveryState.NORMAL
+    assert decision.drivers == ["RECOVERY_NORMAL"]
+    fact_codes = {fact.code for fact in decision.evidence.facts}
+    assert {"HRV_NEAR_BASELINE", "RHR_NEAR_BASELINE", "SLEEP_NEAR_BASELINE"} <= fact_codes
 
 
 def test_recent_leg_session_suppresses_quality_run_conflict():
@@ -757,6 +813,7 @@ def test_hrv_device_disagreement_is_not_averaged_into_a_recovery_signal():
     decision = DecisionEngine().decide(
         "disagreement-recommendation",
         TARGET,
+        sleep,
         sleep_state,
         hrv,
         recovery,

@@ -3,21 +3,53 @@ import * as appService from "@zos/app-service";
 import { queryPermission, requestPermission } from "@zos/app";
 import { align, createWidget, prop, text_style, widget } from "@zos/ui";
 
-import { acknowledgeQueue, readQueue } from "../shared/queue";
+import { queueStats, readQueue, settleQueue } from "../shared/queue.js";
 
 const SERVICE = "app-service/heart_rate_service";
 const PERMISSIONS = ["data:user.hd.heart_rate", "device:os.bg_service"];
 let statusText = null;
+let uploading = false;
+
+function queueSummary() {
+  const stats = queueStats();
+  const details = [`${stats.pending} 条待上传`];
+  if (stats.droppedCount) details.push(`容量丢弃 ${stats.droppedCount} 条`);
+  if (stats.permanentRejectedCount) {
+    details.push(`服务端拒绝 ${stats.permanentRejectedCount} 条`);
+  }
+  if (stats.corruptionCount) details.push(`存储异常 ${stats.corruptionCount} 次`);
+  if (stats.faulted) details.push("队列需恢复");
+  return details.join("，");
+}
 
 function setStatus(text) {
   if (statusText) statusText.setProperty(prop.TEXT, text);
+}
+
+function uploadSamples(records) {
+  return records.map((record) => ({
+    sample_id: record.id,
+    timestamp: record.timestamp,
+    sample_ordinal: record.sample_ordinal,
+    heart_rate: record.heart_rate,
+  }));
+}
+
+function settlementBody(response) {
+  if (!response || response.transport_status !== "completed") {
+    throw new Error((response && response.transport_status) || "network_error");
+  }
+  if (response.http_status < 200 || response.http_status >= 300) {
+    throw new Error(`http_${response.http_status}`);
+  }
+  return response.body;
 }
 
 Page(BasePage({
   build() {
     statusText = createWidget(widget.TEXT, {
       x: 40, y: 90, w: 400, h: 100,
-      text: `${readQueue().length} 条待上传`,
+      text: queueSummary(),
       text_size: 28, color: 0xffffff,
       align_h: align.CENTER_H, align_v: align.CENTER_V,
       text_style: text_style.WRAP,
@@ -36,7 +68,7 @@ Page(BasePage({
     });
   },
   startCollection() {
-    const results = queryPermission({ permissions: PERMISSIONS });
+    const results = queryPermission({permissions: PERMISSIONS});
     if (results.every((value) => value === 2)) {
       this.startService();
       return;
@@ -51,34 +83,45 @@ Page(BasePage({
   },
   startService() {
     if (appService.getAllAppServices().includes(SERVICE)) {
-      setStatus(`${readQueue().length} 条待上传，后台已运行`);
+      setStatus(`${queueSummary()}，后台已运行`);
       return;
     }
     appService.start({
-      url: SERVICE,
+      file: SERVICE,
       complete_func: (result) => setStatus(
-        result.result ? "后台采集已启动" : "后台采集启动失败"
+        result.result ? `后台采集已启动，${queueSummary()}` : "后台采集启动失败"
       ),
     });
   },
   async uploadPending() {
-    let uploaded = 0;
-    while (true) {
-      const batch = readQueue().slice(0, 500);
-      if (!batch.length) break;
-      try {
-        const response = await this.request({
-          method: "UPLOAD_HEART_RATE",
-          params: { samples: batch },
-        });
-        if (!response || response.status !== "accepted") throw new Error("upload rejected");
-        acknowledgeQueue(batch.map((sample) => sample.timestamp));
-        uploaded += batch.length;
-      } catch (_error) {
-        setStatus(`上传中断，仍有 ${readQueue().length} 条`);
-        return;
-      }
+    if (uploading) {
+      setStatus("同步已在进行");
+      return;
     }
-    setStatus(`已上传 ${uploaded} 条，队列为空`);
+    uploading = true;
+    let acknowledged = 0;
+    let rejected = 0;
+    try {
+      const snapshot = readQueue();
+      if (!snapshot.length) {
+        setStatus(queueSummary());
+      } else {
+        for (let offset = 0; offset < snapshot.length; offset += 500) {
+          const batch = snapshot.slice(offset, offset + 500);
+          const response = await this.request({
+            method: "UPLOAD_HEART_RATE",
+            params: {samples: uploadSamples(batch)},
+          });
+          const settlement = settlementBody(response);
+          settleQueue(settlement, batch.map((record) => record.id));
+          acknowledged += settlement.acknowledged.length;
+          rejected += settlement.rejected.length;
+        }
+        setStatus(`已确认 ${acknowledged} 条，拒绝 ${rejected} 条，${queueSummary()}`);
+      }
+    } catch (_error) {
+      setStatus(`上传中断，未确认记录保留，${queueSummary()}`);
+    }
+    uploading = false;
   },
 }));

@@ -1,10 +1,9 @@
 # 按需解释
 
 全程使用中文。用户明确回答个人资料问题后，使用 `tools/profile.py patch` 写入并携带当前
-revision；遇到 409 时重新读取 profile，不覆盖其他更新。回答“为什么”时优先使用
-`tools/explain.py` 返回的三级链路：
-
-`facts -> inferences -> action`
+revision；遇到 409 时重新读取 profile，不覆盖其他更新。当天训练建议的“为什么”问题必须
+使用 `workflows/daily_explanation.md`，不在本工作流回退到 `tools/analyze.py` 或
+`tools/sync.py`。
 
 趋势问题只使用 TrendResponse，近期变化只使用 HealthEventResponse。仅在字段存在时引用
 变化百分比、斜率、偏差或持续天数。多个依据同时存在时，说明这是多信号综合判断。

@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "10.0"
+DAILY_SCHEMA_VERSION = "11.0"
 WEEKLY_SCHEMA_VERSION = "4.0"
 MONTHLY_SCHEMA_VERSION = "2.0"
 INTELLIGENCE_VERSION = "10.0"
@@ -21,6 +21,7 @@ PERSONAL_MODEL_SCHEMA_VERSION = "2.0"
 ASSOCIATION_SCHEMA_VERSION = "1.0"
 USER_PROFILE_SCHEMA_VERSION = "1.0"
 AGENT_CONTEXT_SCHEMA_VERSION = "5.0"
+DECISION_EXPLANATION_SCHEMA_VERSION = "1.0"
 
 ProfileValue = TypeVar("ProfileValue")
 
@@ -262,6 +263,11 @@ class BaselineStats(BaseModel):
 class Deviation(BaseModel):
     metric: str
     baseline_window_days: Literal[7, 21, 28]
+    baseline_reference: float | None = None
+    unit: str | None = None
+    source: str | None = None
+    source_scope: str | None = None
+    device_id: str | None = None
     percent: float | None = None
     robust_z: float | None = None
     direction: Literal["above", "near", "below", "unknown"] = "unknown"
@@ -972,6 +978,35 @@ class ActionPlan(BaseModel):
     missing_input_gates: list[str] = Field(default_factory=list)
 
 
+class DecisionEvidenceFact(BaseModel):
+    code: str
+    label: str
+    value: float | int | str | bool | list[int] | None = None
+    unit: str | None = None
+    baseline_reference: float | None = None
+    baseline_window_days: Literal[7, 21, 28] | None = None
+    deviation_percent: float | None = None
+    robust_z: float | None = None
+    direction: Literal["above", "near", "below", "unknown"] | None = None
+    source: str | None = None
+    source_scope: str | None = None
+    device_id: str | None = None
+
+
+class DecisionGateEvidence(BaseModel):
+    code: str
+    label: str
+    triggered: bool
+    observed_value: float | int | str | bool | list[int] | None = None
+    expected_condition: str
+    observed_at: datetime | None = None
+
+
+class DecisionEvidence(BaseModel):
+    facts: list[DecisionEvidenceFact] = Field(default_factory=list)
+    gates: list[DecisionGateEvidence] = Field(default_factory=list)
+
+
 class TrainingDecision(BaseModel):
     recommendation_id: str
     action: DecisionAction
@@ -983,6 +1018,7 @@ class TrainingDecision(BaseModel):
     limitations: list[str] = Field(default_factory=list)
     limitation_labels: list[str] = Field(default_factory=list)
     rule_ids: list[str] = Field(default_factory=list)
+    evidence: DecisionEvidence = Field(default_factory=DecisionEvidence)
     action_plan: ActionPlan
 
 
@@ -1317,7 +1353,7 @@ class SubjectiveFeedback(BaseModel):
 
 
 class DailyProfile(BaseModel):
-    schema_version: Literal["10.0"] = DAILY_SCHEMA_VERSION
+    schema_version: Literal["11.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
     intelligence_version: Literal["10.0"] = INTELLIGENCE_VERSION
     decision_policy_version: Literal["7.0"] = DECISION_POLICY_VERSION
@@ -1353,21 +1389,27 @@ class HealthEventResponse(BaseModel):
     events: list[HealthEvent] = Field(default_factory=list)
 
 
-class ExplanationFact(BaseModel):
-    code: str
-    label: str
-    value: float | int | str | None = None
-    unit: str | None = None
+class ExplanationSnapshotProvenance(BaseModel):
+    analysis_run_id: str
+    generated_at: datetime
+    schema_version: str
+    intelligence_version: str
+    decision_policy_version: str
+    evidence_version: str
+    data_quality: DataQuality
 
 
 class DecisionExplanation(BaseModel):
+    schema_version: Literal["1.0"]
     user_id: str
     date: DateValue
-    facts: list[ExplanationFact] = Field(default_factory=list)
-    inferences: list[str] = Field(default_factory=list)
-    limitations: list[str] = Field(default_factory=list)
+    snapshot: ExplanationSnapshotProvenance
+    facts: list[DecisionEvidenceFact]
+    gates: list[DecisionGateEvidence]
+    inferences: list[str]
+    limitations: list[str]
     action: TrainingDecision
-    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+    evidence_refs: list[EvidenceRef]
 
 
 class ContextCurrent(BaseModel):

@@ -302,3 +302,72 @@ The current live database still uses the superseded workout-detail schema withou
 - Bellenger et al. wearable HR/HRV validation: <https://pmc.ncbi.nlm.nih.gov/articles/PMC8160717/>
 - Miller et al. WHOOP sleep validation: <https://pubmed.ncbi.nlm.nih.gov/32713257/>
 - Morton, Fitz-Clarke and Banister load model: <https://pubmed.ncbi.nlm.nih.gov/2246166/>
+
+## 2026-09-02: Personal Health Insight Agents And ZeppBridge
+
+### Scope and sources
+
+This review assesses ideas and implementation boundaries. It does not approve a new
+health-intelligence policy, a new data source, or a clinical use case.
+
+- Merrill et al., *Transforming wearable data into personal health insights using
+  large language model agents*, Nature Communications 17, 1143 (2026):
+  <https://doi.org/10.1038/s41467-025-67922-y>
+- Open article: <https://pmc.ncbi.nlm.nih.gov/articles/PMC12855967/>
+- Preprint: <https://arxiv.org/abs/2406.06464>
+- Released PHIA research code:
+  <https://github.com/yahskapar/personal-health-insights-agent>
+- ZeppBridge local-first project and reviewed v2.1.0 release:
+  <https://github.com/lingcang728/ZeppBridge> and
+  <https://github.com/lingcang728/ZeppBridge/releases/tag/v2.1.0>
+- Zepp OS app-service guide and API_LEVEL 4.2 release notes:
+  <https://docs.zepp.com/docs/guides/framework/device/app-service/> and
+  <https://docs.zepp.com/docs/guides/version-info/new-features-42/>
+
+### PHIA disposition
+
+The paper's useful patterns are a benchmark taxonomy for factual and open-ended
+health questions, explicit tool-error recovery, and a separation between source
+observations, evidence, interpretation, and recommendations. Vitalis can reuse
+those patterns as regression fixtures for missing data, provenance, abstention,
+unsafe advice, personalization, and rendering/tool routing.
+
+PHIA's released implementation generates Pandas programs inside a ReAct loop and
+executes them with in-process `exec`/`eval`. It has no visible process sandbox,
+resource budget, filesystem policy, or retrieval prompt-injection boundary. That
+implementation is rejected for Vitalis. The deterministic Intelligence layer remains
+the only layer permitted to compute health state or a training decision.
+
+Any future language-model integration may read typed Vitalis contracts and produce
+structured routing or presentation output. It must not execute generated code,
+calculate or fill health facts, mutate normalized records, override a deterministic
+decision, or use unversioned web material as user-specific evidence. The PHIA paper
+and code are CC BY-NC 4.0; they are research references, not a source for code,
+prompts, datasets, tests, or substantive expression without separate rights review.
+
+### ZeppBridge comparison
+
+| Capability | Vitalis status | Disposition |
+| --- | --- | --- |
+| Source/device provenance and idempotent writes | `(source, scope, device)` identities plus dialect-native upserts already exist | Already implemented |
+| Durable sync retries and restart recovery | Attempt/chunk ledger, leases, heartbeats, retry states, and fair dispatch already exist | Already implemented |
+| Historical pagination/backfill and replay | Current endpoints use bounded chunks; cursor semantics are not yet fixture-proven | Deferred pending endpoint fixtures |
+| Missing sleep/stress values | Missing data remains absent and blocks unsupported completeness claims | Already implemented |
+| Additional vendor goals, PAI-zone, or stress curves | Units, time basis, device attribution, and missing-value semantics are not yet contract-tested | Candidate only |
+| FIT export/import | Needs data-export authority, file/resource limits, collision semantics, parser license review, and fixtures | Deferred |
+| Cardiac-drift presentation | Vitalis has a conservative, versioned running analysis | Keep current policy; compare only with versioned fixtures |
+
+ZeppBridge is MIT-licensed, with an Apache-2.0-derived workout-decoding notice in
+its upstream notice file. Any retained or future upstream-derived Vitalis code must
+record the reviewed upstream revision, affected modules, modification summary, and
+all required notices in `THIRD_PARTY_NOTICES.md`. Vendor stress is retained only as a
+proprietary vendor observation; it is not a psychological-state or diagnosis claim.
+
+### Balance 2 bridge implication
+
+API_LEVEL 4.2 supplies watch-provided heart-rate-zone settings and device UUIDs. The
+current official app-service contract uses the `file` startup property. The Balance 2
+bridge must verify that contract on hardware, persist callback samples before they can
+be lost on a service restart, expose bounded-queue eviction, and retain idempotent
+retry behavior. Simulator or Developer Bridge success is not sufficient evidence of
+background-service reliability on a physical device.

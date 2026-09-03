@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/daily-profile-10.0.json",
-  "title": "Vitalis DailyProfile 10.0",
+  "$id": "https://vitalis.local/schemas/daily-profile-11.0.json",
+  "title": "Vitalis DailyProfile 11.0",
   "type": "object",
   "required": ["schema_version", "analysis_run_id", "intelligence_version", "decision_policy_version", "evidence_version", "user_id", "date", "generated_at", "data_quality", "facts", "baselines", "features", "trends", "events", "states", "decision", "evidence_refs", "metadata", "open_health_insights"],
   "properties": {
-    "schema_version": {"const": "10.0"},
+    "schema_version": {"const": "11.0"},
     "analysis_run_id": {"type": "string"},
     "intelligence_version": {"const": "10.0"},
     "decision_policy_version": {"const": "7.0"},
@@ -221,7 +221,7 @@
     },
     "decision": {
       "type": "object",
-      "required": ["recommendation_id", "action", "action_label", "confidence", "confidence_label", "drivers", "driver_labels", "limitations", "limitation_labels", "rule_ids", "action_plan"],
+      "required": ["recommendation_id", "action", "action_label", "confidence", "confidence_label", "drivers", "driver_labels", "limitations", "limitation_labels", "rule_ids", "evidence", "action_plan"],
       "properties": {
         "recommendation_id": {"type": "string"},
         "action": {"enum": ["TRAIN_HARD", "TRAIN_NORMAL", "TRAIN_LIGHT", "RECOVERY", "REST", "INSUFFICIENT_DATA"]},
@@ -233,6 +233,14 @@
         "limitations": {"type": "array", "items": {"type": "string"}},
         "limitation_labels": {"type": "array", "items": {"type": "string"}},
         "rule_ids": {"type": "array", "items": {"type": "string"}},
+        "evidence": {
+          "type": "object",
+          "required": ["facts", "gates"],
+          "properties": {
+            "facts": {"type": "array", "items": {"type": "object"}},
+            "gates": {"type": "array", "items": {"type": "object"}}
+          }
+        },
         "action_plan": {
           "type": "object",
           "required": ["schema_version", "goal", "goal_label", "valid_for_date", "expires_at", "safety_status", "safety_status_label", "weekly_balance", "primary_session", "optional_session", "session_relationship", "session_relationship_label", "conflict_checks", "missing_input_gates"],

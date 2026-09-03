@@ -4,7 +4,7 @@
     "appId": 9999999,
     "appName": "Vitalis Bridge",
     "appType": "app",
-    "version": {"code": 1, "name": "0.1.0"},
+    "version": {"code": 2, "name": "0.2.0"},
     "icon": "icon.png",
     "vender": "Vitalis",
     "description": "Balance 2 heart-rate callback bridge for Vitalis"

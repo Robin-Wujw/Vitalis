@@ -23,7 +23,9 @@ Data                          v
 Hermes is not an analysis engine. It may select and phrase fields from structured
 Vitalis responses, but cannot calculate trends, weekly aggregates, scores, thresholds,
 training responses, recovery time, monthly aggregates, correlations, personal patterns,
-confidence, or replacement advice.
+confidence, or replacement advice. Its daily explanation path reads one persisted
+DecisionExplanation projection; it cannot create a snapshot, synchronize data, or
+replace an absent result with a prior day or generic advice.
 
 ## 2. Data Layer
 
@@ -120,7 +122,7 @@ The implementation lives in `vitalis/intelligence`:
 
 ### 3.1 DailyProfile
 
-The wire contract is `schema_version=10.0`. Every result carries `analysis_run_id`,
+The wire contract is `schema_version=11.0`. Every result carries `analysis_run_id`,
 `intelligence_version`, `decision_policy_version`, and `evidence_version` separately:
 
 ```text
@@ -142,7 +144,7 @@ sleep scores are labeled as vendor context and do not become the Vitalis result.
 
 #### 3.1.1 Open Health shadow insights
 
-DailyProfile 10.0, WeeklyProfile 4.0, MonthlyProfile 2.0, and Agent Context 5.0 expose a versioned `open_health_insights` block. It contains transparent personal-baseline readiness, robust multi-signal anomaly screening, sleep efficiency/regularity, user-target sleep gaps, Banister TRIMP, and descriptive ATL/CTL/TSB.
+DailyProfile 11.0, WeeklyProfile 4.0, MonthlyProfile 2.0, and Agent Context 5.0 expose a versioned `open_health_insights` block. It contains transparent personal-baseline readiness, robust multi-signal anomaly screening, sleep efficiency/regularity, user-target sleep gaps, Banister TRIMP, and descriptive ATL/CTL/TSB.
 
 These outputs are strictly `shadow_only=true`. They never enter `RecoveryFeatures.state`, `DecisionEngine`, decision confidence, rule IDs, or ActionPlan. The current decision policy remains 7.0. A future policy must explicitly version and test any use of these signals.
 
@@ -339,7 +341,7 @@ configured; Vitalis never invents weather conditions.
 
 ### 3.10 Running Analysis
 
-DailyProfile 10.0 embeds `TrainingFeatures.running` with Running Analysis v2. Each
+DailyProfile 11.0 embeds `TrainingFeatures.running` with Running Analysis v2. Each
 session preserves distance, duration, derived and equivalent pace, median speed and cadence,
 cadence variability, power, ground-contact time, vertical oscillation, vertical stride
 ratio, HR-zone duration, cardiac drift, detected work/recovery segments, classification
@@ -390,7 +392,7 @@ natural observation, never as a universal cadence target.
 
 ### 3.11 Strength Analysis
 
-DailyProfile 10.0 embeds `TrainingFeatures.strength` with Strength Analysis v1. A user
+DailyProfile 11.0 embeds `TrainingFeatures.strength` with Strength Analysis v1. A user
 can confirm exercise name, set count, repetitions, load, RPE/RIR, rest, and session
 focus against a user-owned strength workout. Vitalis normalizes known Chinese or
 English exercise names to movement patterns and muscle groups while preserving the
@@ -417,7 +419,7 @@ rule.
 
 ### 3.12 Nocturnal Recovery Context
 
-DailyProfile 10.0 keeps timestamped ordinary heart rate separate from daily metric
+DailyProfile 11.0 keeps timestamped ordinary heart rate separate from daily metric
 series. For each sleep interval, the engine isolates device streams and requires at
 least 120 covered minutes and 50% interval coverage. It derives the nightly median, a
 rolling five-minute median low point, first- and second-half medians, and coverage.

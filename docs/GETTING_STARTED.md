@@ -72,7 +72,10 @@ hermes --skills vitalis prompt-size --json
 The list must show `vitalis` as a local enabled Skill, and the prompt-size breakdown
 must resolve `vitalis` from the linked path. `VITALIS_USER` has no fallback: every tool
 passes that exact identity as `X-User-Id`. Hermes remains a Read / Analyze / Act
-orchestrator and must not calculate, merge, or fill health observations.
+orchestrator and must not calculate, merge, or fill health observations. Daily
+explanations use only the persisted `/intelligence/explain` projection; a missing
+snapshot is reported without automatic synchronization or analysis. Keep this API
+loopback/private because `X-User-Id` selects identity but does not authenticate a caller.
 
 ### Daily PushPlus Report
 

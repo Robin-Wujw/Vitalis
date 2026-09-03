@@ -414,8 +414,6 @@ class DataFetcher:
             )))
             for event_type, sub_type in (
                 ("Charge", "real_data"),
-                ("Charge", "stress_data"),
-                ("Charge", "insight_data"),
                 ("readiness", "watch_score"),
             ):
                 diagnostic = f"daily_summary/{event_type.lower()}_{sub_type}"

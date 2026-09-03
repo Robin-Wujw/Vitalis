@@ -163,6 +163,10 @@ def test_daily_and_wellness_requests_are_chunked_for_long_history():
     rmssd_calls = [x for x in connector.events if x[:2] == ("HRVRMSSD", "real_data")]
     assert len(daily_health_calls) == 3
     assert len(readiness_calls) == 3
+    assert not [
+        call for call in connector.events
+        if call[:2] in {("Charge", "stress_data"), ("Charge", "insight_data")}
+    ]
     assert len(rmssd_calls) == 3
     assert len(connector.date_events) == 6
 

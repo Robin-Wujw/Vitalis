@@ -41,7 +41,7 @@ from vitalis.storage.sync_types import SyncLease
 from vitalis.time import local_day_utc_bounds
 
 
-PLAN_VERSION = "zepp-sync-v2"
+PLAN_VERSION = "zepp-sync-v3"
 MAX_CHUNK_ATTEMPTS = 5
 CHUNK_LEASE_SECONDS = 120
 ATTEMPT_LEASE_SECONDS = 300
@@ -338,8 +338,6 @@ class ZeppSyncCoordinator:
             daily_specs = (
                 ("DailyHealth/summary", "DailyHealth", "summary", "daily_summary"),
                 ("Charge/real_data", "Charge", "real_data", "daily_summary/charge_real_data"),
-                ("Charge/stress_data", "Charge", "stress_data", "daily_summary/charge_stress_data"),
-                ("Charge/insight_data", "Charge", "insight_data", "daily_summary/charge_insight_data"),
                 ("readiness/watch_score", "readiness", "watch_score", "daily_summary/readiness"),
             )
             for partition, event_type, sub_type, health in daily_specs:

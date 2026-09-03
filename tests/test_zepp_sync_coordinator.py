@@ -76,7 +76,7 @@ def test_manifest_is_stable_and_request_is_reused():
     first = coordinator.create_attempt("coord-manifest", window=WINDOW, options={"decode_dense_files": False})
     second = coordinator.create_attempt("coord-manifest", window=WINDOW, options={"decode_dense_files": False})
     assert first.id == second.id
-    assert first.chunk_count == 33
+    assert first.chunk_count == 31
     rows = coordinator.status(first.id)["chunks"]
     assert rows[0]["stable_key"] == stable_chunk_key(
         "heart_rate", "minute", WINDOW.start, WINDOW.end, int(WINDOW.start.timestamp())
@@ -92,8 +92,8 @@ def test_page_success_creates_atomic_successor():
     coordinator, attempt = _one_chunk_attempt("coord-page", connector)
     report = coordinator.run_attempt(attempt.id, max_chunks=1)
     state = coordinator.status(attempt.id)
-    assert report.progress["succeeded_chunks"] == 33
-    assert len(state["chunks"]) == 34
+    assert report.progress["succeeded_chunks"] == 31
+    assert len(state["chunks"]) == 32
     successors = [row for row in state["chunks"] if row["status"] == "queued"]
     assert len(successors) == 1
     assert successors[0]["stream"] == "heart_rate"

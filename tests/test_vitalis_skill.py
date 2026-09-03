@@ -12,12 +12,15 @@ SKILL = ROOT / "skills" / "vitalis"
 def test_skill_is_renderer_only_and_uses_current_intelligence_contracts():
     skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
     daily = (SKILL / "tools" / "daily.py").read_text(encoding="utf-8")
+    morning = (SKILL / "tools" / "morning_briefing.py").read_text(encoding="utf-8")
     weekly = (SKILL / "tools" / "weekly.py").read_text(encoding="utf-8")
     monthly = (SKILL / "tools" / "monthly.py").read_text(encoding="utf-8")
     explain = (SKILL / "tools" / "explain.py").read_text(encoding="utf-8")
     assert "Never reproduce those calculations" in skill
     assert "INSUFFICIENT_DATA" in skill
     assert 'request("GET", "daily"' in daily
+    assert '"morning-briefing"' in morning
+    assert "tools/morning_briefing.py" in skill
     assert 'request("GET", "weekly"' in weekly
     assert 'request("GET", "monthly"' in monthly
     assert '"GET", "explain"' in explain
@@ -90,7 +93,7 @@ def test_daily_explanation_workflow_is_read_only():
 
 def test_skill_exposes_read_analyze_and_act_tools():
     expected = {
-        "daily.py", "weekly.py", "monthly.py", "trends.py", "events.py", "explain.py", "context.py",
+        "daily.py", "morning_briefing.py", "weekly.py", "monthly.py", "trends.py", "events.py", "explain.py", "context.py",
         "sync.py", "analyze.py", "feedback.py", "acknowledge_event.py",
         "training_responses.py", "personal_model.py", "personal_associations.py", "timeline.py",
         "complete_recommendation.py",

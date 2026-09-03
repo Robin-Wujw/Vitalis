@@ -1,29 +1,13 @@
 # 晨间分析
 
-当返回 `open_health_insights` 时，可在不超过两条的范围内展示 readiness 与已标记异常的主要
-驱动，并明确写出“开放洞察，不参与今日训练决策”。拒绝或缺输入只复述返回的原因；不得把它
-并入 `decision`。
+Use the requested date, or today's date when none is given. Read `tools/morning_briefing.py` first and render only its fields. Do not reconstruct a report from DailyProfile features.
 
-Use the requested date, or today's date when none is given.
+全程使用普通中文，像教练说明今天怎么做，按以下顺序渲染：
 
-全程使用普通中文，像教练给用户说明今天怎么做。按以下顺序渲染：
+1. `今天做什么`：保留 `action_plan.primary_session` 的时长、强度和步骤。若有 `optional_session`，按 `session_relationship` 用自然语言说明是可选补充还是二选一；不得把二选一写成同日必做。
+2. `为什么`：逐条转述 `key_reasons`，最多三条。不得补充设备名、睡眠分期、厂商评分、原始指标或内部代码。
+3. `注意`：仅在 `cautions` 非空时展示，逐条转述；不要额外生成通用提醒。
+4. `训练后告诉我`：仅在 `feedback_prompt` 存在时展示，并提示用户通过反馈工具记录实际感受。
+5. 当 `decision_action` 为 `INSUFFICIENT_DATA` 时，只说明 `data_quality`、`key_reasons` 和 `cautions`，不得改用昨天数据、通用训练建议或补偿性安排。
 
-1. 仅在当天 `features.sleep.status` 为 `AVAILABLE` 且 `wake_time` 存在时推送；
-   否则延后重试，不得改用昨天的数据。
-2. `今日结论` 只用一句话说明恢复状态及今天的训练方向，不展示内部置信度标签。
-3. `今天做什么` 展示主要训练的时长、强度和实际步骤。可选训练用自然语言说明是
-   晚些时候有余力再做，还是与主要训练二选一；不得展示内部关系标签或固定六小时间隔。
-4. `为什么` 最多使用四条，只说明真正改变安排的事实：睡眠时长和时段、同一主设备
-   HRV 当晚及近 7 天相对此前 7 天的变化、覆盖充分的睡眠心率中位数/稳健低点/前后
-   半夜变化，以及最近一次跑步或力量训练中被本次处方使用的时长、配速、步频、心率
-   漂移、动作、组次、休息或 RPE/RIR。不得列出设备名或多个设备值。
-5. `最近最值得注意` 最多展示一个会影响训练或恢复的未解决事件，并解释今天应如何
-   应对。活动分钟或步数变化若不改变今天安排则不展示，也不得逐项罗列趋势窗口。
-6. `必要提醒` 只在真实疼痛/伤病限制、同步降级、缺少决策必需数据，或多设备 HRV
-   分歧确实降低本次结论把握时出现。
-7. 不展示空的积极/关注信号、未知安全状态、厂商准备度/身体电量、睡眠分期、设备
-   覆盖索引、已通过的冲突检查、规划边界、专项依据、进阶条件、通用停止条件、有效期
-   或数据限制清单。这些内容留在结构化档案中供查询和审计。
-
-当内部动作是 `INSUFFICIENT_DATA` 时，仅使用 `data_quality.status_label`、
-`missing_required_signal_labels` 和中文限制说明，不得用通用训练建议代替缺失结论。
+当用户明确询问“为什么”或“依据是什么”时，调用 `tools/explain.py`，再展示已有的证据与限制；不得重新计算或挑选指标。Open Health 仍是描述性 shadow insight，不参与晨报决策。

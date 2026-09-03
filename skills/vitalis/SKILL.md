@@ -55,7 +55,7 @@ Internal enum codes exist only for program control and must never appear in the 
 
 ## Workflow Routing
 
-- Morning status or today's training: call `tools/daily.py`, then `workflows/morning.md`.
+- Morning status or today's training: call `tools/morning_briefing.py`, then `workflows/morning.md`. Use `tools/explain.py` only when the person asks for the evidence behind the briefing.
 - Evening summary or tonight's focus: call `tools/daily.py`, then `workflows/evening.md`.
 - Weekly review: call `tools/weekly.py`, then `workflows/weekly.md`.
 - Monthly review or recent 28-day cycle: call `tools/monthly.py`, then

@@ -1380,6 +1380,28 @@ class DailyProfile(BaseModel):
     open_health_insights: "OpenHealthBundle | None" = None
 
 
+class MorningBriefingReason(BaseModel):
+    text: str
+
+
+class MorningBriefing(BaseModel):
+    """Non-persistent action-first projection of one DailyProfile."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    analysis_run_id: str
+    user_id: str
+    date: DateValue
+    generated_at: datetime
+    decision_action: DecisionAction
+    action_label: str
+    action_plan: ActionPlan
+    key_reasons: list[MorningBriefingReason] = Field(default_factory=list, max_length=3)
+    cautions: list[str] = Field(default_factory=list, max_length=3)
+    feedback_prompt: str | None = None
+    data_quality: DataQuality
+    evidence: DecisionEvidence
+
+
 class TrendResponse(BaseModel):
     user_id: str
     date: DateValue
@@ -1721,6 +1743,7 @@ class AnalysisResult(BaseModel):
     personal_model: PersonalModel
     personal_associations: PersonalAssociationProfile
     open_health_insights: "OpenHealthBundle | None" = None
+    morning_briefing: MorningBriefing
 
 
 # Open Health Insights 1.0 is intentionally isolated from the Daily/Weekly/Monthly

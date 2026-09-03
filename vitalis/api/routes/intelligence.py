@@ -15,6 +15,7 @@ from vitalis.intelligence.contracts import (
     HealthTimeline,
     LinkRecommendationInput,
     MonthlyProfile,
+    MorningBriefing,
     PersonalAssociationProfile,
     PersonalModel,
     RecommendationInstance,
@@ -84,6 +85,18 @@ def daily_profile(
     user_id: str = Depends(require_user_id),
 ) -> DailyProfile:
     return _snapshot_or_404(IntelligenceQuery().daily(user_id, day))
+
+
+@router.get(
+    "/morning-briefing",
+    response_model=MorningBriefing,
+    summary="Read the action-first morning briefing for a persisted daily profile",
+)
+def morning_briefing(
+    day: date | None = None,
+    user_id: str = Depends(require_user_id),
+) -> MorningBriefing:
+    return _snapshot_or_404(IntelligenceQuery().morning_briefing(user_id, day))
 
 
 @router.get("/weekly", response_model=WeeklyProfile, summary="Read the latest persisted weekly profile")

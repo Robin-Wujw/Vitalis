@@ -12,6 +12,9 @@ from markdown import Markdown
 from markdown.extensions import Extension
 from markdown.treeprocessors import Treeprocessor
 
+from vitalis.intelligence.contracts import MorningBriefing
+from vitalis.intelligence.morning_briefing import MorningBriefingEngine
+
 log = logging.getLogger("vitalis.push")
 PUSHPLUS_URL = "https://www.pushplus.plus/send"
 
@@ -79,7 +82,11 @@ class PushService:
             else profile
         )
         if period == "morning":
-            title, body_lines = _render_morning(payload)
+            briefing = MorningBriefingEngine().build_payload(
+                payload,
+                payload.get("delivery_metadata"),
+            )
+            return self.push_morning_briefing(user_id, briefing)
         elif period == "evening":
             title, body_lines = _render_evening(payload)
         else:
@@ -93,6 +100,23 @@ class PushService:
             extras=payload,
         )
         return self.push(msg)
+
+    def push_morning_briefing(
+        self, user_id: str, briefing: MorningBriefing | dict
+    ) -> dict:
+        payload = (
+            briefing.model_dump(mode="json")
+            if hasattr(briefing, "model_dump")
+            else briefing
+        )
+        title, body_lines = _render_morning(payload)
+        return self.push(PushMessage(
+            title=title,
+            body=_render_report_html(body_lines),
+            user_id=user_id,
+            template="html",
+            extras=payload,
+        ))
 
     @staticmethod
     def _log_handler(msg: PushMessage) -> None:
@@ -206,48 +230,26 @@ def _render_report_html(lines: list[str | _ReportHtmlBlock]) -> str:
     )
 
 
-def _render_morning(payload: dict) -> tuple[str, list[str]]:
-    decision = payload["decision"]
-    action_plan = decision["action_plan"]
+def _render_morning(briefing: dict) -> tuple[str, list[str]]:
+    action_plan = briefing["action_plan"]
     primary = action_plan.get("primary_session")
-    features = payload["features"]
-    states = payload.get("states", {})
-    sleep = features["sleep"]
-    hrv = features["hrv"]
-    overnight_vitals = features["overnight_vitals"]
-    training = features["training"]
-    report_date = payload["date"]
-    action_title = primary["title"] if primary else decision["action_label"]
+    report_date = briefing["date"]
+    action_title = primary["title"] if primary else briefing["action_label"]
     title = f"Vitalis 晨报 · {report_date} · {action_title}"
-    lines = _metadata(payload)
-    lines.extend([
-        "",
-        "## 今日状态",
-        "",
-        _daily_conclusion(
-            decision, states, action_plan, sleep, hrv, overnight_vitals
-        ),
-        "",
-        "## 昨夜数据",
-        "",
-    ])
-    lines.extend(_render_overnight_summary(sleep, hrv, overnight_vitals))
-    open_health_lines = _render_open_health_morning(payload)
-    if open_health_lines:
-        lines.extend(["", "## 开放洞察", "", *open_health_lines])
-    lines.extend(["", "## 最近 7 天", ""])
-    lines.extend(_render_weekly_training_summary(training))
-    lines.extend(["", "## 今天安排", ""])
-    lines.extend(_render_coach_actions(action_plan))
-    plan_reasons = _render_plan_reasons(training, action_plan)
-    if plan_reasons:
-        lines.extend(["", "## 为什么这样安排", "", *plan_reasons])
-    notable = _render_notable_event(payload)
-    if notable:
-        lines.extend(["", "## 最近最值得注意", "", notable])
-    cautions = _render_coach_cautions(payload)
+    lines = ["## 今天做什么", ""]
+    if briefing["decision_action"] == "INSUFFICIENT_DATA":
+        lines.append("今天不生成训练建议。")
+    else:
+        lines.extend(_render_coach_actions(action_plan))
+    reasons = [item["text"] for item in briefing.get("key_reasons", [])]
+    if reasons:
+        lines.extend(["", "## 为什么", "", *(f"- {item}" for item in reasons)])
+    cautions = briefing.get("cautions", [])
     if cautions:
-        lines.extend(["", "## 必要提醒", "", *(f"- {item}" for item in cautions)])
+        lines.extend(["", "## 注意", "", *(f"- {item}" for item in cautions)])
+    feedback_prompt = briefing.get("feedback_prompt")
+    if feedback_prompt:
+        lines.extend(["", "## 训练后告诉我", "", feedback_prompt])
     return title, lines
 
 

@@ -254,6 +254,13 @@ def _profile_payload():
             "driver_labels": ["恢复状态一般"],
             "limitations": ["session_rpe_unavailable"],
             "limitation_labels": ["尚未记录主观用力程度"],
+            "evidence": {
+                "facts": [
+                    {"code": "SLEEP_ABOVE_BASELINE", "label": "睡眠时长高于个人基线"},
+                    {"code": "HRV_ABOVE_BASELINE", "label": "HRV 高于个人基线"},
+                ],
+                "gates": [],
+            },
             "action_plan": {
                 "goal_label": "综合健康优先，跑步与力量并行",
                 "expires_at": "2026-08-29T00:00:00+08:00",
@@ -330,23 +337,27 @@ def test_morning_push_renders_actionable_coach_brief_without_audit_noise():
     assert message.title == "Vitalis 晨报 · 2026-08-28 · 轻松跑"
     assert message.template == "html"
     assert message.body.startswith('<div style="max-width:680px')
-    assert "<blockquote style=" in message.body
-    assert "数据日期：2026-08-28 · 数据完整" in text
-    for heading in ("今日状态", "昨夜数据", "最近 7 天", "今天安排"):
+    for heading in ("今天做什么", "为什么", "注意", "训练后告诉我"):
         assert f">{heading}</h2>" in message.body
-    assert "昨夜恢复指标整体良好" in text
-    assert "今天安排轻松跑，按低强度完成。" in text
+    for heading in ("今日状态", "昨夜数据", "最近 7 天", "今天安排", "开放洞察"):
+        assert f">{heading}</h2>" not in message.body
+    assert "睡眠时长高于个人基线" in text
+    assert "HRV 高于个人基线" in text
     assert "主要：轻松跑 · 30–45 分钟 · 低强度" in text
     assert "热身：6–8 分钟 · 轻松。先快走，再逐渐过渡到慢跑" in text
     assert "有余力时，晚些时候可再做拉类力量训练；不做也不影响今天的主要安排。" in text
     assert "可选：拉类力量训练 · 40–60 分钟 · 中等强度" in text
-    assert "睡眠：7 小时 27 分钟；较个人基线 +6.5%" in text
-    assert "快速眼动睡眠 106 分钟" in text
-    assert "心率变异性 71 毫秒（较个人基线 +8.2%）" in text
-    assert "静息心率 47 次/分钟（较个人基线 -1.0%）" in text
-    assert "每小时下降 2.84 次" in text
-    assert "构成：跑步 2 次、82 分钟、14.2 公里；力量训练 2 次" in text
-    assert "最近一周训练负荷明显增加。完成今天的计划即可，不再追加训练。" in text
+    assert "近 7 日训练负荷持续上升。" in text
+    assert "完成后记录：是否完成、主观用力 RPE" in text
+    for raw_text in (
+        "睡眠：7 小时 27 分钟",
+        "快速眼动睡眠 106 分钟",
+        "心率变异性 71 毫秒",
+        "静息心率 47 次/分钟",
+        "每小时下降 2.84 次",
+        "构成：跑步 2 次、82 分钟、14.2 公里",
+    ):
+        assert raw_text not in text
     for audit_text in (
         "安全状态",
         "积极信号",
@@ -383,7 +394,7 @@ def test_push_report_discloses_degraded_fresh_sync():
     service.push_daily_profile("test-user", payload, period="morning")
 
     text = _visible_text(received[0].body)
-    assert ">必要提醒</h2>" in received[0].body
+    assert ">注意</h2>" in received[0].body
     assert "本次同步未完整完成，结论使用的是已经保存的当天数据。" in text
 
 
@@ -594,15 +605,16 @@ def test_open_health_rendering_uses_localized_shadow_wording():
     service.add_handler(morning.append)
     service.push_daily_profile("test-user", payload, period="morning")
     morning_text = _visible_text(morning[0].body)
-    assert "实验性 RMSSD 观察" in morning_text
-    assert "Zepp 夜间汇总 63.0 毫秒" in morning_text
-    assert "此前 7 夜基线约 65.5 毫秒" in morning_text
-    assert "动态参考范围 63.6-67.5 毫秒" in morning_text
-    assert "按此前最多 7 夜的 lnRMSSD 均值和波动计算" in morning_text
-    assert "多指标观察：多个夜间信号连续偏离个人常态" in morning_text
-    assert "非诊断性实验观察，不参与今日训练决策" in morning_text
-    assert "lnRMSSD delta" not in morning_text
-    assert "ln_rmssd" not in morning_text
+    for raw_text in (
+        "实验性 RMSSD 观察",
+        "Zepp 夜间汇总 63.0 毫秒",
+        "此前 7 夜基线约 65.5 毫秒",
+        "动态参考范围",
+        "多指标观察",
+        "lnRMSSD delta",
+        "ln_rmssd",
+    ):
+        assert raw_text not in morning_text
 
     evening = []
     service = PushService(pushplus_token="")
@@ -678,14 +690,17 @@ def test_morning_push_explains_nocturnal_pattern_and_personalized_session():
 
     body = received[0].body
     text = _visible_text(body)
-    assert "近 7 天较此前 7 天 +12.5%" in text
-    assert "分设备整夜心率：中位数 50 次/分钟" in text
-    assert "稳定 5 分钟低点 46 次/分钟" in text
-    assert "后半夜较前半夜回落 1 次/分钟" in text
     assert "最近一次跑步为稳定跑，33 分钟" in text
-    assert "Amazfit Helio Strap" not in text
-    reasons = body.split(">为什么这样安排</h2>", 1)[1].split(">最近最值得注意</h2>", 1)[0]
-    assert reasons.count("<li") <= 4
+    for raw_text in (
+        "近 7 天较此前 7 天 +12.5%",
+        "分设备整夜心率：中位数 50 次/分钟",
+        "稳定 5 分钟低点 46 次/分钟",
+        "后半夜较前半夜回落 1 次/分钟",
+        "Amazfit Helio Strap",
+    ):
+        assert raw_text not in text
+    reasons = body.split(">为什么</h2>", 1)[1].split(">注意</h2>", 1)[0]
+    assert reasons.count("<li") <= 3
 
 
 def test_morning_push_prefers_vendor_sleep_rhr_and_keeps_device_detail_hidden():
@@ -711,10 +726,44 @@ def test_morning_push_prefers_vendor_sleep_rhr_and_keeps_device_detail_hidden():
     service.push_daily_profile("test-user", payload, period="morning")
 
     text = _visible_text(received[0].body)
-    assert "Zepp 睡眠心率变异性 65 毫秒" in text
-    assert "Zepp 睡眠静息心率 48 次/分钟" in text
-    assert "分设备整夜心率" not in text
-    assert "51 次/分钟" not in text
+    for raw_text in (
+        "Zepp 睡眠心率变异性 65 毫秒",
+        "Zepp 睡眠静息心率 48 次/分钟",
+        "分设备整夜心率",
+        "51 次/分钟",
+    ):
+        assert raw_text not in text
+
+
+def test_morning_push_does_not_invent_training_when_data_is_insufficient():
+    received = []
+    payload = deepcopy(_profile_payload())
+    payload["data_quality"] = {
+        "status": "INSUFFICIENT",
+        "status_label": "数据不足",
+        "missing_required_signal_labels": ["睡眠时长", "心率变异性"],
+    }
+    payload["decision"].update({
+        "action": "INSUFFICIENT_DATA",
+        "action_label": "数据不足，暂不建议",
+        "limitation_labels": ["恢复决策所需信号不足"],
+    })
+    payload["decision"]["action_plan"].update({
+        "primary_session": None,
+        "optional_session": None,
+        "session_relationship": "NONE",
+    })
+    service = PushService(pushplus_token="")
+    service.add_handler(received.append)
+
+    service.push_daily_profile("test-user", payload, period="morning")
+
+    text = _visible_text(received[0].body)
+    assert "今天不生成训练建议。" in text
+    assert "恢复决策所需信号不足，今天不生成训练建议。" in text
+    assert "睡眠时长" in text and "心率变异性" in text
+    assert "训练后告诉我" not in text
+    assert "先按正常生活节奏活动" not in text
 
 
 def test_pushplus_delivery_keeps_token_in_json_body(monkeypatch):

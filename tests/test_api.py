@@ -66,6 +66,33 @@ def test_daily_profile_after_sync(client):
     assert "score" not in body["decision"]
 
 
+def test_morning_briefing_projects_persisted_daily_snapshot(client):
+    user_id = "morning-briefing-user"
+    headers = {"X-User-Id": user_id}
+    analyzed = client.post(
+        "/api/v1/connect/zepp", json={"sync_history": True}, headers=headers
+    )
+    assert analyzed.status_code == 200
+    analyzed = client.post("/api/v1/intelligence/analyze", headers=headers)
+    assert analyzed.status_code == 201
+    daily = client.get("/api/v1/intelligence/daily", headers=headers).json()
+    response = client.get("/api/v1/intelligence/morning-briefing", headers=headers)
+
+    assert response.status_code == 200
+    briefing = response.json()
+    assert briefing["analysis_run_id"] == daily["analysis_run_id"]
+    assert briefing["date"] == daily["date"]
+    assert briefing["decision_action"] == daily["decision"]["action"]
+    assert briefing["action_plan"] == daily["decision"]["action_plan"]
+    assert briefing["evidence"] == daily["decision"]["evidence"]
+    assert briefing == analyzed.json()["morning_briefing"]
+    assert len(briefing["key_reasons"]) <= 3
+    assert client.get(
+        "/api/v1/intelligence/morning-briefing",
+        headers={"X-User-Id": "other-morning-briefing-user"},
+    ).status_code == 404
+
+
 def test_decision_explanation_projects_persisted_snapshot(client):
     user_id = "explanation-projection-user"
     headers = {"X-User-Id": user_id}

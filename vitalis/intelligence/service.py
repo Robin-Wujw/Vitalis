@@ -30,6 +30,7 @@ from .contracts import (
     HealthEventResponse,
     HealthTimeline,
     MonthlyProfile,
+    MorningBriefing,
     ProfileFeatures,
     PersonalModel,
     PersonalAssociationProfile,
@@ -57,6 +58,7 @@ from .lifecycle import EventLifecycleEngine
 from .profile import ProfileLoader
 from .personal import PersonalModelEngine
 from .monthly import MonthlyProfileEngine
+from .morning_briefing import MorningBriefingEngine
 from .training_response import TrainingResponseEngine
 from .strength import normalize_exercise
 from .timeline import HealthTimelineEngine
@@ -307,6 +309,7 @@ class IntelligenceCommand:
                 daily.events = EventLifecycleEngine().reconcile(
                     repo, run.id, user_id, target, daily.events
                 )
+                morning_briefing = MorningBriefingEngine().build(daily)
                 weekly_events = repo.health_events(
                     user_id, target - timedelta(days=6), target
                 )
@@ -386,6 +389,7 @@ class IntelligenceCommand:
                 personal_model=personal_model,
                 personal_associations=association_profile,
                 open_health_insights=open_health_bundle,
+                morning_briefing=morning_briefing,
             )
         except Exception as exc:
             with session_scope() as db:
@@ -475,6 +479,12 @@ class IntelligenceQuery:
         with session_scope() as db:
             row = HealthRepository(db).latest_analysis_snapshot(user_id, "daily", target)
             return DailyProfile.model_validate(row.payload) if row else None
+
+    def morning_briefing(
+        self, user_id: str, day: date | None = None
+    ) -> MorningBriefing | None:
+        daily = self.daily(user_id, day)
+        return MorningBriefingEngine().build(daily) if daily is not None else None
 
     def weekly(self, user_id: str, day: date | None = None) -> WeeklyProfile | None:
         target = day or local_today()

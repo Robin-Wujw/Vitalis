@@ -78,6 +78,7 @@ def health_data_health(user_id: str = Depends(require_user_id)) -> dict:
 def health_sync(
     days: int = Query(7, ge=1, le=730, description="同步天数"),
     decode_dense_files: bool = Query(False, description="显式解码最多一个秒级心率归档"),
+    enqueue_only: bool = Query(False, description="只创建持久同步任务，由 worker 执行"),
     user_id: str = Depends(require_user_id),
 ) -> dict:
     """Check the token in a short session, then run the coordinator outside it."""
@@ -87,6 +88,21 @@ def health_sync(
             auth = connector.load_token(HealthRepository(db), user_id)
         if auth is None and not getattr(connector, "mock", False):
             return {"user_id": user_id, "status": "token_required", "detail": "尚未导入 Zepp 凭据，请先访问 /connect/zepp/scan 导入"}
+        if enqueue_only and not getattr(connector, "mock", False):
+            attempt = connector.create_attempt(
+                user_id,
+                days=days,
+                trigger="manual",
+                decode_dense_files=decode_dense_files,
+            )
+            return {
+                "user_id": user_id,
+                "status": "queued",
+                "success": False,
+                "attempt_id": attempt.id,
+                "attempt_status": attempt.status,
+                "status_url": f"/api/v1/health/sync/{attempt.id}",
+            }
         if getattr(connector, "mock", False):
             with session_scope() as db:
                 report = connector.sync_with_report(

@@ -26,6 +26,7 @@ dev = [
 
 [project.scripts]
 vitalis = "vitalis.main:main"
+vitalis-worker = "vitalis.worker:main"
 
 [build-system]
 requires = ["hatchling"]

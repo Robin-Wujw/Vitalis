@@ -41,7 +41,7 @@ from vitalis.storage.sync_types import SyncLease
 from vitalis.time import local_day_utc_bounds
 
 
-PLAN_VERSION = "zepp-sync-v1"
+PLAN_VERSION = "zepp-sync-v2"
 MAX_CHUNK_ATTEMPTS = 5
 CHUNK_LEASE_SECONDS = 120
 ATTEMPT_LEASE_SECONDS = 300

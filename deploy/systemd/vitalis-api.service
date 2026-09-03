@@ -1,0 +1,20 @@
+[Unit]
+Description=Vitalis loopback health intelligence API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/Vitalis
+EnvironmentFile=-/root/Vitalis/.env
+Environment=VITALIS_NO_SCHEDULER=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/root/Vitalis/.venv/bin/python -m uvicorn vitalis.api.app:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+MemoryHigh=250M
+MemoryMax=320M
+
+[Install]
+WantedBy=multi-user.target

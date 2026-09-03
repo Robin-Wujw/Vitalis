@@ -1,0 +1,20 @@
+[Unit]
+Description=Vitalis durable sync worker
+After=network-online.target vitalis.service
+Wants=network-online.target
+Requires=vitalis.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/Vitalis
+EnvironmentFile=-/root/Vitalis/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/root/Vitalis/.venv/bin/python -m vitalis.worker
+Restart=on-failure
+RestartSec=5
+MemoryHigh=250M
+MemoryMax=320M
+
+[Install]
+WantedBy=multi-user.target

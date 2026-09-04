@@ -210,4 +210,4 @@ git diff --check
 
 Open Health Insights 还要求使用当前的训练详情架构，包括 `workout_metric_samples.source`。在真实安装环境中启用它之前，请重新构建全新架构，重新同步至少所需的 42 天负荷窗口（建议 180 天），然后 PATCH 用户确认的资料字段，例如 `sex` 和 `confirmed_hrmax_bpm`。不要让训练观测或设备区间候选值在无提示的情况下填充已确认的资料值。
 
-有关所需的计划、测试、文档、提交和交付工作流，请参阅 [SYSTEM.md](../SYSTEM.md)。
+所需的计划、测试、文档、提交和交付工作流记录在 [SYSTEM.md](../SYSTEM.md) 中。

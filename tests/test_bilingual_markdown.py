@@ -58,7 +58,8 @@ INLINE_CODE_RE = re.compile(r"(?<!`)`([^`]+)`(?!`)")
 CHECKBOX_RE = re.compile(r"^\s*[-*+]\s+\[([ xX])\]", re.MULTILINE)
 LIST_ITEM_RE = re.compile(r"^(\s*)([-*+]|[1-9]\.)\s+", re.MULTILINE)
 NUMBER_RE = re.compile(
-    r"(?<![\w])\d+(?:[.,]\d+)*(?:%|d|h|m|s|KB|MB)?(?![\w])"
+    r"(?<![\w])\d+(?:[.,]\d+)*(?:%|d|h|m|s|KB|MB|st|nd|rd|th)?(?![\w])",
+    re.IGNORECASE,
 )
 DATE_RE = re.compile(r"(?<!\d)20\d{2}-\d{2}-\d{2}(?!\d)")
 COMMIT_HASH_RE = re.compile(r"(?<![0-9a-f])(?:[0-9a-f]{7}|[0-9a-f]{40})(?![0-9a-f])")
@@ -260,13 +261,20 @@ NUMBER_WORDS = {
 }
 
 
+def _number_tokens(text: str) -> list[str]:
+    return [
+        re.sub(r"(?:st|nd|rd|th)$", "", token, flags=re.IGNORECASE)
+        for token in NUMBER_RE.findall(text)
+    ]
+
+
 def _assert_list_item_number_parity(chinese: str, english: str) -> None:
     zh_items = _list_item_blocks(chinese)
     en_items = _list_item_blocks(english)
     assert len(zh_items) == len(en_items)
     for index, (zh_item, en_item) in enumerate(zip(zh_items, en_items), start=1):
-        zh_numbers = Counter(NUMBER_RE.findall(zh_item))
-        en_numbers = Counter(NUMBER_RE.findall(en_item))
+        zh_numbers = Counter(_number_tokens(zh_item))
+        en_numbers = Counter(_number_tokens(en_item))
         assert not (en_numbers - zh_numbers), (
             f"list item {index} lost numeric occurrences in Chinese: "
             f"{en_numbers - zh_numbers}"
@@ -387,8 +395,8 @@ def test_translation_structure_and_technical_literals_match(chinese: str, englis
     # English source sections may spell a count as a word where their Chinese
     # translation uses a numeral. Counters still require every explicit English numeric
     # occurrence to survive; dates, hashes, and inline code are symmetric below.
-    zh_numbers = Counter(NUMBER_RE.findall(zh))
-    en_numbers = Counter(NUMBER_RE.findall(en))
+    zh_numbers = Counter(_number_tokens(zh))
+    en_numbers = Counter(_number_tokens(en))
     assert not (en_numbers - zh_numbers), (
         f"numeric occurrences missing from {chinese}: {en_numbers - zh_numbers}"
     )
@@ -470,9 +478,15 @@ def test_skill_sidecars_are_non_runtime_and_routing_stays_canonical():
     skill_zh = _read("skills/vitalis/SKILL.md")
     skill_en = _read("skills/vitalis/SKILL.en.md")
     frontmatter_zh = _frontmatter(skill_zh)
-    frontmatter_en = _frontmatter(skill_en)
-    assert set(frontmatter_zh) == set(frontmatter_en)
-    assert frontmatter_zh["name"] == frontmatter_en["name"] == "vitalis"
+    assert not skill_en.startswith("---\n")
+    assert frontmatter_zh == {
+        "name": "vitalis",
+        "description": (
+            "Use Vitalis Health Intelligence APIs for deterministic Chinese health "
+            "analysis, training response, personal patterns, timelines, and explicit "
+            "feedback actions."
+        ),
+    }
 
     for name in WORKFLOWS:
         canonical = f"workflows/{name}.md"

@@ -294,5 +294,5 @@ schema, re-synchronize at least the desired 42-day load window (180 days recomme
 PATCH the user-confirmed profile fields such as `sex` and `confirmed_hrmax_bpm`. Do not let
 workout observations or device-zone candidates silently populate confirmed profile values.
 
-See [SYSTEM.md](../SYSTEM.md) for the required plan, test, documentation, commit, and
+See [SYSTEM.en.md](../SYSTEM.en.md) for the required plan, test, documentation, commit, and
 delivery workflow.

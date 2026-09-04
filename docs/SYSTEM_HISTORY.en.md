@@ -4,6 +4,14 @@
 
 > This file preserves execution records and verification evidence for completed work solely for historical traceability. The repository-root `SYSTEM.en.md` is authoritative for current work rules, unfinished work, and the latest verification state.
 
+## 2026-09-04 Repository-wide Bilingual Markdown Contract
+
+- Consolidated all project Markdown into 19 language pairs: unsuffixed `.md` is Simplified Chinese and `.en.md` is English; `docs/README.md` is the sole inline-bilingual exception. The final tracked Markdown inventory contains 39 files.
+- Product, operations, API, architecture, Zepp, browser-extension, Balance 2, Skill, evidence, all 6 workflows, SYSTEM, the complete historical archive, and third-party notices now have equivalent Chinese and English versions with reciprocal language switches after their titles.
+- `SKILL.md` retains the only runtime YAML frontmatter; English Skill/workflow sidecars do not participate in discovery or routing. The authoritative English MIT license text remains identical in both notices and is guarded by a fixed SHA-256.
+- Added `tests/test_bilingual_markdown.py` to enforce the fixed inventory, paired updates, reciprocal links, structural/code/technical-literal parity, language-local links, exact path casing, Skill routing, API literals, and license invariants.
+- Verification: all 47 bilingual-contract tests passed, the complete Python suite passed 473 tests, all 6 Balance 2 Node tests passed, OpenAPI generated 46 paths, and `git diff --check` passed.
+
 ## 2026-09-04 Current SQLite Schema Migration and Live Verification
 
 - Added `vitalis.storage.schema_migration`: it audits existing SQLite columns, unique keys, check constraints, and indexes, and migrates only known old layouts; a migration must specify a backup and historical source.

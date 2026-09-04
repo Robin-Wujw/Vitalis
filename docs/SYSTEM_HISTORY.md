@@ -4,6 +4,14 @@
 
 > 本文件保存已完成工作的执行记录和验证证据，仅供追溯历史。当前有效的工作规则、未完成事项和最新验证状态以仓库根目录的 `SYSTEM.md` 为准。
 
+## 2026-09-04 全仓库 Markdown 双语契约
+
+- 将全部项目 Markdown 收敛为 19 对语言文件：无后缀 `.md` 为简体中文，`.en.md` 为英文；`docs/README.md` 是唯一的内联双语例外。最终受版本控制的 Markdown 清单为 39 个文件。
+- 产品、运维、API、架构、Zepp、浏览器扩展、Balance 2、Skill、证据、6 个工作流、SYSTEM、完整历史归档和第三方声明均提供对等中英文版本，并在标题后提供双向语言切换。
+- `SKILL.md` 保留唯一的运行时 YAML frontmatter，英文 Skill/工作流 sidecar 不参与发现或路由；MIT 许可证英文原文在两份声明中保持一致并由固定 SHA-256 守护。
+- 新增 `tests/test_bilingual_markdown.py`，强制固定清单、文件成对更新、互链、结构/代码/技术标识对等、语言内链接、精确路径大小写、Skill 路由、API 字面量和许可证不变量。
+- 验证：双语契约 47 项通过，完整 Python 套件 473 项通过，Balance 2 Node 测试 6 项通过，OpenAPI 46 条路径生成成功，`git diff --check` 通过。
+
 ## 2026-09-04 SQLite 当前 schema 迁移与真实验证
 
 - 新增 `vitalis.storage.schema_migration`：审计现有 SQLite 的列、唯一键、check constraint 和索引，并仅迁移已知旧布局；迁移必须指定备份和历史来源。

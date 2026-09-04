@@ -94,7 +94,7 @@ def test_bilingual_skill_docs_preserve_frontmatter_and_canonical_routing():
         "description: Use Vitalis Health Intelligence APIs for deterministic Chinese health analysis, training response, personal patterns, timelines, and explicit feedback actions.\n"
         "---\n"
     )
-    assert skill_path.read_bytes().startswith(expected_frontmatter.encode("utf-8"))
+    assert skill.replace("\r\n", "\n").startswith(expected_frontmatter)
     assert skill.splitlines()[7] == "[English](SKILL.en.md)"
     assert skill_en.splitlines()[2] == "[简体中文](SKILL.md)"
 

@@ -70,4 +70,4 @@ Vitalis 当前是可运行、持续开发中的 pre-production 项目，首个�
 - [Zepp 数据接入](docs/ZEPP_INTEGRATION.md)：官方登录、凭据生命周期、身份所有权与数据覆盖
 - [API 导读](docs/API.md)：当前 HTTP 接口和身份要求
 - [系统架构](docs/ARCHITECTURE.md)：数据流、智能管线、决策边界与版本化合同
-- [Hermes Skill](skills/vitalis/SKILL.md)：Agent 的 Read / Analyze / Act 调用边界
+- [Hermes Skill（中文）](skills/vitalis/SKILL.md)：Agent 的 Read / Analyze / Act 调用边界

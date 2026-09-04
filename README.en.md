@@ -70,4 +70,4 @@ Read the deployment, backup, identity-migration, and recovery requirements befor
 - [Zepp integration](docs/ZEPP_INTEGRATION.en.md): official login, credential lifecycle, identity ownership, and data coverage
 - [API guide](docs/API.en.md): current HTTP surface and identity requirements
 - [Architecture](docs/ARCHITECTURE.en.md): data flow, intelligence pipeline, policy boundaries, and versioned contracts
-- [Hermes Skill](skills/vitalis/SKILL.md): Read / Analyze / Act boundaries for agents
+- [Hermes Skill](skills/vitalis/SKILL.en.md): Read / Analyze / Act boundaries for agents

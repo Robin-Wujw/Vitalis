@@ -75,11 +75,11 @@ Historical tasks, completed TODOs, session records, and per-run verification res
 
 Date: 2026-09-04
 
-- The current `main` baseline is `b1be242`, including the durable synchronization worker, API/worker systemd units, and morning-report waiting after queued synchronization.
-- The existing application-test baseline most recently passed 425 tests; the new bilingual Markdown enforcement module collects 47 tests. This isolated worktree still lacks the 15 English sidecars owned by the other workstreams, so 425 must not be described as the post-change complete-suite result. Final full verification must be rerun and recorded after all 19 pairs are integrated. Zepp identity uniqueness and migration hardening, Chinese and English documentation entry points, current SQLite schema migration, and the `all_day_stress` local-day time series have all been verified.
+- The current working branch is `fix/zepp-identity-ownership`, based on deployed commit `aef653c`. This documentation work brings all 39 project Markdown files into 19 Chinese/English pairs plus the sole inline-bilingual hub `docs/README.md`.
+- The complete post-change Python suite passed 473 tests; all 47 bilingual-contract tests in `tests/test_bilingual_markdown.py` and all 6 Balance 2 Node tests passed. Zepp identity uniqueness and migration hardening, Chinese and English documentation entry points, current SQLite schema migration, and the `all_day_stress` local-day time series have all been verified.
 - Comparison of Zepp data and UI for the same account, device, and matching date confirmed that the daily stress summary comes from the `all_day_stress` fields and its chart comes from the explicitly timestamped `data` array. The `Charge/stress_data` protobuf and `Charge/insight_data` still have no provable semantics and remain unrequested.
 - Local and server SQLite schema/identity audits are clean. A real `zepp-sync-v4` stress stream completed fetch/parse/write successfully and wrote 234 local-day points for 2026-09-03 with a range of 5-65. The complete attempt was `partial` only because optional capabilities were unavailable, with 0 failed chunks; deterministic analysis returned `SUFFICIENT` / `TRAIN_NORMAL`, and both Morning and Evening projections succeeded.
-- The server has deployed `fix/zepp-identity-ownership@880c6a0`; API/worker are active, `healthz=ok`, and error-log count is 0. Morning `PushPlus --test` returned `test_sent` without changing the formal schedule marker.
+- The server has deployed `fix/zepp-identity-ownership@aef653c`; API/worker are active, `healthz=ok`, and error-log count is 0. Morning `PushPlus --test` returned `test_sent` without changing the formal schedule marker.
 
 ## 10. Current Unfinished Work
 

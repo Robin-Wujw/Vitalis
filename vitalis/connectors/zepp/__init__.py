@@ -362,7 +362,6 @@ class ZeppConnector(HealthConnector):
             raise AuthRequired(
                 f"用户 {user.id} 的 Zepp 凭据缺少厂商用户 id，请重新配对"
             )
-        user.source_user_id = vendor_id
         return ZeppAPIClient(
             app_token=auth.access_token,
             user_id=vendor_id,

@@ -2,6 +2,14 @@
 
 > 本文件保存已完成工作的执行记录和验证证据，仅供追溯历史。当前有效的工作规则、未完成事项和最新验证状态以仓库根目录的 `SYSTEM.md` 为准。
 
+## 2026-09-04 Zepp 身份迁移 hardening
+
+- 普通 `upsert_user()` 不再在缺少新身份时覆盖来源投影，避免配对、分析或链接创建破坏既有 connector 身份。
+- `save_token()` 在仓储边界规范化厂商 ID；Zepp 投影保持唯一，其他 connector token 继续按 `(user_id, source)` 独立保存。
+- 审计新增 `orphan_projections`，并提供显式 `clear-projection` 命令；resolver 在删除 token 前检查跨用户 token/投影所有权，迁移后再次审计并在不干净时回滚。
+- 启动先审计再复用统一的唯一索引创建函数；真实本地库审计 clean，`init_db()` 正常。
+- 身份与 API 聚焦测试 76 项通过；完整测试 417 项通过，compileall、OpenAPI 46 条路径和 `git diff --check` 通过。
+
 ## 2026-09-04 Zepp 压力时间序列
 
 - 使用同一 Zepp 账号、同一设备和可对应日期的界面与脱敏 payload 完成语义核对：日均、最低、最高和四档占比来自 `all_day_stress` 日汇总，曲线来自其 `data` JSON 时间点。

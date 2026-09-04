@@ -86,14 +86,24 @@ class HealthRepository:
 
     # ---- 用户 ----
     def upsert_user(self, user_id: str, name: str = "", source: str = "zepp", source_user_id: str | None = None) -> orm.User:
+        normalized_source_user_id = (
+            source_user_id.strip() if isinstance(source_user_id, str) else source_user_id
+        )
+        normalized_source_user_id = normalized_source_user_id or None
         u = self.db.get(orm.User, user_id)
         if u is None:
-            u = orm.User(id=user_id, name=name, source=source, source_user_id=source_user_id)
+            u = orm.User(
+                id=user_id,
+                name=name,
+                source=source,
+                source_user_id=normalized_source_user_id,
+            )
             self.db.add(u)
         else:
             u.name = name or u.name
-            u.source = source
-            u.source_user_id = source_user_id or u.source_user_id
+            if source_user_id is not None:
+                u.source = source
+                u.source_user_id = normalized_source_user_id
         return u
 
     def identity_context(self, user_id: str) -> dict:
@@ -127,6 +137,7 @@ class HealthRepository:
     def source_identity_owned_by_other(
         self, user_id: str, source: str, source_user_id: str
     ) -> bool:
+        source_user_id = source_user_id.strip()
         token_owner = self.db.execute(
             select(orm.AuthToken.id).where(
                 orm.AuthToken.source == source,
@@ -134,6 +145,8 @@ class HealthRepository:
                 orm.AuthToken.user_id != user_id,
             ).limit(1)
         ).scalar_one_or_none()
+        if token_owner is not None or source != "zepp":
+            return token_owner is not None
         user_owner = self.db.execute(
             select(orm.User.id).where(
                 orm.User.source == source,
@@ -141,7 +154,7 @@ class HealthRepository:
                 orm.User.id != user_id,
             ).limit(1)
         ).scalar_one_or_none()
-        return token_owner is not None or user_owner is not None
+        return user_owner is not None
 
     # ---- 设备 ----
     def upsert_device(self, device: Device) -> orm.Device:
@@ -2508,7 +2521,12 @@ class HealthRepository:
     # ---- OAuth 令牌 ----
 
     def save_token(self, token: AuthToken) -> None:
-        """Atomically claim a vendor identity and save its access token."""
+        """Atomically claim a source-qualified vendor identity and save its token."""
+        token.source_user_id = (
+            token.source_user_id.strip()
+            if isinstance(token.source_user_id, str)
+            else token.source_user_id
+        ) or None
         if token.source == "zepp" and not token.source_user_id:
             raise SourceIdentityConflict("Zepp 凭据必须包含厂商用户 id")
 
@@ -2528,7 +2546,8 @@ class HealthRepository:
 
         user = self.db.get(orm.User, token.user_id)
         if (
-            user is not None
+            token.source == "zepp"
+            and user is not None
             and user.source_user_id
             and token.source_user_id
             and (
@@ -2536,7 +2555,7 @@ class HealthRepository:
                 or user.source_user_id != token.source_user_id
             )
         ):
-            raise SourceIdentityConflict("当前本地用户已映射到其他厂商账号")
+            raise SourceIdentityConflict("当前本地用户已映射到其他 Zepp 账号")
         if token.source_user_id and self.source_identity_owned_by_other(
             token.user_id, token.source, token.source_user_id
         ):
@@ -2557,8 +2576,9 @@ class HealthRepository:
         row.scope = token.scope
         row.region_host = token.region_host
         row.source_user_id = token.source_user_id
-        user.source = token.source
-        user.source_user_id = token.source_user_id
+        if token.source == "zepp":
+            user.source = token.source
+            user.source_user_id = token.source_user_id
         try:
             self.db.flush()
         except IntegrityError as exc:

@@ -54,9 +54,10 @@ starting the new code. Audit the existing mappings without reading token values:
 python -m vitalis.storage.identity_migration audit
 ```
 
-If the report is not clean, use the explicit `resolve` or `resolve-local` commands
-documented in [ZEPP_INTEGRATION.md](ZEPP_INTEGRATION.md#source-identity-ownership).
-After every conflict has an operator-selected canonical identity, apply the migration:
+If the report is not clean, use the explicit `resolve`, `resolve-local`,
+`assign-missing`, `resolve-projection`, or `clear-projection` command documented in
+[ZEPP_INTEGRATION.md](ZEPP_INTEGRATION.md#source-identity-ownership). After every
+conflict has an operator-verified resolution, apply the migration:
 
 ```bash
 python -m vitalis.storage.identity_migration migrate --apply

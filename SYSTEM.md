@@ -64,7 +64,7 @@
 日期：2026-09-04
 
 - 当前 `main` 基线为 `b1be242`，包含持久同步 worker、API/worker systemd 单元和排队同步后的晨报等待。
-- 本地完整测试最近通过：410 项；Zepp 身份唯一性、本地旧库身份迁移、中英文文档入口和 `all_day_stress` 时间序列解析均已验证。
+- 本地完整测试最近通过：417 项；Zepp 身份唯一性与迁移 hardening、本地旧库身份迁移、中英文文档入口和 `all_day_stress` 时间序列解析均已验证。
 - 同账号、同设备、日期匹配的 Zepp 数据与界面对照确认：压力日汇总来自 `all_day_stress` 字段，曲线来自其显式时间戳 `data` 数组。`Charge/stress_data` protobuf 和 `Charge/insight_data` 仍无可证明语义，继续不请求。
 - 本地完整 coordinator 验证被旧库缺少 `sync_attempts.trigger_ref` 阻断；在修复 schema、完成真实同步和分析之前，不部署或强行发送晨报。
 

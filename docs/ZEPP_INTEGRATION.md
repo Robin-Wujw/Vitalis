@@ -56,9 +56,11 @@ vendor risk controls may require a new official login.
 ## Source Identity Ownership
 
 A non-null Zepp `userid` has exactly one local Vitalis owner. The database enforces
-unique `(source, source_user_id)` mappings in both the credential row and its user
-projection, plus one credential row per `(local user, source)`. Manual import, initial
-pairing, and browser-link renewal all use the same atomic claim-and-save operation.
+unique `(source, source_user_id)` mappings in both the credential row and its Zepp user
+projection, plus one credential row per `(local user, source)`. `AuthToken` remains
+source-qualified, so another connector can store its own token without overwriting the
+Zepp projection. Manual import, initial pairing, and browser-link renewal all use the
+same atomic claim-and-save operation.
 A competing claim returns HTTP `409`; it does not replace either user's credential or
 merge their health history.
 
@@ -122,7 +124,18 @@ python -m vitalis.storage.identity_migration resolve-projection \
   --apply
 ```
 
-Then normalize absent projections and create the unique indexes:
+An `orphan_projections` entry has no matching Zepp token and cannot reserve the vendor
+identity indefinitely. After verifying it is stale, clear only that projection:
+
+```bash
+python -m vitalis.storage.identity_migration clear-projection \
+  --user-id <local-user-id> \
+  --source zepp \
+  --source-user-id <stale-vendor-user-id> \
+  --apply
+```
+
+Then normalize absent Zepp projections and create the unique indexes:
 
 ```bash
 python -m vitalis.storage.identity_migration migrate --apply

@@ -36,8 +36,8 @@ def test_profile_loader_keeps_device_streams_and_local_identities_separate():
         repo = HealthRepository(db)
         repo.delete_for_user(user_id)
         repo.delete_for_user(sibling_id)
-        repo.upsert_user(user_id, source_user_id="vendor-primary")
-        repo.upsert_user(sibling_id, source_user_id="vendor-sibling")
+        repo.upsert_user(user_id)
+        repo.upsert_user(sibling_id)
         repo.save_daily(NormalizedDaily(
             user_id=user_id,
             date=day,

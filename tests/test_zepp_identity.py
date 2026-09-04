@@ -16,6 +16,7 @@ from vitalis.storage.identity_migration import (
     SourceIdentityMigrationRequired,
     assign_missing_token_identity,
     audit_source_identities,
+    clear_orphan_identity_projection,
     ensure_source_identity_indexes,
     migrate_source_identities,
     resolve_identity_projection,
@@ -73,6 +74,57 @@ def test_save_token_claims_identity_and_updates_user_projection():
     assert user.source_user_id == "vendor-a"
     assert saved is not None
     assert saved.source_user_id == "vendor-a"
+
+
+def test_generic_upsert_preserves_existing_identity_projection():
+    _engine, sessions = _database()
+    with sessions.begin() as db:
+        repo = HealthRepository(db)
+        repo.save_token(_token("local-a", "vendor-a"))
+        repo.upsert_user("local-a", name="Updated")
+        user = db.get(orm.User, "local-a")
+
+    assert user is not None
+    assert user.name == "Updated"
+    assert user.source == "zepp"
+    assert user.source_user_id == "vendor-a"
+
+
+def test_save_token_normalizes_vendor_identity_whitespace():
+    _engine, sessions = _database()
+    with sessions.begin() as db:
+        repo = HealthRepository(db)
+        repo.save_token(_token("local-a", " vendor-a "))
+        saved = repo.get_token("local-a", "zepp")
+
+    assert saved is not None
+    assert saved.source_user_id == "vendor-a"
+
+    with pytest.raises(SourceIdentityConflict):
+        with sessions.begin() as db:
+            HealthRepository(db).save_token(_token("local-b", "vendor-a"))
+
+
+def test_local_user_can_hold_tokens_for_multiple_sources():
+    _engine, sessions = _database()
+    with sessions.begin() as db:
+        repo = HealthRepository(db)
+        repo.save_token(_token("local-a", "zepp-a"))
+        repo.save_token(AuthToken(
+            user_id="local-a",
+            source="garmin",
+            access_token="garmin-token",
+            source_user_id="garmin-a",
+        ))
+        user = db.get(orm.User, "local-a")
+
+    assert user is not None
+    assert (user.source, user.source_user_id) == ("zepp", "zepp-a")
+    with sessions() as db:
+        repo = HealthRepository(db)
+        assert repo.get_token("local-a", "zepp") is not None
+        assert repo.get_token("local-a", "garmin") is not None
+        assert audit_source_identities(db).clean
 
 
 def test_database_constraint_is_final_fence_for_cross_user_claim():
@@ -144,6 +196,36 @@ def test_init_db_refuses_legacy_duplicate_identity(monkeypatch):
 
     with pytest.raises(SourceIdentityMigrationRequired):
         database.init_db()
+
+
+def test_orphan_projection_requires_explicit_clearance():
+    engine, sessions = _database()
+    _drop_identity_indexes(engine)
+    with sessions.begin() as db:
+        db.add(orm.User(
+            id="orphan-user",
+            source="zepp",
+            source_user_id="orphan-vendor",
+        ))
+
+    with sessions.begin() as db:
+        audit = audit_source_identities(db)
+        assert not audit.clean
+        assert audit.orphan_projections[0].user_id == "orphan-user"
+        with pytest.raises(SourceIdentityMigrationRequired):
+            migrate_source_identities(db)
+        cleared = clear_orphan_identity_projection(
+            db,
+            user_id="orphan-user",
+            source="zepp",
+            source_user_id="orphan-vendor",
+        )
+        assert cleared.source_user_id == "orphan-vendor"
+        assert migrate_source_identities(db).clean
+    ensure_source_identity_indexes(engine)
+
+    with sessions.begin() as db:
+        HealthRepository(db).save_token(_token("new-owner", "orphan-vendor"))
 
 
 def test_delete_for_user_releases_vendor_identity_for_new_owner():
@@ -239,6 +321,89 @@ def test_mismatched_projection_requires_explicit_resolution():
         )
         assert resolved.source_user_id == "vendor-current"
         assert migrate_source_identities(db).clean
+    ensure_source_identity_indexes(engine)
+
+
+def test_projection_resolution_rejects_identity_owned_by_other_token():
+    engine, sessions = _database()
+    _drop_identity_indexes(engine)
+    with sessions.begin() as db:
+        db.add_all([
+            orm.User(id="local-b", source="zepp", source_user_id="vendor-old"),
+            orm.AuthToken(
+                user_id="local-a", source="zepp", access_token="a",
+                source_user_id="vendor-shared",
+            ),
+            orm.AuthToken(
+                user_id="local-b", source="zepp", access_token="b",
+                source_user_id="vendor-shared",
+            ),
+        ])
+
+    with sessions.begin() as db:
+        with pytest.raises(ValueError, match="其他本地用户"):
+            resolve_identity_projection(
+                db,
+                user_id="local-b",
+                source="zepp",
+                source_user_id="vendor-shared",
+            )
+        assert db.get(orm.User, "local-b").source_user_id == "vendor-old"
+
+
+def test_local_resolution_checks_cross_user_owner_before_deleting_tokens():
+    engine, sessions = _database()
+    _drop_identity_indexes(engine)
+    with sessions.begin() as db:
+        db.add_all([
+            orm.AuthToken(
+                user_id="local-a", source="zepp", access_token="a",
+                source_user_id="vendor-shared",
+            ),
+            orm.AuthToken(
+                user_id="local-b", source="zepp", access_token="b1",
+                source_user_id="vendor-shared",
+            ),
+            orm.AuthToken(
+                user_id="local-b", source="zepp", access_token="b2",
+                source_user_id="vendor-b",
+            ),
+        ])
+
+    with sessions.begin() as db:
+        with pytest.raises(ValueError, match="其他本地用户"):
+            resolve_local_source_tokens(
+                db,
+                user_id="local-b",
+                source="zepp",
+                canonical_source_user_id="vendor-shared",
+            )
+        assert len(db.execute(select(orm.AuthToken).where(
+            orm.AuthToken.user_id == "local-b"
+        )).scalars().all()) == 2
+
+
+def test_migration_projects_only_zepp_for_multi_source_user():
+    engine, sessions = _database()
+    _drop_identity_indexes(engine)
+    with sessions.begin() as db:
+        db.add_all([
+            orm.User(id="multi-source"),
+            orm.AuthToken(
+                user_id="multi-source", source="zepp", access_token="zepp",
+                source_user_id="zepp-user",
+            ),
+            orm.AuthToken(
+                user_id="multi-source", source="garmin", access_token="garmin",
+                source_user_id="garmin-user",
+            ),
+        ])
+
+    with sessions.begin() as db:
+        assert audit_source_identities(db).clean
+        assert migrate_source_identities(db).clean
+        user = db.get(orm.User, "multi-source")
+        assert (user.source, user.source_user_id) == ("zepp", "zepp-user")
     ensure_source_identity_indexes(engine)
 
 
@@ -364,7 +529,9 @@ def test_legacy_resolution_preserves_health_history_and_revokes_loser_link():
         db.add_all(
             [
                 orm.User(id="canonical", source="zepp", source_user_id="vendor-x"),
-                orm.User(id="legacy-copy", source="zepp", source_user_id="vendor-x"),
+                orm.User(
+                    id="legacy-copy", source="zepp", source_user_id="vendor-stale"
+                ),
                 orm.AuthToken(
                     user_id="canonical",
                     source="zepp",

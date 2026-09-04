@@ -41,6 +41,7 @@ def init_db() -> None:
     from .identity_migration import (
         SourceIdentityMigrationRequired,
         audit_source_identities,
+        ensure_source_identity_indexes,
     )
 
     Base.metadata.create_all(bind=_engine)
@@ -52,24 +53,21 @@ def init_db() -> None:
         for index in metric_samples.indexes
         if index.name == "ix_metric_samples_user_metric_timestamp"
     ).create(bind=_engine, checkfirst=True)
-    try:
-        for table_name in ("users", "auth_tokens"):
-            for index in Base.metadata.tables[table_name].indexes:
-                if index.name and index.name.startswith("uq_"):
-                    index.create(bind=_engine, checkfirst=True)
-    except SQLAlchemyError as exc:
-        raise SourceIdentityMigrationRequired(
-            "Zepp 身份映射存在重复或尚未迁移；先运行 "
-            "`python -m vitalis.storage.identity_migration audit`，"
-            "解决冲突后运行 `python -m vitalis.storage.identity_migration migrate --apply`"
-        ) from exc
     with Session(_engine) as db:
         audit = audit_source_identities(db)
     if not audit.clean:
         raise SourceIdentityMigrationRequired(
-            "Zepp 身份映射跨表不一致或缺少厂商用户 id；先运行 "
+            "Zepp 身份映射跨表不一致、缺少厂商用户 id 或存在孤立投影；先运行 "
             "`python -m vitalis.storage.identity_migration audit` 并显式解析"
         )
+    try:
+        ensure_source_identity_indexes(_engine)
+    except SQLAlchemyError as exc:
+        raise SourceIdentityMigrationRequired(
+            "Zepp 身份唯一索引创建失败；先运行 "
+            "`python -m vitalis.storage.identity_migration audit`，"
+            "解决冲突后运行 `python -m vitalis.storage.identity_migration migrate --apply`"
+        ) from exc
 
 
 def get_session() -> Iterator[Session]:

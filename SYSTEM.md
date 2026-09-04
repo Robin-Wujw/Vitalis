@@ -64,12 +64,11 @@
 日期：2026-09-04
 
 - 当前 `main` 基线为 `b1be242`，包含持久同步 worker、API/worker systemd 单元和排队同步后的晨报等待。
-- 本地完整测试最近通过：417 项；Zepp 身份唯一性与迁移 hardening、本地旧库身份迁移、中英文文档入口和 `all_day_stress` 时间序列解析均已验证。
+- 本地完整测试最近通过：425 项；Zepp 身份唯一性与迁移 hardening、中英文文档入口、SQLite 当前 schema 迁移和 `all_day_stress` 本地日时间序列均已验证。
 - 同账号、同设备、日期匹配的 Zepp 数据与界面对照确认：压力日汇总来自 `all_day_stress` 字段，曲线来自其显式时间戳 `data` 数组。`Charge/stress_data` protobuf 和 `Charge/insight_data` 仍无可证明语义，继续不请求。
-- 本地完整 coordinator 验证被旧库缺少 `sync_attempts.trigger_ref` 阻断；在修复 schema、完成真实同步和分析之前，不部署或强行发送晨报。
+- 本地 SQLite schema/身份审计 clean；真实 `zepp-sync-v4` 压力流 fetch/parse/write success，2026-09-03 本地日写入 234 点、范围 5-65。完整 attempt 因可选 capability unavailable 为 `partial`；确定性分析为 `SUFFICIENT` / `TRAIN_NORMAL`，Morning 与 Evening 投影均成功。
 
 ## 9. 当前未完成事项
 
-- [ ] 修复或重建本地数据库中缺失的 `sync_attempts.trigger_ref` schema，再完成真实同步、分析和一次本地 Morning/Evening 输出验证。
-- [ ] 本地端到端验证通过后，部署 parser 修复到服务器，完成同步、分析和一次 `PushPlus --test` 晨报验证。
+- [ ] 将已验证的身份、schema 和压力时间序列提交部署到服务器，完成服务器 schema/身份审计、同步、分析和一次 `PushPlus --test` 晨报验证。
 - [ ] 为持久同步账本建立生产备份/恢复演练与长期数据保留策略。

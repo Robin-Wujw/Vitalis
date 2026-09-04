@@ -23,6 +23,7 @@ from vitalis.connectors.zepp.client import SPORTS, ZeppAPIClient, ZeppAuthError
 from vitalis.connectors.zepp.dense_hr import decode_sec_hr_archive
 from vitalis.connectors.zepp.fetcher import (
     CHUNK_DAYS,
+    DAY_MILLISECONDS,
     HEART_RATE_PAGE_LIMIT,
     DataFetcher,
     FetchWindow,
@@ -41,7 +42,7 @@ from vitalis.storage.sync_types import SyncLease
 from vitalis.time import local_day_utc_bounds
 
 
-PLAN_VERSION = "zepp-sync-v3"
+PLAN_VERSION = "zepp-sync-v4"
 MAX_CHUNK_ATTEMPTS = 5
 CHUNK_LEASE_SECONDS = 120
 ATTEMPT_LEASE_SECONDS = 300
@@ -356,10 +357,25 @@ class ZeppSyncCoordinator:
                 ("pai", "user", "PaiHealthInfo", None, "wellness/pai"),
             )
             for label, surface, event_type, sub_type, health in wellness_specs:
+                request_start_ms = (
+                    start_ms - DAY_MILLISECONDS
+                    if label == "all_day_stress" else start_ms
+                )
+                request_end_ms = (
+                    end_ms + DAY_MILLISECONDS
+                    if label == "all_day_stress" else end_ms
+                )
                 manifest.append(self._spec(
                     "wellness", label, item, health_stream=health, ordinal=ordinal,
                     allow_unavailable=True, operation="fetch_wellness",
-                    params={"label": label, "surface": surface, "event_type": event_type, "sub_type": sub_type, "from_ms": start_ms, "to_ms": end_ms},
+                    params={
+                        "label": label,
+                        "surface": surface,
+                        "event_type": event_type,
+                        "sub_type": sub_type,
+                        "from_ms": request_start_ms,
+                        "to_ms": request_end_ms,
+                    },
                 )); ordinal += 1
             for subtype, health in (("odi", "wellness/spo2_odi"), ("osa_event", "wellness/spo2_osa")):
                 manifest.append(self._spec(

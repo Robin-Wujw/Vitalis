@@ -5,7 +5,12 @@ from types import SimpleNamespace
 import pytest
 
 from vitalis.connectors.zepp.client import SPORTS, ZeppAuthError
-from vitalis.connectors.zepp.fetcher import FetchWindow, FetchedRecord, RawRecord
+from vitalis.connectors.zepp.fetcher import (
+    DAY_MILLISECONDS,
+    FetchWindow,
+    FetchedRecord,
+    RawRecord,
+)
 from vitalis.models import User
 from vitalis.services.zepp_sync_coordinator import (
     SyncControl,
@@ -82,6 +87,12 @@ def test_manifest_is_stable_and_request_is_reused():
         "heart_rate", "minute", WINDOW.start, WINDOW.end, int(WINDOW.start.timestamp())
     )
     assert all("operation" in row["stages"] for row in rows)
+    with session_scope() as db:
+        chunks = HealthRepository(db).sync_chunks(first.id)
+        stress = next(row for row in chunks if row.partition == "all_day_stress")
+        params = stress.stages["params"]
+        assert params["from_ms"] == int(WINDOW.start.timestamp() * 1000) - DAY_MILLISECONDS
+        assert params["to_ms"] == int(WINDOW.end.timestamp() * 1000) + DAY_MILLISECONDS
 
 
 def test_page_success_creates_atomic_successor():

@@ -48,7 +48,9 @@ analysis layer reads only normalized records:
 Raw measurements and vendor scores remain separate from Vitalis-derived states.
 `all_day_stress.data` contributes timestamped vendor stress observations using its
 explicit UTC timestamps; gaps remain missing and no category thresholds are inferred.
-The vendor-provided daily average, min/max, and category proportions remain separate
+Its UTC-day request is padded around the configured-local window, then samples are
+clipped to the original half-open window before persistence. The vendor-provided daily
+average, min/max, and category proportions remain separate
 `daily_metrics`. Neither form changes recovery state or training decisions.
 `ahi_readiness` and `afib_readiness` are vendor readiness component scores, not AHI or
 AFib diagnoses.

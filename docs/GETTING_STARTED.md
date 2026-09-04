@@ -68,6 +68,35 @@ the unique indexes from being created. Do not bypass that check or delete a data
 hide the conflict. The migration preserves both users' historical health data and only
 releases the non-canonical credential and browser link.
 
+### Existing SQLite Schema Migration
+
+`create_all()` creates a fresh current schema but does not alter existing SQLite tables.
+Before starting newer code against a long-lived database, stop Vitalis processes and
+audit columns, unique constraints, check constraints, and indexes:
+
+```bash
+python -m vitalis.storage.schema_migration audit
+```
+
+For the known pre-current layouts, run the explicit migration with the historical data
+source and a required backup path:
+
+```bash
+python -m vitalis.storage.schema_migration migrate \
+  --legacy-source zepp \
+  --backup backups/vitalis-before-current-schema.db \
+  --apply
+```
+
+The command creates and verifies the SQLite backup before changing tables. It rebuilds
+drifted tables from the current SQLAlchemy metadata, maps known added columns, preserves
+row counts, normalizes legacy null device IDs, recreates current indexes, and finishes
+with schema and foreign-key checks. It refuses to reinterpret a non-empty legacy
+`sync_attempts` or `sync_chunks` ledger. Unknown schema differences require a separate
+review rather than a forced migration.
+
+Run the audit again and start the API/worker only when it reports `clean=true`.
+
 ## Hermes Runtime
 
 Keep the checked-in Skill as the single source of truth by linking it into Hermes'

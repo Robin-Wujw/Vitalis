@@ -173,7 +173,9 @@ The user-scoped `all_day_stress` event supplies two verified contracts:
 - vendor daily summary fields map directly to `stress`, `stress_min`, `stress_max`, and
   the four `stress_*_pct` daily metrics;
 - its `data` JSON array supplies timestamped `stress` metric samples. Vitalis preserves
-  each explicit UTC timestamp, 0-100 vendor value, gaps, and device attribution. The
+  each explicit UTC timestamp, 0-100 vendor value, gaps, and device attribution. Because
+  the endpoint buckets events by UTC day, Vitalis requests one padded day on each side
+  and clips samples back to the original configured-local half-open window. The
   connected-account payload currently shows a five-minute cadence with gaps, but the
   parser does not assume or synthesize that cadence.
 

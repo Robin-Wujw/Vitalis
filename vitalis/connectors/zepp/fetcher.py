@@ -18,6 +18,7 @@ from vitalis.time import local_day, local_day_utc_bounds
 MAX_SYNC_DAYS = 730  # 2 年
 CHUNK_DAYS = 7
 HEART_RATE_PAGE_LIMIT = 1000
+DAY_MILLISECONDS = 24 * 60 * 60 * 1000
 
 
 @dataclass
@@ -487,8 +488,17 @@ class DataFetcher:
                 to_ms = int(chunk.end.timestamp() * 1000)
                 try:
                     if surface == "user":
+                        request_from_ms = (
+                            from_ms - DAY_MILLISECONDS
+                            if label == "all_day_stress" else from_ms
+                        )
+                        request_to_ms = (
+                            to_ms + DAY_MILLISECONDS
+                            if label == "all_day_stress" else to_ms
+                        )
                         payload = self.connector.fetch_user_events(
-                            event_type, sub_type, from_ms, to_ms, 1000, True
+                            event_type, sub_type,
+                            request_from_ms, request_to_ms, 1000, True,
                         )
                     else:
                         payload = self.connector.fetch_events(

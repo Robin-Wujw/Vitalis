@@ -9,6 +9,7 @@ import pytest
 from vitalis.connectors.zepp import ZeppConnector, client as client_module
 from vitalis.connectors.zepp.client import ZeppAPIClient, ZeppAuthError
 from vitalis.connectors.zepp.fetcher import (
+    DAY_MILLISECONDS,
     DataFetcher,
     FetchWindow,
     PartialFetchError,
@@ -161,8 +162,15 @@ def test_daily_and_wellness_requests_are_chunked_for_long_history():
     daily_health_calls = [x for x in connector.events if x[:2] == ("DailyHealth", "summary")]
     readiness_calls = [x for x in connector.events if x[:2] == ("readiness", "watch_score")]
     rmssd_calls = [x for x in connector.events if x[:2] == ("HRVRMSSD", "real_data")]
+    stress_calls = [
+        x for x in connector.user_events if x[:2] == ("all_day_stress", None)
+    ]
     assert len(daily_health_calls) == 3
     assert len(readiness_calls) == 3
+    assert len(stress_calls) == 3
+    for daily_call, stress_call in zip(daily_health_calls, stress_calls):
+        assert stress_call[2] == daily_call[2] - DAY_MILLISECONDS
+        assert stress_call[3] == daily_call[3] + DAY_MILLISECONDS
     assert not [
         call for call in connector.events
         if call[:2] in {("Charge", "stress_data"), ("Charge", "insight_data")}

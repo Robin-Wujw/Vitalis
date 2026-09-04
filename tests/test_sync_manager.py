@@ -394,10 +394,18 @@ class TestSyncManager:
                 "mediumProportion": 1,
                 "highProportion": 0,
                 "data": json.dumps([
+                    {"time": int(start.timestamp() * 1000) - 300_000, "value": 99},
                     {"time": int(start.timestamp() * 1000), "value": 5},
                     {"time": int(start.timestamp() * 1000) + 300_000, "value": 29},
                     {"time": int(start.timestamp() * 1000) + 600_000, "value": 65},
+                    {"time": int((start + timedelta(days=1)).timestamp() * 1000), "value": 98},
                 ]),
+            }, {
+                "timestamp": int((start - timedelta(days=1)).timestamp() * 1000),
+                "avgStress": 11,
+            }, {
+                "timestamp": int((start + timedelta(days=1)).timestamp() * 1000),
+                "avgStress": 88,
             }]},
         ))
 

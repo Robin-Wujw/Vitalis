@@ -683,6 +683,19 @@ class SyncManager:
 
         elif stream == "wellness":
             metrics, samples = parser.parse_wellness(payload, record.raw.source_key)
+            if record.raw.source_key.startswith("wellness:all_day_stress:"):
+                metrics = [
+                    metric for metric in metrics
+                    if record.raw.start_utc
+                    <= datetime.combine(
+                        metric.date, datetime.min.time(), tzinfo=timezone.utc
+                    )
+                    < record.raw.end_utc
+                ]
+            samples = [
+                sample for sample in samples
+                if record.raw.start_utc <= sample.timestamp < record.raw.end_utc
+            ]
             parsed = len(metrics) + len(samples)
             for metric in metrics:
                 metric.user_id = user.id

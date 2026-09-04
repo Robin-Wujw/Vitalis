@@ -1,7 +1,9 @@
 # 晚间总结
 
+[English](evening.en.md)
+
 若 `open_health_insights.training_load` 有返回，只复述当日 TRIMP 与描述性 ATL/CTL/TSB；TSB
-只能称为训练负荷差值，不称为恢复或状态。拒绝或缺输入时简洁说明返回的 missing input。
+只能称为训练负荷差值，不称为恢复或状态。拒绝或缺输入时简洁说明返回的缺失输入。
 
 全程使用中文，不重复晨间叙述，先说明今天实际发生的内容：
 

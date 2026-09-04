@@ -1,6 +1,8 @@
 # 晨间分析
 
-Use the requested date, or today's date when none is given. Read `tools/morning_briefing.py` first and render only its fields. Do not reconstruct a report from DailyProfile features.
+[English](morning.en.md)
+
+使用请求的日期；如果未指定日期，则使用今天。先读取 `tools/morning_briefing.py`，并且只渲染其中的字段。不得根据 DailyProfile 特征重新构建报告。
 
 全程使用普通中文，像教练说明今天怎么做，按以下顺序渲染：
 
@@ -10,4 +12,4 @@ Use the requested date, or today's date when none is given. Read `tools/morning_
 4. `训练后告诉我`：仅在 `feedback_prompt` 存在时展示，并提示用户通过反馈工具记录实际感受。
 5. 当 `decision_action` 为 `INSUFFICIENT_DATA` 时，只说明 `data_quality`、`key_reasons` 和 `cautions`，不得改用昨天数据、通用训练建议或补偿性安排。
 
-当用户明确询问“为什么”或“依据是什么”时，调用 `tools/explain.py`，再展示已有的证据与限制；不得重新计算或挑选指标。Open Health 仍是描述性 shadow insight，不参与晨报决策。
+当用户明确询问“为什么”或“依据是什么”时，调用 `tools/explain.py`，再展示已有的证据与限制；不得重新计算或挑选指标。Open Health 仍是描述性影子洞察，不参与晨报决策。

@@ -1,75 +1,26 @@
-# Evidence Scope
+# 证据范围
 
-The API response is authoritative for evidence references used by a specific profile.
-The first model version uses the following boundaries:
+[English](evidence.en.md)
 
-- WHO physical activity guidance supports weekly population-level aerobic and strength
-  context; it is not an individual readiness formula.
-- The 1996 HRV standards support measurement separation and interpretation discipline;
-  they do not validate a Vitalis recovery score.
-- World Sleep Society guidance requires consumer sleep stages to be treated as trend
-  indicators rather than polysomnography-equivalent truth.
-- The AASM/SRS adult sleep consensus supports at least seven hours as a general adult
-  duration reference, with individual context still required.
-- IOC load guidance supports integrated load, recovery, health, and wellbeing
-  monitoring; it does not justify a universal acute/chronic ratio threshold.
-- The 2026 ACSM resistance-training position stand supports progressive resistance
-  training, major-muscle-group coverage, and manipulation of load, volume, range of
-  motion, power intent, and weekly sets for healthy adults. It supports movement-
-  pattern-level prescriptions; it does not let Vitalis infer absolute weight targets
-  without individual strength history.
-- Concurrent-training reviews support cautious scheduling when aerobic and strength
-  work are both due, especially around same-session explosive-strength outcomes.
-  Current six-hour spacing and 48-hour lower-body conflict windows are Vitalis product
-  policy, not directly proven universal thresholds.
-- RPE/RIR research supports guided subjective effort feedback for resistance training,
-  but accuracy depends on experience, load, exercise type, proximity to failure, and
-  user familiarization. RPE/RIR is user-reported context, not a precise substitute for
-  measured load or completed sets/reps/weight.
-- Hettiarachchi et al. (2019, DOI `10.1371/journal.pone.0217288`) found close
-  agreement between an upper-arm Polar OH1 PPG sensor and ECG during moderate- to
-  high-intensity exercise. A 2025 arm-versus-wrist validation study
-  (`10.2196/67110`) also found better aggregate heart-rate agreement for its tested
-  upper-arm sensor. These studies support the upper-arm form factor for exercise
-  heart rate; they are not independent validation of Amazfit Helio Strap.
-- Bent et al. (2020, DOI `10.1038/s41746-020-0226-6`) found PPG error varied by
-  device and activity, with activity error higher than rest. Sampling frequency or
-  wearing position alone must not be converted into a universal accuracy claim.
-- Schäfer and Vagedes (2013, DOI `10.1016/j.ijcard.2012.03.119`) found pulse-rate
-  variability is not interchangeable with ECG-derived HRV in every setting. Vitalis
-  therefore compares the same HRV metric within each device baseline and never averages
-  raw RMSSD/SDNN across devices.
-- Dial et al. (2025, DOI `10.14814/phy2.70527`) found materially different nocturnal
-  HRV agreement across five consumer devices measured against ECG. This supports
-  model-specific validation and stable within-device baselines, not choosing a sleep
-  HRV source from wearing position alone.
-- Bland and Altman's method-comparison guidance (1986, DOI
-  `10.1016/S0140-6736(86)90837-8`) requires demonstrated agreement before measurement
-  methods are treated as interchangeable. A secondary wearable can corroborate the
-  canonical stream, but agreement does not turn two unvalidated streams into a more
-  accurate synthetic value.
-- Laborde et al. (2017, DOI `10.3389/fpsyg.2017.00213`), the 2024 Society for
-  Psychophysiological Research guidance (DOI `10.1111/psyp.14604`), and Sammito et al.
-  (2024, DOI `10.3389/fphys.2024.1430458`) require ambulatory HRV interpretation to
-  account for recording method, activity, posture, time, physiology, lifestyle, and
-  external confounders. A minute-scale wearable value is not a direct stress label.
-- Järvelin-Pasanen et al. (2018, DOI `10.2486/indhealth.2017-0190`) supports an
-  association between occupational stress and reduced parasympathetic HRV measures at
-  group and observation-window levels. It does not validate classifying each low
-  daytime RMSSD point as stress.
-- Saygin et al. (2025, DOI `10.1016/j.biopsycho.2025.109171`) shows that respiration
-  can create spurious ambulatory RSA associations. Schneider et al. (2025, DOI
-  `10.1007/s11886-025-02299-4`) found context-dependent positive-affect/HRV directions.
-  Vitalis therefore requires contextual and subjective evidence rather than inferring
-  stress valence or happiness from daytime HRV alone.
+API 响应是特定档案所用证据引用的权威来源。第一版模型采用以下边界：
 
-Device validity remains `LIMITED_BY_EVIDENCE` when only form-factor research exists.
-Never convert missing model-specific validation or indexed-but-undecoded second-heart-
-rate files into a synthetic quality probability.
+- WHO 身体活动指南为每周人群层面的有氧和力量活动提供背景依据；它不是个人准备状态公式。
+- 1996 年 HRV 标准支持将不同测量分开处理并遵守严谨的解释原则；它们不能验证 Vitalis 恢复评分。
+- 世界睡眠学会指南要求将消费级设备的睡眠阶段视为趋势指标，而不是等同于多导睡眠监测的事实。
+- AASM/SRS 成人睡眠共识支持至少七小时作为一般成人睡眠时长参考，但仍需结合个人情况。
+- IOC 负荷指南支持综合监测负荷、恢复、健康和身心状态；它不能证明通用的急性/慢性负荷比阈值合理。
+- 2026 年 ACSM 抗阻训练立场声明支持健康成人开展渐进式抗阻训练、覆盖主要肌群，并调整负荷、训练量、动作幅度、功率意图和每周组数。它支持动作模式层面的训练方案；如果没有个人力量历史，Vitalis 不能据此推断绝对重量目标。
+- 并行训练综述支持在有氧和力量训练均需进行时谨慎安排，尤其应关注同一训练中的爆发力表现。目前六小时间隔和 48 小时下肢冲突窗口属于 Vitalis 产品策略，并非经直接证明的通用阈值。
+- RPE/RIR 研究支持在抗阻训练中使用引导式主观用力反馈，但准确性取决于经验、负荷、动作类型、距力竭程度和用户熟悉度。RPE/RIR 是用户报告的背景信息，不能精确替代测得的负荷或实际完成的组数/次数/重量。
+- Hettiarachchi 等人（2019，DOI `10.1371/journal.pone.0217288`）发现，在中高强度运动期间，上臂 Polar OH1 PPG 传感器与 ECG 高度一致。2025 年一项上臂与手腕设备的验证研究（`10.2196/67110`）也发现，其测试的上臂传感器在总体心率一致性上表现更好。这些研究支持在运动心率测量中采用上臂形态，但并非对 Amazfit Helio Strap 的独立验证。
+- Bent 等人（2020，DOI `10.1038/s41746-020-0226-6`）发现，PPG 误差因设备和活动而异，活动时误差高于静息时。不能仅依据采样频率或佩戴位置得出通用准确性结论。
+- Schäfer 和 Vagedes（2013，DOI `10.1016/j.ijcard.2012.03.119`）发现，脉率变异性并非在所有场景下都可与 ECG 得出的 HRV 互换。因此，Vitalis 在每台设备自身的基线内比较相同 HRV 指标，绝不跨设备平均原始 RMSSD/SDNN。
+- Dial 等人（2025，DOI `10.14814/phy2.70527`）发现，五种消费级设备与 ECG 相比的夜间 HRV 一致性存在实质差异。这支持针对具体型号进行验证并使用稳定的设备内基线，而不是仅凭佩戴位置选择睡眠 HRV 来源。
+- Bland 和 Altman 的方法比较指南（1986，DOI `10.1016/S0140-6736(86)90837-8`）要求先证明一致性，才能将测量方法视为可互换。次要可穿戴设备可以佐证规范数据流，但两个未经验证的数据流即使一致，也不会因此形成更准确的合成值。
+- Laborde 等人（2017，DOI `10.3389/fpsyg.2017.00213`）、心理生理学研究学会 2024 年指南（DOI `10.1111/psyp.14604`）以及 Sammito 等人（2024，DOI `10.3389/fphys.2024.1430458`）要求在解释动态 HRV 时考虑记录方法、活动、姿势、时间、生理、生活方式和外部混杂因素。分钟尺度的可穿戴设备数值并不直接等同于压力标签。
+- Järvelin-Pasanen 等人（2018，DOI `10.2486/indhealth.2017-0190`）支持职业压力与副交感 HRV 指标降低在群体和观察窗口层面存在关联。它不能证明应将每个偏低的日间 RMSSD 数据点归类为压力。
+- Saygin 等人（2025，DOI `10.1016/j.biopsycho.2025.109171`）表明，呼吸可能产生虚假的动态 RSA 关联。Schneider 等人（2025，DOI `10.1007/s11886-025-02299-4`）发现，积极情感与 HRV 的方向取决于具体情境。因此，Vitalis 要求具备情境和主观证据，而不是仅凭日间 HRV 推断压力的正负性质或幸福感。
 
-For exercise heart rate, a decoded and explicitly attributed upper-arm stream is the
-preferred context when available because the form factor has stronger activity evidence.
-For nocturnal HRV, Vitalis instead selects one canonical same-metric stream by usable
-baseline coverage and continuity. Secondary streams are retained for audit and silent
-corroboration. They reduce confidence only when a comparable within-device direction
-disagrees; they do not replace the canonical conclusion.
+当只有设备形态研究时，设备有效性仍为 `LIMITED_BY_EVIDENCE`。绝不能把缺少特定型号验证或已索引但未解码的第二心率文件转换为合成质量概率。
+
+对于运动心率，如果存在已解码且来源明确的上臂数据流，则优先将其作为背景信息，因为上臂形态拥有更充分的活动场景证据。对于夜间 HRV，Vitalis 则根据可用基线覆盖率和连续性，选择一个采用相同指标的规范数据流。次要数据流会保留用于审计和静默佐证；只有当可比较的设备内变化方向不一致时，它们才会降低置信度，而不会取代规范结论。

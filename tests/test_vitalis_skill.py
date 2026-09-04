@@ -11,12 +11,14 @@ SKILL = ROOT / "skills" / "vitalis"
 
 def test_skill_is_renderer_only_and_uses_current_intelligence_contracts():
     skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+    skill_en = (SKILL / "SKILL.en.md").read_text(encoding="utf-8")
     daily = (SKILL / "tools" / "daily.py").read_text(encoding="utf-8")
     morning = (SKILL / "tools" / "morning_briefing.py").read_text(encoding="utf-8")
     weekly = (SKILL / "tools" / "weekly.py").read_text(encoding="utf-8")
     monthly = (SKILL / "tools" / "monthly.py").read_text(encoding="utf-8")
     explain = (SKILL / "tools" / "explain.py").read_text(encoding="utf-8")
-    assert "Never reproduce those calculations" in skill
+    assert "Never reproduce those calculations" in skill_en
+    assert "绝不能在模型中复现这些计算" in skill
     assert "INSUFFICIENT_DATA" in skill
     assert 'request("GET", "daily"' in daily
     assert '"morning-briefing"' in morning
@@ -29,7 +31,8 @@ def test_skill_is_renderer_only_and_uses_current_intelligence_contracts():
     analyze = (SKILL / "tools" / "analyze.py").read_text(encoding="utf-8")
     assert "request(" in analyze and '"POST"' in analyze and '"analyze"' in analyze
     assert not (SKILL / "tools" / "health_query.py").exists()
-    assert "All user-visible content must be Chinese" in skill
+    assert "All user-visible content must be Chinese" in skill_en
+    assert "所有面向用户的内容都必须使用中文" in skill
     assert "decision.action_plan" in skill
     assert "daily_explanation.md" in skill
     assert "tools/analyze.py" in skill and "tools/sync.py" in skill
@@ -81,14 +84,56 @@ def test_skill_has_all_workflows_and_valid_schema():
         json.loads((SKILL / "schemas" / name).read_text(encoding="utf-8"))
 
 
+def test_bilingual_skill_docs_preserve_frontmatter_and_canonical_routing():
+    skill_path = SKILL / "SKILL.md"
+    skill = skill_path.read_text(encoding="utf-8")
+    skill_en = (SKILL / "SKILL.en.md").read_text(encoding="utf-8")
+    expected_frontmatter = (
+        "---\n"
+        "name: vitalis\n"
+        "description: Use Vitalis Health Intelligence APIs for deterministic Chinese health analysis, training response, personal patterns, timelines, and explicit feedback actions.\n"
+        "---\n"
+    )
+    assert skill_path.read_bytes().startswith(expected_frontmatter.encode("utf-8"))
+    assert skill.splitlines()[7] == "[English](SKILL.en.md)"
+    assert skill_en.splitlines()[2] == "[简体中文](SKILL.md)"
+
+    markdown_files = list(SKILL.rglob("*.md"))
+    assert [path for path in markdown_files if path.read_text(encoding="utf-8").startswith("---\n")] == [skill_path]
+
+    workflow_names = (
+        "morning", "evening", "weekly", "monthly", "on_demand", "daily_explanation",
+    )
+    for name in workflow_names:
+        canonical_path = SKILL / "workflows" / f"{name}.md"
+        english_path = SKILL / "workflows" / f"{name}.en.md"
+        canonical = canonical_path.read_text(encoding="utf-8")
+        english = english_path.read_text(encoding="utf-8")
+        assert canonical.splitlines()[2] == f"[English]({name}.en.md)"
+        assert english.splitlines()[2] == f"[简体中文]({name}.md)"
+        assert not english.startswith("---\n")
+        assert "runtime user-visible output must" in english
+        assert f"workflows/{name}.en.md" not in skill
+        assert f"workflows/{name}.en.md" not in skill_en
+
+    evidence = (SKILL / "knowledge" / "evidence.md").read_text(encoding="utf-8")
+    evidence_en = (SKILL / "knowledge" / "evidence.en.md").read_text(encoding="utf-8")
+    assert evidence.splitlines()[2] == "[English](evidence.en.md)"
+    assert evidence_en.splitlines()[2] == "[简体中文](evidence.md)"
+    assert "API 响应是特定档案所用证据引用的权威来源" in evidence
+    assert "The API response is authoritative for evidence references" in evidence_en
+
+
 def test_daily_explanation_workflow_is_read_only():
     workflow = (SKILL / "workflows" / "daily_explanation.md").read_text(encoding="utf-8")
+    workflow_en = (SKILL / "workflows" / "daily_explanation.en.md").read_text(encoding="utf-8")
     assert "tools/explain.py" in workflow
     assert "tools/analyze.py" in workflow
     assert "tools/sync.py" in workflow
     assert "INSUFFICIENT_DATA" in workflow
     assert "status=snapshot_missing" in workflow
     assert "不得改用昨天的数据" in workflow
+    assert "Do not substitute yesterday's data" in workflow_en
 
 
 def test_skill_exposes_read_analyze_and_act_tools():

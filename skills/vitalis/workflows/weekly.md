@@ -1,5 +1,7 @@
 # 每周回顾
 
+[English](weekly.en.md)
+
 全程使用中文，只渲染 WeeklyProfile：
 
 1. 用 `data_quality.status_label` 和 `confidence_label` 说明分析可信度。

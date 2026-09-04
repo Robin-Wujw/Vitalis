@@ -1,5 +1,7 @@
 # 近 28 天回顾
 
+[English](monthly.en.md)
+
 全程使用中文，只渲染 MonthlyProfile：
 
 1. 明确这是截至目标日期的连续 28 个本地日，不称为自然月。

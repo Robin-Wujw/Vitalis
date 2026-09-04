@@ -1,5 +1,7 @@
 # 按需解释
 
+[English](on_demand.en.md)
+
 全程使用中文。用户明确回答个人资料问题后，使用 `tools/profile.py patch` 写入并携带当前
 revision；遇到 409 时重新读取 profile，不覆盖其他更新。当天训练建议的“为什么”问题必须
 使用 `workflows/daily_explanation.md`，不在本工作流回退到 `tools/analyze.py` 或
@@ -16,5 +18,5 @@ revision；遇到 409 时重新读取 profile，不覆盖其他更新。当天�
 中的中位数、MAD、样本量、覆盖率和置信度，并称为“关联”或“个人模式”，不得称为
 因果。PersonalAssociation 只能复述 `summary`、配对天数、覆盖率、系数、强度、置信度
 和限制；必须说明 `association_only=true` 的含义，不得自行筛选阈值、计算显著性或把
-弱关联升级为行动建议。时间线只按已返回的 typed summary 说明先后顺序，不得从时间
+弱关联升级为行动建议。时间线只按已返回的有类型定义摘要说明先后顺序，不得从时间
 接近推断因果。

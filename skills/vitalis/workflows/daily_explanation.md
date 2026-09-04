@@ -1,5 +1,7 @@
 # 每日建议解释
 
+[English](daily_explanation.en.md)
+
 仅处理“为什么今天这样建议训练”“解释今天的计划”等当天解释请求。先调用
 `tools/explain.py`，只渲染其 `decision_explanation.json` 契约中的字段。
 

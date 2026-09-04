@@ -22,6 +22,16 @@ from .database import Base
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        Index(
+            "uq_users_source_identity",
+            "source",
+            "source_user_id",
+            unique=True,
+            sqlite_where=text("source_user_id IS NOT NULL"),
+            postgresql_where=text("source_user_id IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(128), default="")
@@ -583,6 +593,22 @@ class AuthToken(Base):
     """厂商 OAuth2 令牌（扫码授权后保存）。"""
 
     __tablename__ = "auth_tokens"
+    __table_args__ = (
+        Index(
+            "uq_auth_tokens_user_source",
+            "user_id",
+            "source",
+            unique=True,
+        ),
+        Index(
+            "uq_auth_tokens_source_identity",
+            "source",
+            "source_user_id",
+            unique=True,
+            sqlite_where=text("source_user_id IS NOT NULL"),
+            postgresql_where=text("source_user_id IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(String(64), index=True)

@@ -52,6 +52,10 @@ from vitalis.time import local_day, local_day_utc_bounds
 from . import models as orm
 
 
+class SourceIdentityConflict(ValueError):
+    """A vendor identity is already owned by another local user."""
+
+
 @dataclass(frozen=True)
 class WorkoutAnalysisSample:
     source: str
@@ -119,6 +123,25 @@ class HealthRepository:
             "source_user_id_present": source_user_id is not None,
             "shared_local_user_count": len(local_user_ids),
         }
+
+    def source_identity_owned_by_other(
+        self, user_id: str, source: str, source_user_id: str
+    ) -> bool:
+        token_owner = self.db.execute(
+            select(orm.AuthToken.id).where(
+                orm.AuthToken.source == source,
+                orm.AuthToken.source_user_id == source_user_id,
+                orm.AuthToken.user_id != user_id,
+            ).limit(1)
+        ).scalar_one_or_none()
+        user_owner = self.db.execute(
+            select(orm.User.id).where(
+                orm.User.source == source,
+                orm.User.source_user_id == source_user_id,
+                orm.User.id != user_id,
+            ).limit(1)
+        ).scalar_one_or_none()
+        return token_owner is not None or user_owner is not None
 
     # ---- 设备 ----
     def upsert_device(self, device: Device) -> orm.Device:
@@ -2478,16 +2501,47 @@ class HealthRepository:
     # ---- OAuth 令牌 ----
 
     def save_token(self, token: AuthToken) -> None:
-        """保存/更新某用户的厂商访问令牌。"""
+        """Atomically claim a vendor identity and save its access token."""
+        if token.source == "zepp" and not token.source_user_id:
+            raise SourceIdentityConflict("Zepp 凭据必须包含厂商用户 id")
+
         row = self.db.execute(
             select(orm.AuthToken).where(
                 orm.AuthToken.user_id == token.user_id,
                 orm.AuthToken.source == token.source,
             )
         ).scalar_one_or_none()
+        if (
+            row is not None
+            and row.source_user_id
+            and token.source_user_id
+            and row.source_user_id != token.source_user_id
+        ):
+            raise SourceIdentityConflict("当前本地用户已绑定其他厂商账号")
+
+        user = self.db.get(orm.User, token.user_id)
+        if (
+            user is not None
+            and user.source_user_id
+            and token.source_user_id
+            and (
+                user.source != token.source
+                or user.source_user_id != token.source_user_id
+            )
+        ):
+            raise SourceIdentityConflict("当前本地用户已映射到其他厂商账号")
+        if token.source_user_id and self.source_identity_owned_by_other(
+            token.user_id, token.source, token.source_user_id
+        ):
+            raise SourceIdentityConflict("该厂商账号已绑定到其他本地用户")
+
         if row is None:
             row = orm.AuthToken(user_id=token.user_id, source=token.source)
             self.db.add(row)
+        if user is None:
+            user = orm.User(id=token.user_id)
+            self.db.add(user)
+
         from .token_cipher import encrypt_token
 
         row.access_token = encrypt_token(token.access_token)
@@ -2496,7 +2550,14 @@ class HealthRepository:
         row.scope = token.scope
         row.region_host = token.region_host
         row.source_user_id = token.source_user_id
-        self.db.flush()
+        user.source = token.source
+        user.source_user_id = token.source_user_id
+        try:
+            self.db.flush()
+        except IntegrityError as exc:
+            raise SourceIdentityConflict(
+                "该厂商账号已绑定到其他本地用户"
+            ) from exc
 
     def get_token(self, user_id: str, source: str = "zepp") -> AuthToken | None:
         row = self.db.execute(
@@ -2713,11 +2774,13 @@ class HealthRepository:
             orm.SubjectiveFeedback,
             orm.SyncStreamState,
             orm.ZeppDeviceLink, orm.ZeppBrowserLink, orm.ZeppPairingSession,
+            orm.AuthToken, orm.OAuthState,
         ):
             self.db.execute(delete(model).where(model.user_id == user_id))
         attempt_ids = select(orm.SyncAttempt.id).where(orm.SyncAttempt.user_id == user_id)
         self.db.execute(delete(orm.SyncChunk).where(orm.SyncChunk.attempt_id.in_(attempt_ids)))
         self.db.execute(delete(orm.SyncAttempt).where(orm.SyncAttempt.user_id == user_id))
+        self.db.execute(delete(orm.User).where(orm.User.id == user_id))
 
 
 def _profile_field_value(field: ProfileField | None):

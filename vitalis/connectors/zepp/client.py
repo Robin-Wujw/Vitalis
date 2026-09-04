@@ -121,6 +121,7 @@ ZeppErrorKind = Literal[
     "timeout",
     "cancelled",
     "invalid_request",
+    "identity_conflict",
     "partial_coverage",
     "vendor_response",
     "unknown",

@@ -13,13 +13,16 @@ side-effect free and return `404` when the requested snapshot has not been gener
 | POST | `/connect/zepp/link/credentials` | Update credentials through an authenticated browser link |
 | POST | `/connect/zepp/link/validate` | Validate a saved credential when browser cookies are temporarily unavailable |
 | POST | `/connect/zepp/link/disconnected` | Report an official browser logout |
+| POST | `/connect/zepp/token` | Import a real Zepp `userid` plus `apptoken` |
 | POST | `/connect/zepp/device-link` | Create a Balance 2 upload token |
 | POST | `/connect/zepp/device-link/heart-rate` | Settle a device heart-rate batch per sample ID |
 | GET | `/connect/zepp/token` | Read connection, renewal, and re-login state |
 | POST | `/connect/zepp` | Connect and synchronize up to 730 days |
 
 See [ZEPP_INTEGRATION.md](ZEPP_INTEGRATION.md) for authentication, security, and source
-semantics.
+semantics. Manual import, initial pairing, and browser-link renewal return HTTP `409`
+when the Zepp vendor identity already belongs to another local user; the existing
+credential and both users' historical records remain unchanged.
 
 ## Health Intelligence
 

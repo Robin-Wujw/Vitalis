@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -35,18 +36,40 @@ def get_engine():
 
 
 def init_db() -> None:
-    """Create the current schema in a fresh database."""
+    """Create the current schema and require resolved source identities."""
     from . import models as _  # noqa: F401
+    from .identity_migration import (
+        SourceIdentityMigrationRequired,
+        audit_source_identities,
+    )
 
     Base.metadata.create_all(bind=_engine)
     # `create_all` does not add indexes declared after an existing table was
-    # created, so apply the current high-volume query index explicitly.
+    # created, so apply current indexes explicitly for existing databases.
     metric_samples = Base.metadata.tables["metric_samples"]
     next(
         index
         for index in metric_samples.indexes
         if index.name == "ix_metric_samples_user_metric_timestamp"
     ).create(bind=_engine, checkfirst=True)
+    try:
+        for table_name in ("users", "auth_tokens"):
+            for index in Base.metadata.tables[table_name].indexes:
+                if index.name and index.name.startswith("uq_"):
+                    index.create(bind=_engine, checkfirst=True)
+    except SQLAlchemyError as exc:
+        raise SourceIdentityMigrationRequired(
+            "Zepp 身份映射存在重复或尚未迁移；先运行 "
+            "`python -m vitalis.storage.identity_migration audit`，"
+            "解决冲突后运行 `python -m vitalis.storage.identity_migration migrate --apply`"
+        ) from exc
+    with Session(_engine) as db:
+        audit = audit_source_identities(db)
+    if not audit.clean:
+        raise SourceIdentityMigrationRequired(
+            "Zepp 身份映射跨表不一致或缺少厂商用户 id；先运行 "
+            "`python -m vitalis.storage.identity_migration audit` 并显式解析"
+        )
 
 
 def get_session() -> Iterator[Session]:

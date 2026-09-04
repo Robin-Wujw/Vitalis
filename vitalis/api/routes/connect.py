@@ -398,14 +398,16 @@ a{{display:inline-block;margin-top:18px;color:#0072ff;text-decoration:none;font-
             "sync": sync,
         })
     except ZeppAuthError as exc:
+        status_code = 409 if exc.kind == "identity_conflict" else 400
         if "text/html" in request.headers.get("accept", "*/*"):
             return HTMLResponse(
                 f"<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'/></head>"
                 f"<body style='font-family:sans-serif;text-align:center;padding-top:80px'>"
                 f"<h2>授权失败</h2><p style='color:#666'>{exc}</p>"
-                f"<a href='/api/v1/connect/zepp/scan'>返回扫码页重新扫码</a></body></html>"
+                f"<a href='/api/v1/connect/zepp/scan'>返回扫码页重新扫码</a></body></html>",
+                status_code=status_code,
             )
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=status_code, detail=str(exc))
 
 
 @router.get("/zepp/token", summary="查询 token 状态")
@@ -569,7 +571,8 @@ def import_zepp_token(
                 vendor_user_id=vendor_user_id, region_host=region_host,
             )
     except ZeppAuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        status_code = 409 if exc.kind == "identity_conflict" else 400
+        raise HTTPException(status_code=status_code, detail=str(exc))
 
     response = {
         "status": "connected",

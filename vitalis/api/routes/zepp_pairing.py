@@ -161,7 +161,12 @@ def submit_zepp_pairing_credentials(
             repo = HealthRepository(db)
             repo.finish_pairing_session(pairing_id, "Zepp 已连接，云端正在同步", sync_attempt_id)
             repo.create_browser_link(link_digest, user_id, sync_attempt_id)
-    except (ZeppAuthError, RuntimeError) as exc:
+    except ZeppAuthError as exc:
+        _pairing_failed(pairing_id, str(exc))
+        status_code = 409 if exc.kind == "identity_conflict" else 400
+        detail = str(exc) if exc.kind == "identity_conflict" else "Zepp 凭据验证失败，请重新登录后重试"
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    except RuntimeError as exc:
         _pairing_failed(pairing_id, str(exc))
         raise HTTPException(status_code=400, detail="Zepp 凭据验证失败，请重新登录后重试") from exc
 
@@ -484,6 +489,8 @@ def _raise_link_validation_error(link_digest: str, error: RuntimeError) -> None:
                 link_digest, "Zepp 云端凭据已失效，请重新登录"
             )
         raise HTTPException(status_code=400, detail="Zepp 登录已失效，请重新登录") from error
+    if isinstance(error, ZeppAuthError) and error.kind == "identity_conflict":
+        raise HTTPException(status_code=409, detail=str(error)) from error
     raise HTTPException(
         status_code=503,
         detail="Zepp 服务暂时不可用，已保留当前连接，请稍后重试",

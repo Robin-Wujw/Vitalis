@@ -61,16 +61,15 @@
 
 ## 8. 当前状态
 
-日期：2026-09-03
+日期：2026-09-04
 
-- 当前 `main` 为 `1ea06f3`，包含行动优先的 MorningBriefing：PushPlus、API 与 Hermes 使用同一份非持久化晨报投影。
-- 本地完整测试最近通过：384 项；服务器已部署当前 `main` 并建立 fresh SQLite schema，`sync_attempts.trigger_ref` 已存在。
+- 当前 `main` 基线为 `b1be242`，包含持久同步 worker、API/worker systemd 单元和排队同步后的晨报等待。
+- 本地完整测试最近通过：404 项；Zepp 身份唯一性实现、历史冲突审计/解析工具、API 冲突响应和迁移文档均已验证。本地旧库已选择 `001` 为 canonical 并完成迁移，审计无重复。
 - 服务器新库已完成 Zepp 配对，但 charge payload 解析失败会阻断同步验证；在本地处理该 payload、完成端到端验证之前，不继续在服务器试错或强行发送晨报。
 
 ## 9. 当前未完成事项
 
 - [ ] 精简文档并建立可维护的中英双语入口：`README.md` / `README.en.md` / `docs/README.md`。
 - [ ] 在有足够私有语义对照后，解析 Zepp `charge_insight_data` 与 `charge_stress_data`；当前发布不请求这两个未验证 subtype，压力事实继续使用已验证的 `all_day_stress`。
-- [ ] 修复同一 Zepp `source_user_id` 映射为多个本地用户的重复账户问题，并定义历史处理方式。
 - [ ] 在本地验证通过后，部署 parser 修复到服务器，完成同步、分析和一次 `PushPlus --test` 晨报验证。
 - [ ] 为持久同步账本建立生产备份/恢复演练与长期数据保留策略。

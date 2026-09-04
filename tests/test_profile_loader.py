@@ -36,8 +36,8 @@ def test_profile_loader_keeps_device_streams_and_local_identities_separate():
         repo = HealthRepository(db)
         repo.delete_for_user(user_id)
         repo.delete_for_user(sibling_id)
-        repo.upsert_user(user_id, source_user_id="vendor-shared")
-        repo.upsert_user(sibling_id, source_user_id="vendor-shared")
+        repo.upsert_user(user_id, source_user_id="vendor-primary")
+        repo.upsert_user(sibling_id, source_user_id="vendor-sibling")
         repo.save_daily(NormalizedDaily(
             user_id=user_id,
             date=day,
@@ -77,7 +77,9 @@ def test_profile_loader_keeps_device_streams_and_local_identities_separate():
     assert raw.data_quality.status == QualityStatus.SUFFICIENT
     assert {point.device_id for point in raw.series["hrv_rmssd"]} == {"helio", "balance"}
     assert {point.value for point in raw.series["hrv_rmssd"]} == {52, 71}
-    assert any(flag.code == "SOURCE_IDENTITY_SHARED" for flag in raw.data_quality.flags)
+    assert not any(
+        flag.code == "SOURCE_IDENTITY_SHARED" for flag in raw.data_quality.flags
+    )
 
 
 def test_open_health_groups_pre_midnight_rmssd_into_wake_date_sleep_window():

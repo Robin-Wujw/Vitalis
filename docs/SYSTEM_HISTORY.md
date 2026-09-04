@@ -1,6 +1,16 @@
 # Vitalis 开发系统历史归档
 
-> 本文件保存 2026-08-26 至 2026-09-01 的完整长篇执行记录和验证证据，仅供追溯历史。当前有效的工作规则、未完成事项和最新验证状态以仓库根目录的 `SYSTEM.md` 为准。
+> 本文件保存已完成工作的执行记录和验证证据，仅供追溯历史。当前有效的工作规则、未完成事项和最新验证状态以仓库根目录的 `SYSTEM.md` 为准。
+
+## 2026-09-04 Zepp 身份所有权
+
+- 为 `users(source, source_user_id)`、`auth_tokens(source, source_user_id)` 和 `auth_tokens(user_id, source)` 增加数据库唯一索引。
+- 将 token 保存改为原子身份认领；手工导入、首次配对和浏览器续期的所有权冲突统一返回 HTTP 409。
+- 真实 Zepp 导入必须提供厂商 `userid`，同步客户端不再回退到可能过期的用户投影。
+- 新增只读审计、显式 canonical 解析和迁移命令。非 canonical 用户只撤销冲突凭据与浏览器链接，健康、训练、分析和反馈历史不合并也不删除。
+- `delete_for_user()` 现在完整删除 token、OAuth state 和用户映射，使显式全量清理真正释放厂商身份。
+- 验证：迁移边界与回调冲突聚焦测试 12 项通过；完整 `python -m pytest -q` 为 404 项通过；compileall、OpenAPI 生成和 `git diff --check` 通过。
+- 本机旧库迁移前备份通过 SQLite `quick_check`；随后选择 `001` 为 canonical，撤销 `real001` 的冲突 token。迁移后审计无重复、唯一索引齐全、真实 `init_db()` 正常，两边健康历史计数保持不变。
 
 ## 1. 目的
 

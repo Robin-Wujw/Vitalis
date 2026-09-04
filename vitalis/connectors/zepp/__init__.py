@@ -22,6 +22,7 @@ from datetime import date, datetime, time, timedelta, timezone
 
 from vitalis.config import settings
 from vitalis.models import AuthToken, MetricSample, NormalizedDaily, TrainingRecord, User
+from vitalis.storage.repositories import SourceIdentityConflict
 from vitalis.time import local_today
 
 from ..base import ConnectorAuth, ConnectorSyncResult, HealthConnector
@@ -64,11 +65,17 @@ class ZeppConnector(HealthConnector):
             repo: 存储仓储（保存 token）
             vitalis_user_id: 系统内用户 id
             app_token: Zepp apptoken（来自登录 cookie hm-user-login-info）
-            vendor_user_id: Zepp 用户 id（可选，未知时用 "me" 探测）
+            vendor_user_id: Zepp 用户 id（来自登录 cookie）
             region_host: 区域主机（缺省中国区 api-mifitcn.zepp.com）
         """
         if not app_token:
             raise ZeppAuthError("apptoken 不能为空", kind="invalid_request")
+        vendor_user_id = vendor_user_id.strip()
+        if not vendor_user_id:
+            raise ZeppAuthError(
+                "Zepp user_id 不能为空；请重新读取 hm-user-login-info cookie",
+                kind="invalid_request",
+            )
         existing = repo.get_token(vitalis_user_id, self.source)
         if (
             existing is not None
@@ -78,10 +85,17 @@ class ZeppConnector(HealthConnector):
         ):
             raise ZeppAuthError(
                 "当前本地用户已绑定其他 Zepp 账号；请先断开并清理该用户数据",
-                kind="invalid_request",
+                kind="identity_conflict",
+            )
+        if repo.source_identity_owned_by_other(
+            vitalis_user_id, self.source, vendor_user_id
+        ):
+            raise ZeppAuthError(
+                "该 Zepp 账号已绑定到其他本地用户",
+                kind="identity_conflict",
             )
         region = region_host.strip() or DEFAULT_REGION
-        client = ZeppAPIClient(app_token=app_token, user_id=vendor_user_id or "me", region_host=region)
+        client = ZeppAPIClient(app_token=app_token, user_id=vendor_user_id, region_host=region)
         # 验证：拉设备列表（或按需用 /v2/users/me/events 探测）
         try:
             client.verify()
@@ -97,9 +111,12 @@ class ZeppConnector(HealthConnector):
             access_token=app_token,
             scope="apptoken",
             region_host=region,
-            source_user_id=vendor_user_id or None,
+            source_user_id=vendor_user_id,
         )
-        repo.save_token(auth)
+        try:
+            repo.save_token(auth)
+        except SourceIdentityConflict as exc:
+            raise ZeppAuthError(str(exc), kind="identity_conflict") from exc
         return auth
 
     def load_token(self, repo, user_id: str) -> AuthToken | None:
@@ -132,9 +149,12 @@ class ZeppConnector(HealthConnector):
             expires_at=token.expires_at.replace(tzinfo=None) if token.expires_at else None,
             scope=token.scope,
             region_host="",
-            source_user_id=token.source_user_id,
+            source_user_id=f"mock-user-{user_id}",
         )
-        repo.save_token(auth)
+        try:
+            repo.save_token(auth)
+        except SourceIdentityConflict as exc:
+            raise ZeppAuthError(str(exc), kind="identity_conflict") from exc
         return auth
 
     # ---------------- 数据获取（新版：对齐 ZeppBridge SyncManager） ----------------
@@ -337,12 +357,15 @@ class ZeppConnector(HealthConnector):
                 "登录 watchface.zepp.com 后从 cookie hm-user-login-info 取 user_id+apptoken，"
                 "POST /api/v1/connect/zepp/token 导入"
             )
-        vendor_id = auth.source_user_id or user.source_user_id or ""
-        if vendor_id:
-            user.source_user_id = vendor_id
+        vendor_id = auth.source_user_id or ""
+        if not vendor_id:
+            raise AuthRequired(
+                f"用户 {user.id} 的 Zepp 凭据缺少厂商用户 id，请重新配对"
+            )
+        user.source_user_id = vendor_id
         return ZeppAPIClient(
             app_token=auth.access_token,
-            user_id=vendor_id or "me",
+            user_id=vendor_id,
             region_host=auth.region_host or DEFAULT_REGION,
         )
 

@@ -53,6 +53,88 @@ Vitalis. The extension can update the app token only while the official browser
 session remains valid and readable. Logout, session expiration, password changes, or
 vendor risk controls may require a new official login.
 
+## Source Identity Ownership
+
+A non-null Zepp `userid` has exactly one local Vitalis owner. The database enforces
+unique `(source, source_user_id)` mappings in both the credential row and its user
+projection, plus one credential row per `(local user, source)`. Manual import, initial
+pairing, and browser-link renewal all use the same atomic claim-and-save operation.
+A competing claim returns HTTP `409`; it does not replace either user's credential or
+merge their health history.
+
+Real Zepp credential import requires the vendor `userid` from `hm-user-login-info`.
+Vitalis no longer combines a new token with an older fallback identity. Reporting that
+the official browser session is disconnected only marks the browser link as needing
+login; it does not release account ownership or discard the server-side token.
+
+An existing database created before these constraints must be migrated before the API
+or worker starts. Stop all Vitalis processes, take a tested backup, and run:
+
+```bash
+python -m vitalis.storage.identity_migration audit
+```
+
+For every `duplicate_identities` group, explicitly choose the local user that keeps the
+Zepp credential:
+
+```bash
+python -m vitalis.storage.identity_migration resolve \
+  --source zepp \
+  --source-user-id <vendor-user-id> \
+  --canonical-user-id <local-user-id> \
+  --apply
+```
+
+The selected canonical user must already hold a matching token row. A user represented
+only by a stale `users.source_user_id` projection cannot receive another user's token
+implicitly.
+
+If `duplicate_local_sources` reports multiple tokens for one local user, explicitly
+choose the vendor identity to retain:
+
+```bash
+python -m vitalis.storage.identity_migration resolve-local \
+  --user-id <local-user-id> \
+  --source zepp \
+  --canonical-source-user-id <vendor-user-id> \
+  --apply
+```
+
+A legacy Zepp token with no vendor ID appears in `missing_token_identities`. Verify the
+identity outside Vitalis, assign it to the exact audited token row, then resolve any
+remaining local duplicate:
+
+```bash
+python -m vitalis.storage.identity_migration assign-missing \
+  --token-id <audited-token-id> \
+  --source-user-id <verified-vendor-user-id> \
+  --apply
+```
+
+A `mismatched_projections` entry is never fixed implicitly. After verifying which token
+is retained, align the user projection explicitly:
+
+```bash
+python -m vitalis.storage.identity_migration resolve-projection \
+  --user-id <local-user-id> \
+  --source zepp \
+  --source-user-id <retained-vendor-user-id> \
+  --apply
+```
+
+Then normalize absent projections and create the unique indexes:
+
+```bash
+python -m vitalis.storage.identity_migration migrate --apply
+```
+
+Resolution never merges or deletes health, workout, analysis, or feedback records.
+For each non-canonical local user it removes only the conflicting vendor credential,
+clears the vendor-identity projection, and revokes active browser links. That user's
+historical data remains addressable under the original local user ID. The operator must
+choose the canonical owner from external account context; Vitalis never guesses from
+record count or token recency.
+
 ## Normalized Data Coverage
 
 Vitalis currently normalizes:

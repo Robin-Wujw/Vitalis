@@ -43,6 +43,30 @@ Important configuration:
 The deterministic analysis engine does not require an LLM. Hermes or another agent
 consumes structured Vitalis results and renders them separately.
 
+### Existing Database Identity Migration
+
+Current schema requires one local owner for each non-null Zepp vendor identity. A fresh
+database receives the unique indexes during `init_db()`. For a database created by an
+older release, stop the API, worker, and scheduler and take a tested backup before
+starting the new code. Audit the existing mappings without reading token values:
+
+```bash
+python -m vitalis.storage.identity_migration audit
+```
+
+If the report is not clean, use the explicit `resolve` or `resolve-local` commands
+documented in [ZEPP_INTEGRATION.md](ZEPP_INTEGRATION.md#source-identity-ownership).
+After every conflict has an operator-selected canonical identity, apply the migration:
+
+```bash
+python -m vitalis.storage.identity_migration migrate --apply
+```
+
+Startup fails with `SourceIdentityMigrationRequired` while duplicate mappings prevent
+the unique indexes from being created. Do not bypass that check or delete a database to
+hide the conflict. The migration preserves both users' historical health data and only
+releases the non-canonical credential and browser link.
+
 ## Hermes Runtime
 
 Keep the checked-in Skill as the single source of truth by linking it into Hermes'

@@ -398,8 +398,72 @@ def test_import_token_rejects_rebinding_local_user_to_other_vendor_account():
             region_host="api-mifitcn.zepp.com",
         )
 
-    assert raised.value.kind == "invalid_request"
+    assert raised.value.kind == "identity_conflict"
     assert "其他 Zepp 账号" in str(raised.value)
+
+
+def test_import_token_rejects_vendor_account_owned_by_other_local_user():
+    class Repository:
+        @staticmethod
+        def get_token(_user_id, _source):
+            return None
+
+        @staticmethod
+        def source_identity_owned_by_other(user_id, source, source_user_id):
+            assert (user_id, source, source_user_id) == (
+                "local-b",
+                "zepp",
+                "vendor-shared",
+            )
+            return True
+
+    with pytest.raises(ZeppAuthError) as raised:
+        ZeppConnector(mock=False).import_token(
+            Repository(),
+            "local-b",
+            "new-token",
+            vendor_user_id="vendor-shared",
+        )
+
+    assert raised.value.kind == "identity_conflict"
+    assert "其他本地用户" in str(raised.value)
+
+
+def test_import_token_requires_vendor_user_id():
+    with pytest.raises(ZeppAuthError) as raised:
+        ZeppConnector(mock=False).import_token(object(), "local-user", "token")
+
+    assert raised.value.kind == "invalid_request"
+    assert "user_id" in str(raised.value)
+
+
+def test_import_token_persists_verified_identity_atomically(monkeypatch):
+    saved = {}
+
+    class Repository:
+        @staticmethod
+        def get_token(_user_id, _source):
+            return None
+
+        @staticmethod
+        def source_identity_owned_by_other(_user_id, _source, _source_user_id):
+            return False
+
+        @staticmethod
+        def save_token(token):
+            saved["token"] = token
+
+    monkeypatch.setattr(ZeppAPIClient, "verify", lambda _self: None)
+    auth = ZeppConnector(mock=False).import_token(
+        Repository(),
+        "local-user",
+        "new-token",
+        vendor_user_id="vendor-a",
+        region_host="api-mifitcn.zepp.com",
+    )
+
+    assert auth.source_user_id == "vendor-a"
+    assert saved["token"] is auth
 
 
 def test_real_connector_fetch_synchronizes_requested_local_dates(monkeypatch):

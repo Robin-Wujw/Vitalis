@@ -885,6 +885,43 @@ def test_callback_rejects_reused_state(client):
     assert again.status_code == 400
 
 
+def test_callback_maps_identity_conflict_to_http_409(client):
+    from vitalis.api.routes import connect
+    from vitalis.connectors.zepp import ZeppAuthError
+
+    state = "identity-conflict-callback-state"
+    with session_scope() as db:
+        HealthRepository(db).save_oauth_state(
+            state, "identity-conflict-callback-user"
+        )
+
+    class ConflictingConnector:
+        source = "zepp"
+        mock = True
+
+        @staticmethod
+        def exchange_and_save(*_args, **_kwargs):
+            raise ZeppAuthError(
+                "该 Zepp 账号已绑定到其他本地用户",
+                kind="identity_conflict",
+            )
+
+    from vitalis.api.app import app
+
+    app.dependency_overrides[connect._connector] = lambda: ConflictingConnector()
+    try:
+        response = client.get(
+            "/api/v1/connect/zepp/callback",
+            params={"code": "mock-code", "state": state},
+            headers={"Accept": "application/json"},
+        )
+    finally:
+        app.dependency_overrides.pop(connect._connector, None)
+
+    assert response.status_code == 409
+    assert "其他本地用户" in response.json()["detail"]
+
+
 def test_token_status_when_not_authorized(client):
     resp = client.get("/api/v1/connect/zepp/token", headers={"X-User-Id": "099"})
     assert resp.json()["authorized"] is False
@@ -942,6 +979,152 @@ def test_scan_page_full_flow(client):
 
 
 # ---- 云端配对（浏览器书签 / 扩展共用） ----
+
+
+def test_manual_token_import_rejects_cross_user_zepp_identity(
+    client, monkeypatch
+):
+    from vitalis.api.routes import connect
+    from vitalis.connectors.zepp import ZeppConnector
+    from vitalis.connectors.zepp.client import ZeppAPIClient
+
+    connector = ZeppConnector(mock=False)
+    monkeypatch.setattr(connector, "authenticate", lambda: None)
+    monkeypatch.setattr(connect, "_connector", lambda: connector)
+    monkeypatch.setattr(
+        connect,
+        "_probe_region_hosts",
+        lambda *_args, **_kwargs: "api-mifitcn.zepp.com",
+    )
+    monkeypatch.setattr(ZeppAPIClient, "verify", lambda _self: None)
+    for user_id in ("identity-owner", "identity-contender"):
+        with session_scope() as db:
+            HealthRepository(db).delete_for_user(user_id)
+
+    payload = {
+        "user_id": "vendor-api-shared",
+        "app_token": "owner-token",
+        "sync_history": False,
+    }
+    owner = client.post(
+        "/api/v1/connect/zepp/token",
+        headers={"X-User-Id": "identity-owner"},
+        json=payload,
+    )
+    contender = client.post(
+        "/api/v1/connect/zepp/token",
+        headers={"X-User-Id": "identity-contender"},
+        json={**payload, "app_token": "contender-token"},
+    )
+
+    assert owner.status_code == 200
+    assert contender.status_code == 409
+    assert "其他本地用户" in contender.json()["detail"]
+
+
+def test_initial_pairing_reports_identity_conflict_without_creating_link(
+    client, monkeypatch
+):
+    from vitalis.api.routes import connect, zepp_pairing
+    from vitalis.connectors.zepp import ZeppConnector
+    from vitalis.models import AuthToken
+
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user("pairing-identity-owner")
+        repo.delete_for_user("pairing-identity-contender")
+        repo.save_token(
+            AuthToken(
+                user_id="pairing-identity-owner",
+                source="zepp",
+                access_token="owner-token",
+                source_user_id="vendor-pairing-shared",
+            )
+        )
+
+    connector = ZeppConnector(mock=False)
+    monkeypatch.setattr(zepp_pairing, "get_connector", lambda _source: connector)
+    monkeypatch.setattr(
+        connect,
+        "_probe_region_hosts",
+        lambda *_args, **_kwargs: "api-mifitcn.zepp.com",
+    )
+    code = client.post(
+        "/api/v1/connect/zepp/pair",
+        headers={"X-User-Id": "pairing-identity-contender"},
+    ).json()["pairing_code"]
+
+    response = client.post(
+        f"/api/v1/connect/zepp/pair/{code}/credentials",
+        json={
+            "cookie": '{"userid":"vendor-pairing-shared","apptoken":"other-token"}'
+        },
+    )
+
+    assert response.status_code == 409
+    assert "其他本地用户" in response.json()["detail"]
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        assert repo.latest_browser_link("pairing-identity-contender") is None
+        assert repo.pairing_session(code).status == "failed"
+
+
+def test_link_refresh_identity_conflict_keeps_current_binding(
+    client, monkeypatch
+):
+    from vitalis.api.routes import connect, zepp_pairing
+    from vitalis.connectors.zepp import ZeppConnector
+    from vitalis.models import AuthToken
+
+    link_token = "l" * 48
+    link_digest = hashlib.sha256(link_token.encode()).hexdigest()
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user("refresh-owner")
+        repo.delete_for_user("refresh-contender")
+        repo.save_token(
+            AuthToken(
+                user_id="refresh-owner",
+                source="zepp",
+                access_token="owner-token",
+                source_user_id="vendor-refresh-owner",
+            )
+        )
+        repo.save_token(
+            AuthToken(
+                user_id="refresh-contender",
+                source="zepp",
+                access_token="current-token",
+                source_user_id="vendor-refresh-current",
+            )
+        )
+        repo.create_browser_link(link_digest, "refresh-contender")
+
+    connector = ZeppConnector(mock=False)
+    monkeypatch.setattr(zepp_pairing, "get_connector", lambda _source: connector)
+    monkeypatch.setattr(
+        connect,
+        "_probe_region_hosts",
+        lambda *_args, **_kwargs: "api-mifitcn.zepp.com",
+    )
+    response = client.post(
+        "/api/v1/connect/zepp/link/credentials",
+        headers={"Authorization": f"Bearer {link_token}"},
+        json={
+            "cookie": '{"userid":"vendor-refresh-owner","apptoken":"new-token"}'
+        },
+    )
+
+    assert response.status_code == 409
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        current = repo.get_token("refresh-contender", "zepp")
+        link = repo.browser_link(link_digest)
+        assert current is not None
+        assert current.source_user_id == "vendor-refresh-current"
+        assert current.access_token == "current-token"
+        assert link is not None and link.status == "connected"
+
 
 def test_cloud_pairing_one_time_flow(client):
     created = client.post(

@@ -69,6 +69,12 @@ credential and both users' historical records remain unchanged.
 | GET | `/health/dense-files/second_heart_rate?from=&to=` | Read high-frequency file coverage without file IDs |
 | POST | `/health/sync?days=&decode_dense_files=false` | Sync health data; dense archives are index-only unless one-file decoding is explicitly enabled |
 
+`GET /health/metrics/stress?resolution=raw` returns the vendor's timestamped
+`all_day_stress.data` observations with source, scope, device, unit, and explicit gaps.
+Daily average, min/max, and category proportions remain available separately through
+`GET /health/daily-metrics`; the API does not derive category thresholds or fill missing
+stress intervals.
+
 Attempts use local-date windows, so repeated equivalent requests reuse an active ledger
 entry instead of differing by request-time seconds. Public status omits lease tokens,
 internal stages, and raw vendor errors. `retry_wait` retains completed chunks and the next

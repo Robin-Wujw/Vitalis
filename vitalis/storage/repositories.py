@@ -1833,12 +1833,19 @@ class HealthRepository:
             "wellness/lactate_threshold": "lactate_threshold_hr",
         }
         metric = metric_by_stream.get(stream)
-        if metric in {"heart_rate", "hrv_sdnn", "hrv_rmssd", "spo2", "spo2_apnea_low"}:
-            return self.db.execute(select(func.max(orm.MetricSample.timestamp)).where(
-                orm.MetricSample.user_id == user_id,
-                orm.MetricSample.source == source,
-                orm.MetricSample.metric == metric,
-            )).scalar_one_or_none()
+        if metric in {
+            "heart_rate", "hrv_sdnn", "hrv_rmssd", "spo2", "spo2_apnea_low",
+            "stress",
+        }:
+            latest_sample = self.db.execute(
+                select(func.max(orm.MetricSample.timestamp)).where(
+                    orm.MetricSample.user_id == user_id,
+                    orm.MetricSample.source == source,
+                    orm.MetricSample.metric == metric,
+                )
+            ).scalar_one_or_none()
+            if latest_sample is not None or metric != "stress":
+                return latest_sample
         if metric:
             value = self.db.execute(select(func.max(orm.DailyMetric.date)).where(
                 orm.DailyMetric.user_id == user_id,

@@ -644,6 +644,76 @@ def test_parse_lactate_threshold_and_full_stress_summary():
     }
 
 
+def test_parse_all_day_stress_timeline_preserves_timestamp_and_device():
+    start = 1_777_334_400_000
+    daily, samples = ZeppParser.parse_wellness({"items": [{
+        "timestamp": start,
+        "deviceId": "A1B2C3D4E5F60708",
+        "avgStress": "29",
+        "minStress": "5",
+        "maxStress": "65",
+        "relaxProportion": "63",
+        "normalProportion": "36",
+        "mediumProportion": "1",
+        "highProportion": "0",
+        "data": json.dumps([
+            {"time": start, "value": 5},
+            {"time": start + 300_000, "value": "29"},
+            {"time": start + 600_000, "value": 65},
+            {"time": start + 900_000, "value": 101},
+            {"time": "invalid", "value": 40},
+            {"time": start + 1_200_000},
+        ]),
+    }]}, "wellness:all_day_stress:user:2026-04-28:2026-04-28")
+
+    assert {row.metric: row.value for row in daily} == {
+        "stress": 29,
+        "stress_min": 5,
+        "stress_max": 65,
+        "stress_relaxed_pct": 63,
+        "stress_normal_pct": 36,
+        "stress_medium_pct": 1,
+        "stress_high_pct": 0,
+    }
+    assert [sample.value for sample in samples] == [5, 29, 65]
+    assert [sample.timestamp for sample in samples] == [
+        datetime(2026, 4, 28, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 28, 0, 5, tzinfo=timezone.utc),
+        datetime(2026, 4, 28, 0, 10, tzinfo=timezone.utc),
+    ]
+    assert {sample.metric for sample in samples} == {"stress"}
+    assert {sample.unit for sample in samples} == {"score"}
+    assert {sample.source_scope for sample in samples} == {"device"}
+    assert {sample.device_id for sample in samples} == {"A1B2C3D4E5F60708"}
+
+
+def test_parse_all_day_stress_ignores_malformed_timeline():
+    daily, samples = ZeppParser.parse_wellness({"items": [{
+        "timestamp": 1_777_334_400_000,
+        "avgStress": 29,
+        "data": "not-json",
+    }]}, "wellness:all_day_stress:user:2026-04-28:2026-04-28")
+
+    assert [(row.metric, row.value) for row in daily] == [("stress", 29)]
+    assert samples == []
+
+
+def test_parse_all_day_stress_caps_nested_timeline(monkeypatch):
+    from vitalis.connectors.zepp import parser as parser_module
+
+    monkeypatch.setattr(parser_module, "MAX_WELLNESS_SAMPLES_PER_EVENT", 2)
+    start = 1_777_334_400_000
+    _, samples = ZeppParser.parse_wellness({"items": [{
+        "timestamp": start,
+        "data": [
+            {"time": start + offset * 300_000, "value": 20 + offset}
+            for offset in range(3)
+        ],
+    }]}, "wellness:all_day_stress:user:2026-04-28:2026-04-28")
+
+    assert [sample.value for sample in samples] == [20, 21]
+
+
 def test_parse_dense_file_index_preserves_device_and_coverage_only():
     start = 1_777_334_400_000
     rows = ZeppParser.parse_dense_file_index({"items": [{

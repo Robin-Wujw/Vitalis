@@ -2,6 +2,14 @@
 
 > 本文件保存已完成工作的执行记录和验证证据，仅供追溯历史。当前有效的工作规则、未完成事项和最新验证状态以仓库根目录的 `SYSTEM.md` 为准。
 
+## 2026-09-04 Zepp 压力时间序列
+
+- 使用同一 Zepp 账号、同一设备和可对应日期的界面与脱敏 payload 完成语义核对：日均、最低、最高和四档占比来自 `all_day_stress` 日汇总，曲线来自其 `data` JSON 时间点。
+- `parse_wellness()` 现在将显式时间戳和 0-100 厂商值保存为 device-scoped `MetricSample(metric="stress")`；缺口保持缺失，不推导档位阈值，也不进入恢复或训练决策。
+- `Charge/real_data` 继续只表示 hybrid/physical/mental Charge；`Charge/stress_data` protobuf 和 `Charge/insight_data` 类型仍无可证明语义，保持禁用。
+- 聚焦 parser、sync manager、health API 和 fetcher 回归 140 项通过；完整测试 410 项通过，compileall、OpenAPI 46 条路径、Markdown 链接和 `git diff --check` 通过。
+- 真实 coordinator 验证未完成：本地旧库缺少 `sync_attempts.trigger_ref`，创建同步 attempt 时按 schema 不匹配失败。该阻塞保留在 `SYSTEM.md`，没有被描述成 parser 失败或端到端成功。
+
 ## 2026-09-04 中英双语文档入口
 
 - 将根 `README.md` 精简为中文产品入口，只保留产品目的、数据到行动路径、核心能力、信任边界、当前状态和主要文档链接。

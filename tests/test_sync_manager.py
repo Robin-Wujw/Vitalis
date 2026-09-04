@@ -2,6 +2,7 @@
 
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
+import json
 import threading
 from types import SimpleNamespace
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -371,6 +372,60 @@ class TestSyncManager:
         )
         assert diagnostic.status == "unavailable"
         assert diagnostic.error_kind == "not_available"
+
+    def test_all_day_stress_summary_and_timeline_are_persisted(
+        self, mock_fetcher, setup_db
+    ):
+        user = User(id="stress-timeline-user")
+        start = datetime(2026, 9, 3, tzinfo=timezone.utc)
+        record = FetchedRecord(raw=RawRecord(
+            stream="wellness",
+            source_key="wellness:all_day_stress:user:2026-09-03:2026-09-03",
+            start_utc=start,
+            end_utc=start + timedelta(days=1),
+            payload={"items": [{
+                "timestamp": int(start.timestamp() * 1000),
+                "deviceId": "A1B2C3D4E5F60708",
+                "avgStress": 29,
+                "minStress": 5,
+                "maxStress": 65,
+                "relaxProportion": 63,
+                "normalProportion": 36,
+                "mediumProportion": 1,
+                "highProportion": 0,
+                "data": json.dumps([
+                    {"time": int(start.timestamp() * 1000), "value": 5},
+                    {"time": int(start.timestamp() * 1000) + 300_000, "value": 29},
+                    {"time": int(start.timestamp() * 1000) + 600_000, "value": 65},
+                ]),
+            }]},
+        ))
+
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            report = SyncManager(mock_fetcher)._persist_records(
+                "wellness", [record], repo, user
+            )
+            daily = repo.daily_metrics(
+                user.id, date(2026, 9, 3), date(2026, 9, 3)
+            )
+            samples = repo.metric_samples(
+                user.id,
+                "stress",
+                start,
+                start + timedelta(days=1),
+            )
+
+        assert report.status == "success"
+        assert report.raw_records == 1
+        assert report.records_written == len(daily) + len(samples)
+        assert {row.metric for row in daily} == {
+            "stress", "stress_min", "stress_max", "stress_relaxed_pct",
+            "stress_normal_pct", "stress_medium_pct", "stress_high_pct",
+        }
+        assert [row.value for row in samples] == [5, 29, 65]
+        assert {row.device_id for row in samples} == {"A1B2C3D4E5F60708"}
 
     @pytest.mark.parametrize("kind", ["service", "network", "auth"])
     def test_optional_stream_failure_blocks_complete_sync(

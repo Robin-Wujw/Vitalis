@@ -29,6 +29,7 @@ from vitalis.models import (
 from .sport_types import resolve_sport_mode
 
 MAX_WORKOUT_SECONDS = 12 * 60 * 60
+MAX_WELLNESS_SAMPLES_PER_EVENT = 10_000
 
 _TYPE_MAP = {
     "running": WorkoutType.RUNNING,
@@ -1027,7 +1028,6 @@ class ZeppParser:
                                 source_scope="user_fused",
                             ))
         elif label == "spo2":
-            import json
             for item in items:
                 if not isinstance(item, dict):
                     continue
@@ -1122,6 +1122,37 @@ class ZeppParser:
                             date=day, metric=metric, value=reading, unit=unit,
                             source_scope="device" if device_id else "unknown", device_id=device_id,
                         ))
+
+                timeline = item.get("data")
+                if timeline is None and value:
+                    timeline = value.get("data")
+                if isinstance(timeline, str):
+                    try:
+                        timeline = json.loads(timeline)
+                    except json.JSONDecodeError:
+                        timeline = []
+                if not isinstance(timeline, list):
+                    continue
+                for point in timeline[:MAX_WELLNESS_SAMPLES_PER_EVENT]:
+                    if not isinstance(point, dict):
+                        continue
+                    raw_timestamp = point.get("time")
+                    if raw_timestamp is None:
+                        raw_timestamp = point.get("timestamp")
+                    timestamp = ZeppParser._parse_datetime_value(raw_timestamp)
+                    reading = ZeppParser._first_number(
+                        point, ("value", "stress", "stressScore")
+                    )
+                    if timestamp is None or reading is None or not 0 <= reading <= 100:
+                        continue
+                    samples.append(MetricSample(
+                        metric="stress",
+                        timestamp=timestamp,
+                        value=reading,
+                        unit="score",
+                        source_scope="device" if device_id else "unknown",
+                        device_id=device_id,
+                    ))
         else:
             daily.extend(ZeppParser.parse_daily_metrics(raw))
         return daily, samples

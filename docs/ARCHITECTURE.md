@@ -34,7 +34,7 @@ analysis layer reads only normalized records:
 
 - Daily records: sleep, activity, and training.
 - `metric_samples`: timestamped HR, RMSSD, SDNN, sleep HRV/RHR, readiness components,
-  Charge, SpO2, and other supported measurements.
+  Charge, device-scoped stress observations, SpO2, and other supported measurements.
 - `daily_metrics`: sparse vendor facts such as readiness, stress, respiratory rate,
   PAI, ODI, and lactate-threshold fields.
 - `workouts` and `workout_metric_samples`: normalized workout summaries, versioned
@@ -46,6 +46,10 @@ analysis layer reads only normalized records:
   metric samples.
 
 Raw measurements and vendor scores remain separate from Vitalis-derived states.
+`all_day_stress.data` contributes timestamped vendor stress observations using its
+explicit UTC timestamps; gaps remain missing and no category thresholds are inferred.
+The vendor-provided daily average, min/max, and category proportions remain separate
+`daily_metrics`. Neither form changes recovery state or training decisions.
 `ahi_readiness` and `afib_readiness` are vendor readiness component scores, not AHI or
 AFib diagnoses.
 

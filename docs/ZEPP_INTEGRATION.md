@@ -153,6 +153,28 @@ Vitalis currently normalizes:
 - decoded second-level heart rate from dense `SEC_HR` cloud files, with per-device
   coverage and decode status retained alongside the samples.
 
+### Stress and Charge
+
+The user-scoped `all_day_stress` event supplies two verified contracts:
+
+- vendor daily summary fields map directly to `stress`, `stress_min`, `stress_max`, and
+  the four `stress_*_pct` daily metrics;
+- its `data` JSON array supplies timestamped `stress` metric samples. Vitalis preserves
+  each explicit UTC timestamp, 0-100 vendor value, gaps, and device attribution. The
+  connected-account payload currently shows a five-minute cadence with gaps, but the
+  parser does not assume or synthesize that cadence.
+
+Category percentages are stored exactly as reported. Vitalis does not derive vendor
+category boundaries from the chart axis, recalculate the daily summary from incomplete
+points, diagnose psychological stress, or use this series in recovery and training
+decisions. The raw series is available through `/health/metrics/stress`.
+
+`Charge/real_data` remains a separate body-energy contract: `total`, `physical`, and
+`mental` map to hybrid, physical, and mental Charge. `Charge/stress_data` contains an
+undocumented protobuf blob, while `Charge/insight_data` contains undocumented insight
+types and coefficients. Both subtypes remain absent from normal synchronization because
+no evidence supports assigning health semantics to their internal fields.
+
 Dense indexes are fetched on every sync, but an archive is downloaded only when its
 index gains an unseen interval. Intervals checked against a valid archive without a
 matching sample block are retained as `no_data`, preventing an open-ended vendor

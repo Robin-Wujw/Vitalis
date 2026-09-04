@@ -121,6 +121,113 @@ def test_data_health_exposes_fetch_parse_write_and_sample_time(client):
     assert stream["last_sample_at"] == "2026-08-25T08:05:00Z"
 
 
+def test_stress_timeline_is_exposed_and_drives_stream_freshness(client):
+    user_id = "stress-series-user"
+    observed = datetime(2026, 9, 3, 8, 5, tzinfo=timezone.utc)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        repo.save_daily_metrics([
+            DailyMetric(
+                user_id=user_id,
+                date=date(2026, 9, 3),
+                metric="stress",
+                value=29,
+                unit="score",
+                source_scope="device",
+                device_id="stress-device",
+            )
+        ])
+        repo.save_metric_samples([
+            MetricSample(
+                user_id=user_id,
+                metric="stress",
+                timestamp=observed,
+                value=65,
+                unit="score",
+                source_scope="device",
+                device_id="stress-device",
+            )
+        ])
+        repo.save_sync_stream_state(
+            user_id,
+            "wellness/all_day_stress",
+            fetch_status="success",
+            parse_status="success",
+            write_status="success",
+            fetched_at=observed,
+            parsed_at=observed,
+            written_at=observed,
+            raw_records=1,
+            records_written=2,
+        )
+
+    series = client.get(
+        "/api/v1/health/metrics/stress"
+        "?from=2026-09-03T00:00:00Z&to=2026-09-04T00:00:00Z&resolution=raw",
+        headers={"X-User-Id": user_id},
+    )
+    health = client.get(
+        "/api/v1/health/data-health",
+        headers={"X-User-Id": user_id},
+    )
+
+    assert series.status_code == 200
+    assert series.json()["points"] == [{
+        "timestamp": "2026-09-03T08:05:00Z",
+        "value": 65.0,
+        "unit": "score",
+        "source": "zepp",
+        "source_scope": "device",
+        "device_id": "stress-device",
+    }]
+    stream = next(
+        item for item in health.json()["streams"]
+        if item["stream"] == "wellness/all_day_stress"
+    )
+    assert stream["last_sample_at"] == "2026-09-03T08:05:00Z"
+
+
+def test_stress_stream_freshness_falls_back_to_daily_summary(client):
+    user_id = "stress-daily-only-user"
+    observed = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        repo.save_daily_metrics([
+            DailyMetric(
+                user_id=user_id,
+                date=date(2026, 9, 3),
+                metric="stress",
+                value=29,
+                unit="score",
+            )
+        ])
+        repo.save_sync_stream_state(
+            user_id,
+            "wellness/all_day_stress",
+            fetch_status="success",
+            parse_status="success",
+            write_status="success",
+            fetched_at=observed,
+            parsed_at=observed,
+            written_at=observed,
+            raw_records=1,
+            records_written=1,
+        )
+
+    health = client.get(
+        "/api/v1/health/data-health",
+        headers={"X-User-Id": user_id},
+    )
+
+    stream = next(
+        item for item in health.json()["streams"]
+        if item["stream"] == "wellness/all_day_stress"
+    )
+    assert stream["last_sample_at"] == "2026-09-03T00:00:00Z"
+
+
 def test_metric_writes_preserve_two_devices_at_same_timestamp(client):
     user_id = "multi-device-metrics-user"
     timestamp = datetime(2026, 8, 25, 8, 5, tzinfo=timezone.utc)

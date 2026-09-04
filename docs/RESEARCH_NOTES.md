@@ -353,7 +353,9 @@ prompts, datasets, tests, or substantive expression without separate rights revi
 | Durable sync retries and restart recovery | Attempt/chunk ledger, leases, heartbeats, retry states, and fair dispatch already exist | Already implemented |
 | Historical pagination/backfill and replay | Current endpoints use bounded chunks; cursor semantics are not yet fixture-proven | Deferred pending endpoint fixtures |
 | Missing sleep/stress values | Missing data remains absent and blocks unsupported completeness claims | Already implemented |
-| Additional vendor goals, PAI-zone, or stress curves | Units, time basis, device attribution, and missing-value semantics are not yet contract-tested | Candidate only |
+| `all_day_stress` curve | Explicit UTC point timestamps, 0-100 values, gaps, and device attribution are fixture- and account-validated | Implemented as vendor observations; not used for decisions |
+| Additional vendor goals or PAI-zone details | Units, time basis, device attribution, and missing-value semantics are not yet contract-tested | Candidate only |
+| `Charge/stress_data` and `Charge/insight_data` | Protobuf/insight envelopes are observed, but internal field semantics remain undocumented and do not map to the verified stress UI | Keep disabled; no health metrics |
 | FIT export/import | Needs data-export authority, file/resource limits, collision semantics, parser license review, and fixtures | Deferred |
 | Cardiac-drift presentation | Vitalis has a conservative, versioned running analysis | Keep current policy; compare only with versioned fixtures |
 
@@ -362,6 +364,9 @@ its upstream notice file. Any retained or future upstream-derived Vitalis code m
 record the reviewed upstream revision, affected modules, modification summary, and
 all required notices in `THIRD_PARTY_NOTICES.md`. Vendor stress is retained only as a
 proprietary vendor observation; it is not a psychological-state or diagnosis claim.
+A same-account, same-device, date-matched Zepp UI comparison verified the daily summary
+field meanings and the `all_day_stress.data` timeline shape. It did not establish the
+meaning of any `Charge/stress_data` protobuf field or `Charge/insight_data` insight type.
 
 ### Balance 2 bridge implication
 

@@ -46,7 +46,7 @@ A typical workflow:
 | Agent integration | Hermes Read / Analyze / Act tools, explanation workflows, and PushPlus delivery |
 | Operations | SQLite/PostgreSQL, durable sync attempts, worker entry point, systemd units, and data-health reporting |
 
-The [architecture document](docs/ARCHITECTURE.md) is authoritative for data contracts, algorithm boundaries, coverage gates, and refusal behavior.
+The [architecture document](docs/ARCHITECTURE.en.md) is authoritative for data contracts, algorithm boundaries, coverage gates, and refusal behavior.
 
 ## Trust Boundaries
 
@@ -66,8 +66,8 @@ Read the deployment, backup, identity-migration, and recovery requirements befor
 ## Start Here
 
 - [Documentation hub](docs/README.md): navigation by user, integrator, and maintainer role
-- [Getting started](docs/GETTING_STARTED.md): installation, local runtime, service deployment, scheduling, and verification
-- [Zepp integration](docs/ZEPP_INTEGRATION.md): official login, credential lifecycle, identity ownership, and data coverage
-- [API guide](docs/API.md): current HTTP surface and identity requirements
-- [Architecture](docs/ARCHITECTURE.md): data flow, intelligence pipeline, policy boundaries, and versioned contracts
+- [Getting started](docs/GETTING_STARTED.en.md): installation, local runtime, service deployment, scheduling, and verification
+- [Zepp integration](docs/ZEPP_INTEGRATION.en.md): official login, credential lifecycle, identity ownership, and data coverage
+- [API guide](docs/API.en.md): current HTTP surface and identity requirements
+- [Architecture](docs/ARCHITECTURE.en.md): data flow, intelligence pipeline, policy boundaries, and versioned contracts
 - [Hermes Skill](skills/vitalis/SKILL.md): Read / Analyze / Act boundaries for agents

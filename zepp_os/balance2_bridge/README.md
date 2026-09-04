@@ -1,36 +1,19 @@
-# Vitalis Balance 2 Bridge
+# Vitalis Balance 2 桥接应用
 
-Zepp OS fallback for Balance 2 only. Helio Strap cannot run Zepp OS apps and is
-therefore not supported by this channel.
+[English](README.en.md)
 
-The background app service is the sole writer of a versioned NDJSON journal. Each valid
-`HeartRate.onCurrentChange()` callback receives a stable local sample ID and is appended
-with one file write; the callback path does not parse, sort, or replace the full queue.
-Zepp does not document a fixed callback frequency, so these records are callback-level
-measurements, not a guaranteed 1 Hz stream. Zepp OS exposes no `fsync` guarantee, so the
-bridge reports append and recovery status rather than claiming power-loss-proof storage.
+仅适用于 Balance 2 的 Zepp OS 备用方案。Helio Strap 无法运行 Zepp OS 应用，因此此通道不支持 Helio Strap。
 
-The foreground page owns a separate recoverable acknowledgement checkpoint and uploads
-one fixed high-water snapshot at a time. The v2 server response settles exact sample IDs:
-committed or replayed samples and explicit permanent rejections leave the pending queue;
-timeouts, malformed responses, authentication failures, and server errors retain them.
-Deferred service maintenance repairs a torn final journal line, compacts settled records,
-and retains the newest 3,600 pending records while reporting
-capacity loss, permanent rejection, and corruption counters. The service is started with
-Zepp OS's documented `file` property. Accelerometer collection is intentionally absent
-because high-power sensors are not supported in a background app service.
+后台 app service 是版本化 NDJSON 日志的唯一写入方。每个有效的 `HeartRate.onCurrentChange()` 回调都会获得一个稳定的本地 sample ID，并通过一次文件写入追加到日志中；回调路径不会解析、排序或替换整个队列。Zepp 未说明固定的回调频率，因此这些记录是回调级测量值，并非有保证的 1 Hz 数据流。Zepp OS 不提供 `fsync` 保证，因此桥接应用会报告追加和恢复状态，而不会声称存储能够抵御断电造成的数据丢失。
 
-## Setup
+前台页面拥有独立且可恢复的确认 checkpoint，并且每次上传一个固定的 high-water 快照。v2 服务端响应会结算精确的 sample ID：已提交或重放的样本以及明确的永久拒绝项会离开待处理队列；超时、格式错误的响应、身份验证失败和服务器错误则会保留这些样本。延迟执行的 service 维护会修复日志末尾被截断的行、压缩已结算的记录，并保留最新 3,600 条待处理记录，同时报告容量损失、永久拒绝和损坏计数器。service 使用 Zepp OS 文档规定的 `file` 属性启动。有意不采集 Accelerometer，因为后台 app service 不支持高功耗传感器。
 
-1. Replace the placeholder `app.appId` in `app.json` with an app ID owned by the
-   developer account.
-2. From Vitalis, call `POST /api/v1/connect/zepp/device-link` with `X-User-Id` and
-   retain the returned device token; the server stores only its SHA-256 digest.
-3. In the Zepp app settings, enter the public Vitalis HTTPS base URL and the device
-   token.
-4. Use Node 24 with npm 11, install the locked dependencies, preview on Balance 2,
-   grant heart-rate/background permissions, and start background collection. The app
-   targets Zepp OS API 4.2; the latest published `@zeppos/device-types` remains 4.0.0.
+## 设置
+
+1. 将 `app.json` 中的占位 `app.appId` 替换为开发者账户所拥有的 app ID。
+2. 在 Vitalis 中，使用 `X-User-Id` 调用 `POST /api/v1/connect/zepp/device-link` 并保留返回的 device token；服务器仅存储其 SHA-256 摘要。
+3. 在 Zepp 应用设置中，输入 Vitalis 的公网 HTTPS base URL 和 device token。
+4. 使用 Node 24 和 npm 11，安装锁定版本的依赖项，在 Balance 2 上预览，授予心率/后台权限，然后启动后台采集。应用以 Zepp OS API 4.2 为目标；最新发布的 `@zeppos/device-types` 仍为 4.0.0。
 
 ```bash
 npm ci
@@ -39,5 +22,4 @@ npm run preview
 npm run build
 ```
 
-Open the device app periodically and choose `同步到 Vitalis` to flush the bounded
-queue. Cloud sync remains the historical source of truth.
+定期打开设备端应用并选择 `同步到 Vitalis`，以清空有界队列。云同步仍是历史数据的事实来源。

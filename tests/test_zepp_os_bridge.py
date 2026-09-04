@@ -64,12 +64,21 @@ def test_balance2_queue_is_bounded_and_upload_is_https_authenticated():
     assert (APP / ".nvmrc").read_text(encoding="utf-8").strip() == "24"
 
 
-def test_balance2_readme_does_not_claim_fixed_one_hertz_or_helio_support():
-    readme = (APP / "README.md").read_text(encoding="utf-8")
-    assert "not a guaranteed 1 Hz stream" in readme
-    assert "Helio Strap cannot run Zepp OS apps" in readme
-    assert "Accelerometer collection is intentionally absent" in readme
-    assert "sole writer of a versioned NDJSON journal" in readme
-    assert "newest 3,600 pending records" in readme
-    assert "settles exact sample IDs" in readme
-    assert "no `fsync` guarantee" in readme
+def test_balance2_readmes_preserve_safety_contracts_in_both_languages():
+    english_readme = (APP / "README.en.md").read_text(encoding="utf-8")
+    assert "not a guaranteed 1 Hz stream" in english_readme
+    assert "Helio Strap cannot run Zepp OS apps" in english_readme
+    assert "Accelerometer collection is intentionally absent" in english_readme
+    assert "sole writer of a versioned NDJSON journal" in english_readme
+    assert "newest 3,600 pending records" in english_readme
+    assert "settles exact sample IDs" in english_readme
+    assert "no `fsync` guarantee" in english_readme
+
+    chinese_readme = (APP / "README.md").read_text(encoding="utf-8")
+    assert "并非有保证的 1 Hz 数据流" in chinese_readme
+    assert "Helio Strap 无法运行 Zepp OS 应用" in chinese_readme
+    assert "有意不采集 Accelerometer" in chinese_readme
+    assert "版本化 NDJSON 日志的唯一写入方" in chinese_readme
+    assert "最新 3,600 条待处理记录" in chinese_readme
+    assert "结算精确的 sample ID" in chinese_readme
+    assert "不提供 `fsync` 保证" in chinese_readme

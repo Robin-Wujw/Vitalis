@@ -1,17 +1,16 @@
-# Getting Started
+# 快速入门
 
-This guide covers local setup, service operation, deployment, scheduling, and
-verification. Product positioning belongs in the root [README](../README.md); health
-intelligence contracts and calculation boundaries belong in
-[ARCHITECTURE.md](ARCHITECTURE.md).
+[English](GETTING_STARTED.en.md)
 
-## Requirements
+本指南涵盖本地配置、服务运行、部署、调度和验证。产品定位请参阅根目录的 [README](../README.md)；健康智能契约和计算边界请参阅 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
-- Python 3.11 or newer
-- SQLite for local development, or PostgreSQL for a persistent deployment
-- A browser-trusted HTTPS origin for real browser-extension pairing
+## 要求
 
-## Local Development
+- Python 3.11 或更高版本
+- 本地开发使用 SQLite，持久化部署使用 PostgreSQL
+- 进行真实的浏览器扩展配对时，需要浏览器信任的 HTTPS 源
+
+## 本地开发
 
 ```bash
 python3 -m venv .venv
@@ -20,66 +19,51 @@ cp .env.example .env
 .venv/bin/python -m vitalis.main
 ```
 
-The default `ZEPP_MOCK=true` mode requires no vendor credentials and supplies
-deterministic development data. The API is served at `http://127.0.0.1:8000`; FastAPI
-documentation is available at `/docs`.
+默认的 `ZEPP_MOCK=true` 模式不需要供应商凭据，并会提供确定性的开发数据。API 在 `http://127.0.0.1:8000` 上提供服务；FastAPI 文档位于 `/docs`。
 
-Important configuration:
+重要配置：
 
-| Variable | Purpose |
+| 变量 | 用途 |
 | --- | --- |
-| `DATABASE_URL` | SQLite or PostgreSQL connection string |
-| `ZEPP_MOCK` | Use the deterministic development connector when `true` |
-| `VITALIS_TIMEZONE` | Local-day boundary used by intelligence calculations |
-| `HOST` / `PORT` | Application listener |
-| `VITALIS_PUBLIC_URL` | Public HTTPS origin used by pairing pages |
-| `ZEPP_PAIRING_PROCESSING_LEASE_SECONDS` | Time before an interrupted pairing submission can be reclaimed |
-| `SYNC_CRON_HOUR` / `SYNC_CRON_MINUTE` | Nightly synchronization enqueue time |
-| `SYNC_DISPATCHER_INTERVAL_SECONDS` | Interval between durable-ledger dispatcher passes |
-| `SYNC_DISPATCHER_BATCH_CHUNKS` | Maximum chunks processed per fair dispatcher pass |
-| `SYNC_LEASE_SECONDS` / `SYNC_ATTEMPT_LEASE_SECONDS` | Chunk and attempt fencing lease durations |
-| `VITALIS_NO_SCHEDULER` | Disable background jobs and retry recovery when set to `1` |
+| `DATABASE_URL` | SQLite 或 PostgreSQL 连接字符串 |
+| `ZEPP_MOCK` | 设为 `true` 时使用确定性开发连接器 |
+| `VITALIS_TIMEZONE` | 智能计算使用的本地日期边界 |
+| `HOST` / `PORT` | 应用程序监听地址与端口 |
+| `VITALIS_PUBLIC_URL` | 配对页面使用的公共 HTTPS 源 |
+| `ZEPP_PAIRING_PROCESSING_LEASE_SECONDS` | 被中断的配对提交可被重新接管前的等待时间 |
+| `SYNC_CRON_HOUR` / `SYNC_CRON_MINUTE` | 夜间同步入队时间 |
+| `SYNC_DISPATCHER_INTERVAL_SECONDS` | 持久化账本调度器程序各轮次之间的间隔 |
+| `SYNC_DISPATCHER_BATCH_CHUNKS` | 每轮公平调度最多处理的分块数 |
+| `SYNC_LEASE_SECONDS` / `SYNC_ATTEMPT_LEASE_SECONDS` | 分块和尝试的隔离租约时长 |
+| `VITALIS_NO_SCHEDULER` | 设为 `1` 时禁用后台任务和重试恢复 |
 
-The deterministic analysis engine does not require an LLM. Hermes or another agent
-consumes structured Vitalis results and renders them separately.
+确定性分析引擎不需要 LLM。Hermes 或其他智能体会读取结构化的 Vitalis 结果，并单独进行呈现。
 
-### Existing Database Identity Migration
+### 现有数据库身份迁移
 
-Current schema requires one local owner for each non-null Zepp vendor identity. A fresh
-database receives the unique indexes during `init_db()`. For a database created by an
-older release, stop the API, worker, and scheduler and take a tested backup before
-starting the new code. Audit the existing mappings without reading token values:
+当前架构要求每个非空 Zepp 供应商身份只能有一个本地所有者。新数据库会在 `init_db()` 期间获得唯一索引。对于由旧版本创建的数据库，请先停止 API、工作进程和调度器，并完成经过测试的备份，再启动新代码。在不读取令牌值的情况下审计现有映射：
 
 ```bash
 python -m vitalis.storage.identity_migration audit
 ```
 
-If the report is not clean, use the explicit `resolve`, `resolve-local`,
-`assign-missing`, `resolve-projection`, or `clear-projection` command documented in
-[ZEPP_INTEGRATION.md](ZEPP_INTEGRATION.md#source-identity-ownership). After every
-conflict has an operator-verified resolution, apply the migration:
+如果报告并非完全正常，请使用 [ZEPP_INTEGRATION.md](ZEPP_INTEGRATION.md#来源身份所有权) 中记录的显式 `resolve`、`resolve-local`、`assign-missing`、`resolve-projection` 或 `clear-projection` 命令。每项冲突都由操作人员核实解决后，应用迁移：
 
 ```bash
 python -m vitalis.storage.identity_migration migrate --apply
 ```
 
-Startup fails with `SourceIdentityMigrationRequired` while duplicate mappings prevent
-the unique indexes from being created. Do not bypass that check or delete a database to
-hide the conflict. The migration preserves both users' historical health data and only
-releases the non-canonical credential and browser link.
+当重复映射妨碍创建唯一索引时，启动会因 `SourceIdentityMigrationRequired` 而失败。不要绕过该检查，也不要通过删除数据库来掩盖冲突。迁移会保留双方用户的历史健康数据，仅释放非规范凭据和浏览器链接。
 
-### Existing SQLite Schema Migration
+### 现有 SQLite 架构迁移
 
-`create_all()` creates a fresh current schema but does not alter existing SQLite tables.
-Before starting newer code against a long-lived database, stop Vitalis processes and
-audit columns, unique constraints, check constraints, and indexes:
+`create_all()` 会创建全新的当前架构，但不会更改现有 SQLite 表。使用较新代码启动长期使用的数据库之前，请停止 Vitalis 进程，并审计列、唯一约束、检查约束和索引：
 
 ```bash
 python -m vitalis.storage.schema_migration audit
 ```
 
-For the known pre-current layouts, run the explicit migration with the historical data
-source and a required backup path:
+对于已知的旧版布局，请运行显式迁移，并提供历史数据源和必需的备份路径：
 
 ```bash
 python -m vitalis.storage.schema_migration migrate \
@@ -88,27 +72,20 @@ python -m vitalis.storage.schema_migration migrate \
   --apply
 ```
 
-The command creates and verifies the SQLite backup before changing tables. It rebuilds
-drifted tables from the current SQLAlchemy metadata, maps known added columns, preserves
-row counts, normalizes legacy null device IDs, recreates current indexes, and finishes
-with schema and foreign-key checks. It refuses to reinterpret a non-empty legacy
-`sync_attempts` or `sync_chunks` ledger. Unknown schema differences require a separate
-review rather than a forced migration.
+该命令会在更改表之前创建并验证 SQLite 备份。它会依据当前 SQLAlchemy 元数据重建发生漂移的表，映射已知的新增列，保留行数，规范化旧版空设备 ID，重新创建当前索引，并以架构和外键检查收尾。它拒绝重新解释非空的旧版 `sync_attempts` 或 `sync_chunks` 账本。未知的架构差异需要单独审查，不得强制迁移。
 
-Run the audit again and start the API/worker only when it reports `clean=true`.
+再次运行审计，并且仅在报告 `clean=true` 时启动 API/工作进程。
 
-## Hermes Runtime
+## Hermes 运行时
 
-Keep the checked-in Skill as the single source of truth by linking it into Hermes'
-local discovery tree from the repository root:
+从仓库根目录将已签入的 Skill 链接到 Hermes 的本地发现目录树，以确保它是唯一事实来源：
 
 ```bash
 mkdir -p "$HOME/.hermes/skills/health"
 ln -s "$PWD/skills/vitalis" "$HOME/.hermes/skills/health/vitalis"
 ```
 
-Do not copy the Skill or commit a local user identity. Configure the loopback API and
-the explicit local Vitalis user in Hermes' private `~/.hermes/.env` instead:
+不要复制 Skill，也不要提交本地用户身份。请改为在 Hermes 私有的 `~/.hermes/.env` 中配置环回 API 和明确的本地 Vitalis 用户：
 
 ```dotenv
 VITALIS_API=http://127.0.0.1:8000
@@ -116,55 +93,28 @@ VITALIS_USER=<local-user-id>
 NO_PROXY=127.0.0.1,localhost
 ```
 
-Start Vitalis, then verify discovery and fresh-session loading:
+启动 Vitalis，然后验证发现流程和新会话加载：
 
 ```bash
 hermes skills list --source local --enabled-only
 hermes --skills vitalis prompt-size --json
 ```
 
-The list must show `vitalis` as a local enabled Skill, and the prompt-size breakdown
-must resolve `vitalis` from the linked path. `VITALIS_USER` has no fallback: every tool
-passes that exact identity as `X-User-Id`. Hermes remains a Read / Analyze / Act
-orchestrator and must not calculate, merge, or fill health observations. Daily
-explanations use only the persisted `/intelligence/explain` projection; a missing
-snapshot is reported without automatic synchronization or analysis. Keep this API
-loopback/private because `X-User-Id` selects identity but does not authenticate a caller.
+列表必须将 `vitalis` 显示为已启用的本地 Skill，且提示词大小明细必须从链接路径解析 `vitalis`。`VITALIS_USER` 没有回退值：每个工具都将这个确切身份作为 `X-User-Id` 传递。Hermes 始终是 Read / Analyze / Act 编排器，不得计算、合并或补填健康观测。每日解释仅使用持久化的 `/intelligence/explain` 投影；如果缺少快照，则直接报告，不会自动进行同步或分析。请保持此 API 为环回/私有服务，因为 `X-User-Id` 只选择身份，并不对调用方进行身份验证。
 
-### Daily PushPlus Report
+### 每日 PushPlus 报告
 
-The local production setup uses Hermes Cron as the only daily dispatcher. Vitalis runs
-as a loopback system service with its embedded scheduler disabled. The morning job runs
-hourly from 09:30 through 21:30 `Asia/Shanghai`, synchronizes two days for the explicit
-`VITALIS_USER`, and analyzes only the current local day. It sends nothing while today's
-sleep status is unavailable or `wake_time` is absent. The next hourly run synchronizes
-and checks again; once sleep is complete it sends exactly one Morning report and later
-runs skip the date using private atomic state under `~/.hermes/vitalis_push/`. It never
-substitutes yesterday's profile.
+本地生产配置仅使用 Hermes Cron 作为每日调度程序。Vitalis 作为环回系统服务运行，并禁用其嵌入式调度器。晨间任务在 `Asia/Shanghai` 时区的 09:30 至 21:30 之间每小时运行一次，为明确指定的 `VITALIS_USER` 同步两天数据，并且只分析当前本地日期。当今天的睡眠状态不可用或缺少 `wake_time` 时，它不会发送任何内容。下一次每小时运行会再次同步和检查；睡眠完成后，它会恰好发送一份晨间报告，而之后的运行会借助 `~/.hermes/vitalis_push/` 下的私有原子状态跳过该日期。它绝不会用昨天的资料替代。
 
-A separate job runs at 22:30, synchronizes one day, and sends one Evening report for the
-current date. The Morning report interprets recovery and presents the health-first
-concurrent action plan: fused overnight health, recent running and strength balance,
-one primary session, and an optional addition or alternative with a concrete dose and
-plain-language reasons. The Evening report instead reviews completed workouts, daily
-activity and stress, a seven-night sleep-HRV trend, and rolling training load through today,
-then gives a practical recovery action and leaves tomorrow's intensity to the next
-complete overnight assessment. Both reports are sent with PushPlus' HTML template using
-portable inline styling; report
-values are escaped before HTML generation. The HTML root has its own high-contrast light
-background so PushPlus dark mode cannot place dark report text directly on black. The
-Evening report does not show the sleep-only RMSSD curve or infer continuous daytime
-HRV, stress, or emotion from sparse samples.
+另一个任务在 22:30 运行，同步一天数据，并发送一份当天的晚间报告。晨间报告解读恢复情况，并给出健康优先的并行行动计划：融合后的夜间健康状况、近期跑步与力量训练的平衡、一个主要训练单元，以及一个包含具体剂量和通俗原因的可选附加或替代训练。晚间报告则回顾已完成的训练、每日活动和压力、七晚睡眠 HRV 趋势，以及截至今天的滚动训练负荷，然后给出切实可行的恢复行动，并将明天的强度安排留到下一次完整夜间评估。两种报告均采用 PushPlus 的 HTML 模板和可移植的内联样式发送；报告值会在生成 HTML 之前进行转义。HTML 根元素自带高对比度浅色背景，因此 PushPlus 深色模式不会将深色报告文字直接置于黑色背景上。晚间报告不会显示仅睡眠时段的 RMSSD 曲线，也不会根据稀疏样本推断连续的日间 HRV、压力或情绪。
 
-Add the PushPlus token to Hermes' private `~/.hermes/.env`:
+将 PushPlus 令牌添加到 Hermes 私有的 `~/.hermes/.env`：
 
 ```dotenv
 PUSHPLUS_TOKEN=<private-pushplus-token>
 ```
 
-The cron tool reads that private file at execution time, so adding or rotating the token
-does not require a Gateway restart. Verify the persistent runtime and inspect delivery
-history with:
+cron 工具在执行时读取该私有文件，因此添加或轮换令牌无需重启 Gateway。使用以下命令验证持久化运行时并检查投递历史：
 
 ```bash
 systemctl status vitalis.service hermes-gateway.service
@@ -173,61 +123,49 @@ hermes cron list
 hermes cron runs <job-id>
 ```
 
-To send a real manual test without reading or writing the scheduled delivery marker,
-run the report tool with `--test`:
+要发送一次真实的手动测试，同时不读取或写入计划投递标记，请用 `--test` 运行报告工具：
 
 ```bash
 /root/Vitalis/.venv/bin/python /root/Vitalis/skills/vitalis/tools/daily_push.py \
   --period evening --test
 ```
 
-Running `hermes cron run <job-id>` is an official scheduled invocation: a successful
-delivery writes the daily marker and prevents that period from being sent twice.
+运行 `hermes cron run <job-id>` 属于正式的计划调用：成功投递会写入每日标记，并防止该时段被重复发送。
 
-The tool exits before synchronization when either `VITALIS_USER` or `PUSHPLUS_TOKEN` is
-missing. The token is never passed to the model, included in a URL, or written to
-repository files and logs.
+当缺少 `VITALIS_USER` 或 `PUSHPLUS_TOKEN` 时，该工具会在同步之前退出。令牌绝不会传递给模型、包含在 URL 中，也不会写入仓库文件和日志。
 
-## Public Deployment
+## 公共部署
 
-Keep the application listener on a private or loopback interface and put a
-browser-trusted HTTPS reverse proxy or tunnel in front of it:
+让应用程序监听器保持在私有或环回接口上，并在其前方配置浏览器信任的 HTTPS 反向代理或隧道：
 
 ```bash
 HOST=127.0.0.1
 VITALIS_PUBLIC_URL=https://health.example.com
 ```
 
-A Cloudflare Quick Tunnel can be used for temporary integration testing:
+临时集成测试可以使用 Cloudflare Quick Tunnel：
 
 ```bash
 cloudflared tunnel --url http://127.0.0.1:8000
 ```
 
-Quick Tunnel addresses are temporary. Persistent deployments should use a stable
-domain and automatically renewed TLS certificates.
+Quick Tunnel 地址是临时的。持久化部署应使用稳定域名和自动续期的 TLS 证书。
 
-## Scheduled Jobs
+## 计划任务
 
-Synchronization, analysis, and push rendering are separate stages:
+同步、分析和推送呈现是相互独立的阶段：
 
-| Local time | Job | Behavior |
+| 本地时间 | 任务 | 行为 |
 | --- | --- | --- |
-| 02:00 | Nightly sync | Enqueue 7 days; analyze after the durable attempt succeeds |
-| 09:30-21:30 hourly | Morning retry | Enqueue 2 days; analyze and send once after successful sync and complete sleep |
-| 22:30 | Evening | Enqueue 1 day; analyze and send the distinct Evening profile after successful sync |
+| 02:00 | 夜间同步 | 将 7 天的数据同步任务入队；持久化尝试成功后进行分析 |
+| 09:30-21:30 每小时 | 晨间重试 | 将 2 天的数据同步任务入队；同步成功且睡眠完整后进行分析并发送一次 |
+| 22:30 | 晚间 | 将 1 天的数据同步任务入队；同步成功后分析并发送不同的晚间资料 |
 
-FastAPI lifespan owns scheduler startup and shutdown, so both `python -m vitalis.main` and
-direct `uvicorn vitalis.api.app:app` launches recover persisted work. Each dispatcher pass
-processes at most `SYNC_DISPATCHER_BATCH_CHUNKS` due chunks and rotates attempts by their
-last update. Network work runs outside database transactions; renewable attempt/chunk
-leases prevent a stale process from claiming or finalizing additional work after takeover.
-Set `VITALIS_NO_SCHEDULER=1` only when a separate process owns dispatch and recovery.
+FastAPI 生命周期负责调度器的启动和关闭，因此通过 `python -m vitalis.main` 和直接执行 `uvicorn vitalis.api.app:app` 启动时都会恢复持久化工作。每轮调度最多处理 `SYNC_DISPATCHER_BATCH_CHUNKS` 个到期分块，并按尝试的最后更新时间轮换。网络操作在数据库事务之外运行；可续期的尝试/分块租约可防止陈旧进程在任务被接管后继续认领或完成其他工作。仅当有单独的进程负责调度和恢复时，才设置 `VITALIS_NO_SCHEDULER=1`。
 
-An insufficient profile remains insufficient. The scheduler does not replace it with
-an older result, a default score, or a generic training template.
+信息不足的资料仍然是信息不足。调度器不会用更早的结果、默认分数或通用训练模板来替代它。
 
-## Repository Layout
+## 仓库布局
 
 ```text
 vitalis/
@@ -244,21 +182,17 @@ browser_extension/       Official-page Zepp browser pairing
 zepp_os/balance2_bridge/ Balance 2 device-side heart-rate bridge
 ```
 
-## Verification
+## 验证
 
-Run the complete suite:
+运行完整测试套件：
 
 ```bash
 .venv/bin/python -m pytest -q
 ```
 
-The current verified result is recorded in `SYSTEM.md`. The suite covers connector parsing and
-synchronization, browser pairing, health-data APIs, device isolation, baselines,
-Daily/Weekly/Monthly intelligence, health-event lifecycle, training response,
-personal associations, immutable snapshots, bounded Context, Timeline, push rendering,
-and Hermes Skill contracts.
+当前已验证的结果记录在 `SYSTEM.md` 中。测试套件涵盖连接器解析与同步、浏览器配对、健康数据 API、设备隔离、基线、每日/每周/每月智能、健康事件生命周期、训练响应、个人关联、不可变快照、有界 Context、Timeline、推送呈现和 Hermes Skill 契约。
 
-Additional checks used before delivery:
+交付前使用的其他检查：
 
 ```bash
 .venv/bin/python -m compileall -q vitalis skills/vitalis/tools
@@ -266,31 +200,14 @@ Additional checks used before delivery:
 git diff --check
 ```
 
-## Development Contract
+## 开发契约
 
-The repository is pre-production and current-contract-only. It does not maintain
-legacy endpoints, migrations, backfills, dual reads, or old-data adapters. Re-ingest
-disposable local data after a contract change. Missing observations remain missing and
-must never be replaced with zero or fabricated measurements.
+本仓库处于预生产阶段，且仅支持当前契约。它不维护旧版端点、迁移、回填、双重读取或旧数据适配器。契约变更后，应重新摄取可丢弃的本地数据。缺失的观测必须保持缺失，不得用零或伪造的测量值替代。
 
-The current canonical-data constraints require a fresh database/schema when upgrading
-from an earlier checkout: stop every API, scheduler, and synchronization worker; retain a
-cold copy only for whole-version rollback; create a new empty SQLite database or
-PostgreSQL application schema; start the current code so `init_db()` creates its tables;
-then reconnect Zepp, synchronize the desired history, and run a new analysis. Do not run
-old and new versions against the same database. The application intentionally contains
-no online ALTER, legacy-row conversion, or compatibility reader for this change.
+从较早的代码检出版本升级时，当前规范数据约束要求使用全新的数据库/架构：停止所有 API、调度器和同步工作进程；仅保留一个冷副本以便进行整版回滚；创建一个新的空 SQLite 数据库或 PostgreSQL 应用程序架构；启动当前代码，让 `init_db()` 创建其数据表；然后重新连接 Zepp、同步所需历史记录并运行新的分析。不要让新旧版本使用同一个数据库。对于此次变更，应用程序有意不包含在线 ALTER、旧版行转换或兼容性读取器。
 
-After re-ingestion, verify that each daily table has one row per `(user_id, date)`, that
-same-time metrics from different sources/scopes/devices remain separate, that source-qualified
-workout details and user links resolve independently, and that each daily training summary
-matches all canonical workouts grouped by `VITALIS_TIMEZONE`.
+重新摄取数据后，请验证每张每日数据表对于每个 `(user_id, date)` 只有一行，来自不同来源/作用域/设备的相同时间指标仍彼此分离，限定来源的训练详情和用户链接可以独立解析，并且每份每日训练摘要均与按 `VITALIS_TIMEZONE` 分组的所有规范训练记录一致。
 
-Open Health Insights also requires the current workout-detail schema, including
-`workout_metric_samples.source`. Before enabling it on a real installation, rebuild a fresh
-schema, re-synchronize at least the desired 42-day load window (180 days recommended), then
-PATCH the user-confirmed profile fields such as `sex` and `confirmed_hrmax_bpm`. Do not let
-workout observations or device-zone candidates silently populate confirmed profile values.
+Open Health Insights 还要求使用当前的训练详情架构，包括 `workout_metric_samples.source`。在真实安装环境中启用它之前，请重新构建全新架构，重新同步至少所需的 42 天负荷窗口（建议 180 天），然后 PATCH 用户确认的资料字段，例如 `sex` 和 `confirmed_hrmax_bpm`。不要让训练观测或设备区间候选值在无提示的情况下填充已确认的资料值。
 
-See [SYSTEM.md](../SYSTEM.md) for the required plan, test, documentation, commit, and
-delivery workflow.
+有关所需的计划、测试、文档、提交和交付工作流，请参阅 [SYSTEM.md](../SYSTEM.md)。

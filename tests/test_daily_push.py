@@ -101,7 +101,7 @@ def test_morning_push_syncs_current_day_and_sends_exactly_once(monkeypatch, tmp_
     )
 
     assert requests == [
-        ("/api/v1/health/sync", {"params": {"days": 2}}),
+        ("/api/v1/health/sync", {"params": {"days": 2, "enqueue_only": "true"}}),
         ("/api/v1/intelligence/analyze", {"params": {"day": "2026-08-29"}}),
     ]
     assert sent == [("explicit-user", profile, "morning")]
@@ -217,7 +217,7 @@ def test_morning_push_defers_without_complete_sleep(
     )
 
     assert requests == [
-        ("/api/v1/health/sync", {"params": {"days": 2}}),
+        ("/api/v1/health/sync", {"params": {"days": 2, "enqueue_only": "true"}}),
         ("/api/v1/intelligence/analyze", {"params": {"day": "2026-08-29"}}),
     ]
     assert sent == []
@@ -326,7 +326,7 @@ def test_evening_push_uses_one_day_and_ignores_morning_sleep_gate(
         state_dir=tmp_path,
     )
 
-    assert requests[0] == ("/api/v1/health/sync", {"params": {"days": 1}})
+    assert requests[0] == ("/api/v1/health/sync", {"params": {"days": 1, "enqueue_only": "true"}})
     assert sent == ["evening"]
     assert result["status"] == "sent"
     assert result["period"] == "evening"

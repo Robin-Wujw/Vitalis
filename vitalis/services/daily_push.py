@@ -6,6 +6,7 @@ from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from datetime import date
 import hashlib
+import time
 import os
 from pathlib import Path
 from typing import Iterator, Literal
@@ -24,6 +25,8 @@ from vitalis.time import local_today
 
 ReportPeriod = Literal["morning", "evening"]
 DEFAULT_STATE_DIR = Path.home() / ".hermes" / "vitalis_push"
+SYNC_POLL_INTERVAL_SECONDS = 2
+SYNC_POLL_MAX_ATTEMPTS = 90
 
 
 def run_daily_push(
@@ -65,7 +68,7 @@ def run_daily_push(
             timeout=180.0,
             trust_env=False,
         ) as client:
-            sync = _sync_health(client, days)
+            sync = _await_sync(client, _sync_health(client, days))
             sync_degraded, sync_status, sync_detail = _assess_sync(sync)
 
             daily = _analyze(client, current_date)
@@ -121,7 +124,9 @@ def run_daily_push(
 
 def _sync_health(client: httpx.Client, days: int) -> dict:
     try:
-        response = client.post("/api/v1/health/sync", params={"days": days})
+        response = client.post(
+            "/api/v1/health/sync", params={"days": days, "enqueue_only": "true"}
+        )
         response.raise_for_status()
         return response.json()
     except httpx.HTTPStatusError as exc:
@@ -138,6 +143,24 @@ def _sync_health(client: httpx.Client, days: int) -> dict:
             "retryable": True,
             "detail": str(exc),
         }
+
+
+def _await_sync(client: httpx.Client, sync: dict) -> dict:
+    attempt_id = sync.get("attempt_id")
+    if sync.get("status") != "queued" or not attempt_id:
+        return sync
+    latest = sync
+    for _ in range(SYNC_POLL_MAX_ATTEMPTS):
+        response = client.get(f"/api/v1/health/sync/{attempt_id}")
+        response.raise_for_status()
+        payload = response.json()
+        attempt = payload.get("attempt") or {}
+        status = attempt.get("status")
+        if status in {"succeeded", "partial", "failed", "needs_reauth", "cancelled"}:
+            latest = {**sync, "status": "synced" if status == "succeeded" else "incomplete" if status == "partial" else status, "success": status == "succeeded", "attempt_status": status, "progress": payload.get("progress")}
+            break
+        time.sleep(SYNC_POLL_INTERVAL_SECONDS)
+    return latest
 
 
 def _assess_sync(sync: dict) -> tuple[bool, str, str | None]:

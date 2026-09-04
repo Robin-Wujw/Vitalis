@@ -1,5 +1,7 @@
 # Vitalis 开发系统历史归档
 
+[English](SYSTEM_HISTORY.en.md)
+
 > 本文件保存已完成工作的执行记录和验证证据，仅供追溯历史。当前有效的工作规则、未完成事项和最新验证状态以仓库根目录的 `SYSTEM.md` 为准。
 
 ## 2026-09-04 SQLite 当前 schema 迁移与真实验证
@@ -873,488 +875,240 @@ AnalysisRun，保留指标和设备身份，并作为提供给 Hermes 的有界�
 - 部分 4：Decision Policy 4.0 直接用带日期的以健康为先的 `ActionPlan` 替换通用处方列表：一个主要训练课，至多一个兼容的附加训练或替代方案；每一项都包含证据、剂量、进阶、停止条件和失效时间。用户作用域的偏好记录跑步/力量训练每周目标、可用时间、训练时段、经验、器械和疼痛/受伤状态，同时跑步与力量训练仍是产品的强制目标。规划器平衡 7/28 天缺口，遵循已识别的力量训练轮换，交替训练方式，并防止高质量跑步与下肢力量训练在 48 小时内叠加。明确的疼痛/受伤会阻止计划训练；未知输入保持为可见门控，而不是编造假设。聚焦规划器、API、上下文、存储、跑步和力量训练套件通过全部 80 个测试；排除尚未替换的 Hermes push/Skill 模块后，更大范围的套件通过全部 181 个测试。编译、JSON schema 解析和 `git diff --check` 通过。
 - 部分 5（实现与重新摄入）：Hermes 工作流和确定性的 PushPlus 渲染器现在消费 `decision.action_plan`，保留主要/可选关系，并包含 7/28 天平衡、跑步指标、力量训练分化/详情、证据、冲突检查、剂量、进阶、停止条件、缺失输入门控和失效时间。Hermes 具有用于训练偏好和已确认力量训练锻炼的用户作用域工具与 Schema。一次真实数据验收发现并修复了中性基线方向被错误排除在恢复信号覆盖之外的问题；现在中性观测计入可解释范围，但不会变成正向或负向证据。旧的 `workout_samples` 表以及锻炼/智能派生行已移除，同时保留认证和浏览器链接状态。全新的 30 天同步在心率、速度、等效配速、步频、距离、海拔和跑步功率方面存储了 24 条当前契约锻炼详情。真实 Daily 4.0 / Decision Policy 4.0 分析和 JSON Schema 验证通过，私有早间渲染器包含行动计划以及跑步和力量训练详情，且不包含内部代码。完整套件通过全部 209 个测试；编译、扩展语法、所有 JSON Schemas 和 `git diff --check` 通过。重建前的数据库副本存储在仓库外的仅 root 可访问本地状态中。`vitalis.service` 和 `hermes-gateway.service` 均重启并处于活动状态；Hermes 解析了仓库关联的 Vitalis Skill，保留两个处于活动状态的 no-agent cron 任务，且没有代理环境。通过直接的无代理 PushPlus 连接发送并接受了一份当前 Schema 的早间报告。在此最终记录之前，提交 `5ae1b82`、`cb00e27`、`8126b91`、`57f9637` 和 `b456839` 已从 `main` 推送到 `origin/main`。
 
-## 22. Local Research Notes Session
+## 22. 本地调研笔记会话
 
-Date: 2026-08-29
+日期：2026-08-29
 
-Goal: continue local research after the concurrent running and strength delivery by
-reviewing evidence gaps for exercise prescription, concurrent scheduling,
-RPE/RIR-based feedback, Zepp OS capability boundaries, and Balance 2 / Helio Strap
-device claims without changing business logic.
+目标：在并行跑步与力量训练功能交付后继续本地调研，审查运动处方、并行训练安排、基于 RPE/RIR 的反馈、Zepp OS 能力边界以及 Balance 2 / Helio Strap 设备声明的证据缺口，同时不改变业务逻辑。
 
-### Detailed TODO
+### 详细 TODO
 
-- [x] Part 1 - Establish the local research baseline.
-  - Confirm the worktree state and latest delivery record.
-  - Identify current evidence gaps from implementation and documentation.
-- [x] Part 2 - Review current external evidence and platform documents.
-  - Check current WHO, ACSM, concurrent-training, RPE/RIR, Zepp OS, and Amazfit
-    product/support sources.
-  - Separate evidence-backed statements from manufacturer claims and product policy.
-- [x] Part 3 - Record local research output.
-  - Add a reusable research note for future implementation planning.
-  - Link it from the README documentation index.
-- [x] Part 4 - Verify documentation-only changes.
-  - Run a formatting/diff check and record any skipped application tests.
+- [x] 部分 1 - 建立本地调研基线。
+  - 确认工作树状态和最新交付记录。
+  - 从实现和文档中识别当前证据缺口。
+- [x] 部分 2 - 审查当前外部证据和平台文档。
+  - 检查当前 WHO、ACSM、并行训练、RPE/RIR、Zepp OS 以及 Amazfit 产品/支持来源。
+  - 将有证据支持的陈述与厂商声明和产品策略分开。
+- [x] 部分 3 - 记录本地调研产出。
+  - 添加一份可供未来实现规划复用的调研笔记。
+  - 从 README 文档索引链接该笔记。
+- [x] 部分 4 - 验证仅文档变更。
+  - 运行格式/差异检查，并记录任何跳过的应用测试。
 
-### Verification Log
+### 验证日志
 
-- Part 1: the repository started clean at `d38e295`
-  (`docs: record concurrent training delivery`). The latest completed work delivered
-  DailyProfile 4.0, Decision Policy 4.0, typed workout details, running analysis,
-  strength analysis, and deterministic concurrent training plans.
-- Part 2: research found that ACSM's April 2026 resistance-training position stand
-  is the strongest current broad source for healthy-adult strength prescription; WHO
-  supports weekly aerobic plus strength context; concurrent-training evidence supports
-  caution around same-session explosive/lower-body outcomes but does not prove the
-  current exact six-hour or 48-hour policy numbers; RPE/RIR evidence supports guided
-  subjective load regulation with experience-related limits. Zepp OS docs support the
-  existing Balance 2 bridge boundary without a guaranteed callback frequency. Current
-  Amazfit pages support capability and wearing-position claims, but not independent
-  model-specific validation for Balance 2 or Helio Strap.
-- Part 3: `docs/RESEARCH_NOTES.md` now records sources, findings, implementation
-  implications, and candidate next work. `README.md` links the note from the
-  documentation table.
-- Part 4: documentation-only changes do not require application tests. `git diff
-  --check` passed with only existing Windows line-ending normalization warnings for
-  README and SYSTEM.
+- 部分 1：仓库从干净的 `d38e295`（`docs: record concurrent training delivery`）开始。最近完成的工作交付了 DailyProfile 4.0、Decision Policy 4.0、类型化锻炼详情、跑步分析、力量训练分析和确定性的并行训练计划。
+- 部分 2：调研发现，ACSM 2026 年 4 月的抗阻训练立场声明是当前针对健康成人力量训练处方最有力的综合来源；WHO 支持每周有氧加力量训练的背景；并行训练证据支持谨慎对待同一训练课中的爆发力/下肢结果，但不能证明当前精确的六小时或 48 小时策略数值；RPE/RIR 证据支持在经验相关限制下进行有指导的主观负荷调节。Zepp OS 文档支持现有 Balance 2 bridge 的边界，但不保证 callback 频率。当前 Amazfit 页面支持能力和佩戴位置声明，但不支持 Balance 2 或 Helio Strap 的独立型号特定验证。
+- 部分 3：`docs/RESEARCH_NOTES.md` 现在记录了来源、发现、实现影响和候选后续工作。`README.md` 从文档表格链接该笔记。
+- 部分 4：仅文档变更不需要应用测试。`git diff --check` 通过，仅有 README 和 SYSTEM 现有的 Windows 行尾规范化警告。
 
-## 23. Exercise Evidence Library Session
+## 23. 运动证据库会话
 
-Date: 2026-08-29
+日期：2026-08-29
 
-Goal: convert the local research findings into the current Vitalis evidence library
-without changing Decision Policy 4.0 behavior. The immediate scope is evidence
-metadata, renderer-facing profile evidence refs, and documentation; exact plan rules
-such as six-hour same-day spacing and 48-hour lower-body conflicts remain product
-policy until a separate implementation changes them.
+目标：将本地调研发现转化为当前 Vitalis 证据库，同时不改变 Decision Policy 4.0 行为。当前范围是证据元数据、面向 renderer 的 profile evidence refs 和文档；六小时同日间隔、48 小时下肢冲突等精确计划规则仍属于产品策略，直到单独实现对其进行更改。
 
-### Detailed TODO
+### 详细 TODO
 
-- [x] Part 1 - Add exercise-prescription evidence references.
-  - Add current resistance-training, concurrent-training, and RPE/RIR references to
-    `EVIDENCE_REFS`.
-  - Keep applies-to labels narrow so future renderers do not overclaim causality or
-    device accuracy.
-  - Add focused tests for evidence ids and scope.
-- [x] Part 2 - Synchronize evidence documentation.
-  - Update `skills/vitalis/knowledge/evidence.md` with the new evidence boundaries.
-  - Update Architecture evidence boundaries without changing current API behavior.
-- [x] Part 3 - Verify and record the local result.
-  - Run focused tests and Markdown/diff hygiene.
-  - Leave broader application behavior unchanged and record skipped verification if
-    this remains documentation/metadata-only.
+- [x] 部分 1 - 添加运动处方证据引用。
+  - 将当前抗阻训练、并行训练和 RPE/RIR 引用添加到 `EVIDENCE_REFS`。
+  - 严格限定 applies-to 标签，使未来 renderer 不会过度声称因果关系或设备准确性。
+  - 为 evidence id 和 scope 添加聚焦测试。
+- [x] 部分 2 - 同步证据文档。
+  - 使用新的证据边界更新 `skills/vitalis/knowledge/evidence.md`。
+  - 更新 Architecture 的证据边界，同时不改变当前 API 行为。
+- [x] 部分 3 - 验证并记录本地产出。
+  - 运行聚焦测试以及 Markdown/差异卫生检查。
+  - 保持更广泛的应用行为不变；如果本次仍仅涉及文档/元数据，则记录跳过的验证。
 
-### Verification Log
+### 验证日志
 
-- Part 1: `EVIDENCE_REFS` now includes narrow-scoped references for ACSM 2026
-  resistance training, concurrent aerobic/strength training, the RIR-specific RPE
-  scale, and RIR accuracy limitations. The focused contract test locks the new ids,
-  uniqueness, applies-to scopes, and non-overclaiming boundary. Command:
-  `PYTHONPATH=.codex_pydeps;. python -m pytest tests\test_intelligence_contracts.py`
-  passed 4 tests.
-- Part 2: `skills/vitalis/knowledge/evidence.md` and `docs/ARCHITECTURE.md` now
-  document resistance-training, concurrent-training, and RPE/RIR boundaries. The
-  documentation explicitly keeps six-hour same-day spacing, 48-hour lower-body
-  conflicts, and absolute resistance loads in the product-policy or missing-history
-  category rather than presenting them as directly proven evidence.
-- Part 3: focused verification with `PYTHONUTF8=1` passed 9 tests across
-  `tests\test_intelligence_contracts.py` and `tests\test_vitalis_skill.py`. Windows
-  local verification with `--ignore=tests/test_daily_push.py` passed 195 tests with
-  existing `datetime.utcnow()` warnings. The unignored full suite was not runnable on
-  this Windows host because `tests/test_daily_push.py` imports the Linux-only `fcntl`
-  module; run the complete suite on the server before live acceptance. `git diff
-  --check` passed with only Windows line-ending normalization warnings.
+- 部分 1：`EVIDENCE_REFS` 现在包含范围严格限定的 ACSM 2026 抗阻训练、并行有氧/力量训练、RIR 专用 RPE 量表和 RIR 准确性限制引用。聚焦合同测试锁定了新的 id、唯一性、applies-to scope 和不过度声称边界。命令：`PYTHONPATH=.codex_pydeps;. python -m pytest tests\test_intelligence_contracts.py` 通过 4 个测试。
+- 部分 2：`skills/vitalis/knowledge/evidence.md` 和 `docs/ARCHITECTURE.md` 现在记录了抗阻训练、并行训练和 RPE/RIR 边界。文档明确将六小时同日间隔、48 小时下肢冲突和绝对抗阻负荷归为产品策略或缺少历史数据的类别，而不是将它们表述为直接得到证明的证据。
+- 部分 3：设置 `PYTHONUTF8=1` 的聚焦验证在 `tests\test_intelligence_contracts.py` 和 `tests\test_vitalis_skill.py` 中通过 9 个测试。使用 `--ignore=tests/test_daily_push.py` 的 Windows 本地验证通过 195 个测试，并出现现有的 `datetime.utcnow()` 警告。未忽略的完整套件无法在这台 Windows 主机上运行，因为 `tests/test_daily_push.py` 导入了仅限 Linux 的 `fcntl` 模块；在实时验收前必须在服务器上运行完整套件。`git diff --check` 通过，仅有 Windows 行尾规范化警告。
 
-## 24. Actionable Daily Brief And Device Fusion Session
+## 24. 可执行每日简报与设备融合会话
 
-Date: 2026-08-30
+日期：2026-08-30
 
-Goal: replace the audit-style Hermes morning report with a concise, actionable health-
-first brief and make multi-device heart-rate/HRV handling evidence-bounded. Each metric
-must produce one user-facing conclusion; secondary devices corroborate silently unless
-their disagreement materially changes today's recommendation.
+目标：用简洁、可执行、健康优先的简报替换审计风格的 Hermes 晨报，并使多设备心率/HRV 处理受证据边界约束。每个指标必须产生一个面向用户的结论；次要设备默认静默佐证，除非其分歧实质性改变今天的建议。
 
-### Detailed TODO
+### 详细 TODO
 
-- [x] Part 1 - Complete the targeted evidence review and define the fusion policy.
-  - Review validation evidence for upper-arm and wrist optical heart rate, nocturnal
-    PPG-derived variability, cross-device interchangeability, and actionable reporting.
-  - Distinguish independent evidence from manufacturer claims and record the absence of
-    model-specific validation where applicable.
-  - Define one canonical source per metric and measurement context; never average raw
-    values from devices whose interchangeability has not been demonstrated.
-- [x] Part 2 - Implement consequence-aware multi-device fusion.
-  - Select the primary HRV stream using metric suitability, current/baseline coverage,
-    measurement context, and stable device continuity instead of presenting two devices.
-  - Use secondary streams only as corroboration and reduce confidence on consequential
-    disagreement; keep complete per-device evidence in the structured profile.
-  - Add focused tests for selection, silent agreement, and consequential disagreement.
-- [x] Part 3 - Replace the morning push with an actionable coach brief.
-  - Present today's conclusion, the concrete primary and optional actions, a short
-    explanation, at most one meaningful recent change, and only applicable cautions.
-  - Omit empty signals, unknown safety status, passed conflict checks, planning gates,
-    generic limitations, raw multi-window trend lists, and repeated audit metadata.
-  - Translate retained metrics and relationships into ordinary Chinese and add focused
-    renderer regression tests.
-- [x] Part 4 - Synchronize documentation and complete delivery.
-  - Update evidence, architecture, workflow, and product documentation for the current
-    contract only, with no compatibility or fallback path.
-  - Run focused and complete tests, compilation and diff checks; generate a private
-    real-data preview and verify the result contains no secrets or device identifiers.
-  - Restart the relevant services, commit the completed change, push `main`, and record
-    the remote commit and verification results.
+- [x] 部分 1 - 完成针对性证据审查并定义融合策略。
+  - 审查上臂和腕部光学心率、夜间 PPG 衍生变异性、跨设备可互换性和可执行报告的验证证据。
+  - 区分独立证据和厂商声明，并在适用时记录缺少型号特定验证。
+  - 为每个指标和测量情境定义一个 canonical 来源；绝不平均尚未证明可互换的设备原始值。
+- [x] 部分 2 - 实现后果感知的多设备融合。
+  - 使用指标适用性、当前/基线覆盖率、测量情境和稳定设备连续性选择主要 HRV 数据流，而不是展示两个设备。
+  - 次要数据流仅用于佐证；在会产生后果的分歧时降低置信度；在结构化 profile 中保留完整的逐设备证据。
+  - 为选择、静默一致和产生后果的分歧添加聚焦测试。
+- [x] 部分 3 - 用可执行教练简报替换晨间推送。
+  - 展示今天的结论、具体主要和可选行动、简短解释、至多一项有意义的近期变化，并且只展示适用的注意事项。
+  - 省略空信号、未知安全状态、已通过的冲突检查、规划 gate、通用限制、原始多窗口趋势列表和重复的审计元数据。
+  - 将保留的指标和关系翻译为普通中文，并添加聚焦 renderer 回归测试。
+- [x] 部分 4 - 同步文档并完成交付。
+  - 针对当前合同更新证据、架构、工作流和产品文档，不提供兼容或 fallback 路径。
+  - 运行聚焦和完整测试、编译及差异检查；生成私有真实数据预览，并验证结果不包含 secret 或设备标识符。
+  - 重启相关服务，提交完成的变更，推送 `main`，并记录远程提交和验证结果。
 
-### Verification Log
+### 验证日志
 
-- Part 1: PubMed and primary-source review found strong form-factor evidence for
-  upper-arm exercise heart rate but no independent model-specific validation for
-  Helio Strap or Balance 2. Nocturnal wearable HRV accuracy varies materially by
-  device, and measurement-method agreement must be established before streams are
-  interchangeable. The evidence-contract test passed all 4 tests.
-- Part 2: nocturnal HRV now selects one canonical stream by same-metric baseline
-  availability, baseline days, current coverage, and continuity; measurement site is
-  only a final tie-breaker. Secondary agreement no longer inflates confidence, while
-  disagreement lowers confidence without averaging or replacing the canonical value.
-  The analyzer, evidence-contract, and Skill schema run passed all 21 tests.
-- Part 3: the morning renderer now emits one conclusion, concrete primary/optional
-  actions, short reasons, at most one actionable event, and consequential cautions.
-  It omits empty signals, unknown safety state, vendor scores, sleep stages, per-device
-  values, raw trend windows, passed checks, planning gates, and generic limitations.
-  The push, analyzer, and Skill focused run passed all 25 tests. A private real-data
-  preview produced a short normal-training brief without identifiers or device names.
-- Part 4 (verification): the final full suite passed all 212 tests with 224 existing
-  Python 3.14 `datetime.utcnow()` deprecation warnings. Python compilation, all Skill
-  JSON parsing, OpenAPI generation with 41 paths, both browser-extension syntax checks,
-  and `git diff --check` passed. After restarting both services, a real stored-data
-  analysis produced DailyProfile 5.0 with the canonical-device contract. The private
-  renderer acceptance rejected all superseded audit headings, device names, empty
-  signals, unknown comparisons, and contradictory HRV event text. `vitalis.service`
-  and `hermes-gateway.service` are active, and the loopback health endpoint returns 200.
-  A misleading manual 502 was traced to this terminal's `ALL_PROXY`; a no-proxy check
-  reached Vitalis directly, while the system services themselves have no proxy setting.
-- Part 4 (delivery): feature commit `f440d14` (`feat: deliver actionable health brief`)
-  was pushed to `origin/main`. The delivery record was then committed and pushed on the
-  same branch; local and remote `main` were verified synchronized.
+- 部分 1：PubMed 和主要来源审查发现，上臂运动心率具有有力的形态因子证据，但 Helio Strap 或 Balance 2 均没有独立的型号特定验证。夜间穿戴式 HRV 的准确性因设备而有实质差异，数据流可互换之前必须先确定测量方法的一致性。证据合同测试通过全部 4 个测试。
+- 部分 2：夜间 HRV 现在根据相同指标的基线可用性、基线天数、当前覆盖率和连续性选择一个 canonical 数据流；测量部位仅作为最后的 tie-breaker。次要设备一致不再提高置信度，而分歧会降低置信度，但不会平均或替换 canonical 值。analyzer、证据合同和 Skill schema 运行通过全部 21 个测试。
+- 部分 3：晨间 renderer 现在输出一个结论、具体主要/可选行动、简短原因、至多一个可执行事件和有后果的注意事项。它省略空信号、未知安全状态、厂商 score、睡眠阶段、逐设备值、原始趋势窗口、已通过的检查、规划 gate 和通用限制。push、analyzer 和 Skill 聚焦运行通过全部 25 个测试。一份私有真实数据预览生成了不含标识符或设备名称的简短正常训练简报。
+- 部分 4（验证）：最终完整套件通过全部 212 个测试，并出现 224 条现有 Python 3.14 `datetime.utcnow()` 弃用警告。Python 编译、所有 Skill JSON 解析、包含 41 条路径的 OpenAPI 生成、两个浏览器扩展语法检查以及 `git diff --check` 均通过。重启两个服务后，一次真实存储数据分析生成了具有 canonical-device 合同的 DailyProfile 5.0。私有 renderer 验收拒绝了所有已取代的审计标题、设备名称、空信号、未知比较和相互矛盾的 HRV 事件文本。`vitalis.service` 和 `hermes-gateway.service` 处于 active，回环健康端点返回 200。一次误导性的手工 502 被追溯到此终端的 `ALL_PROXY`；no-proxy 检查直接到达 Vitalis，而系统服务本身没有 proxy 设置。
+- 部分 4（交付）：功能提交 `f440d14`（`feat: deliver actionable health brief`）已推送到 `origin/main`。交付记录随后在同一分支提交并推送；本地与远程 `main` 已验证同步。
 
-## 25. Recovery Depth And Individualized Prescription Session
+## 25. 恢复深度和个性化处方会话
 
-Date: 2026-08-30
+日期：2026-08-30
 
-Goal: make DailyProfile and the morning brief use materially more of the available
-nocturnal heart-rate/HRV and workout-detail evidence. Running and strength sessions must
-be selected and dosed from the user's recent sessions and response data instead of
-mostly fixed weekly-frequency templates.
+目标：让 DailyProfile 和晨间简报实质性使用更多可用的夜间心率/HRV 和锻炼详情证据。跑步与力量训练必须根据用户近期训练和响应数据选择并确定剂量，而不是主要依赖固定的每周频次模板。
 
-### Detailed TODO
+### 详细 TODO
 
-- [x] Part 1 - Add canonical-device nocturnal recovery context.
-  - Derive night heart-rate coverage, median, artifact-resistant low point, and
-    first-half/second-half trajectory from timestamped heart-rate samples inside each
-    recorded sleep window; keep device streams isolated.
-  - Build a historical personal baseline for the canonical nightly stream and add a
-    same-device 7-day HRV comparison against the preceding 7 days.
-  - Do not derive beat-to-beat HRV from minute heart-rate samples or claim decoded
-    second-level data while the `SEC_HR` payload remains unverified.
-  - Add focused loader, analyzer, contract, and API tests.
-- [x] Part 2 - Replace coarse running and strength prescription rules.
-  - Select recovery/easy/steady/quality/long running content from recovery state,
-    recent session classes, recent duration and distance, threshold availability,
-    cardiac drift, and lower-body conflicts.
-  - Anchor running duration to recent completed sessions and preserve individual HR
-    zones, natural cadence, and bounded progression rather than universal targets.
-  - Reuse confirmed strength exercises, prior sets/repetitions/load/rest and RPE/RIR
-    when present; otherwise prescribe explicit movement-pattern choices without
-    pretending heart rate identifies an exercise.
-  - Bind ACSM, concurrent-training, and RIR evidence ids to planned sessions and add
-    focused decision tests.
-- [x] Part 3 - Explain the richer decision without rebuilding an audit report.
-  - Make the morning brief explain the useful overnight HR/HRV pattern and the exact
-    recent workout fact that changed today's session.
-  - Keep at most four short reasons and suppress metrics that did not influence the
-    plan; retain the concise action-first presentation.
-  - Add renderer tests for personalized running and strength plans and absent-data
-    behavior.
-- [x] Part 4 - Rebuild current intelligence output, verify, and publish.
-  - Update current schemas, evidence/workflow/architecture documentation, and version
-    constants directly with no legacy contract or fallback path.
-  - Run focused and complete tests, validate real stored data privately, restart both
-    services, commit, and push synchronized `main` to GitHub.
+- [x] 部分 1 - 添加 canonical-device 夜间恢复上下文。
+  - 从每个已记录睡眠窗口内带时间戳的心率样本推导夜间心率覆盖率、中位数、抗伪影低点和前半夜/后半夜轨迹；保持设备数据流隔离。
+  - 为 canonical 夜间数据流建立历史个人基线，并添加同设备的 7 天 HRV 与此前 7 天对比。
+  - 不从分钟级心率样本推导逐搏 HRV，也不在 `SEC_HR` payload 尚未验证时声称已解码秒级数据。
+  - 添加聚焦 loader、analyzer、contract 和 API 测试。
+- [x] 部分 2 - 替换粗略的跑步和力量训练处方规则。
+  - 根据恢复状态、近期训练分类、近期时长和距离、阈值可用性、心脏漂移以及下肢冲突选择恢复/轻松/稳态/质量/长距离跑步内容。
+  - 将跑步时长锚定在近期已完成训练上，并保留个人 HR zone、自然步频和有界进阶，而不是通用目标。
+  - 在明确存在时复用已确认力量训练动作、既往组数/次数/负荷/休息以及 RPE/RIR；否则提供明确的动作模式选择，而不假装心率能识别动作。
+  - 将 ACSM、并行训练和 RIR evidence id 绑定到计划训练课，并添加聚焦 decision 测试。
+- [x] 部分 3 - 解释更丰富的决策而不重新构建审计报告。
+  - 让晨间简报解释有用的夜间 HR/HRV 模式，以及改变今日训练课的具体近期锻炼事实。
+  - 原因最多保留四条短句，并抑制没有影响计划的指标；保持简洁、行动优先的呈现方式。
+  - 为个性化跑步和力量训练计划以及数据缺失行为添加 renderer 测试。
+- [x] 部分 4 - 重建当前智能输出、验证并发布。
+  - 直接更新当前 schema、证据/工作流/架构文档和 version constant，不提供 legacy contract 或 fallback 路径。
+  - 运行聚焦和完整测试，私下验证真实存储数据，重启两个服务，提交并将同步的 `main` 推送到 GitHub。
 
-### Verification Log
+### 验证日志
 
-- Part 1: ordinary minute heart rate is loaded into a separate, non-daily series over
-  the bounded nocturnal history window. Device-isolated sleep intervals require at
-  least 120 covered minutes and 50% coverage before producing median HR, rolling
-  five-minute low, first/second-half trajectory, and a same-device historical
-  comparison. The canonical HRV stream now compares its latest 7-day median with the
-  preceding 7 days. Minute HR and indexed `SEC_HR` data are not treated as HRV.
-- Part 2: the running planner now selects recovery, easy, steady, threshold, or
-  long-easy content from recent session type, personal duration, threshold HR, cardiac
-  drift, recent hard work, and lower-body conflicts. Strength planning reuses explicit
-  exercise dose and RPE/RIR when present; absent explicit exercises remain movement-
-  pattern prescriptions and heart rate never supplies an exercise identity. Planned
-  sessions carry the ACSM, concurrent-training, RIR, and physical-activity evidence IDs.
-- Part 3: the morning brief keeps four reasons at most and reports only the overnight
-  and workout facts that explain the actual plan. A real private preview aligned the
-  conclusion with a 21-26 minute recovery run and explained that the latest 8.1%
-  cardiac drift caused the reduction. It contained no device name, empty signals,
-  unknown safety text, vendor scores, planning gates, or generic limitation section.
-- Part 4 (verification): all 217 tests passed with 225 existing Python 3.14
-  `datetime.utcnow()` deprecation warnings. Compilation, Skill JSON parsing, evidence-
-  ID checks, and `git diff --check` passed. Real-data timing attributed about 2 seconds
-  to nocturnal recovery analysis and 0.3 seconds to training analysis within a roughly
-  21-second local analysis. `vitalis.service` and `hermes-gateway.service` were
-  restarted and are active; `/healthz` returns 200 without a proxy. Both Hermes cron
-  jobs are active, their latest executions are `ok`, and the next morning run is
-  scheduled for 2026-08-30 09:30 Asia/Shanghai.
-- Part 4 (delivery): feature commit `7b40fd4` (`feat: deepen recovery and training
-  prescriptions`) was pushed to `origin/main`. The delivery record was then committed
-  and pushed on the same branch, followed by a local/remote revision equality check.
+- 部分 1：普通分钟级心率被加载到有界夜间历史窗口内单独的非 daily series 中。设备隔离的睡眠区间必须覆盖至少 120 分钟且覆盖率达到 50%，之后才会生成中位 HR、滚动五分钟低点、前半夜/后半夜轨迹和同设备历史对比。canonical HRV 数据流现在将最新 7 天中位数与此前 7 天比较。分钟 HR 和已建立索引的 `SEC_HR` 数据不被视为 HRV。
+- 部分 2：跑步 planner 现在根据近期训练类型、个人时长、阈值 HR、心脏漂移、近期高强度训练和下肢冲突选择恢复、轻松、稳态、阈值或长距离轻松跑内容。力量训练规划在明确动作剂量和 RPE/RIR 存在时复用它们；缺少明确动作时继续使用动作模式处方，心率绝不提供动作身份。计划训练课携带 ACSM、并行训练、RIR 和身体活动 evidence ID。
+- 部分 3：晨间简报最多保留四条原因，并仅报告解释实际计划的夜间和锻炼事实。一份真实私有预览将结论与 21-26 分钟恢复跑对齐，并解释最近 8.1% 的心脏漂移导致减量。它不包含设备名称、空信号、未知安全文本、厂商 score、规划 gate 或通用限制章节。
+- 部分 4（验证）：全部 217 个测试通过，并出现 225 条现有 Python 3.14 `datetime.utcnow()` 弃用警告。编译、Skill JSON 解析、evidence-ID 检查和 `git diff --check` 通过。真实数据计时显示，在约 21 秒的本地分析中，夜间恢复分析约占 2 秒，训练分析约占 0.3 秒。`vitalis.service` 和 `hermes-gateway.service` 已重启且处于 active；`/healthz` 在无 proxy 情况下返回 200。两个 Hermes cron job 均处于 active，最近执行状态为 `ok`，下一次晨间运行安排在 2026-08-30 09:30 Asia/Shanghai。
+- 部分 4（交付）：功能提交 `7b40fd4`（`feat: deepen recovery and training prescriptions`）已推送到 `origin/main`。交付记录随后在同一分支提交并推送，之后检查本地/远程 revision 相等。
 
-## 26. Verified Dense Heart Rate And Overnight Fusion
+## 26. 已验证密集心率与夜间融合
 
-Date: 2026-08-30
+日期：2026-08-30
 
-Goal: decode Zepp's second-level heart-rate files, use them safely in nocturnal
-analysis, complete the multi-device recovery brief, and remove the scheduled delivery
-path's dependency on interactive terminal proxy settings.
+目标：解码 Zepp 的秒级心率文件，在夜间分析中安全使用它们，完成多设备恢复简报，并消除计划交付路径对交互式终端 proxy 设置的依赖。
 
-### Implemented Contract
+### 已实现合同
 
-- The official Android flow was verified as `fileInfo` index -> `queryDownUrlList` ->
-  signed HTTPS ZIP -> `DailySecondHeartBeat` protobuf. A heartbeat block contains a
-  Unix-second start time followed by consecutive integer heart-rate values; `255` is
-  missing data.
-- ZIP entry/device assignment uses a global one-to-one maximum interval-overlap match.
-  Ambiguous mappings, unsafe URLs, malformed archives, invalid protobuf wire types,
-  oversized content, and non-heart-rate values are rejected.
-- Signed object-storage downloads do not receive the Zepp `apptoken`. Zepp, local
-  Vitalis calls, webhooks, and PushPlus all use `trust_env=False`, so Hermes does not
-  inherit `HTTP_PROXY`, `HTTPS_PROXY`, or `ALL_PROXY` from an interactive shell.
-- A decoded file/device/start interval stores `parse_status=decoded` and its sample
-  count. Later syncs skip the exact decoded set. Decoded samples remain device-scoped
-  and are never averaged across devices or reinterpreted as beat-to-beat HRV.
-- The analysis loader queries only actual sleep windows, reduces each device's
-  second-level values to minute medians, and keeps at most 35 nights. A sufficiently
-  covered upper-arm stream is preferred for current-night heart rate and compared only
-  with its own available history. HRV retains a separate canonical same-device
-  baseline and secondary-device corroboration contract.
-- Dense archives are decoded and persisted one file at a time. This bounds memory for
-  multi-day synchronization instead of retaining the entire window's samples before
-  one large write.
+- 官方 Android 流程已验证为 `fileInfo` index -> `queryDownUrlList` -> signed HTTPS ZIP -> `DailySecondHeartBeat` protobuf。一个 heartbeat block 包含 Unix-second 开始时间及其后连续的整数心率值；`255` 表示数据缺失。
+- ZIP entry/device 分配使用全局一对一最大 interval-overlap 匹配。歧义映射、不安全 URL、格式错误的 archive、无效 protobuf wire type、超大内容和非心率值均被拒绝。
+- signed object-storage download 不接收 Zepp `apptoken`。Zepp、本地 Vitalis 调用、webhook 和 PushPlus 均使用 `trust_env=False`，因此 Hermes 不会继承交互式 shell 的 `HTTP_PROXY`、`HTTPS_PROXY` 或 `ALL_PROXY`。
+- 已解码的 file/device/start interval 存储 `parse_status=decoded` 及其 sample count。后续同步跳过完全一致的已解码集合。已解码 sample 保持 device-scoped，绝不跨设备平均，也不重新解释为逐搏 HRV。
+- analysis loader 仅查询实际睡眠窗口，将每台设备的秒级值归约为分钟中位数，并最多保留 35 夜。当前夜晚优先选择覆盖充分的上臂数据流，并且只与其自身可用历史比较。HRV 保持独立的 canonical 同设备基线和次要设备佐证合同。
+- 密集 archive 一次解码并持久化一个文件。这限制了多日同步的内存使用，避免在一次大型写入前保留整个窗口的 sample。
 
-### Real Verification
+### 真实验证
 
-- A verified production archive was only a few kilobytes and contained two protobuf
-  entries whose timestamp ranges matched two indexed devices. Missing sentinels were
-  discarded and physiological values decoded at one-second spacing.
-- After loading the new service code, the first two-day sync wrote roughly 91,000
-  dense-file/sample records. An immediate identical sync wrote zero dense records,
-  proving that successful archives are not downloaded and decoded repeatedly.
-- A real target-day analysis reported complete sleep, REM sleep, canonical HRV,
-  resting heart rate, a full-night heart-rate median/low-point/trajectory, respiratory
-  rate, and explicit insufficient oxygen coverage without inventing an oxygen result.
-- A 35-day all-stream backfill correctly hit the existing synchronization deadline.
-  A subsequent queued seven-day attempt exposed excessive memory retention in the
-  dense writer and was stopped before commit; SQLite rolled the transaction back while
-  preserving the committed two-day data. The writer was then changed to per-archive
-  persistence and covered by the focused sync/decoder test run.
-- Final verification passed all 226 tests with 225 pre-existing Python 3.14
-  `datetime.utcnow()` deprecation warnings. Python compilation, all Skill JSON parsing,
-  `git diff --check`, and the no-audit-language renderer acceptance passed.
-- After both services restarted, a production two-day sync succeeded with zero dense
-  writes on the already-decoded set. The regenerated DailyProfile selected the complete
-  upper-arm stream for current-night heart rate, retained separate canonical HRV and
-  resting-heart-rate evidence, and abstained from an oxygen conclusion when coverage
-  was insufficient.
-- The final morning brief omitted empty signals, unknown safety text, planning gates,
-  raw device disagreement, and a stale HRV lifecycle sentence that conflicted with the
-  current direction. PushPlus returned application-level success. Both Hermes jobs are
-  active in no-agent script mode, and both `vitalis.service` and
-  `hermes-gateway.service` are active without proxy variables in their service
-  environments.
+- 一个经验证的生产 archive 只有几 KB，其中包含两个 protobuf entry，其时间戳范围与两台建立索引的设备匹配。missing sentinel 被丢弃，生理值以一秒间隔解码。
+- 加载新服务代码后，第一次两日同步写入约 91,000 条密集文件/sample 记录。紧接着进行的相同同步写入 0 条密集记录，证明成功 archive 不会被重复下载和解码。
+- 一次真实目标日分析报告了完整睡眠、REM 睡眠、canonical HRV、静息心率、整夜心率中位数/低点/轨迹、呼吸频率，以及明确的血氧覆盖不足，未编造血氧结果。
+- 一次 35 天全数据流 backfill 正确触发了现有同步 deadline。后续排队的七日 attempt 暴露出密集 writer 保留过多内存，因此在提交前停止；SQLite 回滚了事务，同时保留已提交的两日数据。随后 writer 改为逐 archive 持久化，并由聚焦同步/decoder 测试运行覆盖。
+- 最终验证通过全部 226 个测试，并出现 225 条预先存在的 Python 3.14 `datetime.utcnow()` 弃用警告。Python 编译、所有 Skill JSON 解析、`git diff --check` 和无审计语言 renderer 验收均通过。
+- 两个服务重启后，生产两日同步在已解码集合上以 0 条密集写入成功完成。重新生成的 DailyProfile 为当前夜间心率选择完整的上臂数据流，保留独立 canonical HRV 和静息心率证据，并在覆盖不足时不生成血氧结论。
+- 最终晨间简报省略了空信号、未知安全文本、规划 gate、原始设备分歧，以及与当前方向冲突的过时 HRV lifecycle 句子。PushPlus 返回 application-level success。两个 Hermes job 均以 no-agent script mode 处于 active，且 `vitalis.service` 和 `hermes-gateway.service` 均处于 active，其服务环境不含 proxy variable。
 
-## 27. User-Selected Running And Strength Rotation
+## 27. 用户选择的跑步与力量训练轮换
 
-Date: 2026-08-31
+日期：2026-08-31
 
-Goal: let a user choose deterministic running/strength alternation while preserving
-health gates, record treadmill availability and bad-weather fallback, and keep Hermes
-as the scheduler rather than the training decision maker.
+目标：让用户选择确定性的跑步/力量训练交替，同时保留健康 gate，记录跑步机可用性和恶劣天气 fallback，并让 Hermes 保持为 scheduler 而不是训练决策者。
 
-### Delivery Plan
+### 交付计划
 
-- [x] Part 1 - Extend the current training-preference contract and persistence model.
-- [x] Part 2 - Apply explicit alternation in the health-gated deterministic planner.
-- [x] Part 3 - Update the API, Skill tool/schema, renderer explanation, tests, and docs.
-- [x] Part 4 - Store the user's selected policy and verify it against real current data.
-- [x] Part 5 - Commit and push the verified feature to `origin/main`.
+- [x] 部分 1 - 扩展当前训练偏好合同和持久化模型。
+- [x] 部分 2 - 在受健康 gate 约束的确定性 planner 中应用明确交替。
+- [x] 部分 3 - 更新 API、Skill tool/schema、renderer 解释、测试和文档。
+- [x] 部分 4 - 存储用户选择的策略，并针对真实当前数据进行验证。
+- [x] 部分 5 - 提交并将已验证功能推送到 `origin/main`。
 
-### Implemented Contract
+### 已实现合同
 
-- Training preferences now distinguish weekly-balance planning from explicit
-  running/strength alternation. Under alternation, the latest recognized aerobic
-  workout selects strength next and the latest strength workout selects running next.
-- Recovery suppression, pain/injury, unavailable training days, and recent lower-body
-  conflicts continue to override or constrain the selected training family.
-- Treadmill availability and bad-weather running fallback are user-scoped persistent
-  preferences. They are not applied until a reliable weather source is configured;
-  Vitalis does not infer current weather or claim that a fallback was triggered.
-- The current training-preference storage model directly owns all three fields. The
-  deployed pre-production database was advanced to that current schema without adding
-  a compatibility reader, version branch, or retained migration path.
-- The morning renderer receives the resulting structured action plan and explains when
-  the user's alternation preference selected the primary session. Hermes still only
-  dispatches synchronization, analysis, and delivery.
+- 训练偏好现在区分每周平衡规划和明确的跑步/力量训练交替。在交替模式下，最近一次已识别的有氧锻炼会选择下次力量训练，最近一次力量训练会选择下次跑步。
+- 恢复抑制、疼痛/伤病、无可用训练日和近期下肢冲突继续覆盖或约束所选训练类别。
+- 跑步机可用性和恶劣天气跑步 fallback 是用户作用域的持久化偏好。在配置可靠天气来源之前不会应用这些偏好；Vitalis 不会推断当前天气，也不会声称已触发 fallback。
+- 当前训练偏好存储模型直接拥有全部三个字段。部署的 pre-production 数据库已推进到该当前 schema，没有添加 compatibility reader、version branch 或保留 migration path。
+- 晨间 renderer 接收生成的结构化 action plan，并解释用户的交替偏好何时选择了主要训练课。Hermes 仍然只分派同步、分析和交付。
 
-### Verification Log
+### 验证日志
 
-- Focused preference, planner, API, and Skill coverage passed 76 tests. The complete
-  suite passed 262 tests with existing Python 3.14 `datetime.utcnow()` deprecation
-  warnings. Compilation, all Skill JSON parsing, and `git diff --check` passed.
-- The production preference row retained its existing 3/3 weekly targets, equipment,
-  and pain/injury state while setting alternation, no treadmill, and strength as the
-  stored bad-weather fallback.
-- After restarting `vitalis.service`, `/healthz` returned success. A real current-day
-  analysis selected `STRENGTH` with title `全身力量训练`; its first personalization
-  reason stated that the latest formal workout was running and the user's alternation
-  preference therefore selected strength.
-- No duplicate morning notification was sent during verification. Weather-triggered
-  substitution remains inactive until a weather source is implemented.
-- Part 5 (delivery): feature commit `0477b0b` (`feat: personalize training rotation`)
-  was pushed from local `main` to `origin/main`.
+- 聚焦偏好、planner、API 和 Skill 覆盖通过 76 个测试。完整套件通过 262 个测试，并出现现有 Python 3.14 `datetime.utcnow()` 弃用警告。编译、所有 Skill JSON 解析和 `git diff --check` 通过。
+- 生产偏好行保留了现有的 3/3 每周目标、器械和疼痛/伤病状态，同时将 alternation、无跑步机和 strength 设置为存储的恶劣天气 fallback。
+- 重启 `vitalis.service` 后，`/healthz` 返回 success。一次真实当前日分析选择 `STRENGTH`，标题为 `全身力量训练`；其第一条 personalization reason 表明最近一次正式锻炼是跑步，因此用户的交替偏好选择了力量训练。
+- 验证期间没有发送重复晨间通知。在实现天气来源之前，天气触发的替代保持 inactive。
+- 部分 5（交付）：功能提交 `0477b0b`（`feat: personalize training rotation`）已从本地 `main` 推送到 `origin/main`。
 
-## 28. Cross-Platform Planning and Commit Contract
+## 28. 跨平台规划与提交合同
 
-Date: 2026-08-31
+日期：2026-08-31
 
-Goal: make planning mandatory before repository work, require a separate Git commit for
-each completed major plan part, and define Linux server plus Windows support as an
-explicit cross-platform product contract.
+目标：使每次仓库工作之前都必须规划，要求每个已完成的主要计划部分分别创建 Git commit，并将 Linux server 加 Windows support 定义为明确的跨平台产品合同。
 
-### Delivery Plan
+### 交付计划
 
-- [x] Part 1 - Make the plan-before-execution rule apply to every repository task and
-  require each completed major part to be committed before the next part begins.
-- [ ] Part 2 - Define the shared-core/platform-adapter strategy and platform-specific
-  security and verification requirements for Linux servers and Windows workstations.
-- [ ] Part 3 - Validate the Markdown diff, confirm unrelated user changes remain
-  untouched, and create a documentation-only commit for this contract update.
+- [x] 部分 1 - 使执行前规划规则适用于每项仓库任务，并要求每个已完成的主要部分在开始下一部分之前提交。
+- [ ] 部分 2 - 定义 shared-core/platform-adapter 策略以及平台特定的安全和验证要求，以支持 Linux server 和 Windows workstation。
+- [ ] 部分 3 - 验证 Markdown diff，确认无关用户变更保持不受影响，并为本次合同更新创建仅文档 commit。
 
-### Verification Log
+### 验证日志
 
-- Part 1: the required workflow now mandates a visible plan before state-changing work
-  and a separate, scoped commit after each verified major plan part.
+- 部分 1：必需工作流现在强制要求在改变状态的工作之前展示可见计划，并在每个已验证的主要计划部分后创建单独的 scoped commit。
 
-## 29. Canonical Zepp Data Correctness Session
+## 29. Canonical Zepp 数据正确性会话
 
-Date: 2026-09-01
+日期：2026-09-01
 
-Goal: repair current-contract synchronization facts before adding new ingestion or
-maintenance features. Canonical workouts must drive local-day training summaries,
-metric identities must preserve device and source scope, and fetch failures must never
-be presented as cloud-empty or successful.
+目标：在添加新的摄入或维护功能之前修复当前合同的同步事实。Canonical workout 必须驱动 local-day training summary，metric identity 必须保留 device 和 source scope，而 fetch failure 绝不能被呈现为 cloud-empty 或 successful。
 
-### Delivery Plan
+### 交付计划
 
-- [x] Part 1 - Add fresh-schema natural keys and native upserts for daily records,
-  DailyMetric, and MetricSample while preserving device/source-scope identity.
-- [x] Part 2 - Persist canonical workouts first, rebuild affected local-day training
-  summaries from the workout table, and use configured-timezone query boundaries.
-- [x] Part 3 - Classify Zepp errors structurally and make core/optional stream outcomes
-  internally consistent without parsing human-readable error messages.
-- [x] Part 4 - Synchronize current-contract documentation and run focused, full,
-  compilation, schema, OpenAPI, JSON, and diff verification.
+- [x] 部分 1 - 为 daily record、DailyMetric 和 MetricSample 添加 fresh-schema natural key 和 native upsert，同时保留 device/source-scope identity。
+- [x] 部分 2 - 首先持久化 canonical workout，从 workout table 重建受影响的 local-day training summary，并使用 configured-timezone query boundary。
+- [x] 部分 3 - 以结构化方式分类 Zepp error，并使 core/optional stream outcome 在内部保持一致，不解析供人阅读的错误消息。
+- [x] 部分 4 - 同步当前合同文档，并运行聚焦、完整、编译、schema、OpenAPI、JSON 和 diff 验证。
 
-### Constraints
+### 约束
 
-- No migration, ALTER TABLE, legacy reader, dual read/write, compatibility branch, or
-  old-data conversion is introduced. The changed constraints require a fresh schema and
-  vendor re-ingestion before live use.
-- Missing-value Optional contracts, raw payload retention, chunk coverage ledgers,
-  retry/backoff improvements, backup/restore, and retention policy remain separate
-  planned work rather than partial additions to this batch.
-- Existing databases, services, deployments, commits, and remotes are not changed by
-  this session without separate explicit authorization.
+- 不引入 migration、ALTER TABLE、legacy reader、dual read/write、compatibility branch 或 old-data conversion。变更后的 constraint 要求 fresh schema，并且实时使用前必须重新摄入 vendor 数据。
+- Missing-value Optional contract、raw payload retention、chunk coverage ledger、retry/backoff 改进、backup/restore 和 retention policy 仍是单独的计划工作，而不是本批次的部分添加。
+- 未经单独明确授权，本会话不更改现有 database、service、deployment、commit 或 remote。
 
-### Verification Log
+### 验证日志
 
-- Part 1: fresh SQLite inspection confirmed daily `(user_id, date)` uniqueness,
-  source-scope/device-aware MetricSample and DailyMetric keys, and source-aware workout
-  detail sample identity. Native upsert and multi-device/source-scope API regressions
-  passed.
-- Part 2: multi-page and multi-sport tests confirmed canonical workouts rebuild one
-  complete Shanghai-local training day, repeated sync stays idempotent, timestamp
-  corrections clean the old day, and local-day workout API boundaries are half-open and
-  correct.
-- Part 3: HTTP, transport, timeout, optional endpoint, empty response, unrecognized
-  payload, pairing, and link-state regressions passed. Region hosts are validated at the
-  client boundary, dense downloads reject redirects, and incomplete synchronization no
-  longer marks a browser link synced.
-- Part 4: focused post-review run passed 110 tests. The UTF-8 full suite reached 278
-  passes with one pre-existing Windows-only failure at `tests/test_daily_push.py:109`,
-  whose Unix `0600` mode assertion observes `0666` on Windows; excluding that file passed
-  263 tests. Python compilation, 42-path OpenAPI generation, all 12 Skill JSON schemas,
-  fresh-schema constraint assertions, and `git diff --check` passed. High-effort review
-  findings were fixed; its final heart-rate timestamp concern was checked against
-  ZeppBridge and found to be a parameter-name mismatch—the endpoint intentionally uses
-  Unix seconds—so the client parameter and docstring were clarified without changing
-  working request semantics. No database, service, deployment, commit, or remote was
-  changed.
+- 部分 1：fresh SQLite inspection 确认 daily `(user_id, date)` uniqueness、source-scope/device-aware MetricSample 和 DailyMetric key，以及 source-aware workout detail sample identity。Native upsert 和 multi-device/source-scope API regression 通过。
+- 部分 2：multi-page 和 multi-sport 测试确认 canonical workout 重建一个完整 Shanghai-local training day，重复同步保持 idempotent，timestamp correction 清理旧日期，并且 local-day workout API boundary 为正确的 half-open 区间。
+- 部分 3：HTTP、transport、timeout、optional endpoint、empty response、unrecognized payload、pairing 和 link-state regression 通过。Region host 在 client boundary 验证，dense download 拒绝 redirect，且未完成同步不再将 browser link 标记为 synced。
+- 部分 4：review 后的聚焦运行通过 110 个测试。UTF-8 完整套件达到 278 个通过，且在 `tests/test_daily_push.py:109` 有一个预先存在的仅 Windows failure，其 Unix `0600` mode assertion 在 Windows 上观测到 `0666`；排除该文件后通过 263 个测试。Python 编译、生成 42-path OpenAPI、全部 12 个 Skill JSON schema、fresh-schema constraint assertion 和 `git diff --check` 通过。高强度 review finding 已修复；其最终 heart-rate timestamp concern 经 ZeppBridge 核查后发现是 parameter-name mismatch——该 endpoint 有意使用 Unix second——因此 client parameter 和 docstring 得到澄清，没有改变正常工作的 request semantic。未更改任何 database、service、deployment、commit 或 remote。
 
-### Continuation Plan
+### 延续计划
 
-- [x] Part 5 - Reconfirm the current focused baseline without changing repository state.
-  - The existing Zepp fetcher, sync manager, API, and health-data tests still pass, so the
-    remaining work is uncovered contract propagation rather than a known failing test.
-- [x] Part 6 - Make explicit fetch windows and synchronization completeness authoritative.
-  - Preserve successful partial writes, but never report mixed chunk coverage, failed
-    optional streams, or authentication loss as a successful synchronization.
-  - Make pairing, manual sync, generic connect, token status, and scheduled analysis use
-    the same success and reauthentication decisions.
-- [x] Part 7 - Propagate canonical workout identity and metric provenance end to end.
-  - Treat workouts as `(source, workout_id)` through derived training, detail/sample
-    reads, intelligence links, feedback, recommendations, strength confirmation, and API
-    references.
-  - Return source provenance from metric APIs and keep hourly/daily aggregation separated
-    by source, scope, device, and unit using the configured local day.
-- [x] Part 8 - Correct remaining Zepp boundary and diagnostic-stage behavior.
-  - Distinguish dense archive fetch failures from parse failures, reject unknown non-empty
-    payloads, normalize region hosts safely, contain probe timeouts, and remove host-timezone
-    dependence from HRV request boundaries.
-- [x] Part 9 - Add regression coverage, synchronize documentation, and rerun complete
-  verification without changing databases, services, deployments, commits, or remotes.
+- [x] 部分 5 - 在不改变仓库状态的情况下重新确认当前聚焦基线。
+  - 现有 Zepp fetcher、sync manager、API 和 health-data 测试仍通过，因此剩余工作是未覆盖的合同传播，而不是已知的失败测试。
+- [x] 部分 6 - 使明确的 fetch window 和 synchronization completeness 成为权威。
+  - 保留成功的部分写入，但绝不将混合 chunk coverage、失败的 optional stream 或 authentication loss 报告为 successful synchronization。
+  - 让 pairing、manual sync、generic connect、token status 和 scheduled analysis 使用相同的 success 与 reauthentication decision。
+- [x] 部分 7 - 端到端传播 canonical workout identity 和 metric provenance。
+  - 在 derived training、detail/sample read、intelligence link、feedback、recommendation、strength confirmation 和 API reference 中，将 workout 一律视为 `(source, workout_id)`。
+  - 从 metric API 返回 source provenance，并使用 configured local day 按 source、scope、device 和 unit 分离 hourly/daily aggregation。
+- [x] 部分 8 - 修正剩余 Zepp boundary 和 diagnostic-stage behavior。
+  - 区分 dense archive fetch failure 与 parse failure，拒绝 unknown non-empty payload，安全规范化 region host，控制 probe timeout，并消除 HRV request boundary 对 host timezone 的依赖。
+- [x] 部分 9 - 添加 regression coverage，同步文档，并重新运行完整验证，同时不更改 database、service、deployment、commit 或 remote。
 
-### Continuation Verification Log
+### 延续验证日志
 
-- Part 5: with pytest cache and Python bytecode disabled, `tests/test_fetcher.py`,
-  `tests/test_sync_manager.py`, `tests/test_api.py`, and `tests/test_health_data_api.py`
-  passed all 110 tests on Windows. The run emitted only existing deprecation warnings.
-- Part 6: explicit local-date windows now use configured-timezone UTC bounds and serialize
-  vendor date parameters back in that timezone. In-memory coverage distinguishes complete,
-  wholly unavailable, and mixed partial chunks; every failed or unverified stream blocks
-  overall success while successful chunks completed before a terminal error are persisted.
-  Pairing, manual/generic connect, token status, and scheduled analysis now share report
-  success and reauthentication behavior. Focused fetch/sync/API regressions passed.
-- Part 7: canonical workout identity is `(source, workout_id)` through training-day
-  rebuilds, detail/sample reads, ProfileLoader, feedback, recommendations, strength
-  confirmation, response output, timeline references, and health APIs. Timestamped and
-  daily metric APIs return source provenance, never aggregate across source/scope/device/
-  unit, and use `VITALIS_TIMEZONE` for daily buckets. Same-ID Zepp/Garmin regressions
-  confirmed isolated samples and a combined two-workout derived training day.
-- Part 8: dense archive download failures are fetch-stage diagnostics while decode errors
-  remain parse-stage failures; non-empty unknown dense/detail payloads are unverified.
-  Region validation rejects non-origin URL components, probe timeout is structured, HRV
-  epochs use configured-local-day bounds, full heart-rate pages advance by `generatedTime`,
-  and successful empty heart-rate responses are not refetched. Focused regressions passed.
-- Part 9: the final post-review focused suite passed 157 tests. The full suite excluding
-  the pre-existing Windows-only `tests/test_daily_push.py` file passed 293 tests; the
-  complete suite passed 308 tests with only its known `0600` versus Windows `0666`
-  assertion failing. Post-review fixes also reject cross-account local-user rebinding,
-  preserve source-qualified stream freshness, stream aggregate ranges beyond the raw
-  50,000-row cap, and retain source in training-response/comparable-run references.
-  Python compilation passed. OpenAPI still exposes 42 paths and requires workout source
-  for detail and strength operations. A fresh in-memory SQLite schema confirmed source-
-  aware strength/recommendation uniqueness and subjective-feedback source storage.
-  `git diff --check` passed. No database, service, deployment, commit, or remote changed.
+- 部分 5：禁用 pytest cache 和 Python bytecode 后，`tests/test_fetcher.py`、`tests/test_sync_manager.py`、`tests/test_api.py` 和 `tests/test_health_data_api.py` 在 Windows 上通过全部 110 个测试。该运行仅出现现有弃用警告。
+- 部分 6：明确的 local-date window 现在使用 configured-timezone UTC bound，并在该 timezone 中将 vendor date parameter 序列化回来。In-memory coverage 区分 complete、wholly unavailable 和 mixed partial chunk；每个 failed 或 unverified stream 都会阻止 overall success，而 terminal error 之前完成的 successful chunk 会被持久化。Pairing、manual/generic connect、token status 和 scheduled analysis 现在共享 report success 与 reauthentication behavior。聚焦 fetch/sync/API regression 通过。
+- 部分 7：canonical workout identity 在 training-day rebuild、detail/sample read、ProfileLoader、feedback、recommendation、strength confirmation、response output、timeline reference 和 health API 全程为 `(source, workout_id)`。Timestamped 和 daily metric API 返回 source provenance，绝不跨 source/scope/device/unit 聚合，并使用 `VITALIS_TIMEZONE` 生成 daily bucket。同 ID Zepp/Garmin regression 确认 sample 隔离，并得到包含两个 workout 的 combined derived training day。
+- 部分 8：dense archive download failure 属于 fetch-stage diagnostic，而 decode error 保持为 parse-stage failure；非空 unknown dense/detail payload 为 unverified。Region validation 拒绝非 origin URL component，probe timeout 为 structured，HRV epoch 使用 configured-local-day bound，完整 heart-rate page 按 `generatedTime` 前进，成功的 empty heart-rate response 不会被重新 fetch。聚焦 regression 通过。
+- 部分 9：最终 review 后聚焦套件通过 157 个测试。排除预先存在的仅 Windows `tests/test_daily_push.py` 文件后，完整套件通过 293 个测试；完整套件通过 308 个测试，但只有其已知的 `0600` 与 Windows `0666` assertion 失败。review 后修复还会拒绝 cross-account local-user rebinding、保留 source-qualified stream freshness、对超出 raw 50,000-row cap 的 aggregate range 进行 streaming，并在 training-response/comparable-run reference 中保留 source。Python 编译通过。OpenAPI 仍公开 42 条路径，并要求 workout source 用于 detail 和 strength operation。一个新的 in-memory SQLite schema 确认 source-aware strength/recommendation uniqueness 和 subjective-feedback source storage。`git diff --check` 通过。未更改任何 database、service、deployment、commit 或 remote。

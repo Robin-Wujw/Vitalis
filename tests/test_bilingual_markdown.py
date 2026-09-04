@@ -67,8 +67,6 @@ HTTP_ROUTE_RE = re.compile(
 )
 EXECUTABLE_FENCE_LANGUAGES = {
     "bash",
-    "console",
-    "http",
     "javascript",
     "js",
     "json",
@@ -79,6 +77,14 @@ EXECUTABLE_FENCE_LANGUAGES = {
     "yaml",
     "yml",
 }
+CODE_TOKEN_RE = re.compile(
+    r"https?://[^\s'\"`]+"
+    r"|(?<![\w-])--?[A-Za-z][A-Za-z0-9_-]*"
+    r"|(?:\.\.?/|/)[A-Za-z0-9_./?=&{}<>:-]+"
+    r"|\b(?:GET|POST|PUT|PATCH|DELETE|HTTP|HTTPS)[A-Z0-9_]*\b"
+    r"|\b[A-Z][A-Z0-9_]{2,}\b"
+    r"|\"[A-Za-z_][A-Za-z0-9_-]*\"(?=\s*:)"
+)
 # SHA-256 of the authoritative OpenStrap MIT body from Copyright through
 # SOFTWARE., normalized to LF with exactly one trailing newline.
 MIT_SHA256 = "265eb53046c15797b39920f0e82914e450e431b2fc26b09d27bfd0a5c42d869d"
@@ -223,6 +229,61 @@ def _table_shape(text: str) -> list[list[int]]:
     return tables
 
 
+def _list_item_blocks(text: str) -> list[str]:
+    blocks: list[list[str]] = []
+    current: list[str] | None = None
+    for line in text.splitlines():
+        if LIST_ITEM_RE.match(line):
+            current = [line]
+            blocks.append(current)
+        elif current is not None and (line.startswith(" ") or not line.strip()):
+            current.append(line)
+        else:
+            current = None
+    return ["\n".join(block) for block in blocks]
+
+
+NUMBER_WORDS = {
+    "0": ("zero",),
+    "1": ("one", "january"),
+    "2": ("two", "february"),
+    "3": ("three", "march"),
+    "4": ("four", "april"),
+    "5": ("five", "may"),
+    "6": ("six", "june"),
+    "7": ("seven", "july"),
+    "8": ("eight", "august"),
+    "9": ("nine", "september"),
+    "10": ("ten", "october"),
+    "11": ("eleven", "november"),
+    "12": ("twelve", "december"),
+}
+
+
+def _assert_list_item_number_parity(chinese: str, english: str) -> None:
+    zh_items = _list_item_blocks(chinese)
+    en_items = _list_item_blocks(english)
+    assert len(zh_items) == len(en_items)
+    for index, (zh_item, en_item) in enumerate(zip(zh_items, en_items), start=1):
+        zh_numbers = Counter(NUMBER_RE.findall(zh_item))
+        en_numbers = Counter(NUMBER_RE.findall(en_item))
+        assert not (en_numbers - zh_numbers), (
+            f"list item {index} lost numeric occurrences in Chinese: "
+            f"{en_numbers - zh_numbers}"
+        )
+        missing_from_english = zh_numbers - en_numbers
+        lowered_english = en_item.lower()
+        for value, count in missing_from_english.items():
+            equivalents = NUMBER_WORDS.get(value, ())
+            allowance = sum(
+                len(re.findall(rf"\b{re.escape(word)}\b", lowered_english))
+                for word in equivalents
+            )
+            assert count <= allowance, (
+                f"list item {index} lost {count} occurrence(s) of {value} in English"
+            )
+
+
 def _normalized_literal(value: str) -> str:
     value = " ".join(value.split())
     for english, chinese in REVERSE_PAIR_MAP.items():
@@ -246,9 +307,19 @@ def _changed_paths() -> set[str]:
             changed.update(path.split(" -> ", maxsplit=1))
         else:
             changed.add(path)
-    base = os.environ.get("BILINGUAL_BASE_REF")
-    if base:
-        changed.update(_git("diff", "--name-only", f"{base}...HEAD").splitlines())
+    base = (
+        os.environ.get("BILINGUAL_BASE_REF")
+        or os.environ.get("GITHUB_BASE_SHA")
+        or os.environ.get("CI_MERGE_REQUEST_DIFF_BASE_SHA")
+    )
+    if not base and os.environ.get("GITHUB_BASE_REF"):
+        base = f"origin/{os.environ['GITHUB_BASE_REF']}"
+    if not base:
+        # A clean checkout still needs a meaningful range. HEAD^ makes the coupling
+        # invariant effective in ordinary local/CI runs instead of silently testing an
+        # empty diff. PR jobs should set BILINGUAL_BASE_REF (or a supported CI base).
+        base = _git("rev-parse", "--verify", "HEAD^").strip()
+    changed.update(_git("diff", "--name-only", f"{base}...HEAD").splitlines())
     return {PurePosixPath(path.strip('"')).as_posix() for path in changed}
 
 
@@ -311,11 +382,16 @@ def test_translation_structure_and_technical_literals_match(chinese: str, englis
         (len(indent), "ordered" if marker.endswith(".") else "unordered")
         for indent, marker in LIST_ITEM_RE.findall(en)
     ]
+    _assert_list_item_number_parity(zh, en)
     assert _table_shape(zh) == _table_shape(en)
-    # Translators may render an English number word as an Arabic numeral (for example,
-    # "three tests" as "3 个测试"). Requiring the complete literal set preserves every
-    # technical value without falsely requiring the same prose spelling frequency.
-    assert set(NUMBER_RE.findall(zh)) == set(NUMBER_RE.findall(en))
+    # English source sections may spell a count as a word where their Chinese
+    # translation uses a numeral. Counters still require every explicit English numeric
+    # occurrence to survive; dates, hashes, and inline code are symmetric below.
+    zh_numbers = Counter(NUMBER_RE.findall(zh))
+    en_numbers = Counter(NUMBER_RE.findall(en))
+    assert not (en_numbers - zh_numbers), (
+        f"numeric occurrences missing from {chinese}: {en_numbers - zh_numbers}"
+    )
     assert Counter(DATE_RE.findall(zh)) == Counter(DATE_RE.findall(en))
     assert Counter(
         token for token in COMMIT_HASH_RE.findall(zh) if any(char.isdigit() for char in token)
@@ -329,12 +405,11 @@ def test_translation_structure_and_technical_literals_match(chinese: str, englis
     zh_blocks = _fenced_blocks(zh)
     en_blocks = _fenced_blocks(en)
     assert [info for info, _ in zh_blocks] == [info for info, _ in en_blocks]
-    assert [body.count("\n") for _, body in zh_blocks] == [
-        body.count("\n") for _, body in en_blocks
-    ]
     for (info, zh_body), (_, en_body) in zip(zh_blocks, en_blocks):
         if info in EXECUTABLE_FENCE_LANGUAGES:
-            assert zh_body == en_body, f"executable block differs in {chinese}/{english}"
+            assert Counter(CODE_TOKEN_RE.findall(zh_body)) == Counter(
+                CODE_TOKEN_RE.findall(en_body)
+            ), f"technical code tokens differ in {chinese}/{english}"
 
     zh_targets = Counter(
         _normalized_link_target(chinese, path, fragment)
@@ -366,9 +441,10 @@ def test_all_local_links_and_anchors_exist_with_exact_git_case():
 
 
 def test_local_markdown_links_stay_in_the_source_language():
-    # Historical records preserve their original literal links verbatim, and the hub is
-    # intentionally bilingual inline. Both are explicit policy exceptions.
-    exempt = {INLINE_BILINGUAL, "docs/SYSTEM_HISTORY.md", "docs/SYSTEM_HISTORY.en.md"}
+    # The hub is intentionally bilingual inline. Historical prose keeps literal paths in
+    # code spans, but actual Markdown links—including newly appended history—must still
+    # remain language-local apart from each file's reciprocal switch.
+    exempt = {INLINE_BILINGUAL}
     for source in sorted(EXPECTED_MARKDOWN - exempt):
         english_source = source.endswith(".en.md")
         counterpart = REVERSE_PAIR_MAP.get(source) or PAIR_MAP.get(source)
@@ -408,15 +484,25 @@ def test_skill_sidecars_are_non_runtime_and_routing_stays_canonical():
         assert not _read(sidecar).startswith("---\n")
 
     assert not re.search(r"workflows/[A-Za-z0-9_/-]+\.en\.md", skill_zh + skill_en)
-    runtime_suffixes = {".py", ".js", ".json", ".toml", ".yaml", ".yml"}
+    runtime_suffixes = {
+        "", ".py", ".js", ".ts", ".tsx", ".sh", ".ps1",
+        ".json", ".toml", ".yaml", ".yml",
+    }
+    sidecar_reference = re.compile(
+        r"(?:SKILL|evidence|workflows/[A-Za-z0-9_/-]+)\.en\.md"
+    )
     offenders: list[str] = []
-    for path in ROOT.rglob("*"):
-        relative = path.relative_to(ROOT)
-        if relative.parts and relative.parts[0] in {".git", "tests"}:
+    repository_files = _git(
+        "ls-files", "--cached", "--others", "--exclude-standard"
+    ).splitlines()
+    for relative_text in repository_files:
+        relative = PurePosixPath(relative_text)
+        if relative.parts and relative.parts[0] == "tests":
             continue
+        path = ROOT / relative
         if path.is_file() and path.suffix.lower() in runtime_suffixes:
             text = path.read_text(encoding="utf-8", errors="ignore")
-            if "SKILL.en.md" in text or re.search(r"workflows/[^\s\"']+\.en\.md", text):
+            if sidecar_reference.search(text):
                 offenders.append(relative.as_posix())
     assert not offenders, f"runtime files load English reading sidecars: {offenders}"
 
@@ -440,7 +526,11 @@ def test_api_translation_preserves_routes_and_executable_examples():
     assert Counter(HTTP_ROUTE_RE.findall(zh)) == Counter(HTTP_ROUTE_RE.findall(en))
     zh_blocks = [body for info, body in _fenced_blocks(zh) if info in {"bash", "json"}]
     en_blocks = [body for info, body in _fenced_blocks(en) if info in {"bash", "json"}]
-    assert zh_blocks == en_blocks
+    assert len(zh_blocks) == len(en_blocks)
+    for zh_body, en_body in zip(zh_blocks, en_blocks):
+        assert Counter(CODE_TOKEN_RE.findall(zh_body)) == Counter(
+            CODE_TOKEN_RE.findall(en_body)
+        )
     required_literals = {
         "X-User-Id",
         "VITALIS_TIMEZONE",

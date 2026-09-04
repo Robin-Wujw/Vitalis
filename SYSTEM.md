@@ -76,7 +76,7 @@
 日期：2026-09-04
 
 - 当前 `main` 基线为 `b1be242`，包含持久同步 worker、API/worker systemd 单元和排队同步后的晨报等待。
-- 本地完整测试最近通过：425 项；Zepp 身份唯一性与迁移 hardening、中英文文档入口、SQLite 当前 schema 迁移和 `all_day_stress` 本地日时间序列均已验证。
+- 现有应用测试基线最近通过 425 项；新增的双语 Markdown enforcement 模块收集 47 项测试。本隔离工作树仍缺少其他工作流负责的 15 个英文 sidecar，因此 425 不得表述为变更后的完整套件结果，最终完整验证必须在 19 对文件全部整合后重新运行并记录。Zepp 身份唯一性与迁移 hardening、中英文文档入口、SQLite 当前 schema 迁移和 `all_day_stress` 本地日时间序列均已验证。
 - 同账号、同设备、日期匹配的 Zepp 数据与界面对照确认：压力日汇总来自 `all_day_stress` 字段，曲线来自其显式时间戳 `data` 数组。`Charge/stress_data` protobuf 和 `Charge/insight_data` 仍无可证明语义，继续不请求。
 - 本地和服务器 SQLite schema/身份审计均 clean；真实 `zepp-sync-v4` 压力流 fetch/parse/write success，2026-09-03 本地日写入 234 点、范围 5-65。完整 attempt 因可选 capability unavailable 为 `partial`、failed chunk 为 0；确定性分析为 `SUFFICIENT` / `TRAIN_NORMAL`，Morning 与 Evening 投影均成功。
 - 服务器已部署 `fix/zepp-identity-ownership@880c6a0`，API/worker active、`healthz=ok`、错误日志为 0；Morning `PushPlus --test` 返回 `test_sent` 且未改变正式调度标记。

@@ -2,6 +2,13 @@
 
 > 本文件保存已完成工作的执行记录和验证证据，仅供追溯历史。当前有效的工作规则、未完成事项和最新验证状态以仓库根目录的 `SYSTEM.md` 为准。
 
+## 2026-09-04 中英双语文档入口
+
+- 将根 `README.md` 精简为中文产品入口，只保留产品目的、数据到行动路径、核心能力、信任边界、当前状态和主要文档链接。
+- 新增等价的 `README.en.md` 英文入口，不复制安装、部署、API 或算法细节。
+- 新增双语 `docs/README.md`，按使用与运维、API/Agent 集成、架构与研究、项目维护四类读者任务导航，并明确每份文档的唯一维护职责。
+- 验证：三个入口文件的全部本地 Markdown 链接存在，`git diff --check` 通过；本次仅改变文档，不重复运行已通过的 404 项 Python 测试。
+
 ## 2026-09-04 Zepp 身份所有权
 
 - 为 `users(source, source_user_id)`、`auth_tokens(source, source_user_id)` 和 `auth_tokens(user_id, source)` 增加数据库唯一索引。

@@ -10,6 +10,8 @@
 - `all_day_stress` 的 UTC 日请求前后各扩一天，持久化前裁剪回配置时区的原始半开窗口；durable plan 升级为 `zepp-sync-v4`。
 - 真实 2026-09-03 同步终态为 `partial`，仅因可选 capability unavailable；压力流 fetch/parse/write success，本地日 234 点、范围 5-65。分析结果 `SUFFICIENT` / `TRAIN_NORMAL`，Morning/Evening 投影成功，压力未进入 decision evidence。
 - schema migration 单元测试 8 项、同步/schema 聚焦测试 101 项和完整测试 425 项通过；compileall、OpenAPI 46 条路径、Markdown 链接与 `git diff --check` 通过。
+- 服务器部署前创建并通过 `quick_check` 的 SQLite 备份；服务器 425 项测试通过，schema/身份审计 clean，API/worker active、`healthz=ok`、部署后 error 日志为 0。
+- 服务器真实同步终态 `partial`：31 个 chunk 中 12 个可选 unavailable、0 failed；分析为 `SUFFICIENT` / `TRAIN_NORMAL`，压力 234 点、范围 5-65。Morning PushPlus 测试发送成功，正式调度标记未改变。
 
 ## 2026-09-04 Zepp 身份迁移 hardening
 

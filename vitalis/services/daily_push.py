@@ -39,6 +39,7 @@ def run_daily_push(
     target_date: date | None = None,
     state_dir: Path | str = DEFAULT_STATE_DIR,
     test_delivery: bool = False,
+    retrospective: bool = False,
 ) -> dict:
     """Synchronize, analyze, and deliver a scheduled or non-marking test report."""
     if not user_id:
@@ -48,8 +49,14 @@ def run_daily_push(
     if period not in ("morning", "evening"):
         raise ValueError("period must be morning or evening")
 
-    current_date = target_date or local_today()
+    today = local_today()
+    current_date = target_date or today
     days = sync_days if sync_days is not None else (2 if period == "morning" else 1)
+    if retrospective:
+        age = _retrospective_age(target_date, today, period, test_delivery)
+        days = max(days, age + 1)
+    elif current_date != today:
+        raise ValueError("非当日报告必须显式使用测试晚报补发模式")
     marker = _delivery_marker(Path(state_dir), user_id, current_date, period)
     if not test_delivery and marker.exists():
         return {
@@ -91,7 +98,17 @@ def run_daily_push(
         sync_degraded=sync_degraded,
         sync_status=sync_status,
         sync_detail=sync_detail,
+        retrospective=retrospective,
     )
+
+
+def _retrospective_age(target: date | None, today: date, period: ReportPeriod, test: bool) -> int:
+    if target is None or period != "evening" or not test:
+        raise ValueError("指定日期补发仅支持明确日期的测试晚报")
+    age = (today - target).days
+    if not 0 <= age <= 6:
+        raise ValueError("晚报补发仅支持最近七天，不支持未来日期")
+    return age
 
 
 def deliver_daily_report(
@@ -107,12 +124,18 @@ def deliver_daily_report(
     sync_status: str | None = None,
     sync_detail: str | None = None,
     plan_expires_at: datetime | None = None,
+    retrospective: bool = False,
 ) -> dict:
     """Deliver an analyzed report under the shared date/lock/marker gate."""
-    current_date = target_date or local_today()
+    today = local_today()
+    current_date = target_date or today
+    if retrospective:
+        _retrospective_age(target_date, today, period, test_delivery)
+    elif current_date != today:
+        return {"status": "deferred", "period": period, "date": current_date.isoformat(), "reason": "stale_report_date"}
     if plan_expires_at is None and target_date is None:
         _, plan_expires_at = local_day_utc_bounds(current_date)
-    if plan_expires_at is not None:
+    if plan_expires_at is not None and not retrospective:
         expires = plan_expires_at
         if expires.tzinfo is None:
             expires = expires.replace(tzinfo=timezone.utc)
@@ -158,13 +181,15 @@ def deliver_daily_report(
                 "sync_degraded": sync_degraded,
                 "sync_status": sync_status,
             }
-        payload = deepcopy(daily) if sync_degraded else daily
-        if sync_degraded:
-            payload["delivery_metadata"] = {
-                "sync_degraded": True,
-                "sync_status": sync_status,
-                "sync_detail": sync_detail,
-            }
+        payload = deepcopy(daily) if sync_degraded or retrospective else daily
+        if sync_degraded or retrospective:
+            metadata = dict(payload.get("delivery_metadata") or {})
+            if sync_degraded:
+                metadata.update(sync_degraded=True, sync_status=sync_status, sync_detail=sync_detail)
+            if retrospective:
+                metadata["retrospective"] = True
+                payload.pop("decision", None)
+            payload["delivery_metadata"] = metadata
         results = PushService(pushplus_token=pushplus_token).push_daily_profile(
             user_id, payload, period=period
         )
@@ -182,6 +207,8 @@ def deliver_daily_report(
         }
         if test_delivery:
             outcome["scheduled_delivery_unchanged"] = True
+        if retrospective:
+            outcome["retrospective"] = True
         return outcome
 
 

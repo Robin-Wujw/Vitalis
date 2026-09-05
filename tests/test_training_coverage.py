@@ -206,3 +206,30 @@ def test_future_successor_cannot_be_omitted_to_prove_coverage():
         )
     assert result["status"] != "COMPLETE"
     assert result["verified_days"] == []
+
+
+def test_successful_empty_workout_queries_prove_coverage_but_unavailable_does_not():
+    user_id = "coverage-confirmed-empty"
+    attempt_id = _attempt(user_id)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        for chunk in repo.sync_chunks(attempt_id):
+            chunk.parse_status = "empty"
+            chunk.write_status = "not_run"
+    with session_scope() as db:
+        result = HealthRepository(db).training_history_coverage(
+            user_id, date(2026, 8, 1), date(2026, 8, 2), NOW,
+        )
+    assert result["status"] == "COMPLETE"
+    assert result["verified_days"] == ["2026-08-01", "2026-08-02"]
+    with session_scope() as db:
+        chunk = HealthRepository(db).sync_chunks(attempt_id)[0]
+        chunk.status = "unavailable"
+        chunk.fetch_status = "unavailable"
+        chunk.parse_status = "not_run"
+    with session_scope() as db:
+        result = HealthRepository(db).training_history_coverage(
+            user_id, date(2026, 8, 1), date(2026, 8, 2), NOW,
+        )
+    assert result["status"] != "COMPLETE"
+    assert result["verified_days"] == []

@@ -73,9 +73,9 @@ Historical tasks, completed TODOs, session records, and per-run verification res
 
 ## 9. Current Status
 
-Date: 2026-09-05
+Date: 2026-09-06
 
-- The local report and training-recommendation fixes passed all 513 Python tests. Synthetic morning, evening, and weekly reports had no horizontal overflow at a 390-pixel mobile layout or a 1100-pixel desktop layout. Local fixes have been verified; production deployment and this real delivery are still pending.
+- The local report, training-recommendation, and date-boundary fixes passed all 529 Python tests. Synthetic morning, evening, and weekly reports had no horizontal overflow at a 390-pixel mobile layout or a 1100-pixel desktop layout. `9750945` was deployed, but the subsequent real test did not send because cross-date stress parsing failed; the hotfix distinguishes valid empty padding results from malformed payloads and supports explicit-date test evening reports containing historical facts only.
 - Current contracts are Daily 12.0, Weekly 5.0, MorningBriefing 2.0, Agent Context 6.0, Intelligence 11.0, and Decision Policy 8.0. Strength-detail refresh, repetition types and dose preservation, training-coverage gates, and report readability have been fixed; controlled cloud-detail validation confirmed that `strengthSets` can be empty, so app-corrected exercises have not been obtained and must not be guessed from `strengthAssess`.
 
 The following records describe the verified baseline from 2026-09-04. The server and real stress data were not revalidated in this change:

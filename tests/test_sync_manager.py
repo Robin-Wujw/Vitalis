@@ -913,3 +913,125 @@ class TestSyncManager:
         assert report.parse_status == "empty"
         assert report.write_status == "not_run"
         assert report.error_kind is None
+
+    def test_all_day_stress_padding_only_is_successful_empty(self, mock_fetcher, setup_db):
+        manager = SyncManager(mock_fetcher)
+        user = User(id="stress-padding-only-user")
+        start = datetime(2026, 9, 4, 16, tzinfo=timezone.utc)
+        end = datetime(2026, 9, 5, 16, tzinfo=timezone.utc)
+        record = FetchedRecord(raw=RawRecord(
+            stream="wellness",
+            source_key="wellness:all_day_stress:user:2026-09-05:2026-09-05",
+            start_utc=start,
+            end_utc=end,
+            payload={"items": [
+                {"timestamp": int(datetime(2026, 9, 4, tzinfo=timezone.utc).timestamp() * 1000), "avgStress": 11},
+                {"timestamp": int(datetime(2026, 9, 6, tzinfo=timezone.utc).timestamp() * 1000), "avgStress": 88},
+            ]},
+        ))
+
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            report = manager._persist_record(record, repo, user)
+            daily = repo.daily_metrics(user.id, date(2026, 9, 5), date(2026, 9, 5))
+
+        assert report.status == "success"
+        assert report.parse_status == "empty"
+        assert report.write_status == "not_run"
+        assert report.error_kind is None
+        assert daily == []
+
+    def test_all_day_stress_nonempty_malformed_payload_remains_unrecognized(
+        self, mock_fetcher, setup_db
+    ):
+        manager = SyncManager(mock_fetcher)
+        user = User(id="stress-malformed-user")
+        start = datetime(2026, 9, 4, 16, tzinfo=timezone.utc)
+        record = FetchedRecord(raw=RawRecord(
+            stream="wellness",
+            source_key="wellness:all_day_stress:user:2026-09-05:2026-09-05",
+            start_utc=start,
+            end_utc=start + timedelta(days=1),
+            payload={"items": [{
+                "timestamp": int(start.timestamp() * 1000),
+                "data": "not-json",
+            }]},
+        ))
+
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            report = manager._persist_record(record, repo, user)
+
+        assert report.status == "unverified"
+        assert report.parse_status == "unrecognized"
+        assert report.write_status == "not_run"
+        assert report.error_kind == "unrecognized_payload"
+
+    def test_all_day_stress_keeps_logical_window_start_sample(
+        self, mock_fetcher, setup_db
+    ):
+        manager = SyncManager(mock_fetcher)
+        user = User(id="stress-midnight-boundary-user")
+        start = datetime(2026, 9, 4, 16, tzinfo=timezone.utc)
+        record = FetchedRecord(raw=RawRecord(
+            stream="wellness",
+            source_key="wellness:all_day_stress:user:2026-09-05:2026-09-05",
+            start_utc=start,
+            end_utc=start + timedelta(days=1),
+            payload={"items": [{
+                "timestamp": int(start.timestamp() * 1000),
+                "data": [{"time": int(start.timestamp() * 1000), "value": 42}],
+            }]},
+        ))
+
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            report = manager._persist_record(record, repo, user)
+            samples = repo.metric_samples(
+                user.id, "stress", start, start + timedelta(days=1)
+            )
+
+        assert report.status == "success"
+        assert report.parse_status == "success"
+        assert report.write_status == "success"
+        assert [
+            (sample.timestamp.replace(tzinfo=timezone.utc), sample.value)
+            for sample in samples
+        ] == [(start, 42)]
+
+    def test_all_day_stress_mixed_padding_and_malformed_item_is_unrecognized(
+        self, mock_fetcher, setup_db
+    ):
+        manager = SyncManager(mock_fetcher)
+        user = User(id="stress-mixed-malformed-user")
+        start = datetime(2026, 9, 4, 16, tzinfo=timezone.utc)
+        record = FetchedRecord(raw=RawRecord(
+            stream="wellness",
+            source_key="wellness:all_day_stress:user:2026-09-05:2026-09-05",
+            start_utc=start,
+            end_utc=start + timedelta(days=1),
+            payload={"items": [
+                {
+                    "timestamp": int(datetime(2026, 9, 4, tzinfo=timezone.utc).timestamp() * 1000),
+                    "avgStress": 11,
+                },
+                {
+                    "timestamp": int(start.timestamp() * 1000),
+                    "avgStress": None,
+                    "data": "not-json",
+                },
+            ]},
+        ))
+
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.upsert_user(user.id)
+            report = manager._persist_record(record, repo, user)
+
+        assert report.status == "unverified"
+        assert report.parse_status == "unrecognized"
+        assert report.write_status == "not_run"
+        assert report.error_kind == "unrecognized_payload"

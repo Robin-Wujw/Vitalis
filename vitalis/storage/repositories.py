@@ -1488,6 +1488,15 @@ class HealthRepository:
         saw_partial_evidence = False
         last_synced_at: datetime | None = None
         as_of_local_day = local_day(as_of_utc)
+
+        def verified_chunk(chunk: orm.SyncChunk) -> bool:
+            return (
+                chunk.status == "succeeded" and chunk.fetch_status == "success"
+                and (chunk.parse_status, chunk.write_status) in {
+                    ("success", "success"), ("empty", "not_run"),
+                }
+            )
+
         for attempt in attempts:
             attempt_chunks = chunks_by_attempt.get(attempt.id, [])
             if not attempt_chunks:
@@ -1513,23 +1522,11 @@ class HealthRepository:
             complete = True
             for sport in SPORTS:
                 sport_chunks = by_partition.get(sport, [])
-                if not sport_chunks or any(
-                    chunk.status != "succeeded"
-                    or chunk.fetch_status != "success"
-                    or chunk.parse_status != "success"
-                    or chunk.write_status != "success"
-                    for chunk in sport_chunks
-                ):
+                if not sport_chunks or any(not verified_chunk(chunk) for chunk in sport_chunks):
                     complete = False
                     break
             if not complete:
-                if any(
-                    chunk.status == "succeeded"
-                    and chunk.fetch_status == "success"
-                    and chunk.parse_status == "success"
-                    and chunk.write_status == "success"
-                    for chunk in attempt_chunks
-                ):
+                if any(verified_chunk(chunk) for chunk in attempt_chunks):
                     saw_partial_evidence = True
                 continue
 

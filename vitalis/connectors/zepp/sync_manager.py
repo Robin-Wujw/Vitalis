@@ -535,6 +535,9 @@ class SyncManager:
             elif parsed > 0:
                 report.parse_status = "success"
                 report.write_status = "no_change"
+            elif self._is_recognized_empty_all_day_stress(record):
+                report.parse_status = "empty"
+                report.write_status = "not_run"
             elif _payload_items(record.raw.payload):
                 report.parse_status = "unrecognized"
                 report.write_status = "not_run"
@@ -574,6 +577,16 @@ class SyncManager:
             report.write_status = "not_run"
             report.error_kind = self._error_kind(exc, "parse")
         return report
+
+    @staticmethod
+    def _is_recognized_empty_all_day_stress(record: FetchedRecord) -> bool:
+        """Accept a valid padded stress response with no in-window output."""
+        if (
+            record.raw.stream != "wellness"
+            or not record.raw.source_key.startswith("wellness:all_day_stress:")
+        ):
+            return False
+        return ZeppParser.is_recognized_all_day_stress_payload(record.raw.payload)
 
     def _write_stream(self, record: FetchedRecord, repo: HealthRepository, user: User) -> int:
         """将单条记录写入存储，返回写入条数。"""

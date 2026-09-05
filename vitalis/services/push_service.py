@@ -418,8 +418,12 @@ def _render_evening(payload: dict) -> tuple[str, list[str]]:
         title_label = "多项训练回顾"
     else:
         title_label = "日常活动回顾"
-    title = f"Vitalis 晚报 · {report_date} · {title_label}"
+    retrospective = bool((payload.get("delivery_metadata") or {}).get("retrospective"))
+    report_label = "晚报补发" if retrospective else "晚报"
+    title = f"Vitalis {report_label} · {report_date} · {title_label}"
     lines = _metadata(payload)
+    if retrospective:
+        lines.extend(["", "> 本报告仅回顾指定日期的已记录事实，不提供当前训练或恢复处方。"])
     lines.extend([
         "",
         "## 今日回顾",
@@ -437,7 +441,8 @@ def _render_evening(payload: dict) -> tuple[str, list[str]]:
                 f"- **{workout['sport_mode_label']}** · {' · '.join(details)}"
             )
     else:
-        lines.append("今天没有正式训练记录；这只是对当前记录的观察，不能据此推断休息状态，也不需要在晚上补课。")
+        message = "该日期没有已同步的正式训练记录；不能据此推断休息状态。" if retrospective else "今天没有正式训练记录；这只是对当前记录的观察，不能据此推断休息状态，也不需要在晚上补课。"
+        lines.append(message)
 
     details = _render_today_workout_details(training, report_date)
     if details:
@@ -450,16 +455,17 @@ def _render_evening(payload: dict) -> tuple[str, list[str]]:
     if open_health_lines:
         lines.extend(["", "## 开放洞察", "", *open_health_lines])
 
-    lines.extend([
-        "",
-        "## 今晚恢复",
-        "",
-        _evening_recovery_action(training, today, report_date),
-        "",
-        "## 明天衔接",
-        "",
-        _tomorrow_bridge(training, today, report_date),
-    ])
+    if not retrospective:
+        lines.extend([
+            "",
+            "## 今晚恢复",
+            "",
+            _evening_recovery_action(training, today, report_date),
+            "",
+            "## 明天衔接",
+            "",
+            _tomorrow_bridge(training, today, report_date),
+        ])
     return title, lines
 
 

@@ -132,6 +132,8 @@ Vitalis 目前会规范化：
 - 供应商每日汇总字段直接映射到 `stress`、`stress_min`、`stress_max` 以及四个 `stress_*_pct` 每日指标；
 - 其 `data` JSON 数组提供带时间戳的 `stress` 指标样本。Vitalis 会保留每个明确的 UTC 时间戳、0-100 的供应商数值、缺口以及设备归属。由于该端点按 UTC 日划分事件，Vitalis 会在两端各请求一个填充日，再将样本裁剪回原始配置时区下的半开窗口。当前已连接账户的载荷显示出带缺口的五分钟采样间隔，但解析器不会假定或合成该采样间隔。
 
+合法的补边记录在逻辑窗口内没有观测时，同步结果为成功且 `parse_status=empty`，不会补零或误报 `unrecognized_payload`。整批记录必须具有已验证的日期和汇总/时间线结构；合法邻日记录不能掩盖同批畸形当前日记录。训练清单覆盖同样区分成功的空查询（`parse_status=empty`、`write_status=not_run`）和接口 `unavailable`：前者可证明已查询范围，后者不能当作无训练记录。
+
 类别百分比会按报告原样存储。Vitalis 不会根据图表坐标轴推导供应商类别边界，不会用不完整的数据点重新计算每日汇总，不会诊断心理压力，也不会在恢复和训练决策中使用此序列。原始序列可通过 `/health/metrics/stress` 获取。
 
 `Charge/real_data` 仍是独立的身体能量契约：`total`、`physical` 和 `mental` 分别映射到综合、身体和精神 Charge。`Charge/stress_data` 包含未记录的 protobuf 数据块，而 `Charge/insight_data` 包含未记录的洞察类型和系数。由于没有证据支持为其内部字段赋予健康语义，这两个子类型均不会进入常规同步。

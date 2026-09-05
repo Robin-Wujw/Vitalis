@@ -181,6 +181,14 @@ The user-scoped `all_day_stress` event supplies two verified contracts:
   connected-account payload currently shows a five-minute cadence with gaps, but the
   parser does not assume or synthesize that cadence.
 
+Valid padding records with no observations inside the logical window produce a successful
+sync with `parse_status=empty`, without filling zeros or incorrectly reporting
+`unrecognized_payload`. Every record must have a verified date and summary/timeline
+structure; valid neighboring-day records cannot conceal malformed current-day records
+in the same response. Workout-history coverage likewise distinguishes a successful empty
+query (`parse_status=empty`, `write_status=not_run`) from an `unavailable` endpoint: the
+former can prove the queried range, while the latter cannot imply no workouts.
+
 Category percentages are stored exactly as reported. Vitalis does not derive vendor
 category boundaries from the chart axis, recalculate the daily summary from incomplete
 points, diagnose psychological stress, or use this series in recovery and training

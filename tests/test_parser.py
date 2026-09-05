@@ -748,3 +748,32 @@ def test_parse_dense_file_index_preserves_device_and_coverage_only():
     ]
     assert {row.parse_status for row in rows} == {"indexed"}
     assert {row.sample_count for row in rows} == {0}
+
+
+def test_all_day_stress_recognition_accepts_verified_padding_and_explicit_empty():
+    previous = int(datetime(2026, 9, 4, tzinfo=timezone.utc).timestamp() * 1000)
+    next_day = int(datetime(2026, 9, 6, tzinfo=timezone.utc).timestamp() * 1000)
+
+    assert ZeppParser.is_recognized_all_day_stress_payload({"items": [
+        {"timestamp": previous, "avgStress": 11},
+    ]}) is True
+    assert ZeppParser.is_recognized_all_day_stress_payload({"items": [
+        {"timestamp": next_day, "data": []},
+    ]}) is True
+    assert ZeppParser.is_recognized_all_day_stress_payload({"items": [
+        {"timestamp": previous, "data": "not-json"},
+    ]}) is False
+    assert ZeppParser.is_recognized_all_day_stress_payload({"items": [
+        {"timestamp": previous, "avgStress": None, "data": "not-json"},
+    ]}) is False
+
+
+def test_all_day_stress_does_not_fill_null_summary_with_zero():
+    daily, samples = ZeppParser.parse_wellness({"items": [{
+        "timestamp": 1_788_192_000_000,
+        "avgStress": None,
+        "data": [],
+    }]}, "wellness:all_day_stress:user:2026-09-04:2026-09-04")
+
+    assert daily == []
+    assert samples == []

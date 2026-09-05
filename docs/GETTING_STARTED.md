@@ -130,6 +130,8 @@ hermes cron runs <job-id>
   --period evening --test
 ```
 
+需要跨日补发时，可在 `--period evening --test` 后添加 `--date YYYY-MM-DD`。仅支持最近 7 天，工具会自动扩大同步范围以覆盖指定日期；补发仅展示该日期的历史事实，不输出过期训练处方、今晚恢复或明天衔接建议，也不改变正式投递标记。晨报、非测试投递和未来日期不支持此模式。
+
 运行 `hermes cron run <job-id>` 属于正式的计划调用：成功投递会写入每日标记，并防止该时段被重复发送。
 
 当缺少 `VITALIS_USER` 或 `PUSHPLUS_TOKEN` 时，该工具会在同步之前退出。令牌绝不会传递给模型、包含在 URL 中，也不会写入仓库文件和日志。

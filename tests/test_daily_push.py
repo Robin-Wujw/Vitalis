@@ -8,6 +8,11 @@ import pytest
 from vitalis.services import daily_push
 
 
+@pytest.fixture(autouse=True)
+def report_local_day(monkeypatch):
+    monkeypatch.setattr(daily_push, "local_today", lambda: date(2026, 8, 29))
+
+
 class Response:
     def __init__(self, payload):
         self.payload = payload
@@ -677,6 +682,7 @@ def test_stale_report_is_not_delivered_across_midnight(monkeypatch, tmp_path):
         "PushService",
         lambda **kwargs: pytest.fail("stale report must not be delivered"),
     )
+    monkeypatch.setattr(daily_push, "local_today", lambda: date(2026, 8, 30))
     result = daily_push.run_daily_push(
         "explicit-user",
         "private-token",

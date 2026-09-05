@@ -31,6 +31,16 @@ from .sport_types import resolve_sport_mode
 MAX_WORKOUT_SECONDS = 12 * 60 * 60
 MAX_WELLNESS_SAMPLES_PER_EVENT = 10_000
 
+_ALL_DAY_STRESS_FIELDS = (
+    ("stress", ("avgStress", "averageStress", "stress"), "score"),
+    ("stress_min", ("minStress",), "score"),
+    ("stress_max", ("maxStress",), "score"),
+    ("stress_relaxed_pct", ("relaxPct", "relaxProportion"), "%"),
+    ("stress_normal_pct", ("normalPct", "normalProportion"), "%"),
+    ("stress_medium_pct", ("mediumPct", "mediumProportion"), "%"),
+    ("stress_high_pct", ("highPct", "highProportion"), "%"),
+)
+
 _TYPE_MAP = {
     "running": WorkoutType.RUNNING,
     "strength": WorkoutType.STRENGTH,
@@ -997,6 +1007,91 @@ class ZeppParser:
         return output
 
     @staticmethod
+    def is_recognized_all_day_stress_payload(raw: dict) -> bool:
+        """Return whether every non-empty stress item has a verified shape.
+
+        Padding can add neighboring days, but one valid item must not hide a
+        malformed item from the same response.  A null summary is only enough for
+        an item with no timeline or an explicitly empty timeline; it cannot mask a
+        malformed timeline.
+        """
+        items = ZeppParser._items(raw)
+        if not items:
+            return False
+
+        def recognized_item(item: object) -> bool:
+            if not isinstance(item, dict):
+                return False
+            value = item.get("value") if isinstance(item.get("value"), dict) else None
+            if ZeppParser._metric_date(item, value) is None:
+                return False
+
+            valid_summary = False
+            empty_summary = False
+            for source in (item, value or {}):
+                for _metric, keys, _unit in _ALL_DAY_STRESS_FIELDS:
+                    for key in keys:
+                        if key not in source:
+                            continue
+                        candidate = source.get(key)
+                        if candidate is None or (
+                            isinstance(candidate, str) and not candidate.strip()
+                        ):
+                            empty_summary = True
+                            continue
+                        reading = ZeppParser._first_number(source, (key,))
+                        if reading is not None and 0 <= reading <= 100:
+                            valid_summary = True
+
+            timeline_present = "data" in item or (
+                value is not None and "data" in value
+            )
+            timeline = item.get("data")
+            if timeline is None and value:
+                timeline = value.get("data")
+            timeline_valid = False
+            timeline_empty = False
+            timeline_malformed = False
+            if timeline_present:
+                if isinstance(timeline, str):
+                    try:
+                        timeline = json.loads(timeline)
+                    except json.JSONDecodeError:
+                        timeline_malformed = True
+                if not isinstance(timeline, list):
+                    timeline_malformed = True
+                elif not timeline:
+                    timeline_empty = True
+                else:
+                    for point in timeline:
+                        if not isinstance(point, dict):
+                            continue
+                        raw_timestamp = point.get("time")
+                        if raw_timestamp is None:
+                            raw_timestamp = point.get("timestamp")
+                        timestamp = ZeppParser._parse_datetime_value(raw_timestamp)
+                        reading = ZeppParser._first_number(
+                            point, ("value", "stress", "stressScore")
+                        )
+                        if (
+                            timestamp is not None
+                            and reading is not None
+                            and 0 <= reading <= 100
+                        ):
+                            timeline_valid = True
+                            break
+                    if not timeline_valid:
+                        timeline_malformed = True
+
+            if timeline_malformed and not valid_summary:
+                return False
+            return valid_summary or timeline_valid or timeline_empty or (
+                empty_summary and not timeline_present
+            )
+
+        return all(recognized_item(item) for item in items)
+
+    @staticmethod
     def parse_wellness(raw: dict, source_key: str) -> tuple[list[DailyMetric], list[MetricSample]]:
         """Parse the optional wellness shapes verified by ZeppBridge."""
         label = source_key.split(":")[1] if source_key.startswith("wellness:") else ""
@@ -1125,15 +1220,7 @@ class ZeppParser:
                 if day is None:
                     continue
                 device_id = ZeppParser._device_id(value or {}) or ZeppParser._device_id(item)
-                for metric, keys, unit in (
-                    ("stress", ("avgStress", "averageStress", "stress"), "score"),
-                    ("stress_min", ("minStress",), "score"),
-                    ("stress_max", ("maxStress",), "score"),
-                    ("stress_relaxed_pct", ("relaxPct", "relaxProportion"), "%"),
-                    ("stress_normal_pct", ("normalPct", "normalProportion"), "%"),
-                    ("stress_medium_pct", ("mediumPct", "mediumProportion"), "%"),
-                    ("stress_high_pct", ("highPct", "highProportion"), "%"),
-                ):
+                for metric, keys, unit in _ALL_DAY_STRESS_FIELDS:
                     reading = ZeppParser._first_number(item, keys)
                     if reading is None and value:
                         reading = ZeppParser._first_number(value, keys)

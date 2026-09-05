@@ -184,6 +184,13 @@ run the report tool with `--test`:
   --period evening --test
 ```
 
+For a report resent after the date has changed, add `--date YYYY-MM-DD` to
+`--period evening --test`. Only the most recent 7 days are supported, and the tool
+expands the synchronization window to cover that date. A resent report contains
+historical facts only: it omits expired training prescriptions, tonight's recovery
+advice, and tomorrow's transition advice, and leaves scheduled delivery markers
+unchanged. Morning reports, non-test delivery, and future dates cannot use this mode.
+
 Running `hermes cron run <job-id>` is an official scheduled invocation: a successful
 delivery writes the daily marker and prevents that period from being sent twice.
 

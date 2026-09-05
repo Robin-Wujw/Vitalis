@@ -135,22 +135,23 @@ loopback/private because `X-User-Id` selects identity but does not authenticate 
 
 ### Daily PushPlus Report
 
-The local production setup uses Hermes Cron as the only daily dispatcher. Vitalis runs
-as a loopback system service with its embedded scheduler disabled. The morning job runs
-hourly from 09:30 through 21:30 `Asia/Shanghai`, synchronizes two days for the explicit
-`VITALIS_USER`, and analyzes only the current local day. It sends nothing while today's
-sleep status is unavailable or `wake_time` is absent. The next hourly run synchronizes
-and checks again; once sleep is complete it sends exactly one Morning report and later
-runs skip the date using private atomic state under `~/.hermes/vitalis_push/`. It never
-substitutes yesterday's profile.
+The local production setup may use Hermes Cron as the daily scheduling entry point, or
+Vitalis' built-in scheduler; they are alternative entry points and must not both own delivery.
+With Hermes, Vitalis runs as a loopback system service with its embedded scheduler disabled.
+The Hermes Morning job runs hourly from 09:30 through 21:30 `Asia/Shanghai`, synchronizes
+two days for the explicit `VITALIS_USER`, and analyzes only the current local day. It sends
+nothing while today's sleep status is unavailable or `wake_time` is absent. The next hourly
+run synchronizes and checks again; once sleep is complete, private state markers skip a
+Morning delivery already recorded for that date. The Morning report shows returned sleep,
+body-state, and available same-day running/strength context; the absence of a workout so far
+today is not a missing item. It never substitutes yesterday's profile.
 
-A separate job runs at 22:30, synchronizes one day, and sends one Evening report for the
-current date. The Morning report interprets recovery and presents the health-first
-concurrent action plan: fused overnight health, recent running and strength balance,
-one primary session, and an optional addition or alternative with a concrete dose and
-plain-language reasons. The Evening report instead reviews completed workouts, daily
-activity and stress, a seven-night sleep-HRV trend, and rolling training load through today,
-then gives a practical recovery action and leaves tomorrow's intensity to the next
+A separate Hermes job runs at 22:30, synchronizes one day, and sends an Evening report for
+the current date. The Evening report reviews actual workout details in `started_at` order;
+when returned, it shows running metrics, explicit strength sets, and confirmed exercises,
+preserving missing and unknown units without inventing `kg` or exercise names. It also reviews
+daily activity and stress, a seven-night sleep-HRV trend, and rolling training load through
+today, then gives a practical recovery action and leaves tomorrow's intensity to the next
 complete overnight assessment. Both reports are sent with PushPlus' HTML template using
 portable inline styling; report
 values are escaped before HTML generation. The HTML root has its own high-contrast light
@@ -211,7 +212,9 @@ domain and automatically renewed TLS certificates.
 
 ## Scheduled Jobs
 
-Synchronization, analysis, and push rendering are separate stages:
+Synchronization, analysis, and push rendering are separate stages. The table describes the
+built-in scheduler times; Hermes' 09:30-21:30 hourly Morning job and 22:30 Evening job are
+alternative entry points, not the same schedule, so enable only one delivery entry point:
 
 | Local time | Job | Behavior |
 | --- | --- | --- |
@@ -270,18 +273,21 @@ git diff --check
 
 ## Development Contract
 
-The repository is pre-production and current-contract-only. It does not maintain
-legacy endpoints, migrations, backfills, dual reads, or old-data adapters. Re-ingest
-disposable local data after a contract change. Missing observations remain missing and
-must never be replaced with zero or fabricated measurements.
+The repository is pre-production and current-contract-only. It does not maintain legacy
+endpoints, backfills, dual reads, or old-data adapters. Re-ingest disposable local data after
+a contract change; known legacy SQLite layouts must first use the explicit schema-migration
+commands above for audit and migration. Missing observations remain missing and must never be
+replaced with zero or fabricated measurements.
 
-The current canonical-data constraints require a fresh database/schema when upgrading
-from an earlier checkout: stop every API, scheduler, and synchronization worker; retain a
-cold copy only for whole-version rollback; create a new empty SQLite database or
-PostgreSQL application schema; start the current code so `init_db()` creates its tables;
-then reconnect Zepp, synchronize the desired history, and run a new analysis. Do not run
-old and new versions against the same database. The application intentionally contains
-no online ALTER, legacy-row conversion, or compatibility reader for this change.
+When upgrading from an earlier checkout, stop every API, scheduler, and synchronization worker,
+retain a verified backup, and run `vitalis.storage.schema_migration audit`. For a known layout,
+run `vitalis.storage.schema_migration migrate` with the historical source and `--backup`, then
+audit again and start current code only when it reports `clean=true`. Migratable historical data
+is preserved; unknown differences require separate review rather than forced migration. Do not
+let old and new versions write the same database concurrently. Create a new empty SQLite database
+or PostgreSQL application schema only for a contract change that cannot be migrated, let
+`init_db()` create its tables, then reconnect Zepp, synchronize the desired history, and run a
+new analysis.
 
 After re-ingestion, verify that each daily table has one row per `(user_id, date)`, that
 same-time metrics from different sources/scopes/devices remain separate, that source-qualified

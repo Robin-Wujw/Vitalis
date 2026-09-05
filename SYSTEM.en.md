@@ -73,7 +73,12 @@ Historical tasks, completed TODOs, session records, and per-run verification res
 
 ## 9. Current Status
 
-Date: 2026-09-04
+Date: 2026-09-05
+
+- The local report and training-recommendation fixes passed all 513 Python tests. Synthetic morning, evening, and weekly reports had no horizontal overflow at a 390-pixel mobile layout or a 1100-pixel desktop layout. Local fixes have been verified; production deployment and this real delivery are still pending.
+- Current contracts are Daily 12.0, Weekly 5.0, MorningBriefing 2.0, Agent Context 6.0, Intelligence 11.0, and Decision Policy 8.0. Strength-detail refresh, repetition types and dose preservation, training-coverage gates, and report readability have been fixed; controlled cloud-detail validation confirmed that `strengthSets` can be empty, so app-corrected exercises have not been obtained and must not be guessed from `strengthAssess`.
+
+The following records describe the verified baseline from 2026-09-04. The server and real stress data were not revalidated in this change:
 
 - The current working branch is `fix/zepp-identity-ownership`, based on deployed commit `aef653c`. This documentation work brings all 39 project Markdown files into 19 Chinese/English pairs plus the sole inline-bilingual hub `docs/README.md`.
 - The complete post-change Python suite passed 473 tests; all 47 bilingual-contract tests in `tests/test_bilingual_markdown.py` and all 6 Balance 2 Node tests passed. Zepp identity uniqueness and migration hardening, Chinese and English documentation entry points, current SQLite schema migration, and the `all_day_stress` local-day time series have all been verified.
@@ -84,3 +89,4 @@ Date: 2026-09-04
 ## 10. Current Unfinished Work
 
 - [ ] Establish a production backup/recovery drill and long-term data-retention policy for the durable synchronization ledger.
+- [ ] Obtain a verifiable data source for Zepp app-corrected strength exercise sets; empty cloud `strengthSets` does not prove that the app has no records, and assessment fields must not be used to invent exercises or weights.

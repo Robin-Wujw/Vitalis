@@ -42,6 +42,12 @@ def _raw_week():
     raw.sleep_by_day = {}
     raw.activity_by_day = {}
     raw.training_by_day = {}
+    raw.training_history_coverage = {
+        "status": "COMPLETE",
+        "verified_days": [
+            (TARGET - timedelta(days=offset)).isoformat() for offset in range(7)
+        ],
+    }
     for offset in range(14):
         day = TARGET - timedelta(days=offset)
         current = offset < 7
@@ -97,7 +103,9 @@ def test_weekly_profile_separates_facts_inferences_and_actions():
     assert profile.facts.recovery.sleep_hrv_daily[-1].value_ms == 63
     assert any("睡眠时长" in item for item in profile.inferences.key_changes)
     codes = {item.code for item in profile.actions.recommendations}
-    assert {"ADD_AEROBIC_VOLUME", "ADD_STRENGTH_SESSIONS"} <= codes
+    assert "MAINTAIN_PLAN" in codes
+    assert "ADD_AEROBIC_VOLUME" not in codes
+    assert "ADD_STRENGTH_SESSIONS" not in codes
 
 
 def test_weekly_recovery_event_takes_action_priority():
@@ -158,3 +166,137 @@ def test_weekly_recovery_prefers_zepp_fused_sleep_hrv_over_device_stream():
     assert profile.facts.recovery.hrv_median_ms == 66
     assert profile.facts.recovery.sleep_hrv_device_id is None
     assert profile.facts.recovery.sleep_hrv_daily[-1].value_ms == 66
+
+
+def test_weekly_empty_training_history_keeps_nullable_totals_missing():
+    raw = RawDailyProfile(user_id="empty-week", day=TARGET)
+
+    profile = WeeklyProfileEngine().build("empty-run", raw, [], [])
+    training = profile.facts.training
+
+    assert training.record_days == 0
+    assert training.unknown_days == 7
+    assert training.coverage_status == "UNKNOWN"
+    assert training.workout_count == 0
+    assert training.training_days == 0
+    assert training.rest_days is None
+    assert training.duration_minutes is None
+    assert training.vendor_load is None
+    assert training.aerobic_minutes is None
+    assert training.strength_sessions is None
+    assert profile.actions.recommendations[0].code == "WEEKLY_INSUFFICIENT_DATA"
+
+
+def test_weekly_complete_seven_record_days_count_untrained_days_as_rest():
+    raw = RawDailyProfile(user_id="complete-rest-week", day=TARGET)
+    for offset in range(7):
+        day = TARGET - timedelta(days=offset)
+        raw.training_by_day[day] = {
+            "date": day,
+            "workout_count": 0,
+            "total_duration": 0,
+            "total_load": 0,
+        }
+    raw.training_history_coverage = {
+        "status": "COMPLETE",
+        "verified_days": [
+            (TARGET - timedelta(days=offset)).isoformat() for offset in range(7)
+        ],
+    }
+
+    profile = WeeklyProfileEngine().build("complete-rest-run", raw, [], [])
+    training = profile.facts.training
+
+    assert training.coverage_status == "COMPLETE"
+    assert training.record_days == 7
+    assert training.unknown_days == 0
+    assert training.training_days == 0
+    assert training.rest_days == 7
+    assert training.duration_minutes == 0
+    assert training.vendor_load == 0
+    assert training.aerobic_minutes == 0
+    assert training.strength_sessions == 0
+
+
+def test_weekly_partial_history_never_generates_catch_up_or_maintain_quota():
+    raw = RawDailyProfile(user_id="partial-week", day=TARGET)
+    for offset in range(3):
+        day = TARGET - timedelta(days=offset)
+        raw.training_by_day[day] = {
+            "date": day,
+            "workout_count": 0,
+            "total_duration": 0,
+            "total_load": 0,
+        }
+    raw.training_history_coverage = {
+        "status": "PARTIAL",
+        "verified_days": [
+            (TARGET - timedelta(days=offset)).isoformat() for offset in range(3)
+        ],
+    }
+
+    profile = WeeklyProfileEngine().build("partial-run", raw, [], [])
+    codes = {item.code for item in profile.actions.recommendations}
+
+    assert profile.facts.training.record_days == 3
+    assert profile.facts.training.unknown_days == 4
+    assert "ADD_AEROBIC_VOLUME" not in codes
+    assert "ADD_STRENGTH_SESSIONS" not in codes
+    assert "MAINTAIN_PLAN" not in codes
+    assert "WEEKLY_INSUFFICIENT_DATA" in codes
+
+
+def test_weekly_slices_29_day_coverage_and_keeps_stored_workouts_as_lower_bound():
+    raw = RawDailyProfile(user_id="slice-week", day=TARGET)
+    workout_day = TARGET - timedelta(days=1)
+    raw.training_by_day[workout_day] = {
+        "date": workout_day,
+        "workout_count": 1,
+        "total_duration": None,
+        "total_load": None,
+    }
+    raw.workouts = [{
+        "local_day": workout_day,
+        "data": {
+            "sport_mode_label": "户外跑",
+            "training_family": "aerobic",
+            "duration": 35,
+        },
+    }]
+    raw.training_history_coverage = {
+        "status": "PARTIAL",
+        "verified_days": [
+            (TARGET - timedelta(days=offset)).isoformat() for offset in range(7)
+        ] + [(TARGET - timedelta(days=7 + offset)).isoformat() for offset in range(2)],
+    }
+
+    profile = WeeklyProfileEngine().build("slice-run", raw, [], [])
+    training = profile.facts.training
+
+    assert training.coverage_status == "COMPLETE"
+    assert training.record_days == 7
+    assert training.training_days == 1
+    assert training.workout_count == 1
+    assert training.duration_minutes is None
+    assert training.vendor_load is None
+    assert training.aerobic_minutes == 35
+    assert training.rest_days == 6
+
+
+def test_weekly_comparison_requires_four_days_in_each_period():
+    raw = RawDailyProfile(user_id="comparison-week", day=TARGET)
+    for offset in range(7):
+        day = TARGET - timedelta(days=offset)
+        raw.sleep_by_day[day] = {"sleep_duration": 420}
+        raw.activity_by_day[day] = {"steps": 8000}
+    for offset in range(3):
+        day = TARGET - timedelta(days=7 + offset)
+        raw.sleep_by_day[day] = {"sleep_duration": 390}
+        raw.activity_by_day[day] = {"steps": 6000}
+
+    profile = WeeklyProfileEngine().build("comparison-run", raw, [], [])
+
+    assert profile.facts.sleep.previous_available_days == 3
+    assert profile.facts.sleep.change_percent is None
+    assert profile.facts.activity.previous_available_days == 3
+    assert profile.facts.activity.steps_change_percent is None

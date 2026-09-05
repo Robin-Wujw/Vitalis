@@ -105,7 +105,8 @@ def test_profile_api_context_missing_inputs_and_analysis_revision(client):
     context = client.get("/api/v1/intelligence/context", headers=headers)
     assert context.status_code == 200
     body = context.json()
-    assert body["schema_version"] == "5.0"
+    assert body["schema_version"] == "6.0"
+    assert body["recent"]["training_duration_minutes"] is None
     assert {item["field"] for item in body["missing_inputs"]} == {
         "sex", "confirmed_hrmax_bpm", "sleep_target_minutes"
     }

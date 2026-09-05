@@ -490,7 +490,11 @@ class TestSyncManager:
 
         assert written == 1
         assert workout is not None and workout.detail_synced is True
-        assert workout.detail == {
+        assert workout.detail is not None
+        assert workout.detail["fetched_at"].endswith("Z")
+        assert {
+            key: value for key, value in workout.detail.items() if key != "fetched_at"
+        } == {
             "schema_version": "4.0",
             "workout_id": str(int(start.timestamp())),
             "metrics_present": ["heart_rate"],

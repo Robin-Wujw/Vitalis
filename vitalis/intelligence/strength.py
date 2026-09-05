@@ -179,8 +179,12 @@ class StrengthAnalyzer:
         )
 
     def _session(self, raw, workout: dict, threshold: float | None) -> StrengthSessionAnalysis:
-        explicit = list(workout.get("confirmed_exercises") or [])
-        explicit.extend(self._vendor_exercises(raw.user_id, workout))
+        confirmed = list(workout.get("confirmed_exercises") or [])
+        explicit = (
+            self._merge_exercises(confirmed)
+            if confirmed
+            else self._vendor_exercises(raw.user_id, workout)
+        )
         patterns = sorted({item.movement_pattern for item in explicit if item.movement_pattern != "unknown"})
         muscles = sorted({muscle for item in explicit for muscle in item.muscle_groups})
         confirmed_focuses = {
@@ -221,6 +225,10 @@ class StrengthAnalyzer:
         limitations = []
         if not explicit:
             limitations.append("没有已确认动作，未推测具体动作或目标肌群。")
+            if workout.get("detail_available"):
+                limitations.append("当前云详情未返回明确动作组；App 中的修正内容尚未在已读取字段中取得。")
+        elif focus == "UNKNOWN":
+            limitations.append("已记录动作但训练重点未识别；分化未知，不套用全身动作模板。")
         if threshold is None:
             limitations.append("缺少个人乳酸阈心率，未展示本次心率区间。")
         if work_bouts is None:
@@ -261,13 +269,14 @@ class StrengthAnalyzer:
     @staticmethod
     def _vendor_exercises(user_id: str, workout: dict) -> list[StrengthExerciseRecord]:
         detail = workout.get("detail") or {}
-        items = detail.get("strength_sets") or []
+        items = detail.get("strength_sets") or [] if isinstance(detail, dict) else []
         output = []
         workout_source = str(workout.get("source") or "zepp")
         workout_id = str(workout.get("workout_id") or "")
         for order, item in enumerate(items, start=1):
-            name = item.get("exercise_name")
-            exercise_id = item.get("exercise_id")
+            value = item.get if isinstance(item, dict) else getattr(item, "__dict__", {}).get
+            name = value("exercise_name")
+            exercise_id = value("exercise_id")
             if not name and not exercise_id:
                 continue
             pattern, muscles = classify_exercise(exercise_id, name)
@@ -275,9 +284,13 @@ class StrengthAnalyzer:
             stable_id = sha256(
                 f"{user_id}|{workout_source}|{workout_id}|vendor|{order}".encode("utf-8")
             ).hexdigest()[:32]
+            repetitions = value("repetitions")
+            weight_kg = value("weight_kg")
+            rest_seconds = value("rest_seconds")
             output.append(StrengthExerciseRecord(
                 id=stable_id,
                 user_id=user_id,
+                workout_source=workout_source,
                 workout_id=workout_id,
                 order=order,
                 exercise_name=str(name or exercise_id),
@@ -288,14 +301,37 @@ class StrengthAnalyzer:
                 muscle_groups=list(muscles),
                 muscle_group_labels=[MUSCLE_LABELS[value] for value in muscles],
                 sets=1,
-                repetitions=item.get("repetitions"),
-                weight_kg=item.get("weight_kg"),
-                rest_seconds=item.get("rest_seconds"),
+                repetitions=str(repetitions) if repetitions is not None else None,
+                weight_kg=float(weight_kg) if weight_kg is not None else None,
+                rest_seconds=int(rest_seconds) if rest_seconds is not None else None,
                 source="vendor_explicit",
                 confidence=confidence,
                 confidence_label=CONFIDENCE_LABELS[confidence.value],
             ))
-        return output
+        return StrengthAnalyzer._merge_exercises(output)
+
+    @staticmethod
+    def _merge_exercises(exercises: list[StrengthExerciseRecord]) -> list[StrengthExerciseRecord]:
+        """Combine identical vendor dose rows while preserving distinct doses."""
+        merged: dict[tuple, StrengthExerciseRecord] = {}
+        for exercise in exercises:
+            identity = (exercise.exercise_id or exercise.exercise_name).strip().lower()
+            dose = (
+                identity,
+                exercise.repetitions,
+                exercise.weight_kg,
+                exercise.rest_seconds,
+                exercise.rpe,
+                exercise.rir,
+            )
+            previous = merged.get(dose)
+            if previous is None:
+                merged[dose] = exercise
+                continue
+            merged[dose] = previous.model_copy(update={
+                "sets": (previous.sets or 0) + (exercise.sets or 0),
+            })
+        return sorted(merged.values(), key=lambda item: item.order)
 
     def _work_rest(self, workout: dict, heart_rate: list):
         detail = workout.get("detail") or {}

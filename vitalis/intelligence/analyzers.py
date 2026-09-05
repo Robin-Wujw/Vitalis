@@ -915,6 +915,11 @@ class OvernightVitalsAnalyzer:
         )
 
 
+def _record_sum(records: list[dict], metric: str) -> float | None:
+    values = [float(row[metric]) for row in records if row.get(metric) is not None]
+    return sum(values) if values else None
+
+
 class TrainingAnalyzer:
     STRENGTH_TYPES = {"strength", "strength_training", "weight_training", "functional_strength"}
 
@@ -927,6 +932,7 @@ class TrainingAnalyzer:
             return TrainingFeatures(
                 status=Availability.INSUFFICIENT_DATA,
                 status_label=AVAILABILITY_LABELS[Availability.INSUFFICIENT_DATA.value],
+                history_coverage=raw.training_history_coverage,
                 limitations=["training_history_missing"],
                 limitation_labels=[LIMITATION_LABELS["training_history_missing"]],
             )
@@ -939,29 +945,35 @@ class TrainingAnalyzer:
             item for day, item in raw.training_by_day.items()
             if raw.day - timedelta(days=27) <= day <= raw.day
         ]
-        today_load = float(today.get("total_load", 0)) if today else 0.0
-        load_7d = sum(float(item.get("total_load", 0)) for item in recent_7)
+        verified_days = set(raw.training_history_coverage.get("verified_days", []))
+        today_verified = raw.day.isoformat() in verified_days
+        today_load = _record_sum([today], "total_load") if today else (0.0 if today_verified else None)
+        load_7d = _record_sum(recent_7, "total_load")
         prior_week_loads = []
         for week in range(1, 4):
             week_end = raw.day - timedelta(days=week * 7)
             week_start = week_end - timedelta(days=6)
-            prior_week_loads.append(sum(
-                float(item.get("total_load", 0))
-                for item_day, item in raw.training_by_day.items()
+            prior_week_loads.append(_record_sum([
+                item for item_day, item in raw.training_by_day.items()
                 if week_start <= item_day <= week_end
-            ))
+            ], "total_load"))
         has_full_comparison_window = bool(
             raw.training_by_day
             and min(raw.training_by_day) <= raw.day - timedelta(days=28)
         )
+        if raw.training_history_coverage:
+            has_full_comparison_window = all(
+                (raw.day - timedelta(days=offset)).isoformat() in verified_days
+                for offset in range(7, 28)
+            )
         reference = (
             sum(prior_week_loads) / len(prior_week_loads)
-            if has_full_comparison_window and sum(prior_week_loads) > 0
-            else None
+            if has_full_comparison_window and all(value is not None for value in prior_week_loads)
+            and sum(prior_week_loads) > 0 else None
         )
         load_change = (
             (load_7d - reference) / reference * 100
-            if reference and reference > 0 else None
+            if reference and load_7d is not None else None
         )
         direction = "unknown"
         if load_change is not None:
@@ -994,7 +1006,7 @@ class TrainingAnalyzer:
         recent_workouts: list[WorkoutFeature] = []
         for workout in raw.workouts:
             workout_day = workout.get("local_day")
-            if not workout_day or workout_day < raw.day - timedelta(days=6):
+            if not workout_day or not raw.day - timedelta(days=6) <= workout_day <= raw.day:
                 continue
             data = workout.get("data", {})
             workout_type = str(data.get("type", "")).lower()
@@ -1011,6 +1023,7 @@ class TrainingAnalyzer:
                 strength_days.append(workout_day)
             recent_workouts.append(WorkoutFeature(
                 date=workout_day,
+                started_at=workout.get("started_at"),
                 type=workout_type,
                 type_label=CATEGORY_LABELS.get(workout_type, "其他运动"),
                 sport_mode=sport_mode,
@@ -1037,26 +1050,38 @@ class TrainingAnalyzer:
         training_status = self._training_status(raw)
         if running.sessions_28d and running.zone_method == "unavailable":
             limitations.append("aerobic_intensity_classification_unavailable")
+        duration_7d = _record_sum(recent_7, "total_duration")
+        load_28d = _record_sum(recent_28, "total_load")
         return TrainingFeatures(
             status=Availability.AVAILABLE,
             status_label=AVAILABILITY_LABELS[Availability.AVAILABLE.value],
-            today_duration_minutes=int(today.get("total_duration", 0)) if today else 0,
+            today_duration_minutes=(
+                today.get("total_duration") if today else (0 if today_verified else None)
+            ),
             today_load=today_load,
-            today_workouts=int(today.get("workout_count", 0)) if today else 0,
-            duration_7d=sum(int(item.get("total_duration", 0)) for item in recent_7),
-            load_7d=round(load_7d, 1),
+            today_workouts=today.get("workout_count") if today else (0 if today_verified else None),
+            duration_7d=int(duration_7d) if duration_7d is not None else None,
+            load_7d=round(load_7d, 1) if load_7d is not None else None,
             load_7d_reference=round(reference, 1) if reference is not None else None,
             load_7d_change_percent=(
                 round(load_change, 1) if load_change is not None else None
             ),
-            load_28d=round(sum(float(item.get("total_load", 0)) for item in recent_28), 1),
+            load_28d=round(load_28d, 1) if load_28d is not None else None,
             aerobic_minutes_7d=aerobic_minutes,
             strength_sessions_7d=strength_sessions,
             days_since_last_strength=(raw.day - max(strength_days)).days if strength_days else None,
             workout_type_counts_7d=dict(sorted(type_counts.items())),
             workout_type_labels_7d=dict(sorted(type_labels.items())),
             sport_mode_counts_7d=dict(sorted(mode_counts.items())),
-            recent_workouts=sorted(recent_workouts, key=lambda item: item.date, reverse=True),
+            history_coverage=raw.training_history_coverage,
+            recent_workouts=sorted(
+                recent_workouts,
+                key=lambda item: (
+                    item.date,
+                    utc_to_local(item.started_at).timestamp() if item.started_at else float("-inf"),
+                ),
+                reverse=True,
+            ),
             running=running,
             strength=strength,
             training_status=training_status,

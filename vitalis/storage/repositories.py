@@ -740,22 +740,84 @@ class HealthRepository:
         end: datetime,
         limit: int = 100,
         source: str = "zepp",
+        *,
+        refresh_after: datetime | None = None,
+        strength_only: bool = False,
+        exclude_workout_ids: set[str] | None = None,
     ) -> list[orm.Workout]:
-        rows = list(self.db.execute(
-            select(orm.Workout).where(
-                orm.Workout.user_id == user_id,
-                orm.Workout.source == source,
-                orm.Workout.started_at >= _naive_utc(start),
-                orm.Workout.started_at < _naive_utc(end),
-                orm.Workout.vendor_source.is_not(None),
-            ).order_by(orm.Workout.started_at)
+        """Return bounded detail candidates, preserving backlog progress.
+
+        Unsynced/old-schema rows are always preferred.  ``refresh_after`` allows
+        scheduled runs to re-fetch recent strength sessions even when their
+        current detail already has schema 4.0; the timestamp lives in the JSON
+        detail metadata so no schema migration is needed.
+        """
+        budget = max(0, int(limit))
+        if budget == 0:
+            return []
+        conditions = [
+            orm.Workout.user_id == user_id,
+            orm.Workout.source == source,
+            orm.Workout.started_at >= _naive_utc(start),
+            orm.Workout.started_at < _naive_utc(end),
+            orm.Workout.vendor_source.is_not(None),
+        ]
+        excluded = set(exclude_workout_ids or set())
+        if excluded:
+            conditions.append(orm.Workout.workout_id.not_in(excluded))
+        if strength_only:
+            training_family = orm.Workout.data["training_family"].as_string()
+            workout_type = orm.Workout.data["type"].as_string()
+            conditions.append(or_(
+                training_family == "strength",
+                func.lower(workout_type) == "strength",
+            ))
+
+        schema_version = orm.Workout.detail["schema_version"].as_string()
+        fetched_at = orm.Workout.detail["fetched_at"].as_string()
+        backlog = or_(
+            orm.Workout.detail_synced.is_(False),
+            orm.Workout.detail_synced.is_(None),
+            orm.Workout.detail.is_(None),
+            schema_version.is_(None),
+            schema_version != "4.0",
+        )
+        order = (orm.Workout.started_at.desc(), orm.Workout.id.desc())
+        backlog_rows = list(self.db.execute(
+            select(orm.Workout).where(*conditions, backlog).order_by(*order).limit(budget)
         ).scalars().all())
-        return [
-            row for row in rows
-            if not row.detail_synced
-            or not isinstance(row.detail, dict)
-            or row.detail.get("schema_version") != "4.0"
-        ][:limit]
+        rows = list(backlog_rows)
+
+        # A refresh is a second bounded query.  It only considers current
+        # schema details with an old/missing fetched_at; fresh 4.0 details are
+        # never returned merely because the caller requested a batch.
+        remaining = budget - len(rows)
+        if refresh_after is not None and remaining > 0:
+            cutoff = _naive_utc(refresh_after)
+            cutoff_iso = cutoff.replace(tzinfo=timezone.utc).isoformat().replace(
+                "+00:00", "Z"
+            )
+            refresh_rows = list(self.db.execute(
+                select(orm.Workout).where(
+                    *conditions,
+                    orm.Workout.detail_synced.is_(True),
+                    schema_version == "4.0",
+                    or_(fetched_at.is_(None), fetched_at < cutoff_iso),
+                ).order_by(fetched_at.asc().nulls_first(), *order).limit(remaining)
+            ).scalars().all())
+            known_ids = {row.id for row in rows}
+            rows.extend(row for row in refresh_rows if row.id not in known_ids)
+
+        rows.sort(key=lambda row: (
+            not (
+                not row.detail_synced
+                or not isinstance(row.detail, dict)
+                or row.detail.get("schema_version") != "4.0"
+            ),
+            -(row.started_at.timestamp() if row.started_at else 0),
+            -row.id,
+        ))
+        return rows[:budget]
 
     def save_workout_detail(
         self,
@@ -765,6 +827,7 @@ class HealthRepository:
         samples: list[WorkoutMetricSample] | None = None,
         *,
         source: str = "zepp",
+        fetched_at: datetime | None = None,
     ) -> bool:
         row = self.db.execute(
             select(orm.Workout).where(
@@ -775,7 +838,13 @@ class HealthRepository:
         ).scalar_one_or_none()
         if row is None:
             return False
-        row.detail = detail
+        payload = dict(detail or {})
+        fetched = fetched_at or datetime.now(timezone.utc)
+        fetched = fetched if fetched.tzinfo else fetched.replace(tzinfo=timezone.utc)
+        payload["fetched_at"] = fetched.astimezone(timezone.utc).isoformat().replace(
+            "+00:00", "Z"
+        )
+        row.detail = payload
         row.detail_synced = True
         if samples is not None:
             self.db.execute(delete(orm.WorkoutMetricSample).where(
@@ -1338,6 +1407,181 @@ class HealthRepository:
         self, attempt_id: str, user_id: str | None = None, status: str | None = None
     ) -> list[orm.SyncChunk]:
         return self.sync_chunks(attempt_id, user_id=user_id, status=status)
+
+    def training_history_coverage(
+        self,
+        user_id: str,
+        start: date,
+        end: date,
+        as_of: datetime,
+    ) -> dict:
+        """Report conservative, attempt-proven workout-history coverage.
+
+        Coverage is evidence from one completed attempt at a time.  A local
+        workout row is deliberately never used as proof: every expected Zepp
+        sport partition and every pagination successor must have completed
+        fetch, parse, and write stages in that same attempt.
+        """
+        if end < start:
+            raise ValueError("训练历史覆盖窗口无效")
+        as_of_utc = as_of if as_of.tzinfo else as_of.replace(tzinfo=timezone.utc)
+        as_of_utc = as_of_utc.astimezone(timezone.utc)
+        as_of_naive = _naive_utc(as_of_utc)
+        period_start = start.isoformat()
+        period_end = end.isoformat()
+        target_days = {
+            start + timedelta(days=offset)
+            for offset in range((end - start).days + 1)
+        }
+        limitations: list[str] = []
+
+        period_start_at, _ = local_day_utc_bounds(start)
+        _, period_end_at = local_day_utc_bounds(end)
+        period_start_utc = _naive_utc(period_start_at)
+        period_end_utc = _naive_utc(period_end_at)
+
+        # This is intentionally two bounded set queries, not one query per
+        # attempt or partition.  Future terminal evidence is excluded here.
+        attempts = list(self.db.execute(
+            select(orm.SyncAttempt).where(
+                orm.SyncAttempt.user_id == user_id,
+                orm.SyncAttempt.source == "zepp",
+                orm.SyncAttempt.status.in_(("succeeded", "partial", "failed")),
+                orm.SyncAttempt.window_start < period_end_utc,
+                orm.SyncAttempt.window_end > period_start_utc,
+                orm.SyncAttempt.finished_at <= as_of_naive,
+            ).order_by(orm.SyncAttempt.finished_at.desc(), orm.SyncAttempt.created_at.desc())
+            .limit(64)
+        ).scalars().all())
+        attempt_ids = [row.id for row in attempts]
+        chunks = []
+        oversized_attempts: set[str] = set()
+        if attempt_ids:
+            chunk_counts = self.db.execute(
+                select(orm.SyncChunk.attempt_id, func.count(orm.SyncChunk.id))
+                .where(
+                    orm.SyncChunk.attempt_id.in_(attempt_ids),
+                    orm.SyncChunk.stream == "workouts",
+                )
+                .group_by(orm.SyncChunk.attempt_id)
+            ).all()
+            oversized_attempts = {
+                attempt_id for attempt_id, count in chunk_counts if count > 4096
+            }
+            chunks = list(self.db.execute(
+                select(orm.SyncChunk).where(
+                    orm.SyncChunk.attempt_id.in_(attempt_ids),
+                    orm.SyncChunk.stream == "workouts",
+                ).order_by(orm.SyncChunk.attempt_id, orm.SyncChunk.partition, orm.SyncChunk.ordinal)
+                .limit(4096)
+            ).scalars().all())
+
+        chunks_by_attempt: dict[str, list[orm.SyncChunk]] = {}
+        for chunk in chunks:
+            chunks_by_attempt.setdefault(chunk.attempt_id, []).append(chunk)
+
+        # Import lazily to keep the storage layer's normal import graph small.
+        from vitalis.connectors.zepp.client import SPORTS
+
+        verified_days: set[date] = set()
+        saw_relevant_attempt = False
+        saw_partial_evidence = False
+        last_synced_at: datetime | None = None
+        as_of_local_day = local_day(as_of_utc)
+        for attempt in attempts:
+            attempt_chunks = chunks_by_attempt.get(attempt.id, [])
+            if not attempt_chunks:
+                continue
+            saw_relevant_attempt = True
+            if attempt.id in oversized_attempts:
+                limitations.append("attempt 的 workouts 分页 chunk 超出有界查询，未确认覆盖")
+                saw_partial_evidence = True
+                continue
+            # Never discard a future or unfinished successor.  Its presence
+            # means the attempt cannot prove the complete pagination chain.
+            if any(
+                chunk.finished_at is None or chunk.finished_at > as_of_naive
+                for chunk in attempt_chunks
+            ):
+                limitations.append("attempt 存在未完成或晚于 as_of 的 workouts 分页 chunk")
+                saw_partial_evidence = True
+                continue
+            by_partition: dict[str, list[orm.SyncChunk]] = {}
+            for chunk in attempt_chunks:
+                if chunk.partition in SPORTS:
+                    by_partition.setdefault(chunk.partition, []).append(chunk)
+            complete = True
+            for sport in SPORTS:
+                sport_chunks = by_partition.get(sport, [])
+                if not sport_chunks or any(
+                    chunk.status != "succeeded"
+                    or chunk.fetch_status != "success"
+                    or chunk.parse_status != "success"
+                    or chunk.write_status != "success"
+                    for chunk in sport_chunks
+                ):
+                    complete = False
+                    break
+            if not complete:
+                if any(
+                    chunk.status == "succeeded"
+                    and chunk.fetch_status == "success"
+                    and chunk.parse_status == "success"
+                    and chunk.write_status == "success"
+                    for chunk in attempt_chunks
+                ):
+                    saw_partial_evidence = True
+                continue
+
+            window_start = max(attempt.window_start, period_start_utc)
+            window_end = min(attempt.window_end, period_end_utc)
+            if window_start >= window_end:
+                continue
+            confirmed_for_attempt: set[date] = set()
+            for day in target_days:
+                if day > as_of_local_day:
+                    continue
+                day_start, day_end = local_day_utc_bounds(day)
+                required_end = day_end
+                if day == as_of_local_day:
+                    required_end = min(day_end, as_of_utc)
+                if (
+                    window_start <= _naive_utc(day_start)
+                    and window_end >= _naive_utc(required_end)
+                ):
+                    confirmed_for_attempt.add(day)
+                    verified_days.add(day)
+            if confirmed_for_attempt:
+                for chunk in attempt_chunks:
+                    candidate = chunk.finished_at.replace(tzinfo=timezone.utc)
+                    if last_synced_at is None or candidate > last_synced_at:
+                        last_synced_at = candidate
+
+        if not attempts:
+            limitations.append("没有截至 as_of 的 Zepp 同步 attempt 证据")
+        elif not saw_relevant_attempt:
+            limitations.append("匹配的 attempt 没有 workouts 分区记录")
+        if saw_relevant_attempt and len(verified_days) < len(target_days):
+            limitations.append("至少一个窗口缺少完整的 required sport 分区或分页 chunk")
+        if as_of_utc.date() < end:
+            limitations.append("窗口末端晚于 as_of，未来日期不计入覆盖")
+        if not verified_days:
+            status = "PARTIAL" if saw_partial_evidence else "UNKNOWN"
+        elif verified_days == target_days:
+            status = "COMPLETE"
+        else:
+            status = "PARTIAL"
+        return {
+            "status": status,
+            "period_start": period_start,
+            "period_end": period_end,
+            "verified_days": [day.isoformat() for day in sorted(verified_days)],
+            "last_synced_at": (
+                last_synced_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+                if last_synced_at else None
+            ),
+            "limitations": limitations,
+        }
 
     def sync_chunk(
         self, attempt_id: str, stable_key: str, user_id: str | None = None

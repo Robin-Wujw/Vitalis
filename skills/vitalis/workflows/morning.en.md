@@ -2,7 +2,11 @@
 
 [简体中文](morning.md)
 
-Use the requested date, or today's date when none is given. Read `tools/morning_briefing.py` first and render only its fields. Do not reconstruct a report from DailyProfile features. All runtime user-visible output must be ordinary Chinese, phrased like a coach explaining what to do today, in this order:
+Use the requested date, or today's date when none is given. Read `tools/morning_briefing.py` first and render only its fields. Do not reconstruct a report from DailyProfile features. All runtime user-visible output must be ordinary Chinese, phrased like a coach explaining what to do today.
+
+First show the returned sleep and body-state entries in `observations`; include returned same-day running or strength context when present. The absence of a workout so far today is not a missing item and must not turn the Morning briefing into `INSUFFICIENT_DATA`.
+
+Render in this order:
 
 1. `今天做什么`: Preserve the duration, intensity, and steps from `action_plan.primary_session`. If `optional_session` exists, explain naturally in Chinese whether it is an optional addition or an either/or choice according to `session_relationship`. Never present an either/or choice as two required sessions on the same day.
 2. `为什么`: Repeat each item in `key_reasons`, up to three. Do not add device names, sleep stages, vendor scores, raw metrics, or internal codes.

@@ -130,7 +130,7 @@ The implementation lives in `vitalis/intelligence`:
 
 ### 3.1 DailyProfile
 
-The wire contract is `schema_version=11.0`. Every result carries `analysis_run_id`,
+The wire contract is `schema_version=12.0`. Every result carries `analysis_run_id`,
 `intelligence_version`, `decision_policy_version`, and `evidence_version` separately:
 
 ```text
@@ -147,14 +147,20 @@ DailyProfile
 `- metadata: identity and product-policy versions
 ```
 
+`DailyProfile.report_context` is an explicit dictionary for freshness and coverage
+boundaries. It contains `as_of` (an ISO UTC timestamp), `timezone`, `target_date`,
+`target_day_complete`, `training_history`, and `latest_observations`. `training_history`
+reports `status` (`COMPLETE`/`PARTIAL`/`UNKNOWN`), `verified_days`, `last_synced_at`, and
+`prior_7d_verified`; absent training history is never interpreted as zero training or rest.
+
 There is no uncalibrated Vitalis 0-100 recovery score. Vendor readiness, Charge, and
 sleep scores are labeled as vendor context and do not become the Vitalis result.
 
 #### 3.1.1 Open Health shadow insights
 
-DailyProfile 11.0, WeeklyProfile 4.0, MonthlyProfile 2.0, and Agent Context 5.0 expose a versioned `open_health_insights` block. It contains transparent personal-baseline readiness, robust multi-signal anomaly screening, sleep efficiency/regularity, user-target sleep gaps, Banister TRIMP, and descriptive ATL/CTL/TSB.
+DailyProfile 12.0, WeeklyProfile 5.0, MonthlyProfile 2.0, and Agent Context 6.0 expose a versioned `open_health_insights` block. It contains transparent personal-baseline readiness, robust multi-signal anomaly screening, sleep efficiency/regularity, user-target sleep gaps, Banister TRIMP, and descriptive ATL/CTL/TSB.
 
-These outputs are strictly `shadow_only=true`. They never enter `RecoveryFeatures.state`, `DecisionEngine`, decision confidence, rule IDs, or ActionPlan. The current decision policy remains 7.0. A future policy must explicitly version and test any use of these signals.
+These outputs are strictly `shadow_only=true`. They never enter `RecoveryFeatures.state`, `DecisionEngine`, decision confidence, rule IDs, or ActionPlan. The current decision policy remains 8.0. A future policy must explicitly version and test any use of these signals.
 
 User-confirmed physiology is stored in a revisioned `UserProfile`. `sex` and confirmed HRmax are never inferred from age, workout maximum heart rate, vendor readiness, lactate threshold, or device-zone boundaries. Missing fields become typed Agent Context questions. Current Zepp apptoken synchronization does not call an unverified cloud profile endpoint.
 
@@ -234,11 +240,16 @@ an independent interaction timestamp and never changes physiological lifecycle s
 
 ### 3.5 WeeklyProfile and Feedback
 
-WeeklyProfile covers the seven local days ending on the requested date and compares
-them with the preceding seven days. Its contract separates wearable/aggregate `facts`,
-Vitalis `inferences`, and deterministic `actions`. Recovery events take priority over
-generic volume targets. Subjective RPE, physical fatigue, mental state, soreness, and
-notes remain distinct from device facts and are never inferred when absent.
+WeeklyProfile 5.0 covers the rolling seven local days ending on the requested date and
+compares them with the preceding seven days. Its `report_context` also retains whether the
+target day is complete and the training-history coverage; an incomplete target day must be stated.
+Its contract separates wearable/aggregate `facts`, Vitalis `inferences`, and deterministic
+`actions`. Recovery events take priority over generic volume targets. Subjective RPE, physical
+fatigue, mental state, soreness, and notes remain distinct from device facts and are never
+inferred when absent. Weekly sleep and activity facts each report `previous_available_days`.
+Training facts report `record_days`, `unknown_days`, `coverage_status`, and `totals_are_partial`;
+`rest_days`, `duration_minutes`, `vendor_load`, `aerobic_minutes`, and `strength_sessions`
+remain null when they cannot be confirmed.
 
 An explicit analysis command persists one immutable AnalysisRun and immutable Daily,
 Weekly, Monthly, Training Response, Personal Association, and Personal Model snapshots.
@@ -288,7 +299,7 @@ personal associations. It contains no ML, synthetic stress score, or causal clai
 
 Health Timeline projects typed summaries for analysis, recommendation, workout,
 feedback, event transition, training response, monthly summary, and supported personal
-association. It never copies raw sensor or workout samples. Agent Context 5.0 contains
+association. It never copies raw sensor or workout samples. Agent Context 6.0 contains
 only bounded Current, Recent, Trend, and Personal layers, with hard item caps and no
 embedded Daily/Weekly/Monthly payloads.
 
@@ -319,7 +330,7 @@ weekly context but does not replace load, completed sets/reps/weight, or reliabl
 individualized aerobic-intensity classification.
 
 Training content is deterministic engine output, not model-generated advice. Decision
-Policy 7.0 returns an `ActionPlan` with one primary session and at most one optional
+Policy 8.0 returns an `ActionPlan` with one primary session and at most one optional
 compatible addition or alternative. Every session includes dose, evidence, progression,
 stop conditions, and a local-day expiry. The current session library includes:
 
@@ -349,11 +360,15 @@ recent recognized aerobic session selects strength next, and the most recent str
 session selects running next, even when weekly target deficits differ. Recovery,
 availability, injury, and load-conflict gates still take precedence. Weather fallback
 preferences are stored deterministically, but are not applied until a weather source is
-configured; Vitalis never invents weather conditions.
+configured; Vitalis never invents weather conditions. Users may retain the `BALANCE` or
+`ALTERNATE` choice. The 7-day deficit drives selection; sufficient 28-day history is reference
+only and never creates catch-up work. A conflict reduces the actual dose. Unknown training
+prior-7-day coverage produces no training prescription, while sleep and other available signals
+may still be explained. Events with lifecycle `RESOLVED` are no longer current restrictions.
 
 ### 3.10 Running Analysis
 
-DailyProfile 11.0 embeds `TrainingFeatures.running` with Running Analysis v2. Each
+DailyProfile 12.0 embeds `TrainingFeatures.running` with Running Analysis v2. Each
 session preserves distance, duration, derived and equivalent pace, median speed and cadence,
 cadence variability, power, ground-contact time, vertical oscillation, vertical stride
 ratio, HR-zone duration, cardiac drift, detected work/recovery segments, classification
@@ -393,7 +408,11 @@ optional network, service, parse, or authentication failures block overall succe
 preserving earlier successful writes. `GET /health/data-health` exposes this diagnostic
 contract without measurement values, lease tokens, raw errors, or private file identifiers;
 `GET /health/sync/{attempt_id}` exposes user-scoped progress and
-`POST /health/sync/{attempt_id}/cancel` persists cancellation.
+`POST /health/sync/{attempt_id}/cancel` persists cancellation. Delivery and synchronization
+timeouts and 5xx responses are retryable; an explicit `reauth` blocks further delivery and
+cannot be hidden by retrying. CLI and built-in paths share the same user/date delivery-lock
+marker. `partial` is determined per data-stream domain and cannot be treated as whole-sync
+completion merely because another domain succeeded.
 
 The running prescription consumes those session facts. It chooses among recovery,
 easy, steady, threshold, and long-easy sessions using recent hard-session timing,
@@ -404,7 +423,7 @@ natural observation, never as a universal cadence target.
 
 ### 3.11 Strength Analysis
 
-DailyProfile 11.0 embeds `TrainingFeatures.strength` with Strength Analysis v1. A user
+DailyProfile 12.0 embeds `TrainingFeatures.strength` with Strength Analysis v1. A user
 can confirm exercise name, set count, repetitions, load, RPE/RIR, rest, and session
 focus against a user-owned strength workout. Vitalis normalizes known Chinese or
 English exercise names to movement patterns and muscle groups while preserving the
@@ -414,7 +433,15 @@ Explicit vendor sets and user-confirmed exercises are the only sources of exact
 exercise identity. When they are absent, workout heart rate or verified zero-distance
 laps may estimate work-bout count and work/rest duration, but cannot identify a squat,
 bench press, or any target muscle. Strength heart-rate zones describe cardiovascular
-context only and never represent load intensity.
+context only and never represent load intensity. The Balance 2 app's `strengthSets` may be a
+string or a list; cross-layer handling converts integer `reps` to a string and preserves sets
+with the same dose but different weight/repetition values. Unknown units remain unknown; `kg` is
+not added. Local whole-session user confirmation takes precedence over vendor sets. Cached
+strength detail from the recent 28 days is refreshed within a bounded budget (at most 4 per
+refresh, with no guarantee that one pass covers all), and refresh time is recorded as `fetched_at`.
+Three or four real cloud-detail sessions from users have not been verified, so the system does
+not claim to have obtained them; upstream ZeppBridge v2.1.0 also has no directly provable
+strength-sets decoder.
 
 The last 28 days support confidence-bounded full-body, upper/lower, push-pull-legs, and
 five-day split detection. A next focus is returned only after a recognizable rotation
@@ -431,7 +458,7 @@ rule.
 
 ### 3.12 Nocturnal Recovery Context
 
-DailyProfile 11.0 keeps timestamped ordinary heart rate separate from daily metric
+DailyProfile 12.0 keeps timestamped ordinary heart rate separate from daily metric
 series. For each sleep interval, the engine isolates device streams and requires at
 least 120 covered minutes and 50% interval coverage. It derives the nightly median, a
 rolling five-minute median low point, first- and second-half medians, and coverage.
@@ -495,22 +522,29 @@ engine fields. Hermes never derives one intelligence contract from another.
                      -> Evening renderer -> PushPlus -> mark sent
 ```
 
+The flow above is the Vitalis built-in scheduler entry point. Hermes' 09:30-21:30 hourly
+Morning job and 22:30 Evening job are alternative entry points, not the same schedule; a
+deployment should use only one entry point for actual delivery.
+
 The morning scheduler defers while today's sleep record has no wake time and never
 substitutes stale health results. Morning and evening use separate per-user, per-date
 delivery markers, so retries and overlapping invocations do not duplicate a successful
 PushPlus delivery. The evening report is not blocked by the morning sleep gate.
 
 The morning renderer is a deterministic presentation-selection layer over the complete
-DailyProfile. It emits one conclusion, concrete primary/optional actions, short reasons,
-at most one actionable event, and only consequential cautions. Per-device streams,
-raw trend windows, empty signal groups, unknown safety inputs, passed checks, planning
-gates, and generic limitations stay in the structured profile instead of being copied
-into the daily push.
+DailyProfile. With `MorningBriefing schema_version=2.0`, it emits sleep and body-state observations,
+available same-day running/strength context, one conclusion, concrete primary/optional actions,
+short reasons, at most one actionable event, and only consequential cautions. The absence of a
+workout so far today is not a missing item; only insufficient decision signals produce
+`INSUFFICIENT_DATA`. Per-device streams, raw trend windows, empty signal groups, unknown safety
+inputs, passed checks, planning gates, and generic limitations stay in the structured profile
+instead of being copied into the daily push.
 
-The evening renderer is a separate deterministic view. It reports today's actual
-workout metrics when present, summarizes fused daily activity and device-recorded
-stress, explains the recent completed-day training load, and closes with recovery and
-next-day continuity actions. It does not turn a day without formal training into a
+The evening renderer is a separate deterministic view. When present, it reports each actual
+workout today in `started_at` order, including running metrics and explicit strength sets;
+missing and unknown units remain missing, with no invented `kg` or exercise. It summarizes fused
+daily activity and device-recorded stress, explains the recent completed-day training load, and
+closes with recovery and next-day continuity actions. It does not turn a day without formal training into a
 problem, infer readiness from load alone, or print low-confidence workout type and
 cardiac-drift claims.
 
@@ -535,7 +569,9 @@ for the weekly display trend.
 Training `load_7d`, duration, and comparison windows are rolling local-day windows ending
 on the analysis date. The evening report therefore includes today's completed training;
 the three comparison weeks are the immediately preceding non-overlapping seven-day
-windows.
+windows. WeeklyProfile likewise covers the rolling seven local days ending on the requested date;
+when `report_context.target_day_complete=false`, it must state that the target day is incomplete
+and must not treat it as a complete record day.
 
 ## 6. Evidence Boundaries
 

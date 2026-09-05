@@ -6,6 +6,12 @@ All paths below are prefixed with `/api/v1`. User-scoped endpoints require an ex
 `X-User-Id` header; there is no implicit default user. Intelligence GET requests are
 side-effect free and return `404` when the requested snapshot has not been generated.
 
+`report_context` in DailyProfile 12.0 and WeeklyProfile 5.0 retains `as_of` (ISO UTC),
+`timezone`, `target_date`, `target_day_complete`, `training_history`, and
+`latest_observations`. `training_history` contains `status` (`COMPLETE`/`PARTIAL`/`UNKNOWN`),
+`verified_days`, `last_synced_at`, and `prior_7d_verified`; it explains data boundaries and
+never turns unknown training days into zero or rest.
+
 ## Connect and Import
 
 | Method | Path | Purpose |
@@ -33,13 +39,14 @@ credential and both users' historical records remain unchanged.
 | POST | `/intelligence/analyze?day=YYYY-MM-DD` | Run deterministic analysis and persist immutable snapshots |
 | GET | `/intelligence/profile` | Read the revisioned user-confirmed physiology and sleep profile |
 | PATCH | `/intelligence/profile` | Patch explicit profile fields with `expected_revision` conflict protection |
-| GET | `/intelligence/daily?day=YYYY-MM-DD` | Read DailyProfile 11.0 facts, persisted decision evidence, and shadow-only open health insights |
-| GET | `/intelligence/weekly?day=YYYY-MM-DD` | Read the 7-day profile and prior-week comparison |
+| GET | `/intelligence/daily?day=YYYY-MM-DD` | Read DailyProfile 12.0 facts, persisted decision evidence, and shadow-only open health insights |
+| GET | `/intelligence/morning-briefing?day=YYYY-MM-DD` | Read the MorningBriefing schema_version=2.0 morning presentation projection |
+| GET | `/intelligence/weekly?day=YYYY-MM-DD` | Read the rolling 7-day WeeklyProfile 5.0 and prior-week comparison |
 | GET | `/intelligence/monthly?day=YYYY-MM-DD` | Read the directly computed 28-day profile |
 | GET | `/intelligence/trends?day=YYYY-MM-DD` | Read device-isolated 7/28/90-day trends |
 | GET | `/intelligence/events?start=&end=&event_type=` | Read health-event lifecycle state |
 | GET | `/intelligence/explain?day=YYYY-MM-DD` | Read one persisted decision explanation, including snapshot provenance and data quality |
-| GET | `/intelligence/context?day=YYYY-MM-DD` | Read bounded Current/Recent/Trend/Personal agent context |
+| GET | `/intelligence/context?day=YYYY-MM-DD` | Read bounded Agent Context 6.0 Current/Recent/Trend/Personal context |
 | GET | `/intelligence/training-responses?day=YYYY-MM-DD` | Read T+1/T+2/T+3 post-workout responses |
 | GET | `/intelligence/personal-model?day=YYYY-MM-DD` | Read baselines, response distributions, and supported associations |
 | GET | `/intelligence/personal-associations?day=YYYY-MM-DD` | Read 60/90-day association evaluations |
@@ -80,9 +87,11 @@ stress intervals.
 Attempts use local-date windows, so repeated equivalent requests reuse an active ledger
 entry instead of differing by request-time seconds. Public status omits lease tokens,
 internal stages, and raw vendor errors. `retry_wait` retains completed chunks and the next
-retry timestamp; `needs_reauth` is reserved for classified authentication rejection;
-`partial` includes mixed success/unavailable coverage or an explicit caller deadline.
-Cancellation is idempotent and survives process restart. A manual request advances at
+retry timestamp; timeouts and 5xx responses are retryable; `needs_reauth` is reserved for
+classified authentication rejection and blocks further delivery; `partial` is determined per
+data-stream domain and includes mixed success/unavailable coverage or an explicit caller deadline.
+CLI and built-in delivery entry points share the user/date lock marker. Cancellation is idempotent
+and survives process restart. A manual request advances at
 most `SYNC_DISPATCHER_BATCH_CHUNKS` chunks before returning; a `queued` response is normal
 for larger windows, and the lifespan-owned dispatcher continues the same attempt.
 
@@ -161,13 +170,16 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/st
 
 ## Contract Boundaries
 
+- `GET /intelligence/morning-briefing` returns the `MorningBriefing schema=2.0`
+  `observations`, `key_reasons`, `cautions`, and `report_context`; having no workout today
+  is not a missing item.
 - `POST /intelligence/analyze` is the calculation command; GET endpoints do not run or
   mutate analysis. `GET /intelligence/explain` returns 404 when no snapshot exists; a
   Hermes explanation must report that state without synchronizing or analyzing.
 - Daily, Weekly, Monthly, Training Response, Personal Association, and Personal Model
   snapshots share one AnalysisRun identity.
 - Facts, inferences, and actions remain distinct in period profiles.
-- `open_health_insights` is shadow-only. It may explain readiness, sleep, TRIMP, ATL, CTL, and TSB, but it does not change Decision Policy 7.0, recovery state, action, rule IDs, or ActionPlan.
+- `open_health_insights` is shadow-only. It may explain readiness, sleep, TRIMP, ATL, CTL, and TSB, but it does not change Decision Policy 8.0, recovery state, action, rule IDs, or ActionPlan.
 - User-confirmed profile values have revisioned provenance. Age formulas, workout maximum heart rate, Zepp scores, and device-zone boundaries never silently populate confirmed HRmax.
 - Missing measurements remain null or produce explicit insufficient-data/refusal state.
 - Canonical workout identity is `(source, workout_id)`. Detail reads, recommendation
@@ -181,7 +193,13 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/st
 - Training-response overlap identities use `source:workout_id`; comparable-run baselines
   return parallel workout source and ID arrays.
 - Exact strength exercises come only from explicit vendor sets or user confirmation.
-  Heart rate can estimate work/rest structure but not exercise identity or load.
+  Heart rate can estimate work/rest structure but not exercise identity or load. `strengthSets`
+  accepts a string or list, and cross-layer handling converts integer `reps` to a string;
+  same-dose sets with different weight/repetition values are preserved. Unknown units remain
+  unknown and `kg` is not added. Local whole-session confirmation takes precedence; recent
+  28-day detail is refreshed within a bounded budget of at most 4, with refresh time in
+  `fetched_at`, and one pass is not guaranteed to cover all. Unverified real cloud detail is
+  not claimed as obtained.
 - `decision.action_plan` contains one primary session and at most one optional addition
   or alternative. It includes 7/28-day balance, safety state, conflict checks, evidence,
   dose, stop conditions, missing-input gates, and local-day expiry. Removed generic

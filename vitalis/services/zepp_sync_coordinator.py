@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import hashlib
 import logging
+import os
 import random as random_module
 from threading import Event, Thread
 import time
@@ -47,6 +48,7 @@ MAX_CHUNK_ATTEMPTS = 5
 CHUNK_LEASE_SECONDS = 120
 ATTEMPT_LEASE_SECONDS = 300
 MAX_DETAIL_CHUNKS = 4
+DETAIL_REFRESH_DAYS = 28
 MAX_DENSE_ARCHIVE_CHUNKS = 1
 
 log = logging.getLogger("vitalis.sync")
@@ -444,6 +446,7 @@ class ZeppSyncCoordinator:
                 return None
             return {
                 "id": row.id, "user_id": row.user_id, "status": row.status,
+                "trigger": row.trigger, "created_at": row.created_at,
                 "window_start": row.window_start, "window_end": row.window_end,
                 "deadline_at": row.deadline_at, "options": dict(row.options or {}),
                 "cancel_requested_at": row.cancel_requested_at,
@@ -637,6 +640,7 @@ class ZeppSyncCoordinator:
             row = repo.sync_attempt(attempt_id)
             assert row is not None
             return ({"id": row.id, "user_id": row.user_id, "status": row.status,
+                     "trigger": row.trigger, "created_at": row.created_at,
                      "window_start": row.window_start, "window_end": row.window_end,
                      "deadline_at": row.deadline_at, "options": dict(row.options or {}),
                      "cancel_requested_at": row.cancel_requested_at}, token, row.lease_epoch)
@@ -698,12 +702,36 @@ class ZeppSyncCoordinator:
         remaining = MAX_DETAIL_CHUNKS - len(known)
         if remaining <= 0:
             return specs
+
+        detail_window = FetchWindow(chunk["window_start"], chunk["window_end"])
+        strength_only = False
+        refresh_after = None
+        if attempt.get("trigger") in {"manual", "morning", "evening"}:
+            # The daily health request stays at 1/2 days.  Only the bounded
+            # detail refresh looks back 28 days, so old app detail caches are
+            # refreshed without expanding every vendor request.  Manual is the
+            # real /health/sync entry point used by the Hermes CLI; it must not
+            # be relabeled as a scheduled trigger because that would deliver a
+            # duplicate report from the terminal callback.
+            end_day = date.fromisoformat(detail_window.end_day())
+            start_day = end_day - timedelta(days=DETAIL_REFRESH_DAYS - 1)
+            detail_window = FetchWindow.local_dates(start_day, end_day)
+            refresh_after = attempt.get("created_at")
+
+        known_workout_ids = {
+            partition.split(":", 1)[1]
+            for partition in known
+            if partition.startswith("zepp:")
+        }
         pending = repo.pending_workout_details(
             attempt["user_id"],
-            chunk["window_start"],
-            chunk["window_end"],
+            detail_window.start,
+            detail_window.end,
             limit=remaining,
             source="zepp",
+            refresh_after=refresh_after,
+            strength_only=strength_only,
+            exclude_workout_ids=known_workout_ids,
         )
         for workout in pending:
             if not workout.workout_id or not workout.vendor_source:
@@ -717,7 +745,7 @@ class ZeppSyncCoordinator:
             }
             specs.append(self._spec(
                 "workout_detail", part,
-                FetchWindow(chunk["window_start"], chunk["window_end"]),
+                detail_window,
                 health_stream="workout_detail",
                 ordinal=100000 + len(existing) + len(specs),
                 operation="fetch_workout_detail",
@@ -1166,16 +1194,25 @@ class ZeppSyncCoordinator:
                 elif status in {"partial", "failed", "cancelled"}:
                     repo.mark_browser_link_sync_failed(link_digest, "数据同步不完整，将稍后重试")
 
-        if status != "succeeded" or trigger not in {"nightly", "morning", "evening"}:
+        if status not in {"succeeded", "partial"} or trigger not in {"nightly", "morning", "evening"}:
             return
         try:
             from vitalis.intelligence.service import IntelligenceCommand
 
             result = IntelligenceCommand().analyze(user_id)
             if trigger in {"morning", "evening"}:
-                from vitalis.services.push_service import PushService
+                from vitalis.services.daily_push import deliver_daily_report
 
-                PushService().push_daily_profile(user_id, result.daily, period=trigger)
+                daily = (
+                    result.daily.model_dump(mode="json")
+                    if hasattr(result.daily, "model_dump") else result.daily
+                )
+                deliver_daily_report(
+                    user_id,
+                    os.getenv("PUSHPLUS_TOKEN", ""),
+                    daily,
+                    period=trigger,
+                )
         except Exception:
             log.exception(
                 "scheduled post-sync action failed: trigger=%s user=%s attempt=%s",

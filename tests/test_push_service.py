@@ -337,7 +337,7 @@ def test_morning_push_renders_actionable_coach_brief_without_audit_noise():
     assert message.title == "Vitalis 晨报 · 2026-08-28 · 轻松跑"
     assert message.template == "html"
     assert message.body.startswith('<div style="max-width:680px')
-    for heading in ("今天做什么", "为什么", "注意", "训练后告诉我"):
+    for heading in ("昨晚睡眠与身体状态", "今天做什么", "为什么", "注意", "训练后告诉我"):
         assert f">{heading}</h2>" in message.body
     for heading in ("今日状态", "昨夜数据", "最近 7 天", "今天安排", "开放洞察"):
         assert f">{heading}</h2>" not in message.body
@@ -352,7 +352,6 @@ def test_morning_push_renders_actionable_coach_brief_without_audit_noise():
     for raw_text in (
         "睡眠：7 小时 27 分钟",
         "快速眼动睡眠 106 分钟",
-        "心率变异性 71 毫秒",
         "静息心率 47 次/分钟",
         "每小时下降 2.84 次",
         "构成：跑步 2 次、82 分钟、14.2 公里",
@@ -437,7 +436,7 @@ def test_evening_push_names_exact_workout_mode_in_chinese():
     assert "这表示近期训练刺激增加，不代表恢复变差" in text
     assert "训练刺激减少" not in text
     assert "今晚不再追加跑步或腿部力量" in text
-    assert "明天先按低负担方向预留" in text
+    assert "今天的训练记录提示明天避免连续安排质量跑和腿部力量" in text
     assert "趋势与事件" not in text
     assert "数据限制" not in text
 
@@ -455,10 +454,10 @@ def test_evening_rest_day_reports_activity_without_treating_rest_as_a_problem():
 
     message = received[0]
     assert message.title == "Vitalis 晚报 · 2026-08-28 · 日常活动回顾"
-    assert "按正常节奏收尾即可，不需要在晚上补课" in message.body
+    assert "今天没有正式训练记录；这只是对当前记录的观察，不能据此推断休息状态" in message.body
     assert "今天走了 8,632 步" in message.body
-    assert "今天没有正式训练。晚上不用补训练" in message.body
-    assert "今天没有训练不需要用明天加量补偿" in message.body
+    assert "今晚不据此判断恢复状态，也不安排补训练" in message.body
+    assert "今天没有训练记录，不需要用明天加量补偿" in message.body
     assert "恢复受抑制" not in message.body
 
 
@@ -760,7 +759,7 @@ def test_morning_push_does_not_invent_training_when_data_is_insufficient():
 
     text = _visible_text(received[0].body)
     assert "今天不生成训练建议。" in text
-    assert "恢复决策所需信号不足，今天不生成训练建议。" in text
+    assert "恢复决策所需信号不足" in text
     assert "睡眠时长" in text and "心率变异性" in text
     assert "训练后告诉我" not in text
     assert "先按正常生活节奏活动" not in text
@@ -838,6 +837,173 @@ def test_pushplus_application_error_is_failed_delivery(monkeypatch):
     assert "sensitive upstream response" not in result["_pushplus_handler"]
 
 
+def test_morning_push_uses_gate_evidence_for_insufficient_data_reason():
+    received = []
+    payload = deepcopy(_profile_payload())
+    payload["decision"].update({
+        "action": "INSUFFICIENT_DATA",
+        "action_label": "数据不足，暂不建议",
+        "evidence": {
+            "facts": [],
+            "gates": [{
+                "code": "DECISION.TRAINING_HISTORY_COVERAGE_INSUFFICIENT",
+                "label": "此前训练记录不足，暂不处方",
+                "triggered": True,
+            }],
+        },
+    })
+    payload["decision"]["action_plan"].update({
+        "primary_session": None,
+        "optional_session": None,
+        "session_relationship": "NONE",
+    })
+    service = PushService(pushplus_token="")
+    service.add_handler(received.append)
+
+    service.push_daily_profile("test-user", payload, period="morning")
+
+    text = _visible_text(received[0].body)
+    assert "此前训练记录不足，暂不处方" in text
+    assert "恢复决策所需信号不足，今天不生成训练建议" not in text
+
+
+def test_morning_push_leads_with_numeric_overnight_observations_and_reports_baseline_gap():
+    received = []
+    payload = deepcopy(_profile_payload())
+    payload["features"]["sleep"]["duration_deviation"] = None
+    payload["features"]["hrv"]["deviation"] = None
+    service = PushService(pushplus_token="")
+    service.add_handler(received.append)
+
+    service.push_daily_profile("test-user", payload, period="morning")
+
+    text = _visible_text(received[0].body)
+    assert "昨晚睡眠与身体状态" in text
+    assert "昨晚睡眠 447 分钟；个人基线不足，暂不比较" in text
+    assert "设备 心率变异性 71 毫秒；个人基线不足，暂不比较" in text
+    assert "综合身体状态：恢复良好。" in text
+    assert received[0].extras["report_context"]["device_recovery_readiness"] == 78
+    assert text.index("昨晚睡眠与身体状态") < text.index("今天做什么")
+
+
+def test_morning_push_renders_all_hard_safety_stop_conditions_separately():
+    received = []
+    payload = deepcopy(_profile_payload())
+    plan = payload["decision"]["action_plan"]
+    plan["safety_status"] = "LIMITED"
+    plan["safety_status_label"] = "存在疼痛或伤病限制"
+    plan["primary_session"]["stop_conditions"] = [
+        "疼痛时停止。", "症状加重时寻求评估。"
+    ]
+    plan["optional_session"]["stop_conditions"] = ["动作失控时停止。"]
+    service = PushService(pushplus_token="")
+    service.add_handler(received.append)
+
+    service.push_daily_profile("test-user", payload, period="morning")
+
+    body = received[0].body
+    assert ">安全限制</h2>" in body
+    assert "疼痛时停止。" in body
+    assert "症状加重时寻求评估。" in body
+    assert "动作失控时停止。" in body
+
+
+def test_evening_push_reports_confirmed_strength_exercise_load_details():
+    received = []
+    payload = deepcopy(_profile_payload())
+    payload["features"]["training"]["strength"]["recent_sessions"][0][
+        "explicit_exercises"
+    ] = [{
+        "exercise_name": "卧推",
+        "sets": 4,
+        "repetitions": "6–8 次",
+        "weight_kg": 60,
+        "rpe": 8,
+        "rir": 2,
+        "rest_seconds": 120,
+    }]
+    service = PushService(pushplus_token="")
+    service.add_handler(received.append)
+
+    service.push_daily_profile("test-user", payload, period="evening")
+
+    text = _visible_text(received[0].body)
+    assert "卧推：4 组 · 6–8 次 · 60 千克 · RPE 8 · 余力 2 · 休息 120 秒" in text
+
+
+def test_evening_rest_observation_does_not_claim_rest_or_predict_tomorrow_recovery():
+    received = []
+    payload = deepcopy(_profile_payload())
+    payload["features"]["training"]["recent_workouts"] = []
+    payload["features"]["training"]["running"]["recent_sessions"] = []
+    payload["features"]["training"]["strength"]["recent_sessions"] = []
+    service = PushService(pushplus_token="")
+    service.add_handler(received.append)
+
+    service.push_daily_profile("test-user", payload, period="evening")
+
+    text = _visible_text(received[0].body)
+    assert "今天没有正式训练记录；这只是对当前记录的观察，不能据此推断休息状态" in text
+    assert "下一次力量训练的候选重点是拉类" in text
+    assert "明天按计划和身体感受安排" not in text
+    assert "明早根据整夜睡眠" not in text
+
+
+def test_weekly_push_renders_asof_coverage_facts_trends_and_recommendations():
+    received = []
+    profile = {
+        "period_start": "2026-08-22",
+        "period_end": "2026-08-28",
+        "report_context": {
+            "as_of": "2026-08-28T23:30:00+00:00",
+            "training_coverage": {
+                "coverage_status": "PARTIAL",
+                "record_days": 3,
+                "unknown_days": 4,
+            },
+        },
+        "data_quality": {"status_label": "部分可用"},
+        "facts": {
+            "sleep": {"available_days": 5, "average_minutes": 420},
+            "training": {
+                "record_days": 3,
+                "unknown_days": 4,
+                "coverage_status": "PARTIAL",
+                "totals_are_partial": True,
+                "workout_count": 1,
+                "training_days": 1,
+                "duration_minutes": 30,
+                "vendor_load": 20,
+                "rest_days": 2,
+                "aerobic_minutes": 30,
+                "strength_sessions": None,
+            },
+            "activity": {"available_days": 4, "total_steps": 30000},
+        },
+        "inferences": {
+            "key_changes": ["睡眠时长较前一周上升 5.0%。"],
+            "trends": [],
+            "limitations": ["训练历史覆盖为 PARTIAL。"],
+        },
+        "actions": {"recommendations": [{
+            "title": "先补齐周期记录",
+            "action": "先完成后续同步。",
+            "reasons": ["仍有 4 天未知。"],
+        }]},
+    }
+    service = PushService(pushplus_token="")
+    service.add_handler(received.append)
+
+    service.push_weekly_profile("test-user", profile)
+
+    text = _visible_text(received[0].body)
+    assert "滚动周期：2026-08-22 至 2026-08-28" in text
+    assert "分析截至：2026-08-28 23:30 +0000" in text
+    assert "训练历史：清单部分已核实；已核实 3 天；未知 4 天" in text
+    assert "睡眠时长较前一周上升 5.0%。" in text
+    assert "先补齐周期记录" in text
+
+
 def test_pushplus_transport_error_is_failed_delivery_without_token(monkeypatch):
     class Client:
         def __init__(self, **kwargs):
@@ -859,3 +1025,15 @@ def test_pushplus_transport_error_is_failed_delivery_without_token(monkeypatch):
 
     assert result["_pushplus_handler"] == "error: network unavailable"
     assert "private-token" not in result["_pushplus_handler"]
+
+
+def test_evening_explains_when_app_strength_corrections_are_not_in_cloud_data():
+    payload = _profile_payload()
+    for session in payload["features"]["training"]["strength"]["recent_sessions"]:
+        session["explicit_exercises"] = []
+        session["hypotheses"] = []
+    received = []
+    service = PushService(pushplus_token="")
+    service.add_handler(received.append)
+    service.push_daily_profile("test-user", payload, period="evening")
+    assert "不能据此复原 App 中的修正项目" in _visible_text(received[0].body)

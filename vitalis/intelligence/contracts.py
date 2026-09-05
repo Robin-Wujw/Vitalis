@@ -10,17 +10,17 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "11.0"
-WEEKLY_SCHEMA_VERSION = "4.0"
+DAILY_SCHEMA_VERSION = "12.0"
+WEEKLY_SCHEMA_VERSION = "5.0"
 MONTHLY_SCHEMA_VERSION = "2.0"
-INTELLIGENCE_VERSION = "10.0"
-DECISION_POLICY_VERSION = "7.0"
+INTELLIGENCE_VERSION = "11.0"
+DECISION_POLICY_VERSION = "8.0"
 EVIDENCE_VERSION = "2026-09a"
 TRAINING_RESPONSE_SCHEMA_VERSION = "1.0"
 PERSONAL_MODEL_SCHEMA_VERSION = "2.0"
 ASSOCIATION_SCHEMA_VERSION = "1.0"
 USER_PROFILE_SCHEMA_VERSION = "1.0"
-AGENT_CONTEXT_SCHEMA_VERSION = "5.0"
+AGENT_CONTEXT_SCHEMA_VERSION = "6.0"
 DECISION_EXPLANATION_SCHEMA_VERSION = "1.0"
 
 ProfileValue = TypeVar("ProfileValue")
@@ -543,6 +543,7 @@ class RecoveryFeatures(BaseModel):
 
 class WorkoutFeature(BaseModel):
     date: date
+    started_at: datetime | None = None
     type: str
     type_label: str
     sport_mode: str
@@ -820,6 +821,7 @@ class TrainingStatusFeatures(BaseModel):
 class TrainingFeatures(BaseModel):
     status: Availability
     status_label: str = ""
+    history_coverage: dict[str, Any] = Field(default_factory=dict)
     today_duration_minutes: int | None = None
     today_load: float | None = None
     today_workouts: int | None = None
@@ -1049,6 +1051,7 @@ class WeeklyDataQuality(BaseModel):
 
 class WeeklySleepFacts(BaseModel):
     available_days: int = Field(ge=0, le=7)
+    previous_available_days: int = Field(default=0, ge=0, le=7)
     average_minutes: float | None = None
     median_minutes: float | None = None
     previous_average_minutes: float | None = None
@@ -1076,18 +1079,23 @@ class WeeklyRecoveryFacts(BaseModel):
 class WeeklyTrainingFacts(BaseModel):
     workout_count: int = Field(ge=0)
     training_days: int = Field(ge=0, le=7)
-    rest_days: int = Field(ge=0, le=7)
-    duration_minutes: int = Field(ge=0)
-    vendor_load: float = Field(ge=0)
+    record_days: int = Field(default=0, ge=0, le=7)
+    unknown_days: int = Field(default=7, ge=0, le=7)
+    coverage_status: Literal["COMPLETE", "PARTIAL", "UNKNOWN"] = "UNKNOWN"
+    totals_are_partial: bool = True
+    rest_days: int | None = Field(default=None, ge=0, le=7)
+    duration_minutes: int | None = Field(default=None, ge=0)
+    vendor_load: float | None = Field(default=None, ge=0)
     previous_vendor_load: float | None = Field(default=None, ge=0)
     load_change_percent: float | None = None
-    aerobic_minutes: int = Field(ge=0)
-    strength_sessions: int = Field(ge=0)
+    aerobic_minutes: int | None = Field(default=None, ge=0)
+    strength_sessions: int | None = Field(default=None, ge=0)
     sport_mode_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class WeeklyActivityFacts(BaseModel):
     available_days: int = Field(ge=0, le=7)
+    previous_available_days: int = Field(default=0, ge=0, le=7)
     total_steps: int | None = Field(default=None, ge=0)
     average_steps: float | None = Field(default=None, ge=0)
     previous_average_steps: float | None = Field(default=None, ge=0)
@@ -1141,6 +1149,7 @@ class WeeklyProfile(BaseModel):
     period_end: date
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     data_quality: WeeklyDataQuality
+    report_context: dict[str, Any] = Field(default_factory=dict)
     facts: WeeklyFacts
     inferences: WeeklyInferences
     actions: WeeklyActions
@@ -1359,15 +1368,16 @@ class SubjectiveFeedback(BaseModel):
 
 
 class DailyProfile(BaseModel):
-    schema_version: Literal["11.0"] = DAILY_SCHEMA_VERSION
+    schema_version: Literal["12.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
-    intelligence_version: Literal["10.0"] = INTELLIGENCE_VERSION
-    decision_policy_version: Literal["7.0"] = DECISION_POLICY_VERSION
+    intelligence_version: Literal["11.0"] = INTELLIGENCE_VERSION
+    decision_policy_version: Literal["8.0"] = DECISION_POLICY_VERSION
     evidence_version: Literal["2026-09a"] = EVIDENCE_VERSION
     user_id: str
     date: DateValue
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     data_quality: DataQuality
+    report_context: dict[str, Any] = Field(default_factory=dict)
     facts: dict[str, list[MeasurementFact]] = Field(default_factory=dict)
     baselines: dict[str, list[BaselineStats]] = Field(default_factory=dict)
     features: ProfileFeatures
@@ -1385,9 +1395,9 @@ class MorningBriefingReason(BaseModel):
 
 
 class MorningBriefing(BaseModel):
-    """Non-persistent action-first projection of one DailyProfile."""
+    """Non-persistent observation and action projection of one DailyProfile."""
 
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["2.0"] = "2.0"
     analysis_run_id: str
     user_id: str
     date: DateValue
@@ -1395,6 +1405,8 @@ class MorningBriefing(BaseModel):
     decision_action: DecisionAction
     action_label: str
     action_plan: ActionPlan
+    report_context: dict[str, Any] = Field(default_factory=dict)
+    observations: list[MorningBriefingReason] = Field(default_factory=list, max_length=6)
     key_reasons: list[MorningBriefingReason] = Field(default_factory=list, max_length=3)
     cautions: list[str] = Field(default_factory=list, max_length=3)
     feedback_prompt: str | None = None
@@ -1494,7 +1506,7 @@ class ContextRecent(BaseModel):
     hrv_change_percent: float | None = None
     rhr_change_percent: float | None = None
     workout_count: int = Field(ge=0)
-    training_duration_minutes: int = Field(ge=0)
+    training_duration_minutes: int | None = Field(ge=0)
     sport_mode_counts: dict[str, int] = Field(default_factory=dict)
     active_events: list[ContextEvent] = Field(default_factory=list, max_length=5)
     feedback: list[ContextFeedback] = Field(default_factory=list, max_length=5)
@@ -1558,7 +1570,7 @@ class ContextPersonal(BaseModel):
 
 
 class AgentContext(BaseModel):
-    schema_version: Literal["5.0"] = AGENT_CONTEXT_SCHEMA_VERSION
+    schema_version: Literal["6.0"] = AGENT_CONTEXT_SCHEMA_VERSION
     user_id: str
     date: DateValue
     current: ContextCurrent

@@ -246,6 +246,17 @@ intelligence layer. It may estimate work/rest structure from heart rate while ke
 the movement and target muscle unknown until an explicit vendor set or user
 confirmation is available.
 
+Cloud workout-detail `strengthSets` accepts a string or list; cross-layer handling converts
+integer `reps` to a string, combines identical exercise/dose groups, and preserves groups with
+different weights or repetitions separately. Unknown units are not given `kg`. Local whole-session
+user confirmation takes precedence over vendor sets. Cached workout details from the recent 28 days
+are refreshed within a budget of at most 4 per pass, with no guarantee that one pass covers all;
+refresh time is recorded in `fetched_at`. Controlled validation confirmed that the cloud can return
+`strengthSets="[]"`, empty `memo`, and nonempty `strengthAssess`; this does not prove the app has no
+corrected records, and neither `bcId` nor undocumented trailing `lap` columns can be treated as an
+exercise ID. Reports explain that corrected details have not been obtained; upstream ZeppBridge
+v2.1.0 also has no strength-sets decoder that establishes those exercise semantics.
+
 `second_heart_rate/real_data` returns file indexes rather than samples. Ordinary health
 sync stores those indexes without downloading large archives. When
 `decode_dense_files=true` is explicitly requested, Vitalis decodes at most one new
@@ -320,5 +331,7 @@ complete synchronization. Successful chunks completed before a later terminal er
 persisted before the stream is marked failed. Explicit local-date requests are serialized
 back to vendor date parameters in `VITALIS_TIMEZONE`, not from their UTC boundary date.
 A real optional-stream or dense-file network/authentication failure is retained as failed
-and is never reported as an empty account. Authentication failures mark the browser link
-for login; transient failures keep the connection and remain retryable.
+and is never reported as an empty account. Synchronization and delivery timeouts/5xx responses
+are retryable; an explicit `reauth` blocks further delivery. Authentication failures mark the
+browser link for login; transient failures keep the connection and remain retryable. `partial`
+is determined per data-stream domain and cannot be hidden by success in another domain.

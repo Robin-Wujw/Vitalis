@@ -1,14 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/daily-profile-11.0.json",
-  "title": "Vitalis DailyProfile 11.0",
+  "$id": "https://vitalis.local/schemas/daily-profile-12.0.json",
+  "title": "Vitalis DailyProfile 12.0",
   "type": "object",
-  "required": ["schema_version", "analysis_run_id", "intelligence_version", "decision_policy_version", "evidence_version", "user_id", "date", "generated_at", "data_quality", "facts", "baselines", "features", "trends", "events", "states", "decision", "evidence_refs", "metadata", "open_health_insights"],
+  "required": ["schema_version", "analysis_run_id", "intelligence_version", "decision_policy_version", "evidence_version", "user_id", "date", "generated_at", "data_quality", "report_context", "facts", "baselines", "features", "trends", "events", "states", "decision", "evidence_refs", "metadata", "open_health_insights"],
   "properties": {
-    "schema_version": {"const": "11.0"},
+    "schema_version": {"const": "12.0"},
     "analysis_run_id": {"type": "string"},
-    "intelligence_version": {"const": "10.0"},
-    "decision_policy_version": {"const": "7.0"},
+    "intelligence_version": {"const": "11.0"},
+    "decision_policy_version": {"const": "8.0"},
     "evidence_version": {"const": "2026-09a"},
     "user_id": {"type": "string"},
     "date": {"type": "string", "format": "date"},
@@ -26,6 +26,27 @@
         "coverage": {"type": "array", "items": {"type": "object"}},
         "flags": {"type": "array", "items": {"type": "object"}},
         "device_validity": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "report_context": {
+      "type": "object",
+      "required": ["as_of", "timezone", "target_date", "target_day_complete", "training_history", "latest_observations"],
+      "properties": {
+        "as_of": {"type": "string", "format": "date-time"},
+        "timezone": {"type": "string"},
+        "target_date": {"type": "string", "format": "date"},
+        "target_day_complete": {"type": "boolean"},
+        "training_history": {
+          "type": "object",
+          "required": ["status", "verified_days", "last_synced_at", "prior_7d_verified"],
+          "properties": {
+            "status": {"enum": ["COMPLETE", "PARTIAL", "UNKNOWN"]},
+            "verified_days": {"type": "array", "items": {"type": "string", "format": "date"}},
+            "last_synced_at": {"type": ["string", "null"], "format": "date-time"},
+            "prior_7d_verified": {"type": "boolean"}
+          }
+        },
+        "latest_observations": {"type": "object", "additionalProperties": {"type": "string"}}
       }
     },
     "facts": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "object"}}},
@@ -132,10 +153,20 @@
         },
         "training": {
           "type": "object",
-          "required": ["status", "status_label", "load_state", "load_state_label", "sport_mode_counts_7d", "recent_workouts", "running", "strength", "limitation_labels"],
+          "required": ["status", "status_label", "history_coverage", "load_state", "load_state_label", "sport_mode_counts_7d", "recent_workouts", "running", "strength", "limitation_labels"],
           "properties": {
             "status": {"enum": ["AVAILABLE", "INSUFFICIENT_DATA"]},
             "status_label": {"type": "string"},
+            "history_coverage": {
+              "type": "object",
+              "required": ["status", "verified_days", "last_synced_at", "prior_7d_verified"],
+              "properties": {
+                "status": {"enum": ["COMPLETE", "PARTIAL", "UNKNOWN"]},
+                "verified_days": {"type": "array", "items": {"type": "string", "format": "date"}},
+                "last_synced_at": {"type": ["string", "null"], "format": "date-time"},
+                "prior_7d_verified": {"type": "boolean"}
+              }
+            },
             "load_state": {"enum": ["LOW", "NORMAL", "ELEVATED", "INSUFFICIENT_DATA"]},
             "load_state_label": {"type": "string"},
             "workout_type_counts_7d": {
@@ -193,6 +224,7 @@
                 "required": ["date", "type", "type_label", "sport_mode", "sport_mode_label", "training_family", "training_family_label", "recognition_confidence", "recognition_confidence_label", "recognition_source", "recognition_source_label", "duration_minutes", "vendor_load", "detail_available"],
                 "properties": {
                   "date": {"type": "string", "format": "date"},
+                  "started_at": {"type": ["string", "null"], "format": "date-time"},
                   "type": {"type": "string"},
                   "type_label": {"type": "string"},
                   "sport_mode": {"type": "string"},

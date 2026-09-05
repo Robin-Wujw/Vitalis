@@ -61,6 +61,14 @@ def _profile(hrv_today=40, rhr_today=64, sleep_today=360, load_today=20):
         point.day: {"date": point.day, "total_load": point.value, "total_duration": 30, "workout_count": 1}
         for point in raw.series["training_load"]
     }
+    raw.training_history_coverage = {
+        "status": "COMPLETE",
+        "verified_days": [
+            (TARGET - timedelta(days=offset)).isoformat()
+            for offset in range(36)
+        ],
+        "prior_7d_verified": True,
+    }
     return raw
 
 
@@ -85,8 +93,17 @@ def _analyze(raw):
 
 def _with_genuinely_low_recent_load(raw):
     raw.training_by_day = {
-        day: value for day, value in raw.training_by_day.items()
-        if day < TARGET - timedelta(days=7)
+        day: (
+            {
+                **value,
+                "total_load": 0,
+                "total_duration": 0,
+                "workout_count": 0,
+            }
+            if day >= TARGET - timedelta(days=6)
+            else value
+        )
+        for day, value in raw.training_by_day.items()
     }
     return raw
 
@@ -114,10 +131,11 @@ def test_good_recovery_and_low_load_can_produce_hard_training():
     assert decision.action == DecisionAction.TRAIN_HARD
 
 
-def test_empty_morning_load_does_not_make_the_recent_week_low():
+def test_missing_today_training_record_does_not_make_the_recent_week_low():
     raw = _profile(
         hrv_today=62, rhr_today=50, sleep_today=510, load_today=0
     )
+    raw.training_by_day.pop(TARGET)
 
     training = TrainingAnalyzer().analyze(
         raw, BaselineEngine().build(raw.series, raw.day)

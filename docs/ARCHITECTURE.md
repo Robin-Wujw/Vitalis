@@ -113,7 +113,7 @@ Zepp 增量/时间序列会解码为类型化指标样本。分圈仅保留已�
 
 ### 3.1 DailyProfile
 
-线格式契约为 `schema_version=11.0`。每项结果分别携带 `analysis_run_id`、
+线格式契约为 `schema_version=12.0`。每项结果分别携带 `analysis_run_id`、
 `intelligence_version`、`decision_policy_version` 和 `evidence_version`：
 
 ```text
@@ -130,18 +130,24 @@ DailyProfile
 `- metadata: identity and product-policy versions
 ```
 
+`DailyProfile.report_context` 是数据时效和覆盖边界的显式字典，包含
+`as_of`（ISO UTC 时间）、`timezone`、`target_date`、`target_day_complete`、
+`training_history` 和 `latest_observations`。其中 `training_history` 固定报告
+`status`（`COMPLETE`/`PARTIAL`/`UNKNOWN`）、`verified_days`、`last_synced_at`
+和 `prior_7d_verified`；缺少训练历史不会被解释为零训练或休息。
+
 Vitalis 不提供未经校准的 0-100 恢复分数。厂商就绪度、Charge 和睡眠分数
 会标记为厂商上下文，不会成为 Vitalis 结果。
 
 #### 3.1.1 开放健康影子洞察
 
-DailyProfile 11.0、WeeklyProfile 4.0、MonthlyProfile 2.0 和 Agent Context 5.0
+DailyProfile 12.0、WeeklyProfile 5.0、MonthlyProfile 2.0 和 Agent Context 6.0
 公开一个带版本的 `open_health_insights` 数据块。其中包含透明的个人基线就绪度、
 稳健的多信号异常筛查、睡眠效率/规律性、用户目标睡眠差距、Banister TRIMP，
 以及描述性的 ATL/CTL/TSB。
 
 这些输出严格满足 `shadow_only=true`。它们绝不会进入 `RecoveryFeatures.state`、
-`DecisionEngine`、决策置信度、规则 ID 或 ActionPlan。当前决策策略仍为 7.0。
+`DecisionEngine`、决策置信度、规则 ID 或 ActionPlan。当前决策策略仍为 8.0。
 未来的策略若使用这些信号，必须显式划分版本并进行测试。
 
 用户确认的生理信息存储在带修订版本的 `UserProfile` 中。`sex` 和已确认的 HRmax
@@ -215,10 +221,14 @@ MAD 变异性、覆盖率、方向和置信度。缺失日期是缺失的观测�
 
 ### 3.5 WeeklyProfile 与反馈
 
-WeeklyProfile 覆盖截至请求日期的七个本地日期，并将其与之前七天进行比较。
+WeeklyProfile 5.0 覆盖截至请求日期的滚动七个本地日期，并将其与之前七天进行比较；
+`report_context` 同时保留目标日是否结束和训练历史覆盖，未结束目标日必须明示。
 其契约将可穿戴设备/聚合 `facts`、Vitalis `inferences` 和确定性 `actions` 分开。
 恢复事件优先于通用训练量目标。主观 RPE、身体疲劳、精神状态、酸痛和备注
-与设备事实保持独立，在缺失时绝不会推断。
+与设备事实保持独立，在缺失时绝不会推断。Weekly 的睡眠和活动事实分别报告
+`previous_available_days`。训练事实报告 `record_days`、`unknown_days`、
+`coverage_status` 和 `totals_are_partial`；`rest_days`、`duration_minutes`、
+`vendor_load`、`aerobic_minutes` 和 `strength_sessions` 在无法确认时保持 null。
 
 显式分析命令会持久化一个不可变 AnalysisRun，以及不可变的 Daily、Weekly、
 Monthly、Training Response、Personal Association 和 Personal Model 快照。
@@ -261,7 +271,7 @@ Personal Model v2 按训练系列和具体运动模式对响应分组。它为�
 ### 3.8 时间线与智能体上下文
 
 Health Timeline 为分析、建议、训练、反馈、事件转换、训练响应、每月摘要和受支持的
-个人关联生成类型化摘要投影。它绝不会复制原始传感器或训练样本。Agent Context 5.0
+个人关联生成类型化摘要投影。它绝不会复制原始传感器或训练样本。Agent Context 6.0
 仅包含有界的 Current、Recent、Trend 和 Personal 层，并设置严格的条目数量上限，
 且不嵌入 Daily/Weekly/Monthly 载荷。
 
@@ -286,7 +296,7 @@ TRAIN_HARD | TRAIN_NORMAL | TRAIN_LIGHT | RECOVERY | REST | INSUFFICIENT_DATA
 已记录的 RPE 可补充每周上下文，但不能替代负荷、已完成的组数/重复次数/重量，
 也不能替代可靠的个体化有氧强度分类。
 
-训练内容是确定性引擎输出，而不是模型生成的建议。Decision Policy 7.0 返回一个
+训练内容是确定性引擎输出，而不是模型生成的建议。Decision Policy 8.0 返回一个
 `ActionPlan`，其中包含一个主要训练环节，以及至多一个兼容的可选附加项或替代项。
 每个训练环节都包含剂量、证据、进阶、停止条件和本地日期到期时间。当前训练库包括：
 
@@ -311,11 +321,14 @@ TRAIN_HARD | TRAIN_NORMAL | TRAIN_LIGHT | RECOVERY | REST | INSUFFICIENT_DATA
 有氧训练会决定下一次选择力量训练，最近一次力量训练会决定下一次选择跑步，
 即使每周目标缺口不同也是如此。恢复、可用性、受伤和负荷冲突门控仍然优先。
 恶劣天气后备偏好会以确定方式存储，但在配置天气数据源之前不会应用；Vitalis
-绝不会虚构天气状况。
+绝不会虚构天气状况。用户可保留 `BALANCE` 或 `ALTERNATE` 选择。7 日缺口主导选择，
+28 日充分历史仅作参考，不补课；若存在冲突则实际降低剂量。训练 prior 7 天覆盖为未知时，
+不输出训练处方，但仍可解释睡眠和其他已有信号。生命周期为 `RESOLVED` 的事件不再作为
+当前限制。
 
 ### 3.10 跑步分析
 
-DailyProfile 11.0 通过 Running Analysis v2 嵌入 `TrainingFeatures.running`。
+DailyProfile 12.0 通过 Running Analysis v2 嵌入 `TrainingFeatures.running`。
 每次训练会保留距离、时长、推导配速和等效配速、速度和步频中位数、步频变异性、
 功率、触地时间、垂直振幅、垂直步幅比、HR 区间时长、心率漂移、检测到的
 做功/恢复分段、分类证据、置信度和局限性。
@@ -345,7 +358,10 @@ Vitalis 不会根据年龄估算最大 HR。心率漂移要求至少 20 分钟�
 属于部分完成；可选数据流上的网络、服务、解析或身份认证失败会阻止整体成功，
 同时保留之前成功的写入。`GET /health/data-health` 公开此诊断契约，但不公开测量值、
 租约令牌、原始错误或私有文件标识符；`GET /health/sync/{attempt_id}` 公开用户范围的
-进度，`POST /health/sync/{attempt_id}/cancel` 持久化取消请求。
+进度，`POST /health/sync/{attempt_id}/cancel` 持久化取消请求。投递和同步请求的 timeout 与 5xx
+属于可重试故障；明确的 `reauth` 会阻断继续投递，不能被重试掩盖。CLI 与内置路径
+共用同一用户/日期发送锁标记；`partial` 按数据流领域判断，不能把一个领域成功解释为
+整个同步完成。
 
 跑步处方会使用这些训练事实。它依据近期高强度训练的时间、下肢冲突、最近一次
 可解释的心率漂移、个人阈值 HR 和近期已完成跑步的时长中位数，在恢复跑、轻松跑、
@@ -354,14 +370,19 @@ Vitalis 不会根据年龄估算最大 HR。心率漂移要求至少 20 分钟�
 
 ### 3.11 力量训练分析
 
-DailyProfile 11.0 通过 Strength Analysis v1 嵌入 `TrainingFeatures.strength`。
+DailyProfile 12.0 通过 Strength Analysis v1 嵌入 `TrainingFeatures.strength`。
 用户可以针对自己拥有的一项力量训练确认动作名称、组数、重复次数、负荷、RPE/RIR、
 休息和训练重点。Vitalis 会将已知的中文或英文动作名称规范化为动作模式和肌肉群，
 同时保留原始名称作为可审计事实。
 
 明确的厂商组数据和用户确认的动作是精确动作身份的唯一来源。缺少这些信息时，
 训练心率或经验证的零距离分圈可以估算做功组数和做功/休息时长，但无法识别深蹲、
-卧推或任何目标肌肉。力量训练心率区间仅描述心血管上下文，绝不代表负荷强度。
+卧推或任何目标肌肉。力量训练心率区间仅描述心血管上下文，绝不代表负荷强度。Balance 2 应用的
+`strengthSets` 可为字符串或列表；跨层会将整数 `reps` 转为字符串，并保留同剂量
+但不同重量/次数的组。未知单位保持未知，不补写 `kg`。本地整场的用户确认数据优先于
+供应商组数据；近期 28 日已缓存的力量详情只做有界刷新（每次最多 4 个预算，不能保证
+一次覆盖全部），刷新时间记录在 `fetched_at`。当前未核验用户的 3-4 场真实云端详情，
+不宣称已获得；上游 ZeppBridge v2.1.0 也没有可直接证明的力量组 decoder。
 
 最近 28 天的数据支持带置信度限制的全身、上下肢、推拉腿和五日分化检测。
 只有在存在可识别的轮换时，才会返回下一训练重点。各肌肉的最近训练时间与确认的
@@ -375,7 +396,7 @@ DailyProfile 11.0 通过 Strength Analysis v1 嵌入 `TrainingFeatures.strength`
 
 ### 3.12 夜间恢复上下文
 
-DailyProfile 11.0 将带时间戳的普通心率与每日指标序列分开保存。对于每个睡眠区间，
+DailyProfile 12.0 将带时间戳的普通心率与每日指标序列分开保存。对于每个睡眠区间，
 引擎会隔离设备数据流，并要求至少覆盖 120 分钟且区间覆盖率达到 50%。它会推导
 夜间中位数、滚动五分钟中位数低点、前半段和后半段中位数以及覆盖率。选中的夜间
 数据流仅与其自身之前 28 晚的历史比较。
@@ -434,18 +455,24 @@ Act 涵盖同步、建议完成、主观反馈和事件确认。每个面向用�
                      -> Evening renderer -> PushPlus -> mark sent
 ```
 
+以上是 Vitalis 内置调度入口。Hermes 的 09:30-21:30 每小时晨间任务和 22:30 晚间任务
+是替代入口，不是与内置调度同一套计划；部署时只应由一个入口负责实际投递。
+
 如果当天睡眠记录没有醒来时间，晨间调度器会延后处理，并且绝不会用过时的健康结果
 替代。晨间和晚间使用相互独立、按用户和日期划分的发送标记，因此重试和重叠调用
 不会重复一次已成功的 PushPlus 发送。晚间报告不受晨间睡眠门控阻止。
 
-晨间渲染器是完整 DailyProfile 之上的确定性展示选择层。它输出一个结论、具体的
+晨间渲染器是完整 DailyProfile 之上的确定性展示选择层。它通过 `MorningBriefing
+schema_version=2.0` 输出睡眠与身体状态观察、当天可用的跑步/力量上下文、一个结论、具体的
 主要/可选操作、简短理由、至多一个可采取行动的事件，以及仅有实质影响的注意事项。
+当天尚未有 workout 不是缺项；只有决策所需信号不足才会返回 `INSUFFICIENT_DATA`。
 按设备划分的数据流、原始趋势窗口、空信号组、未知安全输入、已通过的检查、规划门控
 和通用局限性会留在结构化档案中，而不会复制到每日推送中。
 
-晚间渲染器是独立的确定性视图。它会在有数据时报告当天实际的训练指标，汇总融合后的
-每日活动和设备记录的压力，解释最近已完成日期的训练负荷，并以恢复及次日连续性操作
-作结。它不会把没有正式训练的一天视为问题，不会仅根据负荷推断就绪度，也不会输出
+晚间渲染器是独立的确定性视图。它会在有数据时按 `started_at` 报告当天每场实际训练
+明细，包括跑步指标以及明确的力量训练组；缺失和未知单位保持缺失，不补写 `kg` 或动作。
+它还汇总融合后的每日活动和设备记录的压力，解释最近已完成日期的训练负荷，并以恢复及
+次日连续性操作作结。它不会把没有正式训练的一天视为问题，不会仅根据负荷推断就绪度，也不会输出
 低置信度的训练类型和心率漂移结论。
 
 两个每日渲染器都会为 PushPlus 生成经过净化的 HTML。健康内容仍是确定性文本契约；
@@ -461,7 +488,9 @@ Act 涵盖同步、建议完成、主观反馈和事件确认。每个面向用�
 连续的全天 HRV 曲线。稀疏 SDNN 仍会存储，但不用于每周展示趋势。
 
 训练 `load_7d`、时长和比较窗口都是截至分析日期的滚动本地日期窗口。因此晚间报告
-包含当天已完成的训练；三个比较周是紧邻的、互不重叠的前三个七天窗口。
+包含当天已完成的训练；三个比较周是紧邻的、互不重叠的前三个七天窗口。WeeklyProfile
+同样覆盖截至请求日期的滚动 7 个本地日期；`report_context.target_day_complete=false`
+时必须明示目标日未结束，不能把未结束目标日当作完整记录日。
 
 ## 6. 证据边界
 

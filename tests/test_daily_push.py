@@ -1,7 +1,8 @@
-from datetime import date
+from datetime import date, datetime, timezone
 import os
 import stat
 
+import httpx
 import pytest
 
 from vitalis.services import daily_push
@@ -22,6 +23,18 @@ def _daily(*, wake_time="08:15:00", sleep_status="AVAILABLE"):
     return {
         "date": "2026-08-29",
         "data_quality": {"status": "SUFFICIENT"},
+        "report_context": {
+            "as_of": "2026-08-29T12:00:00Z",
+            "timezone": "UTC",
+            "target_date": "2026-08-29",
+            "target_day_complete": True,
+            "training_history": {
+                "status": "COMPLETE",
+                "verified_days": ["2026-08-22", "2026-08-29"],
+                "last_synced_at": "2026-08-29T12:00:00Z",
+                "prior_7d_verified": True,
+            },
+        },
         "features": {
             "sleep": {"status": sleep_status, "wake_time": wake_time},
         },
@@ -605,3 +618,158 @@ def test_degraded_sync_defers_when_stored_profile_is_not_current_and_complete(
         "sync_status": "synced",
     }
     assert not list(tmp_path.glob("*.sent"))
+
+
+def test_await_sync_timeout_is_explicitly_retryable(monkeypatch):
+    monkeypatch.setattr(daily_push, "SYNC_POLL_MAX_ATTEMPTS", 1)
+    monkeypatch.setattr(daily_push, "SYNC_POLL_INTERVAL_SECONDS", 0)
+
+    class Client:
+        def get(self, path):
+            return Response({"attempt": {"status": "queued"}})
+
+    result = daily_push._await_sync(
+        Client(), {"status": "queued", "attempt_id": "attempt-timeout"}
+    )
+    assert result["status"] == "timeout"
+    assert result["retryable"] is True
+    assert "可重试" in result["detail"]
+
+
+def test_await_sync_server_error_degrades_without_blocking():
+    response = httpx.Response(
+        503,
+        request=httpx.Request("GET", "http://test/sync"),
+    )
+
+    class Client:
+        def get(self, path):
+            raise httpx.HTTPStatusError(
+                "server unavailable", request=response.request, response=response
+            )
+
+    result = daily_push._await_sync(
+        Client(), {"status": "queued", "attempt_id": "attempt-503"}
+    )
+    assert result["status"] == "transport_error"
+    assert result["retryable"] is True
+
+
+def test_stale_report_is_not_delivered_across_midnight(monkeypatch, tmp_path):
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def post(self, path, **kwargs):
+            if path.endswith("/sync"):
+                return Response({"status": "synced", "success": True})
+            return Response({"daily": _daily()})
+
+    monkeypatch.setattr(daily_push.httpx, "Client", Client)
+    monkeypatch.setattr(
+        daily_push,
+        "PushService",
+        lambda **kwargs: pytest.fail("stale report must not be delivered"),
+    )
+    result = daily_push.run_daily_push(
+        "explicit-user",
+        "private-token",
+        period="morning",
+        target_date=date(2026, 8, 30),
+        state_dir=tmp_path,
+    )
+    assert result["status"] == "deferred"
+    assert result["reason"] == "stale_report_date"
+
+
+def test_delivery_rechecks_local_day_after_sync_wait(monkeypatch, tmp_path):
+    days = iter([date(2026, 8, 29), date(2026, 8, 30)])
+    monkeypatch.setattr(daily_push, "local_today", lambda: next(days))
+    monkeypatch.setattr(
+        daily_push,
+        "local_day_utc_bounds",
+        lambda day: (
+            datetime(2026, 8, 29, tzinfo=timezone.utc),
+            datetime(2026, 12, 31, tzinfo=timezone.utc),
+        ),
+    )
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def post(self, path, **kwargs):
+            if path.endswith("/sync"):
+                return Response({"status": "synced", "success": True})
+            return Response({"daily": _daily()})
+
+    monkeypatch.setattr(daily_push.httpx, "Client", Client)
+    monkeypatch.setattr(
+        daily_push,
+        "PushService",
+        lambda **kwargs: pytest.fail("cross-midnight stale report must not deliver"),
+    )
+    result = daily_push.run_daily_push(
+        "explicit-user", "private-token", period="morning", state_dir=tmp_path
+    )
+    assert result["reason"] == "stale_report_date"
+
+
+def test_evening_unknown_history_can_send_same_day_facts(monkeypatch, tmp_path):
+    daily = _daily()
+    daily["report_context"]["training_history"] = {
+        "status": "UNKNOWN",
+        "verified_days": [],
+        "last_synced_at": None,
+        "prior_7d_verified": False,
+    }
+    sent = []
+
+    class Service:
+        def __init__(self, pushplus_token):
+            pass
+
+        def push_daily_profile(self, user_id, profile, period):
+            sent.append((user_id, profile, period))
+            return {"_pushplus_handler": "ok"}
+
+    monkeypatch.setattr(daily_push, "PushService", Service)
+    result = daily_push.deliver_daily_report(
+        "explicit-user", "private-token", daily,
+        period="evening", target_date=date(2026, 8, 29), state_dir=tmp_path,
+    )
+    assert result["status"] == "sent"
+    assert sent and sent[0][2] == "evening"
+
+
+def test_evening_unknown_history_without_same_day_facts_defers(monkeypatch, tmp_path):
+    daily = _daily(sleep_status="INSUFFICIENT_DATA", wake_time=None)
+    daily["report_context"]["training_history"] = {
+        "status": "UNKNOWN",
+        "verified_days": [],
+        "last_synced_at": None,
+        "prior_7d_verified": False,
+    }
+    monkeypatch.setattr(
+        daily_push,
+        "PushService",
+        lambda **kwargs: pytest.fail("unknown fact-free evening must not deliver"),
+    )
+    result = daily_push.deliver_daily_report(
+        "explicit-user", "private-token", daily,
+        period="evening", target_date=date(2026, 8, 29), state_dir=tmp_path,
+    )
+    assert result["status"] == "deferred"
+    assert result["reason"] == "stored_data_incomplete"

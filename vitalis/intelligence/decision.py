@@ -113,7 +113,14 @@ class DecisionEngine:
                 extra_facts or [],
             )
 
-        if recovery.state == RecoveryState.INSUFFICIENT_DATA:
+        if (
+            recovery.state == RecoveryState.INSUFFICIENT_DATA
+            and preferences.pain_or_injury_status != "PRESENT"
+            and not (
+                preferences.available_weekdays
+                and day.isoweekday() not in preferences.available_weekdays
+            )
+        ):
             return self._decision(
                 recommendation_id,
                 DecisionAction.INSUFFICIENT_DATA,
@@ -243,6 +250,33 @@ class DecisionEngine:
                     expected_condition="少于两个负向恢复信号",
                 )]),
                 plan(self._recovery(preferences, "当前恢复状态受抑制")),
+            )
+
+        coverage = getattr(training, "history_coverage", None)
+        if isinstance(coverage, dict) and coverage.get("prior_7d_verified") is False:
+            coverage_limitations = list(limitations)
+            coverage_limitations.append("此前 7 天训练记录未完整验证，暂不生成训练剂量。")
+            coverage_fact = DecisionEvidenceFact(
+                code="training_history_coverage",
+                label="此前 7 天训练记录覆盖",
+                value=coverage.get("status", "UNKNOWN"),
+            )
+            coverage_gate = DecisionGateEvidence(
+                code="DECISION.TRAINING_HISTORY_COVERAGE_INSUFFICIENT",
+                label="此前训练记录不足，暂不处方",
+                triggered=True,
+                observed_value=False,
+                expected_condition="prior_7d_verified=True",
+            )
+            return self._decision(
+                recommendation_id,
+                DecisionAction.INSUFFICIENT_DATA,
+                ConfidenceBand.NONE,
+                [],
+                coverage_limitations,
+                [coverage_gate.code],
+                evidence_for([], [coverage_gate], [coverage_fact]),
+                plan(None),
             )
 
         conflicts = self._conflicts(day, training)
@@ -412,6 +446,9 @@ class DecisionEngine:
         strength_28d = strength.sessions_28d if strength else 0
         run_target = preferences.weekly_running_target
         strength_target = preferences.weekly_strength_target
+        # A weekly recommendation is not a command to repay an incomplete
+        # 28-day block. Long-term counts remain visible, but due-ness follows
+        # the actionable short-term window.
         return ConcurrentWeeklyBalance(
             running_completed_7d=running_7d,
             running_target_7d=run_target,
@@ -421,8 +458,8 @@ class DecisionEngine:
             strength_target_7d=strength_target,
             strength_completed_28d=strength_28d,
             strength_target_28d=strength_target * 4,
-            running_due=running_7d < run_target or running_28d < run_target * 4,
-            strength_due=strength_7d < strength_target or strength_28d < strength_target * 4,
+            running_due=running_7d < run_target,
+            strength_due=strength_7d < strength_target,
         )
 
     @staticmethod
@@ -469,52 +506,89 @@ class DecisionEngine:
             return DecisionAction.TRAIN_HARD, []
         return DecisionAction.TRAIN_NORMAL, []
 
-    @staticmethod
-    def _primary_type(training, balance, preferences) -> str:
+    @classmethod
+    def _primary_type(cls, training, balance, preferences) -> str:
         latest = training.recent_workouts[0].training_family if training.recent_workouts else None
         if preferences.rotation_policy == "ALTERNATE" and latest in {"aerobic", "strength"}:
             return "STRENGTH" if latest == "aerobic" else "RUNNING"
-        if balance.running_due and not balance.strength_due:
-            return "RUNNING"
-        if balance.strength_due and not balance.running_due:
-            return "STRENGTH"
-        run_gap = (
-            balance.running_target_7d - balance.running_completed_7d
+        running_gap = max(
+            balance.running_target_7d - balance.running_completed_7d, 0
         ) / balance.running_target_7d
-        strength_gap = (
-            balance.strength_target_7d - balance.strength_completed_7d
+        strength_gap = max(
+            balance.strength_target_7d - balance.strength_completed_7d, 0
         ) / balance.strength_target_7d
-        if run_gap != strength_gap:
-            return "RUNNING" if run_gap > strength_gap else "STRENGTH"
-        return "STRENGTH" if latest == "aerobic" else "RUNNING"
+        if running_gap != strength_gap:
+            return "RUNNING" if running_gap > strength_gap else "STRENGTH"
+        if cls._long_term_counts_valid(training):
+            running_long_gap = max(
+                balance.running_target_28d - balance.running_completed_28d, 0
+            ) / balance.running_target_28d
+            strength_long_gap = max(
+                balance.strength_target_28d - balance.strength_completed_28d, 0
+            ) / balance.strength_target_28d
+            if running_long_gap != strength_long_gap:
+                return "RUNNING" if running_long_gap > strength_long_gap else "STRENGTH"
+        if latest == "aerobic":
+            return "STRENGTH"
+        if latest == "strength":
+            return "RUNNING"
+        # With no usable history there is no evidence to prefer one family;
+        # retain the established default while exposing the tie in evidence.
+        return "RUNNING"
+
+    @staticmethod
+    def _long_term_counts_valid(training) -> bool:
+        coverage = getattr(training, "history_coverage", None)
+        if not isinstance(coverage, dict):
+            return True
+        return coverage.get("status") == "COMPLETE"
 
     def _sessions(
         self, day, primary_type, intensity, training, preferences, balance, conflicts
     ):
         focus = training.strength.next_focus if training.strength else None
         lower_focus = focus in {"LEGS", "LOWER"}
+        lower_conflict = any(
+            phrase in conflict
+            for conflict in conflicts
+            if not conflict.startswith("未发现")
+            for phrase in ("腿部力量", "下肢明显酸痛", "高负荷跑步")
+        )
+        constrained_intensity = "low" if lower_conflict else intensity
         if primary_type == "RUNNING":
+            run_dose_constrained = any(
+                phrase in conflict
+                for conflict in conflicts
+                if not conflict.startswith("未发现")
+                for phrase in ("下肢明显酸痛", "高负荷跑步")
+            )
             quality_allowed = (
                 intensity == "high"
+                and not run_dose_constrained
                 and "近 48 小时已有腿部力量训练，今天不安排高强度跑。" not in conflicts
                 and not self._quality_run_this_week(day, training)
             )
-            primary = self._running(day, preferences, training, "PRIMARY", quality_allowed, intensity)
+            run_intensity = "low" if run_dose_constrained else intensity
+            primary = self._running(day, preferences, training, "PRIMARY", quality_allowed, run_intensity)
             if balance.strength_due:
                 optional = self._strength(
                     preferences,
                     training,
                     "OPTIONAL",
-                    "low" if intensity == "low" else "moderate",
+                    "low" if intensity == "low" else constrained_intensity,
+                    conflicts,
                 )
                 relationship = "ALTERNATIVE" if quality_allowed or lower_focus else "ADDITION"
             else:
                 optional = self._recovery(preferences, "跑步后的低负担恢复", "OPTIONAL")
                 relationship = "ADDITION"
             self._add_rotation_reason(primary, training, preferences)
+            self._add_balance_reason(primary, training, balance)
             return primary, optional, relationship
 
-        primary = self._strength(preferences, training, "PRIMARY", intensity)
+        primary = self._strength(
+            preferences, training, "PRIMARY", constrained_intensity, conflicts
+        )
         if balance.running_due:
             optional = self._running(day, preferences, training, "OPTIONAL", False, "low")
             relationship = "ALTERNATIVE" if lower_focus else "ADDITION"
@@ -522,6 +596,7 @@ class DecisionEngine:
             optional = self._recovery(preferences, "力量训练后的低负担恢复", "OPTIONAL")
             relationship = "ADDITION"
         self._add_rotation_reason(primary, training, preferences)
+        self._add_balance_reason(primary, training, balance)
         return primary, optional, relationship
 
     @staticmethod
@@ -536,6 +611,23 @@ class DecisionEngine:
         else:
             return
         primary.personalization_reasons.insert(0, reason)
+
+    @staticmethod
+    def _add_balance_reason(primary, training, balance) -> None:
+        latest = training.recent_workouts[0] if training.recent_workouts else None
+        latest_label = {
+            "aerobic": "跑步",
+            "strength": "力量训练",
+        }.get(latest.training_family, "其他训练") if latest else "无可验证的最近训练"
+        primary.personalization_reasons.append(
+            "近 7 天跑步/力量分别完成 "
+            f"{balance.running_completed_7d}/{balance.running_target_7d}、"
+            f"{balance.strength_completed_7d}/{balance.strength_target_7d} 次；"
+            "近 28 天分别完成 "
+            f"{balance.running_completed_28d}/{balance.running_target_28d}、"
+            f"{balance.strength_completed_28d}/{balance.strength_target_28d} 次；"
+            f"最近完成训练：{latest_label}。"
+        )
 
     @staticmethod
     def _conflicts(day: date, training: TrainingFeatures) -> list[str]:
@@ -730,16 +822,55 @@ class DecisionEngine:
         low = min(low, high)
         return low, high
 
-    def _strength(self, preferences, training, role: str, intensity: str) -> PlannedSession:
+    @staticmethod
+    def _dose_sets(sets: int, intensity: str) -> int:
+        if intensity != "low":
+            return sets
+        return max(1, (sets + 1) // 2)
+
+    def _strength(
+        self, preferences, training, role: str, intensity: str, conflicts=None
+    ) -> PlannedSession:
+        conflicts = conflicts or []
         focus = training.strength.next_focus if training.strength else None
-        focus = focus or "FULL_BODY"
+        sessions = training.strength.recent_sessions if training.strength else []
         prior = next(
             (
-                item for item in (training.strength.recent_sessions if training.strength else [])
+                item for item in sessions
                 if item.focus == focus and item.explicit_exercises
             ),
             None,
+        ) if focus else None
+        if prior is None and not focus:
+            # When the split is unresolved, reuse the latest recognizable session
+            # rather than inventing a full-body program from sparse evidence.
+            prior = next(
+                (item for item in sessions if item.focus != "UNKNOWN" and item.explicit_exercises),
+                None,
+            )
+            if prior is not None:
+                focus = prior.focus
+        focus = focus or "FULL_BODY"
+        lower_conflict = any(
+            phrase in conflict
+            for conflict in conflicts
+            if not conflict.startswith("未发现")
+            for phrase in ("腿部力量", "下肢明显酸痛", "高负荷跑步")
         )
+        if lower_conflict:
+            intensity = "low"
+        if lower_conflict and focus in {"LEGS", "LOWER", "FULL_BODY"}:
+            safe_prior = next(
+                (
+                    item for item in sessions
+                    if item.focus not in {"LEGS", "LOWER", "FULL_BODY"}
+                    and item.focus != "UNKNOWN"
+                    and item.explicit_exercises
+                ),
+                None,
+            )
+            prior = safe_prior
+            focus = safe_prior.focus if safe_prior else "UPPER"
         title, focus_text, steps = (
             self._strength_from_prior(prior, intensity)
             if prior else self._strength_steps(focus, intensity)
@@ -747,25 +878,28 @@ class DecisionEngine:
         planned_intensity = "moderate" if intensity == "high" else intensity
         reasons = []
         if prior:
+            exercise_count = len({
+                (item.exercise_id or item.exercise_name).strip().lower()
+                for item in prior.explicit_exercises
+            })
             reasons.append(
-                f"沿用最近一次{prior.focus_label}训练中已记录的 {len(prior.explicit_exercises)} 个动作。"
+                f"沿用最近一次{prior.focus_label}训练中已记录的 {exercise_count} 个动作。"
             )
             if prior.session_rpe is not None:
                 reasons.append(f"上次整堂训练主观用力为 {prior.session_rpe:.1f}/10。")
         elif training.strength and training.strength.next_focus_label:
             reasons.append(f"按已识别的训练轮换，下一项是{training.strength.next_focus_label}。")
         else:
-            reasons.append("近期没有可复用的已确认动作，按全身动作模式安排。")
-            latest_strength = (
-                training.strength.recent_sessions[0]
-                if training.strength and training.strength.recent_sessions else None
-            )
+            reasons.append("近期没有可复用的已确认动作，训练分化证据不足，仅安排保守动作模式。")
+            latest_strength = sessions[0] if sessions else None
             if latest_strength and latest_strength.estimated_work_bouts is not None:
                 planned_sets = sum(step.sets or 0 for step in steps)
                 reasons.append(
                     f"最近一次力量训练约有 {latest_strength.estimated_work_bouts} 个工作段；"
                     f"心率无法识别动作，本次明确安排 {planned_sets} 个工作组。"
                 )
+        if lower_conflict:
+            reasons.append("近期跑步或下肢负担较高，已降低力量训练剂量并避开下肢重点。")
         return PlannedSession(
             role=role,
             role_label=ROLE_LABELS[role],
@@ -785,7 +919,7 @@ class DecisionEngine:
                 (
                     f"已识别训练结构：{training.strength.detected_split_label}，下一重点为 {training.strength.next_focus_label}。"
                     if training.strength and training.strength.next_focus
-                    else "训练分化证据不足，本次采用全身基础动作模式。"
+                    else "训练分化证据不足，沿用可信的最近动作或采用保守模式。"
                 ),
             ],
             evidence_ref_ids=[
@@ -812,12 +946,7 @@ class DecisionEngine:
                 instructions=["为第一个主动作做 2 组逐步加重的热身"],
             )
         ]
-        seen = set()
         for exercise in prior.explicit_exercises:
-            key = (exercise.exercise_id or exercise.exercise_name).lower()
-            if key in seen:
-                continue
-            seen.add(key)
             instructions = []
             previous_effort = exercise.rir
             if previous_effort is not None:
@@ -826,12 +955,15 @@ class DecisionEngine:
                 instructions.append(f"上次记录主观用力 {exercise.rpe:g}/10")
             if exercise.rir is not None and exercise.rir <= 1 or exercise.rpe is not None and exercise.rpe >= 9:
                 instructions.append("本次保持或略降重量，不做进阶")
-            elif exercise.rir is not None and exercise.rir >= 3 or exercise.rpe is not None and exercise.rpe <= 7:
+            elif intensity != "low" and (
+                exercise.rir is not None and exercise.rir >= 3
+                or exercise.rpe is not None and exercise.rpe <= 7
+            ):
                 instructions.append("动作稳定时可增加少量重量或每组 1 次")
             steps.append(TrainingStep(
                 order=len(steps) + 1,
                 name=exercise.exercise_name,
-                sets=exercise.sets or 3,
+                sets=DecisionEngine._dose_sets(exercise.sets or 3, intensity),
                 repetitions=exercise.repetitions or "6–12 次",
                 load_kg=exercise.weight_kg,
                 rest_seconds=(exercise.rest_seconds, exercise.rest_seconds) if exercise.rest_seconds is not None else (90, 150),
@@ -862,7 +994,7 @@ class DecisionEngine:
             steps.append(TrainingStep(
                 order=order,
                 name=name,
-                sets=sets,
+                sets=DecisionEngine._dose_sets(sets, intensity),
                 repetitions=repetitions,
                 rest_seconds=(rest, rest),
                 intensity=rir,

@@ -73,7 +73,12 @@
 
 ## 9. 当前状态
 
-日期：2026-09-04
+日期：2026-09-05
+
+- 本次本地报告与训练推荐修复通过完整 Python 套件 513 项；晨报、晚报、周报使用合成样例，在 390 像素手机布局和 1100 像素桌面布局下均无横向溢出。本地修复已验证，正式部署与本次真实推送仍待完成。
+- 当前契约为 Daily 12.0、Weekly 5.0、MorningBriefing 2.0、Agent Context 6.0、Intelligence 11.0、Decision Policy 8.0。已修复力量明细刷新、次数类型与剂量保真、训练覆盖门控及报告可读性；受控云详情核验确认 `strengthSets` 可能为空，App 修正动作仍未取得，不能从 `strengthAssess` 猜测。
+
+以下为 2026-09-04 的已验证基线记录，本次未重新核验服务器或真实压力数据：
 
 - 当前工作分支为 `fix/zepp-identity-ownership`，以已部署的 `aef653c` 为基线；本次文档工作将全部 39 个项目 Markdown 收敛为 19 对中英文件和唯一的内联双语入口 `docs/README.md`。
 - 变更后的完整 Python 套件通过 473 项；`tests/test_bilingual_markdown.py` 的 47 项双语契约测试和 Balance 2 的 6 项 Node 测试全部通过。Zepp 身份唯一性与迁移 hardening、中英文文档入口、SQLite 当前 schema 迁移和 `all_day_stress` 本地日时间序列均已验证。
@@ -84,3 +89,4 @@
 ## 10. 当前未完成事项
 
 - [ ] 为持久同步账本建立生产备份/恢复演练与长期数据保留策略。
+- [ ] 取得 Zepp App 修正力量动作组的可验证数据来源；当前云端空 `strengthSets` 不能证明 App 没有记录，也不能用识别评估字段补造动作或重量。

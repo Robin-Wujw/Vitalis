@@ -20,7 +20,7 @@ from vitalis.intelligence.contracts import (
     UserProfile,
 )
 from vitalis.storage import HealthRepository
-from vitalis.time import local_day, local_day_utc_bounds, local_sleep_window
+from vitalis.time import local_day, local_day_utc_bounds, local_sleep_window, local_timezone
 from .localization import QUALITY_LABELS, SIGNAL_LABELS, labels
 from .open_health.common import OpenHealthObservation
 
@@ -59,6 +59,9 @@ class SeriesPoint:
 class RawDailyProfile:
     user_id: str
     day: date
+    as_of: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    training_history_coverage: dict = field(default_factory=dict)
+    report_context: dict = field(default_factory=dict)
     series: dict[str, list[SeriesPoint]] = field(default_factory=dict)
     heart_rate_samples: list[SeriesPoint] = field(default_factory=list)
     sleep_by_day: dict[date, dict] = field(default_factory=dict)
@@ -92,14 +95,26 @@ class ProfileLoader:
         day: date,
         history_days: int = PROFILE_HISTORY_DAYS,
         profile: UserProfile | None = None,
+        as_of: datetime | None = None,
     ) -> RawDailyProfile:
         start = day - timedelta(days=history_days - 1)
-        raw = RawDailyProfile(user_id=user_id, day=day)
+        cutoff = as_of or datetime.now(timezone.utc)
+        cutoff = cutoff.replace(tzinfo=timezone.utc) if cutoff.tzinfo is None else cutoff.astimezone(timezone.utc)
+        raw = RawDailyProfile(user_id=user_id, day=day, as_of=cutoff)
         raw.user_profile = profile or self.repo.user_profile(user_id)
         raw.training_preferences = self.repo.training_preferences(user_id)
         raw.sleep_by_day = _records_by_day(self.repo.sleep_range(user_id, start, day))
         raw.activity_by_day = _records_by_day(self.repo.activity_range(user_id, start, day))
         raw.training_by_day = _records_by_day(self.repo.training_range(user_id, start, day))
+        coverage_start = day - timedelta(days=28)
+        raw.training_history_coverage = self.repo.training_history_coverage(
+            user_id, coverage_start, day, cutoff
+        )
+        verified = set(raw.training_history_coverage.get("verified_days", []))
+        raw.training_history_coverage["prior_7d_verified"] = all(
+            (day - timedelta(days=offset)).isoformat() in verified
+            for offset in range(1, 8)
+        )
 
         self._add_record_series(raw)
         self._add_daily_metrics(raw, start)
@@ -116,6 +131,7 @@ class ProfileLoader:
             row
             for row in self.repo.workouts(user_id, start, day)
             if row.started_at and start <= local_day(row.started_at) <= day
+            and _observed_key(row.started_at) <= cutoff.replace(tzinfo=None)
         ]
         detail_keys: list[tuple[str, str]] = []
         for workout_type in ("running", "strength"):
@@ -158,6 +174,18 @@ class ProfileLoader:
         ]
         raw.facts = self._facts_for_day(raw)
         raw.data_quality = self._quality(raw)
+        raw.report_context = {
+            "as_of": cutoff.isoformat(),
+            "timezone": str(local_timezone()),
+            "target_date": day.isoformat(),
+            "target_day_complete": day < local_day(cutoff),
+            "training_history": raw.training_history_coverage,
+            "latest_observations": {
+                metric: max(points, key=lambda item: _observed_key(item.observed_at)).observed_at.isoformat()
+                for metric, points in raw.series.items() if points
+            },
+            "observation_time_note": "日期级汇总仅表示所属日期，不代表精确测量时刻；生成时间不等于数据更新时间。",
+        }
         return raw
 
     def _add_open_health_inputs(self, raw: RawDailyProfile) -> None:
@@ -425,7 +453,9 @@ class ProfileLoader:
     def _add_sample_metrics(self, raw: RawDailyProfile, start: date) -> None:
         start_at, _ = local_day_utc_bounds(start)
         _, end_at = local_day_utc_bounds(raw.day)
-        end_at -= timedelta(microseconds=1)
+        end_at = min(end_at - timedelta(microseconds=1), raw.as_of)
+        if end_at < start_at:
+            return
         for metric in SAMPLE_METRICS:
             for row in self.repo.metric_samples(
                 raw.user_id, metric, start_at, end_at, limit=MAX_SAMPLES_PER_METRIC
@@ -459,6 +489,9 @@ class ProfileLoader:
             start_at, end_at = (
                 value.astimezone(timezone.utc) for value in window
             )
+            end_at = min(end_at, raw.as_of)
+            if end_at <= start_at:
+                continue
             for minute, value, source, source_scope, device_id, unit in (
                 self.repo.heart_rate_minute_medians(
                     raw.user_id, start_at, end_at

@@ -211,7 +211,9 @@ class IntelligenceCommand:
 
             with session_scope() as db:
                 repo = HealthRepository(db)
-                raw = ProfileLoader(repo).load(user_id, target, profile=profile)
+                raw = ProfileLoader(repo).load(
+                    user_id, target, profile=profile, as_of=run.started_at
+                )
                 identity = repo.identity_context(user_id)
                 response_feedback = repo.subjective_feedback(
                     user_id, target - timedelta(days=179), target
@@ -439,6 +441,7 @@ class IntelligenceCommand:
             user_id=raw.user_id,
             date=target,
             data_quality=raw.data_quality,
+            report_context=raw.report_context,
             facts=raw.facts,
             baselines=baselines,
             features=ProfileFeatures(

@@ -572,11 +572,16 @@ class ZeppParser:
 
     @staticmethod
     def _strength_sets(encoded: object) -> list[StrengthSetObservation]:
-        if not isinstance(encoded, str) or not encoded:
-            return []
-        try:
-            items = json.loads(encoded)
-        except (TypeError, ValueError, json.JSONDecodeError):
+        if isinstance(encoded, str):
+            if not encoded.strip():
+                return []
+            try:
+                items = json.loads(encoded)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return []
+        elif isinstance(encoded, list):
+            items = encoded
+        else:
             return []
         if not isinstance(items, list):
             return []
@@ -602,9 +607,7 @@ class ZeppParser:
                 repetitions=ZeppParser._bounded_int(
                     item, ("repetitions", "reps", "count"), 1, 1000
                 ),
-                weight_kg=ZeppParser._bounded_float(
-                    item, ("weightKg", "weight_kg", "weight"), 0, 2000
-                ),
+                weight_kg=ZeppParser._strength_weight_kg(item),
                 duration_seconds=ZeppParser._bounded_int(
                     item, ("durationSeconds", "duration", "workTime"), 0, MAX_WORKOUT_SECONDS
                 ),
@@ -613,6 +616,23 @@ class ZeppParser:
                 ),
             ))
         return output
+
+    @staticmethod
+    def _strength_weight_kg(item: dict) -> float | None:
+        explicit = ZeppParser._bounded_float(
+            item, ("weightKg", "weight_kg"), 0, 2000
+        )
+        if explicit is not None:
+            return explicit
+        if "weight" not in item:
+            return None
+        unit = ZeppParser._first_text(
+            item, ("weightUnit", "weight_unit", "unit", "weightUnitName")
+        )
+        normalized = (unit or "").strip().lower().replace(" ", "")
+        if normalized not in {"kg", "kgs", "kilogram", "kilograms", "公斤", "千克"}:
+            return None
+        return ZeppParser._bounded_float(item, ("weight",), 0, 2000)
 
     @staticmethod
     def _deduplicate_workout_samples(

@@ -1,27 +1,148 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/weekly-profile-4.0.json",
-  "title": "Vitalis WeeklyProfile 4.0",
+  "$id": "https://vitalis.local/schemas/weekly-profile-5.0.json",
+  "title": "Vitalis WeeklyProfile 5.0",
   "type": "object",
-  "required": ["schema_version", "analysis_run_id", "intelligence_version", "decision_policy_version", "evidence_version", "user_id", "period_start", "period_end", "generated_at", "data_quality", "facts", "inferences", "actions", "evidence_refs", "open_health_period_summary", "open_health_coverage"],
+  "required": ["schema_version", "analysis_run_id", "intelligence_version", "decision_policy_version", "evidence_version", "user_id", "period_start", "period_end", "generated_at", "data_quality", "report_context", "facts", "inferences", "actions", "evidence_refs", "open_health_period_summary", "open_health_coverage"],
   "properties": {
-    "schema_version": {"const": "4.0"},
+    "schema_version": {"const": "5.0"},
     "analysis_run_id": {"type": "string"},
-    "intelligence_version": {"const": "10.0"},
-    "decision_policy_version": {"const": "7.0"},
+    "intelligence_version": {"const": "11.0"},
+    "decision_policy_version": {"const": "8.0"},
     "evidence_version": {"const": "2026-09a"},
     "user_id": {"type": "string"},
     "period_start": {"type": "string", "format": "date"},
     "period_end": {"type": "string", "format": "date"},
     "generated_at": {"type": "string", "format": "date-time"},
-    "data_quality": {"type": "object", "required": ["status", "status_label", "confidence", "confidence_label", "limitations"]},
+    "data_quality": {
+      "type": "object",
+      "required": ["status", "status_label", "confidence", "confidence_label", "limitations"],
+      "properties": {
+        "status": {"enum": ["SUFFICIENT", "PARTIAL", "INSUFFICIENT"]},
+        "status_label": {"type": "string"},
+        "sleep_days": {"type": "integer", "minimum": 0, "maximum": 7},
+        "hrv_days": {"type": "integer", "minimum": 0, "maximum": 7},
+        "activity_days": {"type": "integer", "minimum": 0, "maximum": 7},
+        "training_days": {"type": "integer", "minimum": 0, "maximum": 7},
+        "confidence": {"enum": ["NONE", "LOW", "MODERATE", "HIGH"]},
+        "confidence_label": {"type": "string"},
+        "limitations": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "report_context": {
+      "type": "object",
+      "required": ["as_of", "timezone", "target_date", "target_day_complete", "training_history", "latest_observations"],
+      "properties": {
+        "as_of": {"type": "string", "format": "date-time"},
+        "timezone": {"type": "string"},
+        "target_date": {"type": "string", "format": "date"},
+        "target_day_complete": {"type": "boolean"},
+        "training_history": {
+          "type": "object",
+          "required": ["status", "verified_days", "last_synced_at", "prior_7d_verified"],
+          "properties": {
+            "status": {"enum": ["COMPLETE", "PARTIAL", "UNKNOWN"]},
+            "verified_days": {"type": "array", "items": {"type": "string", "format": "date"}},
+            "last_synced_at": {"type": ["string", "null"], "format": "date-time"},
+            "prior_7d_verified": {"type": "boolean"}
+          }
+        },
+        "latest_observations": {"type": "object", "additionalProperties": {"type": "string"}},
+        "period_start": {"type": "string", "format": "date"},
+        "period_end": {"type": "string", "format": "date"},
+        "training_coverage": {"type": "object"}
+      }
+    },
     "facts": {
       "type": "object",
-      "required": ["sleep", "recovery", "training", "activity", "feedback"]
+      "required": ["sleep", "recovery", "training", "activity", "feedback"],
+      "properties": {
+        "sleep": {
+          "type": "object",
+          "required": ["available_days", "previous_available_days"],
+          "properties": {
+            "available_days": {"type": "integer", "minimum": 0, "maximum": 7},
+            "previous_available_days": {"type": "integer", "minimum": 0, "maximum": 7},
+            "average_minutes": {"type": ["number", "null"]},
+            "median_minutes": {"type": ["number", "null"]},
+            "previous_average_minutes": {"type": ["number", "null"]},
+            "change_percent": {"type": ["number", "null"]},
+            "bedtime_regularity_minutes": {"type": ["number", "null"]}
+          }
+        },
+        "recovery": {
+          "type": "object",
+          "properties": {
+            "hrv_available_days": {"type": "integer", "minimum": 0, "maximum": 7},
+            "hrv_metric": {"type": ["string", "null"]},
+            "hrv_metric_label": {"type": ["string", "null"]},
+            "hrv_device_id": {"type": ["string", "null"]},
+            "hrv_median_ms": {"type": ["number", "null"]},
+            "hrv_previous_median_ms": {"type": ["number", "null"]},
+            "hrv_change_percent": {"type": ["number", "null"]},
+            "sleep_hrv_device_id": {"type": ["string", "null"]},
+            "sleep_hrv_daily": {"type": "array", "items": {"type": "object"}},
+            "rhr_available_days": {"type": "integer", "minimum": 0, "maximum": 7},
+            "rhr_metric": {"type": ["string", "null"]},
+            "rhr_median_bpm": {"type": ["number", "null"]},
+            "rhr_previous_median_bpm": {"type": ["number", "null"]},
+            "rhr_change_percent": {"type": ["number", "null"]}
+          }
+        },
+        "training": {
+          "type": "object",
+          "required": ["workout_count", "training_days", "record_days", "unknown_days", "coverage_status", "totals_are_partial"],
+          "properties": {
+            "workout_count": {"type": "integer", "minimum": 0},
+            "training_days": {"type": "integer", "minimum": 0, "maximum": 7},
+            "record_days": {"type": "integer", "minimum": 0, "maximum": 7},
+            "unknown_days": {"type": "integer", "minimum": 0, "maximum": 7},
+            "coverage_status": {"enum": ["COMPLETE", "PARTIAL", "UNKNOWN"]},
+            "totals_are_partial": {"type": "boolean"},
+            "rest_days": {"type": ["integer", "null"], "minimum": 0, "maximum": 7},
+            "duration_minutes": {"type": ["integer", "null"], "minimum": 0},
+            "vendor_load": {"type": ["number", "null"], "minimum": 0},
+            "previous_vendor_load": {"type": ["number", "null"], "minimum": 0},
+            "load_change_percent": {"type": ["number", "null"]},
+            "aerobic_minutes": {"type": ["integer", "null"], "minimum": 0},
+            "strength_sessions": {"type": ["integer", "null"], "minimum": 0},
+            "sport_mode_counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}
+          }
+        },
+        "activity": {
+          "type": "object",
+          "required": ["available_days", "previous_available_days"],
+          "properties": {
+            "available_days": {"type": "integer", "minimum": 0, "maximum": 7},
+            "previous_available_days": {"type": "integer", "minimum": 0, "maximum": 7},
+            "total_steps": {"type": ["integer", "null"], "minimum": 0},
+            "average_steps": {"type": ["number", "null"], "minimum": 0},
+            "previous_average_steps": {"type": ["number", "null"], "minimum": 0},
+            "steps_change_percent": {"type": ["number", "null"]},
+            "active_minutes": {"type": ["integer", "null"], "minimum": 0}
+          }
+        },
+        "feedback": {
+          "type": "object",
+          "properties": {
+            "response_count": {"type": "integer", "minimum": 0},
+            "average_session_rpe": {"type": ["number", "null"], "minimum": 1, "maximum": 10},
+            "average_physical_fatigue": {"type": ["number", "null"], "minimum": 1, "maximum": 5},
+            "average_mental_state": {"type": ["number", "null"], "minimum": 1, "maximum": 5},
+            "average_muscle_soreness": {"type": ["number", "null"], "minimum": 1, "maximum": 5}
+          }
+        }
+      }
     },
     "inferences": {
       "type": "object",
-      "required": ["trends", "events", "key_changes", "limitations"]
+      "required": ["trends", "events", "key_changes", "limitations"],
+      "properties": {
+        "trends": {"type": "array", "items": {"type": "object"}},
+        "events": {"type": "array", "items": {"type": "object"}},
+        "key_changes": {"type": "array", "items": {"type": "string"}},
+        "limitations": {"type": "array", "items": {"type": "string"}}
+      }
     },
     "actions": {
       "type": "object",

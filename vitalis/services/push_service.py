@@ -4,8 +4,9 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from markdown import Markdown
@@ -13,7 +14,9 @@ from markdown.extensions import Extension
 from markdown.treeprocessors import Treeprocessor
 
 from vitalis.intelligence.contracts import MorningBriefing
+from vitalis.intelligence.evening_briefing import EveningBriefingEngine
 from vitalis.intelligence.morning_briefing import MorningBriefingEngine
+from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
 
 log = logging.getLogger("vitalis.push")
 PUSHPLUS_URL = "https://www.pushplus.plus/send"
@@ -88,6 +91,7 @@ class PushService:
             )
             return self.push_morning_briefing(user_id, briefing)
         elif period == "evening":
+            payload = EveningBriefingEngine().build_payload(payload)
             title, body_lines = _render_evening(payload)
         else:
             raise ValueError("period must be morning or evening")
@@ -110,6 +114,18 @@ class PushService:
             else briefing
         )
         title, body_lines = _render_morning(payload)
+        return self.push(PushMessage(
+            title=title,
+            body=_render_report_html(body_lines),
+            user_id=user_id,
+            template="html",
+            extras=payload,
+        ))
+
+    def push_weekly_profile(self, user_id: str, profile) -> dict:
+        """Render and send one weekly profile; this method does not schedule delivery."""
+        payload = WeeklyBriefingEngine().build_payload(profile)
+        title, body_lines = _render_weekly(payload)
         return self.push(PushMessage(
             title=title,
             body=_render_report_html(body_lines),
@@ -236,7 +252,13 @@ def _render_morning(briefing: dict) -> tuple[str, list[str]]:
     report_date = briefing["date"]
     action_title = primary["title"] if primary else briefing["action_label"]
     title = f"Vitalis 晨报 · {report_date} · {action_title}"
-    lines = ["## 今天做什么", ""]
+    lines = _timing_lines(briefing) + ["", "## 昨晚睡眠与身体状态", ""]
+    observations = [item.get("text", "") for item in briefing.get("observations", [])]
+    if observations:
+        lines.extend(f"- {item}" for item in observations if item)
+    else:
+        lines.append("昨晚可用的睡眠与身体状态观测不足。")
+    lines.extend(["", "## 今天做什么", ""])
     if briefing["decision_action"] == "INSUFFICIENT_DATA":
         lines.append("今天不生成训练建议。")
     else:
@@ -247,9 +269,135 @@ def _render_morning(briefing: dict) -> tuple[str, list[str]]:
     cautions = briefing.get("cautions", [])
     if cautions:
         lines.extend(["", "## 注意", "", *(f"- {item}" for item in cautions)])
+    safety = MorningBriefingEngine.safety_lines(briefing)
+    if safety:
+        lines.extend(["", "## 安全限制", "", *(f"- {item}" for item in safety)])
     feedback_prompt = briefing.get("feedback_prompt")
     if feedback_prompt:
         lines.extend(["", "## 训练后告诉我", "", feedback_prompt])
+    return title, lines
+
+
+def _render_weekly(payload: dict) -> tuple[str, list[str]]:
+    period_start = payload.get("period_start", "未知")
+    period_end = payload.get("period_end", "未知")
+    context = payload.get("report_context") or {}
+    quality = payload.get("data_quality") or {}
+    quality_label = quality.get("status_label", "数据状态未知")
+    title = f"Vitalis 周报 · {period_end} · {quality_label}"
+    lines = [
+        f"> **滚动周期：{period_start} 至 {period_end}** · 睡眠/HRV：{quality_label}",
+        "",
+        *_timing_lines(payload),
+        "",
+        "## 事实",
+        "",
+    ]
+    sections = payload.get("weekly_sections") or {}
+    facts = sections.get("facts") or payload.get("facts") or {}
+    sleep = facts.get("sleep") or {}
+    sleep_parts = []
+    if sleep.get("available_days") is not None:
+        sleep_parts.append(f"有效 {sleep['available_days']} 天")
+    if sleep.get("average_minutes") is not None:
+        sleep_parts.append(f"平均 {sleep['average_minutes']:g} 分钟")
+    if sleep.get("median_minutes") is not None:
+        sleep_parts.append(f"中位数 {sleep['median_minutes']:g} 分钟")
+    if sleep_parts:
+        lines.append(f"- **睡眠**：{'；'.join(sleep_parts)}。")
+    else:
+        lines.append("- **睡眠**：本周期没有可用睡眠事实。")
+
+    recovery = facts.get("recovery") or {}
+    recovery_parts = []
+    if recovery.get("hrv_median_ms") is not None:
+        metric_label = recovery.get("hrv_metric_label") or "心率变异性"
+        recovery_parts.append(
+            f"{metric_label}中位数 {recovery['hrv_median_ms']:g} 毫秒"
+            f"（{recovery.get('hrv_available_days', 0)} 天）"
+        )
+    if recovery.get("rhr_median_bpm") is not None:
+        recovery_parts.append(f"静息心率中位数 {recovery['rhr_median_bpm']:g} 次/分钟")
+    if recovery_parts:
+        lines.append(f"- **身体状态观测**：{'；'.join(recovery_parts)}。")
+
+    training = facts.get("training") or {}
+    training_parts = []
+    for key, label, unit in (
+        ("workout_count", "训练", "次"),
+        ("duration_minutes", "训练时长", "分钟"),
+        ("vendor_load", "设备训练负荷", ""),
+        ("aerobic_minutes", "有氧", "分钟"),
+        ("strength_sessions", "力量训练", "次"),
+        ("rest_days", "已确认休息日", "天"),
+    ):
+        value = training.get(key)
+        if value is not None:
+            training_parts.append(f"{label} {value:g}{unit}")
+    if training_parts:
+        training_label = "训练（已记录合计）" if training.get("totals_are_partial", True) else "训练"
+        lines.append(f"- **{training_label}**：{'；'.join(training_parts)}。")
+    else:
+        lines.append("- **训练**：本周期没有可用训练合计。")
+
+    activity = facts.get("activity") or {}
+    activity_parts = []
+    if activity.get("available_days") is not None:
+        activity_parts.append(f"有效 {activity['available_days']} 天")
+    if activity.get("total_steps") is not None:
+        activity_parts.append(f"累计 {activity['total_steps']:,} 步")
+    if activity.get("average_steps") is not None:
+        activity_parts.append(f"日均 {activity['average_steps']:g} 步")
+    if activity_parts:
+        lines.append(f"- **活动**：{'；'.join(activity_parts)}。")
+    else:
+        lines.append("- **活动**：本周期没有可用步数事实。")
+
+    lines.extend(["", "## 趋势", ""])
+    inferences = payload.get("inferences") or {}
+    changes = sections.get("key_changes") or inferences.get("key_changes") or []
+    trend_items = sections.get("trends") or inferences.get("trends") or []
+    if changes:
+        lines.extend(f"- {item}" for item in changes[:6])
+    elif trend_items:
+        lines.append("- 已达到 TrendEngine 门槛的趋势本周期没有明显变化。")
+    else:
+        lines.append("- 当前没有达到比较门槛的趋势；不对缺失周期做趋势判断。")
+
+    lines.extend(["", "## 覆盖与限制", ""])
+    coverage = (
+        sections.get("training_coverage")
+        or context.get("training_coverage")
+        or context.get("coverage")
+        or {}
+    )
+    if coverage:
+        status_label = {
+            "COMPLETE": "本周期清单已核实", "PARTIAL": "清单部分已核实",
+            "UNKNOWN": "清单覆盖未确认",
+        }.get(coverage.get("coverage_status"), "清单覆盖未确认")
+        lines.append(
+            f"- 训练历史：{status_label}；"
+            f"已核实 {coverage.get('record_days', 0)} 天；"
+            f"未知 {coverage.get('unknown_days', 7)} 天。"
+        )
+    limitations = sections.get("limitations") or inferences.get("limitations") or []
+    lines.extend(f"- {item}" for item in limitations[:6])
+    if not coverage and not limitations:
+        lines.append("- 覆盖上下文未提供；不能将本周期解释为完整。")
+
+    lines.extend(["", "## 建议", ""])
+    recommendations = sections.get("recommendations") or (payload.get("actions") or {}).get("recommendations") or []
+    if recommendations:
+        for item in recommendations[:3]:
+            action = item.get("action") or ""
+            reasons = "；".join(item.get("reasons") or [])
+            line = f"- **{item.get('title', '建议')}**：{action}"
+            if reasons:
+                line += f"（依据：{reasons}）"
+            lines.append(line)
+    else:
+        lines.append("- 当前没有可由事实支持的周期建议。")
     return title, lines
 
 
@@ -257,11 +405,13 @@ def _render_evening(payload: dict) -> tuple[str, list[str]]:
     features = payload["features"]
     training = features["training"]
     report_date = payload["date"]
-    today = [
-        workout
-        for workout in training.get("recent_workouts", [])
-        if workout.get("date") == report_date
-    ]
+    today = (payload.get("evening_facts") or {}).get("today_workouts")
+    if today is None:
+        today = [
+            workout
+            for workout in training.get("recent_workouts", [])
+            if workout.get("date") == report_date
+        ]
     if len(today) == 1:
         title_label = today[0]["sport_mode_label"]
     elif today:
@@ -287,7 +437,7 @@ def _render_evening(payload: dict) -> tuple[str, list[str]]:
                 f"- **{workout['sport_mode_label']}** · {' · '.join(details)}"
             )
     else:
-        lines.append("今天没有记录到正式训练，按正常节奏收尾即可，不需要在晚上补课。")
+        lines.append("今天没有正式训练记录；这只是对当前记录的观察，不能据此推断休息状态，也不需要在晚上补课。")
 
     details = _render_today_workout_details(training, report_date)
     if details:
@@ -486,7 +636,7 @@ def _evening_recovery_action(
         )
     if today:
         return "今天的正式活动已经完成。今晚不再追加训练，按正常饮食、补水和作息收尾。"
-    return "今天没有正式训练。晚上不用补训练，保持正常饮食、补水和入睡时间即可。"
+    return "今天没有正式训练记录；今晚不据此判断恢复状态，也不安排补训练，按身体感受收尾。"
 
 
 def _tomorrow_bridge(training: dict, today: list[dict], report_date: str) -> str:
@@ -502,23 +652,20 @@ def _tomorrow_bridge(training: dict, today: list[dict], report_date: str) -> str
     )
     if hard_run or lower_strength:
         return (
-            "明天先按低负担方向预留，不连续安排质量跑和腿部力量。"
-            "具体内容等今晚睡眠、心率变异性和静息心率到齐后再定。"
+            "今天的训练记录提示明天避免连续安排质量跑和腿部力量；"
+            "明天具体是否训练，留待明早数据和身体感受到齐后再决定。"
         )
 
     next_focus = (training.get("strength") or {}).get("next_focus_label")
     if next_focus:
-        rest_prefix = "" if today else "今天没有训练不需要用明天加量补偿。"
+        rest_prefix = "" if today else "今天没有训练记录，不需要用明天加量补偿。"
         return (
-            f"{rest_prefix}下一次力量训练的候选重点是{next_focus}。是否放在明天，"
-            "等今晚睡眠、心率变异性和静息心率到齐后再定。"
+            f"{rest_prefix}下一次力量训练的候选重点是{next_focus}；"
+            "是否安排在明天，留待明早数据和身体感受明确后再决定。"
         )
     if today:
-        return "明天的训练强度等今晚睡眠、心率变异性和静息心率到齐后再确定。"
-    return (
-        "今天没有训练不需要用明天加量补偿。明早根据整夜睡眠、心率变异性和"
-        "静息心率正常安排。"
-    )
+        return "明天的训练安排留待明早数据和身体感受明确后再决定。"
+    return "今天没有训练记录，不需要用明天加量补偿；明天按计划和身体感受安排。"
 
 
 def _sessions_on_day(feature: dict | None, report_date: str) -> list[dict]:
@@ -657,9 +804,26 @@ def _fact_value(payload: dict, metric: str) -> float | None:
     return float(value) if isinstance(value, (int, float)) else None
 
 
+def _timing_lines(payload: dict) -> list[str]:
+    context = payload.get("report_context") or {}
+    as_of = context.get("as_of")
+    if not isinstance(as_of, str):
+        return ["> 分析截止时刻未提供；日期汇总不代表实时测量。"]
+    try:
+        clock = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+        if clock.tzinfo is None:
+            clock = clock.replace(tzinfo=timezone.utc)
+        clock = clock.astimezone(ZoneInfo(context.get("timezone") or "UTC"))
+        displayed = clock.strftime("%Y-%m-%d %H:%M %z")
+    except (ValueError, TypeError, ZoneInfoNotFoundError):
+        displayed = as_of
+    suffix = "；当日记录仍可能更新" if context.get("target_day_complete") is False else ""
+    return [f"> **分析截至：{displayed}**{suffix}。不代表所有指标在此时测量。"]
+
+
 def _metadata(payload: dict) -> list[str]:
     quality = payload.get("data_quality", {}).get("status_label", "数据状态未知")
-    return [f"> **数据日期：{payload['date']}** · {quality}"]
+    return [f"> **数据日期：{payload['date']}** · 夜间关键观测：{quality}", "", *_timing_lines(payload)]
 
 
 def _daily_conclusion(
@@ -760,6 +924,7 @@ def _render_coach_session(session: dict, role: str) -> list[str]:
         f"### {role}：{session['title']}{duration_text} · {session['intensity_label']}",
         "",
         session["focus"],
+        "",
     ]
     for step in session.get("steps", []):
         details = []
@@ -1193,10 +1358,30 @@ def _render_today_workout_details(training: dict, report_date: str) -> list[str]
             if latest.get("maximum_heart_rate_bpm") is not None:
                 metrics.append(f"最高心率 {latest['maximum_heart_rate_bpm']:g} 次/分钟")
             lines.append(f"- **力量**：{' · '.join(metrics)}")
-            names = [item["exercise_name"] for item in latest.get("explicit_exercises", [])]
+            exercises = latest.get("explicit_exercises", [])
+            names = [item["exercise_name"] for item in exercises]
             if names:
                 lines.append(f"- **动作**：{'、'.join(names)}")
+                for exercise in exercises:
+                    details = []
+                    if exercise.get("sets") is not None:
+                        details.append(f"{exercise['sets']} 组")
+                    if exercise.get("repetitions"):
+                        details.append(str(exercise["repetitions"]))
+                    if exercise.get("weight_kg") is not None:
+                        details.append(f"{exercise['weight_kg']:g} 千克")
+                    if exercise.get("rpe") is not None:
+                        details.append(f"RPE {exercise['rpe']:g}")
+                    if exercise.get("rir") is not None:
+                        details.append(f"余力 {exercise['rir']:g}")
+                    if exercise.get("rest_seconds") is not None:
+                        details.append(f"休息 {exercise['rest_seconds']} 秒")
+                    if details:
+                        lines.append(
+                            f"- **{exercise['exercise_name']}**：{' · '.join(details)}。"
+                        )
             else:
+                lines.append("- **动作明细**：当前已同步数据未含明确动作、组次和重量，不能据此复原 App 中的修正项目。")
                 hypotheses = [
                     item.get("exercise_name") or item.get("movement_pattern_label")
                     for item in latest.get("hypotheses", [])

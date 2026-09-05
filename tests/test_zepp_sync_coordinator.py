@@ -196,6 +196,51 @@ def test_dynamic_workout_detail_is_bounded_and_report_hides_leases():
     assert state["progress"]["complete"] is True
 
 
+def test_manual_detail_refresh_mixes_cached_strength_and_new_running_workouts():
+    captured = {}
+
+    class Repository:
+        def sync_chunks(self, _attempt_id):
+            return []
+
+        def pending_workout_details(self, *args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return [
+                SimpleNamespace(workout_id="strength-cached", vendor_source="strength"),
+                SimpleNamespace(workout_id="run-new", vendor_source="run"),
+            ]
+
+    attempt = {
+        "id": "manual-refresh",
+        "user_id": "manual-refresh-user",
+        "trigger": "manual",
+        "created_at": NOW.replace(tzinfo=None),
+        "window_start": WINDOW.start,
+        "window_end": WINDOW.end,
+        "options": {},
+    }
+    chunk = {
+        "stream": "workouts",
+        "window_start": WINDOW.start,
+        "window_end": WINDOW.end,
+    }
+    result = _ChunkResult(record=FetchedRecord(RawRecord(
+        "workouts", "sport_history:run", WINDOW.start, WINDOW.end, {"data": {}}
+    )))
+    specs = ZeppSyncCoordinator()._dynamic_specs(
+        Repository(), attempt, chunk, result
+    )
+    assert [spec["stages"]["params"]["workout_id"] for spec in specs] == [
+        "strength-cached", "run-new"
+    ]
+    assert captured["kwargs"]["strength_only"] is False
+    assert captured["kwargs"]["refresh_after"] == NOW.replace(tzinfo=None)
+    refresh_start = captured["args"][1]
+    refresh_end = captured["args"][2]
+    assert (refresh_end - refresh_start).days == 28
+
+
 def test_control_budget_is_monotonic_and_recovery_reclaims_expired_attempt():
     assert SyncControl.budget_for_days(7) <= SyncControl.budget_for_days(8)
     assert SyncControl.budget_for_days(8) <= SyncControl.budget_for_days(30)

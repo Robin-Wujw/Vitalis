@@ -75,7 +75,7 @@
 
 日期：2026-09-06
 
-- 本轮四报告数据层、报告路由和 Skill 工作流已通过本地集成验收：Windows 完整 Python 套件 `591` 项通过，包含双语 Markdown、本地链接/锚点、schema 导出和报告链路测试。用户已明确授权提交、部署到现有服务器并发送一次新版测试晚报；服务器部署与真实投递仍需后续核验。
+- 本轮四报告数据层、报告路由和 Skill 工作流已完成集成验收并以 `41a603e` 部署到现有服务器。Windows 与 Linux 完整 Python 套件各 `591` 项通过，包含双语 Markdown、本地链接/锚点、schema 导出和报告链路测试；新版晚报接口返回 HTTP 200、`ReportBriefing 1.0` 和四个报告段落。
 - 当前契约为 Daily 13.0、Weekly 6.0、Monthly 3.0、MorningBriefing 3.0、Agent Context 6.0、Intelligence 12.0、Decision Policy 9.0。新增的 `GET /intelligence/evening-briefing`、`GET /intelligence/weekly-briefing` 和 `GET /intelligence/monthly-briefing` 返回 `ReportBriefing 1.0`，并与 HTML 使用相同的 `sections`。
 - 本轮字段可用性检查不展开个人健康数值；可以描述一般能力，但不把个人健康数值、真实记录或未取得的 App 修正动作写入仓库，也不声称已取得真实 App 动作数据。
 - 周/月活动汇总按本地日期归属；同日不同训练热量相加，日汇总重复观测仍取中位数，不混合来源。报告保留指标单位和部分覆盖限制，未知热量单位不补为千卡。
@@ -85,12 +85,12 @@
 以下为当前核验与仍保留的历史基线：
 
 - 当前工作分支为 `fix/zepp-identity-ownership`；本轮文档只同步当前本地契约，不改变英文 sidecar 的运行时角色。
-- 本轮 Windows 完整 Python 套件通过 `591` 项；服务器 API 健康、Zepp 身份映射和 SQLite schema 只读审计正常。部署前 SQLite 备份通过 `quick_check`，未执行结构迁移；服务器测试和新版投递尚待完成。
+- Windows 与服务器 Linux 完整 Python 套件各通过 `591` 项；新版服务器 API 和同步 worker 均 active，`healthz=ok`，Zepp 身份映射和 SQLite schema 审计正常。部署前 SQLite 备份通过 `quick_check`，未执行结构迁移。
 - 已确认的 Zepp 语义继续有效：压力日汇总来自 `all_day_stress` 字段，曲线来自显式时间戳 `data` 数组；`Charge/stress_data` protobuf 和 `Charge/insight_data` 仍无可证明语义，继续不请求。
-- 本轮只使用用户于 2026-09-06 明确给出的新版部署和单次测试晚报授权，不复用旧的一次性推送授权；测试不修改正式投递去重标记。
+- 使用用户于 2026-09-06 明确给出的新版部署和单次测试晚报授权完成投递：PushPlus 接受发送，测试工具返回 `test_sent`，`quality=SUFFICIENT`，`sync_status=incomplete`、`sync_degraded=true`，`scheduled_delivery_unchanged=true`。报告已注明同步不完整，使用符合日期要求的已保存数据；正式投递去重标记未改变。此授权不延伸到后续额外测试推送。
 
 ## 10. 当前未完成事项
 
-- [ ] 完成本轮已验证四报告的服务器部署验收与一次实际测试晚报，收集用户内容反馈。
+- [ ] 根据用户对新版实际测试晚报的内容反馈进行后续调整；额外测试推送需要新的明确授权。
 - [ ] 为持久同步账本建立生产备份/恢复演练与长期数据保留策略。
 - [ ] 取得 Zepp App 修正力量动作组的可验证数据来源；当前云端空 `strengthSets` 不能证明 App 没有记录，也不能用识别评估字段补造动作或重量。

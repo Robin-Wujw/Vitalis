@@ -75,7 +75,7 @@ Historical tasks, completed TODOs, session records, and per-run verification res
 
 Date: 2026-09-06
 
-- The four-report data layer, report routes, and Skill workflows passed local integration acceptance: the full Windows Python suite passed `591` tests, including bilingual Markdown, local links/anchors, schema exports, and report pipelines. The user explicitly authorized committing, deploying to the existing server, and sending one new-version test evening report; server deployment and actual delivery still require subsequent verification.
+- The four-report data layer, report routes, and Skill workflows completed integration acceptance and were deployed to the existing server as `41a603e`. The full Windows and Linux Python suites each passed `591` tests, including bilingual Markdown, local links/anchors, schema exports, and report pipelines; the new evening endpoint returns HTTP 200, `ReportBriefing 1.0`, and four report sections.
 - Current contracts are Daily 13.0, Weekly 6.0, Monthly 3.0, MorningBriefing 3.0, Agent Context 6.0, Intelligence 12.0, and Decision Policy 9.0. The new `GET /intelligence/evening-briefing`, `GET /intelligence/weekly-briefing`, and `GET /intelligence/monthly-briefing` routes return `ReportBriefing 1.0` and share the same `sections` with HTML.
 - Field-availability checks do not expose personal health values. General capabilities may be described, but personal health values, real records, and unverified app-corrected exercises are not written to the repository or claimed as obtained.
 - Weekly/monthly activity aggregation uses local dates; distinct workouts on the same day have their energy summed, while repeated daily summaries retain median reduction without mixing sources. Reports preserve metric units and partial-coverage limitations; unknown energy units are not filled in as kilocalories.
@@ -85,12 +85,12 @@ Date: 2026-09-06
 The following records current verification and retained historical baselines:
 
 - The current working branch is `fix/zepp-identity-ownership`; this documentation sync does not change the runtime role of English sidecars.
-- The full Windows Python suite passed `591` tests this round; server API health and read-only Zepp identity and SQLite schema audits are clean. The pre-deployment SQLite backup passed `quick_check` without running a structural migration; server tests and new-version delivery remain pending.
+- The full Windows and server Linux Python suites each passed `591` tests; the new server API and synchronization worker are both active, `healthz=ok`, and Zepp identity and SQLite schema audits are clean. The pre-deployment SQLite backup passed `quick_check` without running a structural migration.
 - Verified Zepp semantics remain unchanged: daily stress summaries come from `all_day_stress` fields and curves from explicit timestamped `data`; `Charge/stress_data` protobuf and `Charge/insight_data` still have no provable semantics and remain unrequested.
-- This round uses only the user's explicit authorization on 2026-09-06 to deploy the new version and send one test evening report, not an old one-time push authorization; testing does not change scheduled-delivery deduplication markers.
+- Delivery completed under the user's explicit authorization on 2026-09-06 to deploy the new version and send one test evening report: PushPlus accepted the send and the test tool returned `test_sent`, `quality=SUFFICIENT`, `sync_status=incomplete`, `sync_degraded=true`, and `scheduled_delivery_unchanged=true`. The report discloses incomplete synchronization and uses stored data meeting the date requirements; scheduled-delivery deduplication markers were unchanged. This authorization does not extend to further test pushes.
 
 ## 10. Current Unfinished Work
 
-- [ ] Complete server deployment acceptance and one actual test evening report for the verified four-report implementation, then collect user content feedback.
+- [ ] Make follow-up adjustments based on user feedback on the actual new-version test evening report; additional test pushes require fresh explicit authorization.
 - [ ] Establish a production backup/recovery drill and long-term data-retention policy for the durable synchronization ledger.
 - [ ] Obtain a verifiable data source for Zepp app-corrected strength exercise sets; empty cloud `strengthSets` does not prove that the app has no records, and assessment fields must not be used to invent exercises or weights.

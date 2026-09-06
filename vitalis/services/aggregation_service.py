@@ -111,7 +111,9 @@ class AggregationService:
     @staticmethod
     def _aggregate_block(block: AggregatedBlock) -> None:
         days = block.raw_days
-        block.days_with_data = len(days)
+        block.days_with_data = sum(
+            any((day.sleep, day.activity, day.training)) for day in days
+        )
         if not days:
             return
 
@@ -133,10 +135,19 @@ class AggregationService:
         # activity
         act_days = [d.activity for d in days if d.activity]
         if act_days:
-            n = len(act_days)
-            block.steps_avg = round(sum(a.steps for a in act_days) / n, 0)
-            block.calories_total = sum(a.calories for a in act_days)
-            block.distance_km_total = round(sum(a.distance_km for a in act_days), 2)
+            def values(name: str) -> list:
+                return [
+                    getattr(record, name) for record in act_days
+                    if getattr(record, name) is not None
+                    and (getattr(record, name) != 0 or name in record.observed_fields)
+                ]
+
+            steps = values("steps")
+            calories = values("calories")
+            distances = values("distance_km")
+            block.steps_avg = round(sum(steps) / len(steps), 0) if steps else None
+            block.calories_total = sum(calories) if calories else None
+            block.distance_km_total = round(sum(distances), 2) if distances else None
             rhrs = [a.resting_hr for a in act_days if a.resting_hr]
             if rhrs:
                 block.resting_hr_avg = round(sum(rhrs) / len(rhrs), 1)

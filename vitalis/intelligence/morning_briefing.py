@@ -1,199 +1,266 @@
-"""Build the shared, action-first morning presentation from a DailyProfile."""
+"""Build the complete, action-first morning presentation from a DailyProfile."""
+from __future__ import annotations
 
 from typing import Any
 
-from .contracts import DailyProfile, MorningBriefing
-
+from .contracts import DailyProfile, MorningBriefing, ReportSection
+from .report_formatting import (
+    baseline_text,
+    clock_text,
+    list_facts,
+    metric_label,
+    minutes_text,
+    number,
+    payload_of,
+    range_text,
+    repetitions_text,
+    unique,
+)
 
 _ACTION_CHANGING_EVENTS = {
-    "RECOVERY_SUPPRESSED",
-    "SLEEP_DEFICIT",
-    "RHR_ELEVATED",
-    "HRV_DROP",
-    "TRAINING_LOAD_SPIKE",
-    "TRAINING_GAP",
+    "RECOVERY_SUPPRESSED", "SLEEP_DEFICIT", "RHR_ELEVATED", "HRV_DROP",
+    "TRAINING_LOAD_SPIKE", "TRAINING_GAP",
 }
-_FORMAL_ACTIONS = {"TRAIN_HARD", "TRAIN_NORMAL", "TRAIN_LIGHT", "RECOVERY"}
 
 
 class MorningBriefingEngine:
     """Projection only: it never calculates or changes a training decision."""
 
-    def build(
-        self, daily: DailyProfile, delivery_metadata: dict | None = None
-    ) -> MorningBriefing:
+    def build(self, daily: DailyProfile, delivery_metadata: dict | None = None) -> MorningBriefing:
         return MorningBriefing.model_validate(
-            self.build_payload(daily.model_dump(mode="json"), delivery_metadata)
+            self.build_payload(payload_of(daily), delivery_metadata)
         )
 
-    def build_payload(
-        self, daily: dict[str, Any], delivery_metadata: dict | None = None
-    ) -> dict[str, Any]:
-        decision = daily["decision"]
-        action_plan = decision["action_plan"]
-        reasons = self._reasons(decision)
-        cautions = self._cautions(daily, delivery_metadata or {})
-        feedback_prompt = (
-            "完成后记录：是否完成、主观用力 RPE（1-10）、"
-            "身体疲劳、精神状态和酸痛（1-5）。"
-            if decision["action"] in _FORMAL_ACTIONS
-            else None
-        )
-        report_context = dict(daily.get("report_context") or {})
-        readiness = (daily.get("features", {}).get("recovery") or {}).get(
-            "vendor_readiness"
-        )
-        if isinstance(readiness, (int, float)):
-            report_context["device_recovery_readiness"] = readiness
-        if decision["action"] == "INSUFFICIENT_DATA":
-            feedback_prompt = None
-            gates = [
-                item.get("label", "")
-                for item in decision.get("evidence", {}).get("gates", [])
-                if item.get("triggered", True)
-            ]
-            reasons = self._unique(
-                gates
-                + list(decision.get("limitation_labels", []))
-                + list(daily.get("data_quality", {}).get("missing_required_signal_labels", []))
-            )[:3]
-            if not reasons:
-                reasons = ["恢复决策所需信号不足，今天不生成训练建议。"]
-            cautions = self._unique(
-                list(daily.get("data_quality", {}).get("missing_required_signal_labels", []))
-                + list(decision.get("limitation_labels", []))
-                + cautions
-            )[:3]
+    def build_payload(self, daily: dict[str, Any], delivery_metadata: dict | None = None) -> dict[str, Any]:
+        payload = payload_of(daily)
+        sections = self._sections(payload)
+        report_context = dict(payload.get("report_context") or {})
+        if delivery_metadata:
+            report_context["delivery_metadata"] = dict(delivery_metadata)
+        observations = [fact for section in sections for fact in section["facts"]]
+        reasons = self._reasons(payload)
+        cautions = self._cautions(payload, delivery_metadata or {})
         return {
-            "analysis_run_id": daily.get("analysis_run_id", ""),
-            "user_id": daily.get("user_id", ""),
-            "date": daily["date"],
-            "generated_at": daily.get("generated_at"),
-            "decision_action": decision["action"],
-            "action_label": decision["action_label"],
-            "action_plan": action_plan,
-            "key_reasons": [{"text": item} for item in reasons],
-            "observations": self._observations(daily),
-            "cautions": cautions,
-            "feedback_prompt": feedback_prompt,
-            "data_quality": daily["data_quality"],
-            "evidence": decision.get("evidence", {"facts": [], "gates": []}),
+            "schema_version": "3.0",
+            "analysis_run_id": payload.get("analysis_run_id", ""),
+            "user_id": payload.get("user_id", ""),
+            "date": payload.get("date"),
+            "generated_at": payload.get("generated_at"),
+            "decision_action": (payload.get("decision") or {}).get("action", "INSUFFICIENT_DATA"),
+            "action_label": (payload.get("decision") or {}).get("action_label", "暂不生成训练建议"),
+            "action_plan": (payload.get("decision") or {}).get("action_plan") or {},
             "report_context": report_context,
+            "summary": self._summary(payload, sections),
+            "sections": sections,
+            "observations": [{"text": item} for item in observations],
+            "key_reasons": [{"text": item} for item in reasons],
+            "cautions": cautions,
+            "data_quality": payload.get("data_quality") or {},
+            "evidence": ((payload.get("decision") or {}).get("evidence") or {"facts": [], "gates": []}),
         }
 
-    def _observations(self, daily: dict[str, Any]) -> list[dict[str, str]]:
-        """Expose a short numeric overnight snapshot without duplicating analysis."""
-        features = daily.get("features") or {}
+    def _sections(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        features = payload.get("features") or {}
         sleep = features.get("sleep") or {}
         hrv = features.get("hrv") or {}
+        vitals = features.get("overnight_vitals") or {}
+        decision = payload.get("decision") or {}
+        return [
+            {"key": "sleep", "title": "昨晚睡眠", "facts": self._sleep_facts(sleep),
+             "interpretation": self._sleep_interpretation(sleep), "limitations": self._limitations(sleep)},
+            {"key": "recovery", "title": "今早恢复信号", "facts": self._recovery_facts(hrv, vitals),
+             "interpretation": self._recovery_interpretation(features, hrv, vitals),
+             "limitations": self._limitations(hrv) + self._limitations(vitals)},
+            {"key": "today_plan", "title": "今天的安排", "facts": self._plan_facts(decision),
+             "interpretation": self._plan_interpretation(payload),
+             "limitations": self._plan_limitations(payload)},
+        ]
+
+    def _sleep_facts(self, sleep: dict[str, Any]) -> list[str]:
+        facts = []
+        duration = minutes_text(sleep.get("duration_minutes"))
+        if duration:
+            facts.append(f"睡眠时长 {duration}")
+        bedtime, wake = clock_text(sleep.get("bedtime")), clock_text(sleep.get("wake_time"))
+        if bedtime and wake:
+            facts.append(f"入睡 {bedtime}，醒来 {wake}")
+        for key, label in (("deep_minutes", "深睡"), ("rem_minutes", "快速眼动睡眠"), ("awake_minutes", "清醒")):
+            value = minutes_text(sleep.get(key))
+            if value:
+                facts.append(f"{label} {value}")
+        if sleep.get("wake_count") is not None:
+            facts.append(f"夜间醒来 {sleep['wake_count']} 次")
+        if sleep.get("vendor_sleep_score") is not None:
+            facts.append(f"睡眠评分 {number(sleep['vendor_sleep_score'], 0)}")
+        return facts or ["昨晚没有可用的睡眠时长、时间或连续性记录"]
+
+    def _sleep_interpretation(self, sleep: dict[str, Any]) -> list[str]:
+        output = []
+        if sleep.get("duration_minutes") is not None:
+            output.append(f"睡眠时长：{baseline_text(sleep.get('duration_deviation'))}。")
+        if sleep.get("regularity_minutes") is not None:
+            output.append(f"近期入睡时刻的波动约 {number(sleep['regularity_minutes'])} 分钟。")
+        wake_deviation = sleep.get("wake_count_deviation")
+        if wake_deviation:
+            output.append(f"醒来次数{baseline_text(wake_deviation, noun='个人通常水平')}。")
+        return output or ["睡眠事实已保留，但缺少可用个人参照，不能判断优劣。"]
+
+    def _recovery_facts(self, hrv: dict[str, Any], vitals: dict[str, Any]) -> list[str]:
+        output = []
+        value = hrv.get("value_ms")
+        preferred = hrv.get("preferred_metric")
+        if isinstance(value, (int, float)):
+            output.append(f"{metric_label(preferred, overnight=preferred == 'hrv_rmssd')} {number(value)} 毫秒")
+        else:
+            output.append("没有可用于本次判断的 HRV 读数")
+        if isinstance(hrv.get("rhr_bpm"), (int, float)):
+            output.append(f"{metric_label(hrv.get('rhr_metric') or 'resting_hr')} {number(hrv['rhr_bpm'])} 次/分钟")
+        else:
+            output.append("静息心率没有可用夜间读数")
+        if isinstance(vitals.get("respiratory_rate"), (int, float)):
+            output.append(f"夜间呼吸频率 {number(vitals['respiratory_rate'])} 次/分钟")
+        oxygen = vitals.get("oxygen") or {}
+        if isinstance(oxygen.get("median_percent"), (int, float)):
+            output.append(f"夜间血氧中位数 {number(oxygen['median_percent'])}%")
+        return output
+
+    def _recovery_interpretation(self, features: dict[str, Any], hrv: dict[str, Any], vitals: dict[str, Any]) -> list[str]:
         recovery = features.get("recovery") or {}
-        observations: list[str] = []
+        output = []
+        if hrv.get("value_ms") is not None:
+            output.append(f"{metric_label(hrv.get('preferred_metric'))}：{baseline_text(hrv.get('deviation'))}。")
+        if hrv.get("rhr_bpm") is not None:
+            output.append(f"{metric_label(hrv.get('rhr_metric') or 'resting_hr')}：{baseline_text(hrv.get('rhr_deviation'))}。")
+        positive = recovery.get("positive_signal_labels") or []
+        negative = recovery.get("negative_signal_labels") or []
+        if positive:
+            output.append("相对有利的信号：" + "；".join(positive) + "。")
+        if negative:
+            output.append("需要留意的信号：" + "；".join(negative) + "。")
+        state = recovery.get("state_label")
+        if state:
+            output.append(f"结合上述信号，当前综合判定为{state}。")
+        if hrv.get("corroboration_affects_decision"):
+            output.append("HRV 证据存在分歧，本次安排主要依据其他有效恢复信号，不凭单个 HRV 读数加量。")
+        elif hrv.get("corroboration_status") == "conflicting":
+            output.append("不同 HRV 记录方向不一致，不能直接混成一个值比较。")
+        if not output:
+            output.append("恢复信号不足以支持明确的好坏判断，训练安排将优先遵守数据与安全门控。")
+        return output
 
-        duration = sleep.get("duration_minutes")
-        if isinstance(duration, (int, float)):
-            text = f"昨晚睡眠 {duration:g} 分钟"
-            text += self._baseline_suffix(sleep.get("duration_deviation"))
-            observations.append(text)
-        else:
-            observations.append("昨晚睡眠时长缺失，无法与个人基线比较。")
-
-        hrv_value = hrv.get("value_ms")
-        metric = hrv.get("preferred_metric")
-        metric_label = {
-            "sleep_hrv": "睡眠心率变异性",
-            "hrv_rmssd": "心率变异性 RMSSD",
-            "hrv_sdnn": "心率变异性 SDNN",
-        }.get(metric, "心率变异性")
-        source_label = (
-            "Zepp "
-            if hrv.get("fusion_method") == "vendor_fused_with_device_audit"
-            else "设备 "
-        )
-        if isinstance(hrv_value, (int, float)):
-            text = f"{source_label}{metric_label} {hrv_value:g} 毫秒"
-            text += self._baseline_suffix(hrv.get("deviation"))
-            observations.append(text)
-        else:
-            observations.append(f"{source_label}{metric_label}缺失，无法与个人基线比较。")
-
-        state_label = recovery.get("state_label")
-        if state_label:
-            observations.append(f"综合身体状态：{state_label}。")
-        else:
-            observations.append("综合身体状态缺少可用信号。")
-        return [{"text": item} for item in observations[:3]]
+    def _plan_facts(self, decision: dict[str, Any]) -> list[str]:
+        plan = decision.get("action_plan") or {}
+        primary = plan.get("primary_session")
+        optional = plan.get("optional_session")
+        if decision.get("action") == "INSUFFICIENT_DATA":
+            return ["今天不生成训练建议。"]
+        output = [f"主要安排：{primary.get('title', decision.get('action_label', '按计划活动'))}" if primary else decision.get("action_label", "按计划活动")]
+        if primary:
+            output.extend(self._session_facts(primary))
+        if optional:
+            relation = plan.get("session_relationship")
+            heading = "可选加做" if relation == "ADDITION" else "替代方案"
+            relationship = plan.get("session_relationship_label") or ("可另行加做" if relation == "ADDITION" else "二选一，不在同一天叠加")
+            output.append(f"{heading}：{optional.get('title', '另一项训练')}（{relationship}）")
+            output.extend(self._session_facts(optional))
+        return output
 
     @staticmethod
-    def _baseline_suffix(deviation: dict | None) -> str:
-        if not isinstance(deviation, dict) or deviation.get("percent") is None:
-            return "；个人基线不足，暂不比较"
-        return f"；较个人基线 {float(deviation['percent']):+.1f}%"
+    def _session_facts(session: dict[str, Any]) -> list[str]:
+        lines = []
+        duration = range_text(session.get("total_duration_minutes"), "分钟")
+        if duration:
+            lines.append(f"建议时长：{duration}")
+        if session.get("intensity_label"):
+            lines.append(f"强度：{session['intensity_label']}")
+        for step in session.get("steps") or []:
+            dose = []
+            duration = range_text(step.get("duration_minutes"), "分钟")
+            sets = number(step.get("sets"), 0)
+            repetitions = repetitions_text(step.get("repetitions"))
+            weight = number(step.get("load_kg"))
+            rest = range_text(step.get("rest_seconds"), "秒")
+            if duration:
+                dose.append(duration)
+            if sets is not None:
+                dose.append(f"{sets} 组")
+            if repetitions:
+                dose.append(repetitions)
+            if weight is not None:
+                dose.append(f"{weight} 千克")
+            if rest:
+                dose.append(f"休息 {rest}")
+            if step.get("intensity"):
+                dose.append(str(step["intensity"]))
+            dose.extend(step.get("instructions") or [])
+            lines.append(f"{step.get('name', '训练步骤')}：{'；'.join(dose)}。")
+        return lines
 
-    def _reasons(self, decision: dict[str, Any]) -> list[str]:
-        evidence_labels = [
-            item.get("label", "")
-            for item in decision.get("evidence", {}).get("facts", [])
+    def _plan_interpretation(self, payload: dict[str, Any]) -> list[str]:
+        decision = payload.get("decision") or {}
+        plan = decision.get("action_plan") or {}
+        primary = plan.get("primary_session") or {}
+        if decision.get("action") == "INSUFFICIENT_DATA":
+            gates = [item.get("label", "") for item in (decision.get("evidence") or {}).get("gates", []) if item.get("triggered")]
+            return unique(gates) or unique(decision.get("limitation_labels") or [])[:3]
+        reasons = list(primary.get("personalization_reasons") or []) + [
+            item.get("label", "") for item in (decision.get("evidence") or {}).get("facts", [])
         ]
-        action_plan = decision["action_plan"]
-        primary = action_plan.get("primary_session")
-        selection_reason = None
-        if primary:
-            personalization = primary.get("personalization_reasons", [])
-            if personalization:
-                selection_reason = personalization[0]
-            balance = action_plan.get("weekly_balance") or {}
-            if selection_reason is None and primary.get("session_type") == "RUNNING" and balance.get("running_due"):
-                completed = balance.get("running_completed_7d")
-                if completed is not None:
-                    selection_reason = f"近 7 天完成跑步 {completed} 次，今天优先维持跑步频次。"
-            elif selection_reason is None and primary.get("session_type") == "STRENGTH" and balance.get("strength_due"):
-                completed = balance.get("strength_completed_7d")
-                if completed is not None:
-                    selection_reason = f"近 7 天完成力量训练 {completed} 次，今天优先维持力量训练频次。"
-        if selection_reason:
-            reasons = evidence_labels[:2] + [selection_reason]
-        else:
-            reasons = evidence_labels or list(decision.get("driver_labels", []))
-        if not reasons:
-            reasons = [decision["action_label"]]
-        return self._unique(reasons)[:3]
+        output = unique(reasons)
+        if output:
+            return output[:6]
+        drivers = decision.get("driver_labels") or []
+        return drivers[:6] or ["安排沿用已计算的恢复、负荷和安全门控结果。"]
 
-    def _cautions(self, daily: dict[str, Any], delivery_metadata: dict) -> list[str]:
-        decision = daily["decision"]
-        action_plan = decision["action_plan"]
-        cautions = []
+    def _plan_limitations(self, payload: dict[str, Any]) -> list[str]:
+        quality = payload.get("data_quality") or {}
+        output = list(quality.get("missing_required_signal_labels") or [])
+        plan = (payload.get("decision") or {}).get("action_plan") or {}
+        if plan.get("safety_status") != "LIMITED":
+            for key in ("primary_session", "optional_session"):
+                output.extend((plan.get(key) or {}).get("stop_conditions") or [])
+        return unique(output)
+
+    def _summary(self, payload: dict[str, Any], sections: list[dict[str, Any]]) -> list[str]:
+        decision = payload.get("decision") or {}
+        sleep = sections[0]["interpretation"][:1]
+        recovery = sections[1]["interpretation"][:1]
+        action = decision.get("action_label") or "暂不生成训练建议"
+        return unique(sleep + recovery + [f"今天的安排：{action}。"])[:3]
+
+    def _reasons(self, payload: dict[str, Any]) -> list[str]:
+        decision = payload.get("decision") or {}
+        return self._plan_interpretation(payload)[:6]
+
+    def _cautions(self, payload: dict[str, Any], delivery_metadata: dict[str, Any]) -> list[str]:
+        decision = payload.get("decision") or {}
+        plan = decision.get("action_plan") or {}
+        output = []
         if delivery_metadata.get("sync_degraded"):
-            cautions.append("本次同步未完整完成，结论使用的是已经保存的当天数据。")
-        if action_plan.get("safety_status") == "LIMITED":
-            cautions.append(action_plan.get("safety_status_label", ""))
-            primary = action_plan.get("primary_session") or {}
-            cautions.extend(primary.get("stop_conditions", [])[:1])
-        hrv = daily.get("features", {}).get("hrv", {})
+            output.append("本次同步未完整完成，结论仅使用已经保存的数据。")
+        hrv = (payload.get("features") or {}).get("hrv") or {}
         if hrv.get("corroboration_affects_decision"):
-            cautions.append("今天的心率变异性证据不够稳定，本次安排主要依据其他恢复与训练信号。")
-        if daily.get("data_quality", {}).get("status") == "PARTIAL":
-            cautions.append(daily["data_quality"].get("status_label", "数据部分可用"))
-        for event in daily.get("events", []):
+            output.append("HRV 证据存在分歧，安排主要依据其他恢复与训练信号。")
+        for event in payload.get("events", []):
             if event.get("lifecycle") != "RESOLVED" and event.get("type") in _ACTION_CHANGING_EVENTS:
-                cautions.append(event.get("summary", ""))
+                if event.get("summary"):
+                    output.append(event["summary"])
                 break
-        return self._unique(cautions)[:3]
+        return unique(output)
+
+    @staticmethod
+    def _limitations(value: dict[str, Any]) -> list[str]:
+        labels = value.get("limitation_labels") or []
+        if labels:
+            return unique(labels)
+        return unique([item for item in value.get("limitations") or [] if "_" not in item])
 
     @staticmethod
     def safety_lines(briefing: dict[str, Any]) -> list[str]:
-        """Return all hard safety restrictions for a separate, untruncated section."""
         plan = briefing.get("action_plan") or {}
         if plan.get("safety_status") != "LIMITED":
             return []
-        lines = []
-        if plan.get("safety_status_label"):
-            lines.append(plan["safety_status_label"])
-        primary = plan.get("primary_session") or {}
-        lines.extend(primary.get("stop_conditions", []))
-        optional = plan.get("optional_session") or {}
-        lines.extend(optional.get("stop_conditions", []))
-        return MorningBriefingEngine._unique(lines)
-
-    @staticmethod
-    def _unique(values: list[str]) -> list[str]:
-        return list(dict.fromkeys(value for value in values if value))
+        output = [plan.get("safety_status_label", "")]
+        for session_key in ("primary_session", "optional_session"):
+            output.extend((plan.get(session_key) or {}).get("stop_conditions", []))
+        return unique(output)

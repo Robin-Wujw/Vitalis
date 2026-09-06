@@ -31,6 +31,7 @@ from .contracts import (
     HealthTimeline,
     MonthlyProfile,
     MorningBriefing,
+    ReportBriefing,
     ProfileFeatures,
     PersonalModel,
     PersonalAssociationProfile,
@@ -417,8 +418,11 @@ class IntelligenceCommand:
 
     @staticmethod
     def _build_daily_from_raw(analysis_run_id: str, raw, identity: dict) -> DailyProfile:
+        from .activity import ActivityAnalyzer
+
         target = raw.day
         baselines = BaselineEngine().build(raw.series, target)
+        activity = ActivityAnalyzer().analyze(raw, baselines)
         sleep, sleep_state = SleepAnalyzer().analyze(raw, baselines)
         hrv = HrvAnalyzer().analyze(raw, baselines)
         overnight_vitals = OvernightVitalsAnalyzer().analyze(raw, baselines, sleep)
@@ -445,6 +449,7 @@ class IntelligenceCommand:
             facts=raw.facts,
             baselines=baselines,
             features=ProfileFeatures(
+                activity=activity,
                 sleep=sleep,
                 hrv=hrv,
                 overnight_vitals=overnight_vitals,
@@ -488,6 +493,30 @@ class IntelligenceQuery:
     ) -> MorningBriefing | None:
         daily = self.daily(user_id, day)
         return MorningBriefingEngine().build(daily) if daily is not None else None
+
+    def evening_briefing(
+        self, user_id: str, day: date | None = None
+    ) -> ReportBriefing | None:
+        from .evening_briefing import EveningBriefingEngine
+
+        daily = self.daily(user_id, day)
+        return EveningBriefingEngine().build(daily) if daily is not None else None
+
+    def weekly_briefing(
+        self, user_id: str, day: date | None = None
+    ) -> ReportBriefing | None:
+        from .weekly_briefing import WeeklyBriefingEngine
+
+        weekly = self.weekly(user_id, day)
+        return WeeklyBriefingEngine().build(weekly) if weekly is not None else None
+
+    def monthly_briefing(
+        self, user_id: str, day: date | None = None
+    ) -> ReportBriefing | None:
+        from .monthly_briefing import MonthlyBriefingEngine
+
+        monthly = self.monthly(user_id, day)
+        return MonthlyBriefingEngine().build(monthly) if monthly is not None else None
 
     def weekly(self, user_id: str, day: date | None = None) -> WeeklyProfile | None:
         target = day or local_today()

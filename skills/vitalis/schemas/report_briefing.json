@@ -1,0 +1,132 @@
+{
+  "$defs": {
+    "ReportSection": {
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "facts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Facts",
+          "type": "array"
+        },
+        "interpretation": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Interpretation",
+          "type": "array"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "title"
+      ],
+      "title": "ReportSection",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "period": {
+      "enum": [
+        "evening",
+        "weekly",
+        "monthly"
+      ],
+      "title": "Period",
+      "type": "string"
+    },
+    "analysis_run_id": {
+      "title": "Analysis Run Id",
+      "type": "string"
+    },
+    "user_id": {
+      "title": "User Id",
+      "type": "string"
+    },
+    "date": {
+      "format": "date",
+      "title": "Date",
+      "type": "string"
+    },
+    "period_start": {
+      "format": "date",
+      "title": "Period Start",
+      "type": "string"
+    },
+    "period_end": {
+      "format": "date",
+      "title": "Period End",
+      "type": "string"
+    },
+    "generated_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Generated At"
+    },
+    "report_context": {
+      "additionalProperties": true,
+      "title": "Report Context",
+      "type": "object"
+    },
+    "data_quality": {
+      "additionalProperties": true,
+      "title": "Data Quality",
+      "type": "object"
+    },
+    "summary": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Summary",
+      "type": "array"
+    },
+    "sections": {
+      "items": {
+        "$ref": "#/$defs/ReportSection"
+      },
+      "title": "Sections",
+      "type": "array"
+    }
+  },
+  "required": [
+    "period",
+    "analysis_run_id",
+    "user_id",
+    "date",
+    "period_start",
+    "period_end"
+  ],
+  "title": "Vitalis ReportBriefing 1.0",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vitalis.local/schemas/report-briefing-1.0.json"
+}

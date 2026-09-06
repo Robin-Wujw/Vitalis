@@ -16,6 +16,7 @@ from vitalis.intelligence.contracts import (
     LinkRecommendationInput,
     MonthlyProfile,
     MorningBriefing,
+    ReportBriefing,
     PersonalAssociationProfile,
     PersonalModel,
     RecommendationInstance,
@@ -90,13 +91,37 @@ def daily_profile(
 @router.get(
     "/morning-briefing",
     response_model=MorningBriefing,
-    summary="Read the action-first morning briefing for a persisted daily profile",
+    summary="Read the complete sleep, recovery and training morning report",
 )
 def morning_briefing(
     day: date | None = None,
     user_id: str = Depends(require_user_id),
 ) -> MorningBriefing:
     return _snapshot_or_404(IntelligenceQuery().morning_briefing(user_id, day))
+
+
+@router.get("/evening-briefing", response_model=ReportBriefing, summary="Read the complete daily review report")
+def evening_briefing(
+    day: date | None = None,
+    user_id: str = Depends(require_user_id),
+) -> ReportBriefing:
+    return _snapshot_or_404(IntelligenceQuery().evening_briefing(user_id, day))
+
+
+@router.get("/weekly-briefing", response_model=ReportBriefing, summary="Read the complete rolling seven-day report")
+def weekly_briefing(
+    day: date | None = None,
+    user_id: str = Depends(require_user_id),
+) -> ReportBriefing:
+    return _snapshot_or_404(IntelligenceQuery().weekly_briefing(user_id, day))
+
+
+@router.get("/monthly-briefing", response_model=ReportBriefing, summary="Read the complete rolling 28-day report")
+def monthly_briefing(
+    day: date | None = None,
+    user_id: str = Depends(require_user_id),
+) -> ReportBriefing:
+    return _snapshot_or_404(IntelligenceQuery().monthly_briefing(user_id, day))
 
 
 @router.get("/weekly", response_model=WeeklyProfile, summary="Read the latest persisted weekly profile")

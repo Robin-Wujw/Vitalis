@@ -1,38 +1,1107 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/context-6.0.json",
-  "title": "Vitalis AgentContext 6.0",
-  "type": "object",
-  "required": ["schema_version", "user_id", "date", "current", "recent", "trend", "personal", "profile", "missing_inputs", "open_health_summary", "insights_stale"],
-  "properties": {
-    "schema_version": {"const": "6.0"},
-    "user_id": {"type": "string"},
-    "date": {"type": "string", "format": "date"},
-    "current": {"type": "object", "required": ["analysis_run_id", "action", "action_label", "recommendation_id"]},
-    "recent": {
-      "type": "object",
-      "required": ["period_start", "period_end", "training_duration_minutes", "active_events", "feedback"],
-      "properties": {
-        "training_duration_minutes": {"type": ["integer", "null"], "minimum": 0},
-        "active_events": {"type": "array", "maxItems": 5},
-        "feedback": {"type": "array", "maxItems": 5}
-      }
+  "$defs": {
+    "ConfidenceBand": {
+      "enum": [
+        "NONE",
+        "LOW",
+        "MODERATE",
+        "HIGH"
+      ],
+      "title": "ConfidenceBand",
+      "type": "string"
     },
-    "trend": {"type": "array", "maxItems": 12},
-    "personal": {
-      "type": "object",
-      "required": ["patterns", "associations", "limitations"],
+    "ContextAssociation": {
       "properties": {
-        "patterns": {"type": "array", "maxItems": 6},
-        "associations": {"type": "array", "maxItems": 6}
-      }
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "predictor_metric_label": {
+          "title": "Predictor Metric Label",
+          "type": "string"
+        },
+        "outcome_metric_label": {
+          "title": "Outcome Metric Label",
+          "type": "string"
+        },
+        "predictor_source": {
+          "title": "Predictor Source",
+          "type": "string"
+        },
+        "predictor_source_scope": {
+          "title": "Predictor Source Scope",
+          "type": "string"
+        },
+        "predictor_device_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Predictor Device Id"
+        },
+        "outcome_source": {
+          "title": "Outcome Source",
+          "type": "string"
+        },
+        "outcome_source_scope": {
+          "title": "Outcome Source Scope",
+          "type": "string"
+        },
+        "outcome_device_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outcome Device Id"
+        },
+        "lag_days": {
+          "enum": [
+            0,
+            1
+          ],
+          "title": "Lag Days",
+          "type": "integer"
+        },
+        "window_days": {
+          "enum": [
+            60,
+            90
+          ],
+          "title": "Window Days",
+          "type": "integer"
+        },
+        "coefficient": {
+          "title": "Coefficient",
+          "type": "number"
+        },
+        "direction_label": {
+          "title": "Direction Label",
+          "type": "string"
+        },
+        "strength_label": {
+          "title": "Strength Label",
+          "type": "string"
+        },
+        "confidence": {
+          "$ref": "#/$defs/ConfidenceBand"
+        },
+        "confidence_label": {
+          "title": "Confidence Label",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "predictor_metric_label",
+        "outcome_metric_label",
+        "predictor_source",
+        "predictor_source_scope",
+        "outcome_source",
+        "outcome_source_scope",
+        "lag_days",
+        "window_days",
+        "coefficient",
+        "direction_label",
+        "strength_label",
+        "confidence",
+        "confidence_label",
+        "summary"
+      ],
+      "title": "ContextAssociation",
+      "type": "object"
+    },
+    "ContextCurrent": {
+      "properties": {
+        "analysis_run_id": {
+          "title": "Analysis Run Id",
+          "type": "string"
+        },
+        "date": {
+          "format": "date",
+          "title": "Date",
+          "type": "string"
+        },
+        "data_quality_status": {
+          "$ref": "#/$defs/QualityStatus"
+        },
+        "data_quality_label": {
+          "title": "Data Quality Label",
+          "type": "string"
+        },
+        "sleep_minutes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sleep Minutes"
+        },
+        "hrv_metric": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hrv Metric"
+        },
+        "hrv_value_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hrv Value Ms"
+        },
+        "hrv_device_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hrv Device Id"
+        },
+        "rhr_bpm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rhr Bpm"
+        },
+        "recovery_state": {
+          "$ref": "#/$defs/RecoveryState"
+        },
+        "recovery_state_label": {
+          "title": "Recovery State Label",
+          "type": "string"
+        },
+        "training_load_state": {
+          "$ref": "#/$defs/LoadState"
+        },
+        "training_load_state_label": {
+          "title": "Training Load State Label",
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/$defs/DecisionAction"
+        },
+        "action_label": {
+          "title": "Action Label",
+          "type": "string"
+        },
+        "confidence": {
+          "$ref": "#/$defs/ConfidenceBand"
+        },
+        "confidence_label": {
+          "title": "Confidence Label",
+          "type": "string"
+        },
+        "recommendation_id": {
+          "title": "Recommendation Id",
+          "type": "string"
+        },
+        "primary_session_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Primary Session Title"
+        },
+        "optional_session_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Optional Session Title"
+        },
+        "driver_labels": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5,
+          "title": "Driver Labels",
+          "type": "array"
+        },
+        "limitation_labels": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5,
+          "title": "Limitation Labels",
+          "type": "array"
+        }
+      },
+      "required": [
+        "analysis_run_id",
+        "date",
+        "data_quality_status",
+        "data_quality_label",
+        "recovery_state",
+        "recovery_state_label",
+        "training_load_state",
+        "training_load_state_label",
+        "action",
+        "action_label",
+        "confidence",
+        "confidence_label",
+        "recommendation_id"
+      ],
+      "title": "ContextCurrent",
+      "type": "object"
+    },
+    "ContextEvent": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "type_label": {
+          "title": "Type Label",
+          "type": "string"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/EventLifecycle"
+        },
+        "lifecycle_label": {
+          "title": "Lifecycle Label",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/EventSeverity"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "acknowledged": {
+          "title": "Acknowledged",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "type_label",
+        "lifecycle",
+        "lifecycle_label",
+        "severity",
+        "summary",
+        "acknowledged"
+      ],
+      "title": "ContextEvent",
+      "type": "object"
+    },
+    "ContextFeedback": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "date": {
+          "format": "date",
+          "title": "Date",
+          "type": "string"
+        },
+        "workout_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workout Source"
+        },
+        "workout_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workout Id"
+        },
+        "session_rpe": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Rpe"
+        },
+        "physical_fatigue": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Physical Fatigue"
+        },
+        "mental_state": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mental State"
+        },
+        "muscle_soreness": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Muscle Soreness"
+        }
+      },
+      "required": [
+        "id",
+        "date"
+      ],
+      "title": "ContextFeedback",
+      "type": "object"
+    },
+    "ContextPattern": {
+      "properties": {
+        "group_type": {
+          "enum": [
+            "training_family",
+            "sport_mode"
+          ],
+          "title": "Group Type",
+          "type": "string"
+        },
+        "group_key": {
+          "title": "Group Key",
+          "type": "string"
+        },
+        "group_label": {
+          "title": "Group Label",
+          "type": "string"
+        },
+        "response_count": {
+          "minimum": 0,
+          "title": "Response Count",
+          "type": "integer"
+        },
+        "confidence": {
+          "$ref": "#/$defs/ConfidenceBand"
+        },
+        "confidence_label": {
+          "title": "Confidence Label",
+          "type": "string"
+        },
+        "metrics": {
+          "items": {
+            "$ref": "#/$defs/ContextPatternMetric"
+          },
+          "maxItems": 3,
+          "title": "Metrics",
+          "type": "array"
+        }
+      },
+      "required": [
+        "group_type",
+        "group_key",
+        "group_label",
+        "response_count",
+        "confidence",
+        "confidence_label"
+      ],
+      "title": "ContextPattern",
+      "type": "object"
+    },
+    "ContextPatternMetric": {
+      "properties": {
+        "metric": {
+          "title": "Metric",
+          "type": "string"
+        },
+        "device_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device Id"
+        },
+        "median": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Median"
+        },
+        "unit": {
+          "title": "Unit",
+          "type": "string"
+        },
+        "sample_count": {
+          "minimum": 0,
+          "title": "Sample Count",
+          "type": "integer"
+        },
+        "coverage_ratio": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Coverage Ratio",
+          "type": "number"
+        }
+      },
+      "required": [
+        "metric",
+        "unit",
+        "sample_count",
+        "coverage_ratio"
+      ],
+      "title": "ContextPatternMetric",
+      "type": "object"
+    },
+    "ContextPersonal": {
+      "properties": {
+        "patterns": {
+          "items": {
+            "$ref": "#/$defs/ContextPattern"
+          },
+          "maxItems": 6,
+          "title": "Patterns",
+          "type": "array"
+        },
+        "associations": {
+          "items": {
+            "$ref": "#/$defs/ContextAssociation"
+          },
+          "maxItems": 6,
+          "title": "Associations",
+          "type": "array"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 3,
+          "title": "Limitations",
+          "type": "array"
+        }
+      },
+      "title": "ContextPersonal",
+      "type": "object"
+    },
+    "ContextProfile": {
+      "properties": {
+        "revision": {
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "sex": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sex"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "confirmed_hrmax_bpm": {
+          "anyOf": [
+            {
+              "maximum": 240,
+              "minimum": 100,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confirmed Hrmax Bpm"
+        },
+        "sleep_target_minutes": {
+          "anyOf": [
+            {
+              "maximum": 900,
+              "minimum": 180,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sleep Target Minutes"
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "title": "ContextProfile",
+      "type": "object"
+    },
+    "ContextRecent": {
+      "properties": {
+        "period_start": {
+          "format": "date",
+          "title": "Period Start",
+          "type": "string"
+        },
+        "period_end": {
+          "format": "date",
+          "title": "Period End",
+          "type": "string"
+        },
+        "sleep_average_minutes": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sleep Average Minutes"
+        },
+        "hrv_change_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hrv Change Percent"
+        },
+        "rhr_change_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rhr Change Percent"
+        },
+        "workout_count": {
+          "minimum": 0,
+          "title": "Workout Count",
+          "type": "integer"
+        },
+        "training_duration_minutes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Training Duration Minutes"
+        },
+        "sport_mode_counts": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Sport Mode Counts",
+          "type": "object"
+        },
+        "active_events": {
+          "items": {
+            "$ref": "#/$defs/ContextEvent"
+          },
+          "maxItems": 5,
+          "title": "Active Events",
+          "type": "array"
+        },
+        "feedback": {
+          "items": {
+            "$ref": "#/$defs/ContextFeedback"
+          },
+          "maxItems": 5,
+          "title": "Feedback",
+          "type": "array"
+        }
+      },
+      "required": [
+        "period_start",
+        "period_end",
+        "workout_count",
+        "training_duration_minutes"
+      ],
+      "title": "ContextRecent",
+      "type": "object"
+    },
+    "ContextTrend": {
+      "properties": {
+        "metric": {
+          "title": "Metric",
+          "type": "string"
+        },
+        "metric_label": {
+          "title": "Metric Label",
+          "type": "string"
+        },
+        "window_days": {
+          "enum": [
+            7,
+            28,
+            90
+          ],
+          "title": "Window Days",
+          "type": "integer"
+        },
+        "device_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device Id"
+        },
+        "change_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Change Percent"
+        },
+        "direction": {
+          "$ref": "#/$defs/TrendDirection"
+        },
+        "direction_label": {
+          "title": "Direction Label",
+          "type": "string"
+        },
+        "confidence": {
+          "$ref": "#/$defs/ConfidenceBand"
+        },
+        "confidence_label": {
+          "title": "Confidence Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "metric",
+        "metric_label",
+        "window_days",
+        "direction",
+        "direction_label",
+        "confidence",
+        "confidence_label"
+      ],
+      "title": "ContextTrend",
+      "type": "object"
+    },
+    "DecisionAction": {
+      "enum": [
+        "TRAIN_HARD",
+        "TRAIN_NORMAL",
+        "TRAIN_LIGHT",
+        "RECOVERY",
+        "REST",
+        "INSUFFICIENT_DATA"
+      ],
+      "title": "DecisionAction",
+      "type": "string"
+    },
+    "EventLifecycle": {
+      "enum": [
+        "DETECTED",
+        "PERSISTING",
+        "IMPROVING",
+        "RESOLVED"
+      ],
+      "title": "EventLifecycle",
+      "type": "string"
+    },
+    "EventSeverity": {
+      "enum": [
+        "INFO",
+        "MODERATE",
+        "HIGH"
+      ],
+      "title": "EventSeverity",
+      "type": "string"
+    },
+    "LoadState": {
+      "enum": [
+        "LOW",
+        "NORMAL",
+        "ELEVATED",
+        "INSUFFICIENT_DATA"
+      ],
+      "title": "LoadState",
+      "type": "string"
+    },
+    "MissingUserInput": {
+      "properties": {
+        "field": {
+          "enum": [
+            "sex",
+            "confirmed_hrmax_bpm",
+            "sleep_target_minutes"
+          ],
+          "title": "Field",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "question": {
+          "title": "Question",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "blocking": {
+          "default": true,
+          "title": "Blocking",
+          "type": "boolean"
+        },
+        "required_for": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 4,
+          "title": "Required For",
+          "type": "array"
+        },
+        "patch_path": {
+          "const": "/api/v1/intelligence/profile",
+          "default": "/api/v1/intelligence/profile",
+          "title": "Patch Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "label",
+        "question",
+        "reason"
+      ],
+      "title": "MissingUserInput",
+      "type": "object"
+    },
+    "OpenHealthRefusalReason": {
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "missing_inputs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Inputs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "code",
+        "detail"
+      ],
+      "title": "OpenHealthRefusalReason",
+      "type": "object"
+    },
+    "OpenHealthStatus": {
+      "enum": [
+        "AVAILABLE",
+        "PARTIAL",
+        "REFUSED"
+      ],
+      "title": "OpenHealthStatus",
+      "type": "string"
+    },
+    "OpenHealthSummary": {
+      "description": "Compact Context projection; never contains the full OpenHealthBundle.",
+      "properties": {
+        "profile_revision_used": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Profile Revision Used",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/OpenHealthStatus"
+        },
+        "readiness_state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Readiness State"
+        },
+        "anomaly_flagged": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Anomaly Flagged"
+        },
+        "load_status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OpenHealthStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "drivers": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 2,
+          "title": "Drivers",
+          "type": "array"
+        },
+        "refusal_reasons": {
+          "items": {
+            "$ref": "#/$defs/OpenHealthRefusalReason"
+          },
+          "maxItems": 4,
+          "title": "Refusal Reasons",
+          "type": "array"
+        },
+        "missing_inputs": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Missing Inputs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "OpenHealthSummary",
+      "type": "object"
+    },
+    "QualityStatus": {
+      "enum": [
+        "SUFFICIENT",
+        "PARTIAL",
+        "INSUFFICIENT"
+      ],
+      "title": "QualityStatus",
+      "type": "string"
+    },
+    "RecoveryState": {
+      "enum": [
+        "GOOD",
+        "NORMAL",
+        "SUPPRESSED",
+        "INSUFFICIENT_DATA"
+      ],
+      "title": "RecoveryState",
+      "type": "string"
+    },
+    "Sex": {
+      "enum": [
+        "FEMALE",
+        "MALE",
+        "INTERSEX",
+        "PREFER_NOT_TO_SAY"
+      ],
+      "title": "Sex",
+      "type": "string"
+    },
+    "TrendDirection": {
+      "enum": [
+        "RISING",
+        "STABLE",
+        "FALLING",
+        "INSUFFICIENT_DATA"
+      ],
+      "title": "TrendDirection",
+      "type": "string"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "const": "6.0",
+      "default": "6.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "user_id": {
+      "title": "User Id",
+      "type": "string"
+    },
+    "date": {
+      "format": "date",
+      "title": "Date",
+      "type": "string"
+    },
+    "current": {
+      "$ref": "#/$defs/ContextCurrent"
+    },
+    "recent": {
+      "$ref": "#/$defs/ContextRecent"
+    },
+    "trend": {
+      "items": {
+        "$ref": "#/$defs/ContextTrend"
+      },
+      "maxItems": 12,
+      "title": "Trend",
+      "type": "array"
+    },
+    "personal": {
+      "$ref": "#/$defs/ContextPersonal"
     },
     "profile": {
-      "type": "object",
-      "required": ["revision", "sex", "confirmed_hrmax_bpm", "sleep_target_minutes"]
+      "$ref": "#/$defs/ContextProfile"
     },
-    "missing_inputs": {"type": "array", "maxItems": 3},
-    "open_health_summary": {"type": ["object", "null"]},
-    "insights_stale": {"type": "boolean"}
-  }
+    "missing_inputs": {
+      "items": {
+        "$ref": "#/$defs/MissingUserInput"
+      },
+      "maxItems": 3,
+      "title": "Missing Inputs",
+      "type": "array"
+    },
+    "open_health_summary": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OpenHealthSummary"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "insights_stale": {
+      "default": false,
+      "title": "Insights Stale",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "user_id",
+    "date",
+    "current",
+    "recent",
+    "personal",
+    "profile"
+  ],
+  "title": "Vitalis AgentContext 6.0",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vitalis.local/schemas/agent-context-6.0.json"
 }

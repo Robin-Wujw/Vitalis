@@ -29,6 +29,7 @@ from .contracts import (
 from .localization import CONFIDENCE_LABELS, QUALITY_LABELS
 from .open_health.projection import coverage_summary, period_summary
 from .profile import RawDailyProfile
+from .period_activity import build_period_activity_metrics, period_training_details
 from .trend import METRIC_LABELS, stream_daily_values
 
 
@@ -87,6 +88,7 @@ class MonthlyProfileEngine:
             period_start=period_start,
             period_end=raw.day,
             data_quality=quality,
+            report_context=_report_context(raw, period_start),
             facts=facts,
             inferences=MonthlyInferences(
                 trends=relevant_trends,
@@ -95,7 +97,9 @@ class MonthlyProfileEngine:
                 key_changes=_key_changes(relevant_trends),
                 limitations=limitations,
             ),
-            actions=MonthlyActions(recommendations=_recommend(facts, events)),
+            actions=MonthlyActions(recommendations=_recommend(
+                facts, events, getattr(raw, "training_preferences", None)
+            )),
             evidence_refs=evidence_refs or [],
             open_health_period_summary=period_summary(
                 open_health_insights, period_start, raw.day
@@ -179,66 +183,116 @@ def _training_facts(raw, period_start, previous_start) -> MonthlyTrainingFacts:
         if isinstance(item.get("local_day"), date)
         and period_start <= item["local_day"] <= raw.day
     ]
-    if not current_records:
-        return MonthlyTrainingFacts(record_days=0)
-    recorded_workout_count = sum(
-        int(item.get("workout_count", 0) or 0) for item in current_records
+    coverage = _monthly_training_coverage(raw, period_start)
+    recorded_workout_count = (
+        max(
+            sum(int(item.get("workout_count", 0) or 0) for item in current_records),
+            len(workouts),
+        )
+        if current_records or workouts else None
     )
-    training_days = {
-        item["date"] for item in current_records
-        if int(item.get("workout_count", 0) or 0) > 0
-        or int(item.get("total_duration", 0) or 0) > 0
+    training_days_from_records = {
+        item.get("date")
+        for item in current_records
+        if isinstance(item.get("date"), date)
+        and (
+            int(item.get("workout_count", 0) or 0) > 0
+            or int(item.get("total_duration", 0) or 0) > 0
+        )
     }
+    training_days_from_workouts = {
+        item["local_day"] for item in workouts
+        if isinstance(item.get("local_day"), date)
+    }
+    training_days = training_days_from_records | training_days_from_workouts
+    covered_days = coverage.get("covered_days")
+    if covered_days is not None:
+        rest_days = len(covered_days - training_days)
+    elif coverage["coverage_status"] == "COMPLETE" and coverage["unknown_days"] == 0:
+        rest_days = max(PERIOD_DAYS - len(training_days), 0)
+    else:
+        rest_days = None
+
     modes: Counter[str] = Counter()
     aerobic_minutes = 0
     strength_sessions = 0
     for workout in workouts:
-        data = workout.get("data", {})
+        data = workout.get("data", {}) or {}
         modes[str(data.get("sport_mode_label") or "未知运动")] += 1
         if data.get("training_family") == "aerobic":
             aerobic_minutes += int(data.get("duration", 0) or 0)
         if data.get("training_family") == "strength":
             strength_sessions += 1
-    current_load = sum(float(item.get("total_load", 0) or 0) for item in current_records)
-    previous_load = sum(float(item.get("total_load", 0) or 0) for item in previous_records)
-    details_complete = len(workouts) >= recorded_workout_count
+    current_load = _optional_sum(current_records, "total_load", float)
+    previous_load = _optional_sum(previous_records, "total_load", float)
+    details_complete = bool(workouts) or bool(
+        current_records and recorded_workout_count == 0
+    )
+    details = period_training_details(raw, period_start, raw.day)
+    if not current_records and not workouts:
+        details_complete = False
     return MonthlyTrainingFacts(
-        record_days=len(current_records),
+        record_days=coverage["record_days"],
+        unknown_days=coverage["unknown_days"],
+        coverage_status=coverage["coverage_status"],
+        totals_are_partial=coverage["totals_are_partial"],
         workout_count=recorded_workout_count,
-        training_days=len(training_days),
-        rest_days=PERIOD_DAYS - len(training_days),
-        duration_minutes=sum(int(item.get("total_duration", 0) or 0) for item in current_records),
-        vendor_load=round(current_load, 1),
-        previous_vendor_load=round(previous_load, 1) if previous_records else None,
+        training_days=len(training_days) if current_records or workouts else None,
+        rest_days=rest_days,
+        duration_minutes=_optional_sum(current_records, "total_duration", int),
+        vendor_load=round(current_load, 1) if current_load is not None else None,
+        previous_vendor_load=round(previous_load, 1) if previous_load is not None else None,
         load_change_percent=(
             _rounded(_percent_change(current_load, previous_load))
-            if previous_records else None
+            if current_load is not None
+            and previous_load not in (None, 0)
+            and coverage["current_complete"]
+            and coverage["previous_complete"]
+            else None
         ),
         aerobic_minutes=aerobic_minutes if details_complete else None,
         strength_sessions=strength_sessions if details_complete else None,
         sport_mode_counts=dict(sorted(modes.items())),
+        **details,
     )
 
 
 def _activity_facts(raw, period_start, previous_start) -> MonthlyActivityFacts:
-    current = _record_values(raw.activity_by_day, "steps", period_start, raw.day)
-    previous = _record_values(
-        raw.activity_by_day, "steps", previous_start, period_start - timedelta(days=1)
+    metrics = build_period_activity_metrics(raw, period_start, PERIOD_DAYS, previous_start)
+    steps_metric = next((item for item in metrics if item.metric == "steps"), None)
+    active_metric = next((item for item in metrics if item.metric == "active_minutes"), None)
+    if steps_metric is None and not (getattr(raw, "series", {}) or {}):
+        current = _record_values(raw.activity_by_day, "steps", period_start, raw.day)
+        previous = _record_values(
+            raw.activity_by_day, "steps", previous_start, period_start - timedelta(days=1)
+        )
+        step_values = {
+            "available_days": len(current),
+            "previous_available_days": len(previous),
+            "total_steps": int(sum(current)) if current else None,
+            "average_steps": _rounded(_mean(current)),
+            "previous_average_steps": _rounded(_mean(previous)),
+            "steps_change_percent": (
+                _rounded(_percent_change(_mean(current), _mean(previous)))
+                if len(current) >= 14 and len(previous) >= 14 else None
+            ),
+        }
+    else:
+        step_values = {
+            "available_days": steps_metric.available_days if steps_metric else 0,
+            "previous_available_days": steps_metric.previous_available_days if steps_metric else 0,
+            "total_steps": int(steps_metric.total) if steps_metric and steps_metric.total is not None else None,
+            "average_steps": steps_metric.average if steps_metric else None,
+            "previous_average_steps": steps_metric.previous_average if steps_metric else None,
+            "steps_change_percent": steps_metric.change_percent if steps_metric else None,
+        }
+    active_minutes = (
+        int(active_metric.total) if active_metric and active_metric.total is not None else None
     )
-    current_average = _mean(current)
-    previous_average = _mean(previous)
-    active_minutes = [
-        int(item["active_minutes"])
-        for day, item in raw.activity_by_day.items()
-        if period_start <= day <= raw.day and item.get("active_minutes") is not None
-    ]
     return MonthlyActivityFacts(
-        available_days=len(current),
-        total_steps=int(sum(current)) if current else None,
-        average_steps=_rounded(current_average),
-        previous_average_steps=_rounded(previous_average),
-        steps_change_percent=_rounded(_percent_change(current_average, previous_average)),
-        active_minutes=sum(active_minutes) if active_minutes else None,
+        metrics=metrics,
+        active_minutes=active_minutes,
+        **step_values,
     )
 
 
@@ -300,8 +354,16 @@ def _key_changes(trends: list[TrendFeature]) -> list[str]:
     ]
 
 
-def _recommend(facts: MonthlyFacts, events: list[HealthEvent]) -> list[WeeklyRecommendation]:
+def _recommend(
+    facts: MonthlyFacts,
+    events: list[HealthEvent],
+    training_preferences=None,
+) -> list[WeeklyRecommendation]:
     output = []
+    active_events = [
+        item for item in events
+        if getattr(item, "lifecycle", None) != "RESOLVED"
+    ]
     if facts.sleep.available_days < 14 and facts.training.record_days < 14:
         return [WeeklyRecommendation(
             priority=1,
@@ -310,7 +372,20 @@ def _recommend(facts: MonthlyFacts, events: list[HealthEvent]) -> list[WeeklyRec
             action="先完成新数据同步，再形成下一周期的训练与恢复建议。",
             reasons=["近 28 天睡眠和训练记录覆盖均不足 14 天。"],
         )]
-    if any(item.type in {"RECOVERY_SUPPRESSED", "HRV_DROP", "RHR_ELEVATED"} for item in events):
+
+    pain_present = bool(
+        training_preferences is not None
+        and getattr(training_preferences, "pain_or_injury_status", None) == "PRESENT"
+    )
+    if pain_present:
+        output.append(WeeklyRecommendation(
+            priority=1,
+            code="MONTHLY_RESPECT_PAIN_OR_INJURY",
+            title="遵守疼痛或伤病限制",
+            action="下一个周期暂停会诱发疼痛的训练；疼痛持续、加重或影响日常活动时寻求专业评估。",
+            reasons=["训练偏好中已记录疼痛或伤病状态。"],
+        ))
+    elif any(item.type in {"RECOVERY_SUPPRESSED", "HRV_DROP", "RHR_ELEVATED"} for item in active_events):
         output.append(WeeklyRecommendation(
             priority=1,
             code="MONTHLY_PRIORITIZE_RECOVERY",
@@ -318,6 +393,25 @@ def _recommend(facts: MonthlyFacts, events: list[HealthEvent]) -> list[WeeklyRec
             action="下一个 28 天周期先控制连续高负荷训练，并保留每周至少 1 个完整休息日。",
             reasons=["近 28 天存在恢复相关持续事件。"],
         ))
+
+    complete = (
+        facts.training.coverage_status == "COMPLETE"
+        and facts.training.unknown_days == 0
+    )
+    if not complete:
+        if output:
+            return output[:3]
+        return [WeeklyRecommendation(
+            priority=1,
+            code="MONTHLY_INSUFFICIENT_DATA",
+            title="先补齐周期记录",
+            action="先完成后续同步，待 28 天训练覆盖明确后再评估训练量变化。",
+            reasons=[
+                f"近 28 天训练已记录 {facts.training.record_days} 天，"
+                f"仍有 {facts.training.unknown_days} 天未知。"
+            ],
+        )]
+
     if facts.sleep.average_minutes is not None and facts.sleep.average_minutes < 420:
         output.append(WeeklyRecommendation(
             priority=len(output) + 1,
@@ -353,11 +447,113 @@ def _recommend(facts: MonthlyFacts, events: list[HealthEvent]) -> list[WeeklyRec
     return output
 
 
+def _monthly_training_coverage(raw, period_start: date) -> dict:
+    records = {
+        day for day in raw.training_by_day
+        if period_start <= day <= raw.day
+    }
+    context = getattr(raw, "training_history_coverage", None) or {}
+    if not isinstance(context, dict):
+        context = {}
+    nested = context.get("current_28d")
+    values = {**context, **nested} if isinstance(nested, dict) else context
+    status = str(values.get("coverage_status") or values.get("status") or "").upper()
+    verified_days = values.get("verified_days")
+    previous_start = period_start - timedelta(days=PERIOD_DAYS)
+    previous_days = {
+        previous_start + timedelta(days=index) for index in range(PERIOD_DAYS)
+    }
+    current_days = {
+        period_start + timedelta(days=index) for index in range(PERIOD_DAYS)
+    }
+    target_day_complete = bool(
+        (getattr(raw, "report_context", None) or {}).get("target_day_complete", True)
+    )
+    complete_current_days = set(current_days)
+    if not target_day_complete:
+        complete_current_days.discard(raw.day)
+    verified_all = set()
+    verified_current = set()
+    for item in verified_days or []:
+        if isinstance(item, date):
+            candidate = item
+        elif isinstance(item, str):
+            try:
+                candidate = date.fromisoformat(item[:10])
+            except ValueError:
+                continue
+        else:
+            continue
+        verified_all.add(candidate)
+        if candidate in complete_current_days:
+            verified_current.add(candidate)
+    if verified_days is not None:
+        record_days = len(verified_current)
+        status = (
+            "COMPLETE"
+            if target_day_complete and complete_current_days <= verified_all
+            else "PARTIAL" if verified_current else "UNKNOWN"
+        )
+    elif values.get("record_days") is not None:
+        record_days = int(values["record_days"])
+    elif status == "UNKNOWN":
+        record_days = 0
+    else:
+        record_days = len(records)
+    record_days = max(0, min(record_days, PERIOD_DAYS))
+    if not target_day_complete and status == "COMPLETE":
+        status = "PARTIAL"
+        record_days = min(record_days, PERIOD_DAYS - 1)
+    explicit_unknown = values.get("unknown_days")
+    unknown_days = max(
+        int(explicit_unknown) if explicit_unknown is not None else 0,
+        PERIOD_DAYS - record_days,
+    )
+    if status not in {"COMPLETE", "PARTIAL", "UNKNOWN"}:
+        status = "PARTIAL" if records else "UNKNOWN"
+    unknown_days = max(0, min(unknown_days, PERIOD_DAYS - record_days))
+    if status == "COMPLETE":
+        record_days, unknown_days = PERIOD_DAYS, 0
+    return {
+        "record_days": record_days,
+        "unknown_days": unknown_days,
+        "coverage_status": status,
+        "totals_are_partial": bool(
+            values.get("totals_are_partial", status != "COMPLETE")
+        ),
+        "covered_days": verified_current if verified_days is not None else None,
+        "current_complete": (
+            verified_days is not None
+            and target_day_complete
+            and complete_current_days <= verified_all
+        ),
+        "previous_complete": (
+            verified_days is not None and previous_days <= verified_all
+        ),
+    }
+
+
+def _report_context(raw, period_start: date) -> dict:
+    context = dict(getattr(raw, "report_context", None) or {})
+    context.setdefault("period_start", period_start.isoformat())
+    context.setdefault("period_end", raw.day.isoformat())
+    context.setdefault(
+        "training_coverage",
+        getattr(raw, "training_history_coverage", {}) or {},
+    )
+    return context
+
+
 def _record_values(records, field, start, end) -> list[float]:
     return [
         float(item[field]) for day, item in records.items()
         if start <= day <= end and item.get(field) is not None
     ]
+
+
+def _optional_sum(items: list[dict], field: str, converter):
+    values = [converter(item[field]) for item in items if item.get(field) is not None]
+    return sum(values) if values else None
 
 
 def _mean(values: list[float]) -> float | None:

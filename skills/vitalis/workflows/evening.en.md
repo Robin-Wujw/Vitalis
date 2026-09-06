@@ -13,6 +13,6 @@ Do not repeat the morning narrative. Begin with what actually happened today:
 5. Present recent context with each available trend's `metric_label`, `direction_label`, and `confidence_label`, plus unresolved events' `summary`, severity label, and lifecycle label.
 6. Do not reschedule today's training in the evening. You may review returned discipline-specific analysis, but must not calculate or add actions.
 7. Explain the judgment with Chinese evidence labels and always put data limitations in the final section.
-8. After training, you may briefly ask once for RPE, physical fatigue, mental state, or muscle soreness. After receiving an answer, record it verbatim with `tools/feedback.py add`; never infer a rating for the user.
+8. Do not proactively ask for RPE, physical fatigue, mental state, or muscle soreness; only when the user provides feedback explicitly, record it verbatim with `tools/feedback.py add`; never infer a rating for the user.
 
 The current model has no recovery forecasting capability. Do not predict tomorrow's recovery.

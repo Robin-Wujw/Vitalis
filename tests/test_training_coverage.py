@@ -1,7 +1,7 @@
 from datetime import date, datetime, timedelta, timezone
 
 from vitalis.connectors.zepp.client import SPORTS
-from vitalis.models import Workout
+from vitalis.models import MetricSample, Workout
 from vitalis.connectors.zepp.fetcher import FetchWindow
 from vitalis.services.zepp_sync_coordinator import stable_chunk_key
 from vitalis.storage import HealthRepository, session_scope
@@ -87,6 +87,51 @@ def test_training_history_coverage_excludes_future_attempts_and_other_users():
     assert result["status"] == "UNKNOWN"
     assert result["verified_days"] == []
     assert result["last_synced_at"] is None
+
+
+def test_metric_window_summaries_aggregate_minutes_and_provenance_in_sql():
+    user_id = "metric-window-summary"
+    samples = []
+    for index in range(120):
+        samples.append(MetricSample(
+            user_id=user_id,
+            source="zepp",
+            metric="heart_rate",
+            timestamp=NOW - timedelta(minutes=119 - index, seconds=30),
+            value=60 + index % 10,
+            unit="bpm",
+            source_scope="device",
+            device_id="watch-a",
+        ))
+    samples.append(MetricSample(
+        user_id=user_id,
+        source="zepp",
+        metric="stress",
+        timestamp=NOW - timedelta(minutes=5),
+        value=25,
+        unit="score",
+        source_scope="user_fused",
+        device_id=None,
+    ))
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.save_metric_samples(samples)
+        rows = repo.metric_window_summaries(
+            user_id,
+            ("heart_rate", "stress"),
+            NOW - timedelta(hours=2),
+            NOW + timedelta(minutes=1),
+        )
+
+    heart_rate = next(item for item in rows if item["metric"] == "heart_rate")
+    stress = next(item for item in rows if item["metric"] == "stress")
+    assert heart_rate["sample_count"] == 120
+    assert heart_rate["observed_minutes"] == 120
+    assert heart_rate["minimum"] == 60
+    assert heart_rate["maximum"] == 69
+    assert heart_rate["truncated"] is False
+    assert stress["source_scope"] == "user_fused"
+    assert stress["device_id"] is None
 
 
 def test_workout_detail_refresh_prefers_backlog_and_records_fetched_at():
@@ -206,6 +251,29 @@ def test_future_successor_cannot_be_omitted_to_prove_coverage():
         )
     assert result["status"] != "COMPLETE"
     assert result["verified_days"] == []
+
+
+def test_training_history_coverage_reaches_old_proof_after_more_than_64_attempts():
+    user_id = "coverage-old-proof"
+    proof_id = _attempt(user_id)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        proof = repo.sync_attempt(proof_id)
+        assert proof is not None
+        proof.finished_at = (NOW - timedelta(days=2)).replace(tzinfo=None)
+        for chunk in repo.sync_chunks(proof_id):
+            chunk.finished_at = proof.finished_at
+    for _ in range(64):
+        _attempt(user_id)
+
+    with session_scope() as db:
+        result = HealthRepository(db).training_history_coverage(
+            user_id, date(2026, 8, 1), date(2026, 8, 2), NOW
+        )
+
+    assert result["status"] == "COMPLETE"
+    assert result["verified_days"] == ["2026-08-01", "2026-08-02"]
+    assert result["budget_exhausted"] is False
 
 
 def test_successful_empty_workout_queries_prove_coverage_but_unavailable_does_not():

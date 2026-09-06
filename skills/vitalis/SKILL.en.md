@@ -20,7 +20,9 @@ personal models, and snapshots. Never reproduce those calculations in the model.
 5. Render only facts, inferences, actions, comparisons, drivers, limitations, and
    recommendations already present in the response. Open Health fields are descriptive
    shadow insights only; render `open_health_insights` and typed period/context summaries
-   without recomputing or using them to alter `decision`.
+   without recomputing or using them to alter `decision`. Evening, weekly, and monthly
+   report tools return `ReportBriefing 1.0`; use their `sections` shared with the HTML
+   renderer directly and never freely compose a report from a raw profile.
 
 All user-visible content must be Chinese. Render `*_label`, `*_labels`, workout
 `sport_mode_label`, recognition labels, and the structured `decision.action_plan`.
@@ -40,6 +42,7 @@ Internal enum codes exist only for program control and must never appear in the 
 - Preserve `primary_session`, `optional_session`, and `session_relationship_label`.
   Never present an alternative as an addition or combine sessions the planner separated.
 - Do not treat vendor readiness, Charge, sleep score, or sleep stages as Vitalis truth.
+- Keep missing activity fields as `None`; a legacy `ActivityRecord` default zero without observation evidence is not a measurement. Do not interpret generic calories with `role=unspecified` as total energy expenditure, add duplicate entries or workout calories, or infer an energy deficit without intake data. Do not mix source/scope/device/unit streams.
 - If action is `INSUFFICIENT_DATA`, name the missing signals and stop. Do not infer a
   training decision from general advice or prior days.
 - If a read tool returns 404, state in Chinese that the requested date has no generated
@@ -53,9 +56,9 @@ Internal enum codes exist only for program control and must never appear in the 
 ## Workflow Routing
 
 - Morning status or today's training: call `tools/morning_briefing.py`, then `workflows/morning.md`. Use `tools/explain.py` only when the person asks for the evidence behind the briefing.
-- Evening summary or tonight's focus: call `tools/daily.py`, then `workflows/evening.md`.
-- Weekly review: call `tools/weekly.py`, then `workflows/weekly.md`.
-- Monthly review or recent 28-day cycle: call `tools/monthly.py`, then
+- Evening summary or tonight's focus: call `tools/evening_briefing.py`, then `workflows/evening.md`.
+- Weekly review: call `tools/weekly_briefing.py`, then `workflows/weekly.md`.
+- Monthly review or recent 28-day cycle: call `tools/monthly_briefing.py`, then
   `workflows/monthly.md`.
 - Trends or recent changes: call `tools/trends.py` or `tools/events.py`, then
   `workflows/on_demand.md`.
@@ -72,7 +75,7 @@ Internal enum codes exist only for program control and must never appear in the 
 - Recent sequence of events: call `tools/timeline.py`, then `workflows/on_demand.md`.
 - Mark a recommendation completed only after the user identifies both the recommendation
   and completed workout: call `tools/complete_recommendation.py`.
-- Record RPE, fatigue, mental state, soreness, or notes: call `tools/feedback.py add`.
+- Record RPE, fatigue, mental state, soreness, or notes explicitly provided by the user: call `tools/feedback.py add`.
 - List feedback: call `tools/feedback.py list`.
 - Read or replace running/strength targets, rotation, treadmill/weather fallback,
   availability, experience, equipment, and pain/injury state with

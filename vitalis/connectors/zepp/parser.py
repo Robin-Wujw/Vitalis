@@ -142,14 +142,41 @@ class ZeppParser:
                     )
 
             steps = summary.get("stp") or {}
-            if steps:
-                activities[day] = ActivityRecord(
-                    user_id="", source=self.source, date=day,
-                    steps=int(steps.get("ttl", 0) or 0),
-                    calories=int(steps.get("cal", 0) or 0),
-                    distance_km=round(float(steps.get("dis", 0) or 0) / 1000, 2),
-                    resting_hr=int(sleep.get("rhr", 0) or 0) if sleep.get("rhr") else 0,
+            if isinstance(steps, dict):
+                steps_value = self._nonnegative_number(steps, ("ttl",))
+                calories_value = self._nonnegative_number(steps, ("cal",))
+                distance_meters = self._nonnegative_number(steps, ("dis",))
+                active_minutes = self._nonnegative_number(
+                    summary,
+                    ("activeMinutes", "active_minutes", "totalBurningDuration"),
                 )
+                resting_hr = self._nonnegative_number(sleep, ("rhr",))
+                observed_fields = []
+                if steps_value is not None:
+                    observed_fields.append("steps")
+                if active_minutes is not None:
+                    observed_fields.append("active_minutes")
+                if calories_value is not None:
+                    observed_fields.append("calories")
+                if distance_meters is not None:
+                    observed_fields.append("distance_km")
+                if resting_hr is not None:
+                    observed_fields.append("resting_hr")
+                if observed_fields:
+                    activities[day] = ActivityRecord(
+                        user_id="", source=self.source, date=day,
+                        steps=int(steps_value) if steps_value is not None else None,
+                        active_minutes=(
+                            int(active_minutes) if active_minutes is not None else None
+                        ),
+                        calories=int(calories_value) if calories_value is not None else None,
+                        distance_km=(
+                            round(distance_meters / 1000, 3)
+                            if distance_meters is not None else None
+                        ),
+                        resting_hr=int(resting_hr) if resting_hr is not None else None,
+                        observed_fields=observed_fields,
+                    )
         return sleeps, activities
 
     @staticmethod
@@ -218,8 +245,17 @@ class ZeppParser:
             load = self._first_number(
                 it, ("training_load", "trainLoad", "exercise_load")
             ) or 0
-            calories = self._first_number(it, ("calories", "calorie")) or 0
-            distance = self._first_number(it, ("distance", "dis"))
+            calories = self._nonnegative_number(it, ("calories", "calorie"))
+            distance = self._nonnegative_number(it, ("distance", "dis"))
+            groups = self._nonnegative_number(it, ("total_group",)) if mode.family == "strength" else None
+            reported_sets = int(groups) if groups is not None and groups > 0 and groups.is_integer() else None
+            observed_fields = []
+            if reported_sets is not None:
+                observed_fields.append("vendor_reported_sets")
+            if calories is not None:
+                observed_fields.append("calories")
+            if distance is not None:
+                observed_fields.append("distance_km")
             workouts.append(Workout(
                 user_id="", source=self.source,
                 workout_id=str(it.get("trackid") or it.get("trackId") or ""),
@@ -239,12 +275,14 @@ class ZeppParser:
                 heart_rate_avg=max(int(avg_hr), 0),
                 heart_rate_max=max(int(max_hr), 0),
                 load=max(int(load), 0),
-                calories=max(int(calories), 0),
+                calories=max(int(calories), 0) if calories is not None else 0,
                 distance_km=(
-                    round(max(distance, 0) / 1000, 3)
-                    if distance is not None
+                    round(distance / 1000, 3)
+                    if distance is not None and distance >= 0
                     else None
                 ),
+                observed_fields=observed_fields,
+                vendor_reported_sets=reported_sets,
                 vendor_source=str(it.get("source")) if it.get("source") else None,
                 vendor_type_id=numeric_type,
                 heart_rate_zone_setting_type=self._bounded_int(
@@ -730,7 +768,7 @@ class ZeppParser:
             ("steps", ("steps", "step", "stepCount", "totalSteps"), "steps"),
             ("calories", ("calories", "calorie", "totalCalories"), "kcal"),
             ("active_minutes", ("activeMinutes", "totalBurningDuration"), "min"),
-            ("distance", ("distance", "totalDistance"), "m"),
+            ("distance_km", ("distance", "totalDistance"), "km"),
             ("resting_hr", ("resting_hr", "restingHr", "restingHeartRate", "rhr"), "bpm"),
             ("readiness", ("readiness", "readinessScore", "watchScore", "rdnsScore"), "score"),
             ("physical_readiness", ("phyScore",), "score"),
@@ -807,6 +845,8 @@ class ZeppParser:
                         value = ZeppParser._first_number(nested, keys)
                     if value is None:
                         continue
+                    if metric == "distance_km":
+                        value = value / 1000
                     store(DailyMetric(
                         date=day, metric=metric, value=value, unit=unit,
                         source_scope="device" if device else "user_fused", device_id=device,
@@ -1396,17 +1436,34 @@ class ZeppParser:
     # ---- Activity ----
     def parse_activity(self, raw: dict) -> ActivityRecord | None:
         data = (raw or {}).get("data")
-        if not data:
+        if not isinstance(data, dict) or not data:
+            return None
+        fields = {
+            "steps": self._nonnegative_number(data, ("steps",)),
+            "active_minutes": self._nonnegative_number(data, ("activeMinutes",)),
+            "calories": self._nonnegative_number(data, ("calories",)),
+            "distance_km": self._nonnegative_number(data, ("distanceKm",)),
+            "resting_hr": self._nonnegative_number(data, ("restingHr",)),
+        }
+        observed_fields = [name for name, value in fields.items() if value is not None]
+        if not observed_fields:
             return None
         return ActivityRecord(
             user_id="",
             source=self.source,
             date=date.fromisoformat(data["date"]) if data.get("date") else None,
-            steps=int(data.get("steps", 0)),
-            active_minutes=int(data.get("activeMinutes", 0)),
-            calories=int(data.get("calories", 0)),
-            distance_km=float(data.get("distanceKm", 0)),
-            resting_hr=int(data.get("restingHr", 0)),
+            steps=int(fields["steps"]) if fields["steps"] is not None else None,
+            active_minutes=(
+                int(fields["active_minutes"])
+                if fields["active_minutes"] is not None else None
+            ),
+            calories=int(fields["calories"]) if fields["calories"] is not None else None,
+            distance_km=fields["distance_km"],
+            resting_hr=(
+                int(fields["resting_hr"])
+                if fields["resting_hr"] is not None else None
+            ),
+            observed_fields=observed_fields,
         )
 
     # ---- Training ----
@@ -1432,6 +1489,8 @@ class ZeppParser:
     def parse_workout(self, raw: dict) -> Workout:
         t = raw.get("type", "other")
         started = raw.get("startTime")
+        calories = self._nonnegative_number(raw, ("calories",))
+        observed_fields = ["calories"] if calories is not None else []
         return Workout(
             user_id="",
             source=self.source,
@@ -1442,7 +1501,8 @@ class ZeppParser:
             heart_rate_avg=int(raw.get("avgHr", 0)),
             heart_rate_max=int(raw.get("maxHr", 0)),
             load=int(raw.get("load", 0)),
-            calories=int(raw.get("calories", 0)),
+            calories=int(calories) if calories is not None else 0,
+            observed_fields=observed_fields,
         )
 
     def parse_device(self, raw: dict) -> Device:
@@ -1597,6 +1657,16 @@ class ZeppParser:
                     return float(value.strip())
                 except ValueError:
                     pass
+        return None
+
+    @staticmethod
+    def _nonnegative_number(obj: dict, keys: tuple[str, ...]) -> float | None:
+        for key in keys:
+            if isinstance(obj.get(key), bool):
+                continue
+            value = ZeppParser._first_number(obj, (key,))
+            if value is not None and value >= 0:
+                return value
         return None
 
     @staticmethod

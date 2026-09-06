@@ -320,3 +320,84 @@ def test_profile_loader_keeps_timestamped_heart_rate_out_of_daily_series():
     assert {item.device_id for item in raw.heart_rate_samples} == {"helio", None}
     assert "heart_rate" not in raw.series
     assert "heart_rate" not in raw.facts
+
+
+def test_profile_loader_caches_target_day_window_summaries_by_one_source_stream():
+    user_id = "intelligence-window-summary"
+    day = date(2026, 8, 28)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+        repo.save_metric_samples([
+            MetricSample(
+                user_id=user_id,
+                metric="heart_rate",
+                timestamp=datetime(2026, 8, 28, 1, 0, tzinfo=timezone.utc),
+                value=60,
+                unit="bpm",
+                source_scope="device",
+                device_id="watch-a",
+            ),
+            MetricSample(
+                user_id=user_id,
+                metric="heart_rate",
+                timestamp=datetime(2026, 8, 28, 1, 1, tzinfo=timezone.utc),
+                value=62,
+                unit="bpm",
+                source_scope="device",
+                device_id="watch-a",
+            ),
+            MetricSample(
+                user_id=user_id,
+                metric="stress",
+                timestamp=datetime(2026, 8, 28, 2, 0, tzinfo=timezone.utc),
+                value=31,
+                unit="score",
+                source_scope="user_fused",
+                device_id=None,
+            ),
+        ])
+        raw = ProfileLoader(repo).load(user_id, day)
+
+    heart_rate = raw.sample_window_summaries["heart_rate"]
+    stress = raw.sample_window_summaries["stress"]
+    assert heart_rate.provenance.source_scope == "device"
+    assert heart_rate.provenance.device_id == "watch-a"
+    assert heart_rate.sample_count == 2
+    assert heart_rate.observed_minutes == 2
+    assert heart_rate.minimum == 60
+    assert heart_rate.maximum == 62
+    assert heart_rate.average == 61
+    assert stress.provenance.source_scope == "user_fused"
+    assert stress.sample_count == 1
+    assert stress.observed_minutes == 1
+
+
+def test_profile_loader_ignores_legacy_activity_default_zero_but_keeps_positive_value():
+    user_id = "intelligence-activity-missing"
+    day = date(2026, 8, 28)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+        repo.save_daily(NormalizedDaily(
+            user_id=user_id,
+            date=day,
+            activity={
+                "user_id": user_id,
+                "date": day,
+                "steps": 0,
+                "active_minutes": 25,
+                "calories": 0,
+                "distance_km": 0,
+                "resting_hr": 0,
+            },
+        ))
+        raw = ProfileLoader(repo).load(user_id, day)
+
+    assert "steps" not in raw.series
+    assert [point.value for point in raw.series["active_minutes"]] == [25]
+    assert "calories" not in raw.series
+    assert "distance_km" not in raw.series
+    assert "resting_hr" not in raw.series

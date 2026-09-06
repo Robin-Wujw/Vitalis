@@ -892,11 +892,10 @@ class DecisionEngine:
         else:
             reasons.append("近期没有可复用的已确认动作，训练分化证据不足，仅安排保守动作模式。")
             latest_strength = sessions[0] if sessions else None
-            if latest_strength and latest_strength.estimated_work_bouts is not None:
-                planned_sets = sum(step.sets or 0 for step in steps)
+            if latest_strength and latest_strength.vendor_reported_sets is not None:
                 reasons.append(
-                    f"最近一次力量训练约有 {latest_strength.estimated_work_bouts} 个工作段；"
-                    f"心率无法识别动作，本次明确安排 {planned_sets} 个工作组。"
+                    f"最近一次设备记录 {latest_strength.vendor_reported_sets} 组，但未取得逐组动作和剂量；"
+                    "本次不按总组数照搬训练。"
                 )
         if lower_conflict:
             reasons.append("近期跑步或下肢负担较高，已降低力量训练剂量并避开下肢重点。")

@@ -74,6 +74,41 @@ def test_parse_activity():
     assert act.steps == 12000
     assert act.resting_hr == 58
     assert act.distance_km == 8.4
+    assert set(act.observed_fields) == {
+        "steps", "active_minutes", "calories", "distance_km", "resting_hr",
+    }
+
+
+def test_parse_activity_keeps_explicit_zero_and_missing_values_distinct():
+    act = ZeppParser().parse_activity({"data": {
+        "date": "2026-08-25",
+        "steps": 0,
+        "calories": 0,
+    }})
+    assert act is not None
+    assert act.steps == 0
+    assert act.calories == 0
+    assert act.active_minutes is None
+    assert act.distance_km is None
+    assert act.resting_hr is None
+    assert set(act.observed_fields) == {"steps", "calories"}
+
+
+def test_parse_band_keeps_explicit_zero_and_omits_missing_activity_values():
+    summary = base64.b64encode(json.dumps({
+        "stp": {"ttl": 0, "cal": 0, "dis": 0},
+    }).encode()).decode()
+    _, activities = ZeppParser().parse_band({"data": {"items": [{
+        "date_time": "2026-08-25",
+        "summary": summary,
+    }]}})
+    activity = activities[date(2026, 8, 25)]
+    assert activity.steps == 0
+    assert activity.calories == 0
+    assert activity.distance_km == 0
+    assert activity.active_minutes is None
+    assert activity.resting_hr is None
+    assert set(activity.observed_fields) == {"steps", "calories", "distance_km"}
 
 
 def test_parse_training_aggregates():
@@ -227,7 +262,8 @@ def test_sport_history_normalizes_vendor_negative_sentinels():
     assert rows[0].heart_rate_max == 0
     assert rows[0].load == 0
     assert rows[0].calories == 0
-    assert rows[0].distance_km == 0
+    assert rows[0].distance_km is None
+    assert "distance_km" not in rows[0].observed_fields
 
 
 def test_decode_workout_detail_to_typed_metric_samples():
@@ -346,6 +382,16 @@ def test_parse_daily_metrics():
     })
     values = {row.metric: row.value for row in rows}
     assert values == {"readiness": 83, "physical_readiness": 79}
+
+
+def test_parse_daily_metrics_normalizes_verified_meter_distance_to_km():
+    rows = ZeppParser.parse_daily_metrics({"items": [{
+        "timestamp": 1_777_334_400_000,
+        "distance": 8400,
+    }]})
+    assert [(row.metric, row.value, row.unit) for row in rows] == [
+        ("distance_km", 8.4, "km"),
+    ]
 
 
 def test_parse_spo2_wellness():

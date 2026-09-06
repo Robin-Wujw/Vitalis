@@ -6,11 +6,13 @@ All paths below are prefixed with `/api/v1`. User-scoped endpoints require an ex
 `X-User-Id` header; there is no implicit default user. Intelligence GET requests are
 side-effect free and return `404` when the requested snapshot has not been generated.
 
-`report_context` in DailyProfile 12.0 and WeeklyProfile 5.0 retains `as_of` (ISO UTC),
+`report_context` in DailyProfile 13.0, WeeklyProfile 6.0, and MonthlyProfile 3.0 retains `as_of` (ISO UTC),
 `timezone`, `target_date`, `target_day_complete`, `training_history`, and
 `latest_observations`. `training_history` contains `status` (`COMPLETE`/`PARTIAL`/`UNKNOWN`),
 `verified_days`, `last_synced_at`, and `prior_7d_verified`; it explains data boundaries and
 never turns unknown training days into zero or rest.
+
+Missing activity fields remain `None`; a legacy `ActivityRecord` default `0` without observation evidence is not a measurement. `ActivityMetric` and `EnergyObservation` remain separated by `source`, `source_scope`, `device_id`, and `unit`. Generic calories remain `role=unspecified`, are not interpreted as total energy expenditure, and are not added across duplicate entries or workout calories; without intake data, no energy-deficit conclusion is made.
 
 ## Connect and Import
 
@@ -39,10 +41,13 @@ credential and both users' historical records remain unchanged.
 | POST | `/intelligence/analyze?day=YYYY-MM-DD` | Run deterministic analysis and persist immutable snapshots |
 | GET | `/intelligence/profile` | Read the revisioned user-confirmed physiology and sleep profile |
 | PATCH | `/intelligence/profile` | Patch explicit profile fields with `expected_revision` conflict protection |
-| GET | `/intelligence/daily?day=YYYY-MM-DD` | Read DailyProfile 12.0 facts, persisted decision evidence, and shadow-only open health insights |
-| GET | `/intelligence/morning-briefing?day=YYYY-MM-DD` | Read the MorningBriefing schema_version=2.0 morning presentation projection |
-| GET | `/intelligence/weekly?day=YYYY-MM-DD` | Read the rolling 7-day WeeklyProfile 5.0 and prior-week comparison |
-| GET | `/intelligence/monthly?day=YYYY-MM-DD` | Read the directly computed 28-day profile |
+| GET | `/intelligence/daily?day=YYYY-MM-DD` | Read DailyProfile 13.0 facts, persisted decision evidence, and shadow-only open health insights |
+| GET | `/intelligence/morning-briefing?day=YYYY-MM-DD` | Read the MorningBriefing schema_version=3.0 morning presentation projection |
+| GET | `/intelligence/evening-briefing?day=YYYY-MM-DD` | Read the ReportBriefing 1.0 evening presentation projection |
+| GET | `/intelligence/weekly?day=YYYY-MM-DD` | Read the rolling 7-day WeeklyProfile 6.0 and prior-week comparison |
+| GET | `/intelligence/weekly-briefing?day=YYYY-MM-DD` | Read the ReportBriefing 1.0 weekly presentation projection |
+| GET | `/intelligence/monthly?day=YYYY-MM-DD` | Read the MonthlyProfile 3.0 directly computed 28-day profile |
+| GET | `/intelligence/monthly-briefing?day=YYYY-MM-DD` | Read the ReportBriefing 1.0 monthly presentation projection |
 | GET | `/intelligence/trends?day=YYYY-MM-DD` | Read device-isolated 7/28/90-day trends |
 | GET | `/intelligence/events?start=&end=&event_type=` | Read health-event lifecycle state |
 | GET | `/intelligence/explain?day=YYYY-MM-DD` | Read one persisted decision explanation, including snapshot provenance and data quality |
@@ -133,7 +138,7 @@ curl 'http://localhost:8000/api/v1/intelligence/monthly?day=2026-08-28' \
   -H 'X-User-Id: <local-user-id>'
 ```
 
-Record post-workout feedback. Session RPE requires a real workout ID:
+Record feedback explicitly provided by the user. Session RPE requires a real workout ID:
 
 ```bash
 curl -X POST 'http://localhost:8000/api/v1/intelligence/feedback' \
@@ -170,16 +175,20 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/st
 
 ## Contract Boundaries
 
-- `GET /intelligence/morning-briefing` returns the `MorningBriefing schema=2.0`
+- `GET /intelligence/morning-briefing` returns the `MorningBriefing schema=3.0`
   `observations`, `key_reasons`, `cautions`, and `report_context`; having no workout today
   is not a missing item.
+- `GET /intelligence/evening-briefing`, `GET /intelligence/weekly-briefing`, and
+  `GET /intelligence/monthly-briefing` return `ReportBriefing 1.0`. These reports use the
+  same `sections` as the HTML renderer; they must not be freely composed from raw profiles
+  and are not new scheduled jobs.
 - `POST /intelligence/analyze` is the calculation command; GET endpoints do not run or
   mutate analysis. `GET /intelligence/explain` returns 404 when no snapshot exists; a
   Hermes explanation must report that state without synchronizing or analyzing.
 - Daily, Weekly, Monthly, Training Response, Personal Association, and Personal Model
   snapshots share one AnalysisRun identity.
 - Facts, inferences, and actions remain distinct in period profiles.
-- `open_health_insights` is shadow-only. It may explain readiness, sleep, TRIMP, ATL, CTL, and TSB, but it does not change Decision Policy 8.0, recovery state, action, rule IDs, or ActionPlan.
+- `open_health_insights` is shadow-only. It may explain readiness, sleep, TRIMP, ATL, CTL, and TSB, but it does not change Decision Policy 9.0, recovery state, action, rule IDs, or ActionPlan.
 - User-confirmed profile values have revisioned provenance. Age formulas, workout maximum heart rate, Zepp scores, and device-zone boundaries never silently populate confirmed HRmax.
 - Missing measurements remain null or produce explicit insufficient-data/refusal state.
 - Canonical workout identity is `(source, workout_id)`. Detail reads, recommendation
@@ -208,6 +217,8 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/st
   presentation contract.
 - Association responses are observational and always carry `association_only=true`.
 
-Full Pydantic models live in `vitalis/intelligence/contracts.py`. Hermes-facing wire
-schemas live in `skills/vitalis/schemas/`. Calculation policies are documented in
-[ARCHITECTURE.en.md](ARCHITECTURE.en.md).
+Full Pydantic models live in `vitalis/intelligence/contracts.py`. `schema_export.py` produces
+seven deterministic exports from the Pydantic source and uses standard local `$ref` references;
+callers must not assume that only an explanation export exists. The exports contain no personal
+health values or real records. Hermes-facing wire schemas live in `skills/vitalis/schemas/`.
+Calculation policies are documented in [ARCHITECTURE.en.md](ARCHITECTURE.en.md).

@@ -108,6 +108,10 @@ hermes --skills vitalis prompt-size --json
 
 另一个 Hermes 任务在 22:30 运行，同步一天数据，并发送一份当天的晚间报告。晚间报告按 `started_at` 回顾当天真实训练明细；有返回时展示跑步指标、明确的力量训练组和动作确认，保留缺失与未知单位，不补写 `kg` 或动作。它还回顾每日活动和压力、七晚睡眠 HRV 趋势，以及截至今天的滚动训练负荷，然后给出切实可行的恢复行动，并将明天的强度安排留到下一次完整夜间评估。两种报告均采用 PushPlus 的 HTML 模板和可移植的内联样式发送；报告值会在生成 HTML 之前进行转义。HTML 根元素自带高对比度浅色背景，因此 PushPlus 深色模式不会将深色报告文字直接置于黑色背景上。晚间报告不会显示仅睡眠时段的 RMSSD 曲线，也不会根据稀疏样本推断连续的日间 HRV、压力或情绪。
 
+### 四报告读取与反馈
+
+`GET /api/v1/intelligence/evening-briefing`、`GET /api/v1/intelligence/weekly-briefing` 和 `GET /api/v1/intelligence/monthly-briefing` 返回 `ReportBriefing 1.0`，并与 HTML renderer 使用相同的 `sections`。它们是显式读取能力，不从 raw profile 自由拼接，也不新增 cron；Monthly renderer 只有在被明确调用时运行。报告不会自动请求主观反馈或主动催填 RPE。用户主动提供反馈时，仍可调用 `tools/feedback.py add`，已有反馈分析继续保留。
+
 将 PushPlus 令牌添加到 Hermes 私有的 `~/.hermes/.env`：
 
 ```dotenv
@@ -186,6 +190,8 @@ zepp_os/balance2_bridge/ Balance 2 device-side heart-rate bridge
 ```
 
 ## 验证
+
+`schema_export.py` 从 Pydantic 契约生成 7 份确定性导出，使用标准本地 `$ref`，调用方不得假定只有 explanation 一份导出。该导出只反映当前契约，不包含个人健康数值或真实记录。
 
 运行完整测试套件：
 

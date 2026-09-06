@@ -10,11 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "12.0"
-WEEKLY_SCHEMA_VERSION = "5.0"
-MONTHLY_SCHEMA_VERSION = "2.0"
-INTELLIGENCE_VERSION = "11.0"
-DECISION_POLICY_VERSION = "8.0"
+DAILY_SCHEMA_VERSION = "13.0"
+WEEKLY_SCHEMA_VERSION = "6.0"
+MONTHLY_SCHEMA_VERSION = "3.0"
+INTELLIGENCE_VERSION = "12.0"
+DECISION_POLICY_VERSION = "9.0"
 EVIDENCE_VERSION = "2026-09a"
 TRAINING_RESPONSE_SCHEMA_VERSION = "1.0"
 PERSONAL_MODEL_SCHEMA_VERSION = "2.0"
@@ -343,6 +343,71 @@ class HealthEventObservation(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+EnergyRole = Literal["daily_total", "activity", "workout", "unspecified"]
+
+
+class ActivityMetric(MeasurementFact):
+    baseline_reference: float | None = None
+    baseline_window_days: int | None = None
+    baseline_distinct_days: int = Field(default=0, ge=0)
+    deviation: Deviation | None = None
+
+
+class EnergyObservation(ActivityMetric):
+    role: EnergyRole = "unspecified"
+    source_field: str | None = None
+    estimated: bool = True
+    limitations: list[str] = Field(default_factory=list)
+
+
+class SampleWindowSummary(BaseModel):
+    metric: str
+    unit: str
+    provenance: Provenance
+    sample_count: int = Field(ge=0)
+    observed_minutes: int = Field(ge=0)
+    first_observed_at: datetime | None = None
+    last_observed_at: datetime | None = None
+    minimum: float | None = None
+    maximum: float | None = None
+    average: float | None = None
+    truncated: bool = False
+    limitations: list[str] = Field(default_factory=list)
+
+
+class ActivityFeatures(BaseModel):
+    status: Availability = Availability.INSUFFICIENT_DATA
+    steps: ActivityMetric | None = None
+    distance_km: ActivityMetric | None = None
+    active_minutes: ActivityMetric | None = None
+    energy: list[EnergyObservation] = Field(default_factory=list)
+    heart_rate: SampleWindowSummary | None = None
+    stress: SampleWindowSummary | None = None
+    stress_summary: list[MeasurementFact] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class PeriodActivityMetric(BaseModel):
+    metric: str
+    unit: str
+    provenance: Provenance
+    role: EnergyRole | None = None
+    source_field: str | None = None
+    period_days: int = Field(ge=1)
+    available_days: int = Field(ge=0)
+    complete_days: int = Field(ge=0)
+    previous_available_days: int = Field(default=0, ge=0)
+    previous_complete_days: int = Field(default=0, ge=0)
+    total: float | None = None
+    average: float | None = None
+    previous_total: float | None = None
+    previous_average: float | None = None
+    change_percent: float | None = None
+    total_change_percent: float | None = None
+    totals_are_partial: bool = True
+    limitations: list[str] = Field(default_factory=list)
+
+
 class SleepFeatures(BaseModel):
     status: Availability
     status_label: str = ""
@@ -543,7 +608,10 @@ class RecoveryFeatures(BaseModel):
 
 class WorkoutFeature(BaseModel):
     date: date
+    vendor_reported_sets: int | None = Field(default=None, ge=1)
     started_at: datetime | None = None
+    calories_kcal: float | None = Field(default=None, ge=0)
+    distance_km: float | None = Field(default=None, ge=0)
     type: str
     type_label: str
     sport_mode: str
@@ -739,6 +807,7 @@ class ExerciseHypothesis(BaseModel):
 
 
 class StrengthSessionAnalysis(BaseModel):
+    vendor_reported_sets: int | None = Field(default=None, ge=1)
     workout_id: str
     source: str = "zepp"
     date: DateValue
@@ -848,6 +917,7 @@ class TrainingFeatures(BaseModel):
 
 
 class ProfileFeatures(BaseModel):
+    activity: ActivityFeatures = Field(default_factory=ActivityFeatures)
     sleep: SleepFeatures
     hrv: HrvFeatures
     overnight_vitals: OvernightVitalsFeatures
@@ -1076,7 +1146,22 @@ class WeeklyRecoveryFacts(BaseModel):
     rhr_change_percent: float | None = None
 
 
-class WeeklyTrainingFacts(BaseModel):
+class PeriodTrainingDetails(BaseModel):
+    vendor_reported_sets: int | None = Field(default=None, ge=0)
+    vendor_sets_sessions: int = Field(default=0, ge=0)
+    running_sessions: int | None = Field(default=None, ge=0)
+    running_distance_km: float | None = Field(default=None, ge=0)
+    running_duration_minutes: float | None = Field(default=None, ge=0)
+    running_classification_counts: dict[str, int] = Field(default_factory=dict)
+    strength_duration_minutes: float | None = Field(default=None, ge=0)
+    strength_explicit_sessions: int | None = Field(default=None, ge=0)
+    strength_sets: int | None = Field(default=None, ge=0)
+    workout_calories_kcal: float | None = Field(default=None, ge=0)
+    workout_calories_sessions: int = Field(default=0, ge=0)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class WeeklyTrainingFacts(PeriodTrainingDetails):
     workout_count: int = Field(ge=0)
     training_days: int = Field(ge=0, le=7)
     record_days: int = Field(default=0, ge=0, le=7)
@@ -1094,6 +1179,7 @@ class WeeklyTrainingFacts(BaseModel):
 
 
 class WeeklyActivityFacts(BaseModel):
+    metrics: list[PeriodActivityMetric] = Field(default_factory=list)
     available_days: int = Field(ge=0, le=7)
     previous_available_days: int = Field(default=0, ge=0, le=7)
     total_steps: int | None = Field(default=None, ge=0)
@@ -1198,8 +1284,11 @@ class MonthlyRecoveryFacts(BaseModel):
     streams: list[MonthlyRecoveryStreamFacts] = Field(default_factory=list)
 
 
-class MonthlyTrainingFacts(BaseModel):
+class MonthlyTrainingFacts(PeriodTrainingDetails):
     record_days: int = Field(ge=0, le=28)
+    unknown_days: int = Field(default=28, ge=0, le=28)
+    coverage_status: Literal["COMPLETE", "PARTIAL", "UNKNOWN"] = "UNKNOWN"
+    totals_are_partial: bool = True
     workout_count: int | None = Field(default=None, ge=0)
     training_days: int | None = Field(default=None, ge=0, le=28)
     rest_days: int | None = Field(default=None, ge=0, le=28)
@@ -1213,7 +1302,9 @@ class MonthlyTrainingFacts(BaseModel):
 
 
 class MonthlyActivityFacts(BaseModel):
+    metrics: list[PeriodActivityMetric] = Field(default_factory=list)
     available_days: int = Field(ge=0, le=28)
+    previous_available_days: int = Field(default=0, ge=0, le=28)
     total_steps: int | None = Field(default=None, ge=0)
     average_steps: float | None = Field(default=None, ge=0)
     previous_average_steps: float | None = Field(default=None, ge=0)
@@ -1310,6 +1401,7 @@ class MonthlyProfile(BaseModel):
     period_end: date
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     data_quality: MonthlyDataQuality
+    report_context: dict[str, Any] = Field(default_factory=dict)
     facts: MonthlyFacts
     inferences: MonthlyInferences
     actions: MonthlyActions
@@ -1368,10 +1460,10 @@ class SubjectiveFeedback(BaseModel):
 
 
 class DailyProfile(BaseModel):
-    schema_version: Literal["12.0"] = DAILY_SCHEMA_VERSION
+    schema_version: Literal["13.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
-    intelligence_version: Literal["11.0"] = INTELLIGENCE_VERSION
-    decision_policy_version: Literal["8.0"] = DECISION_POLICY_VERSION
+    intelligence_version: Literal["12.0"] = INTELLIGENCE_VERSION
+    decision_policy_version: Literal["9.0"] = DECISION_POLICY_VERSION
     evidence_version: Literal["2026-09a"] = EVIDENCE_VERSION
     user_id: str
     date: DateValue
@@ -1390,6 +1482,36 @@ class DailyProfile(BaseModel):
     open_health_insights: "OpenHealthBundle | None" = None
 
 
+class ReportSection(BaseModel):
+    key: str
+    title: str
+    facts: list[str] = Field(default_factory=list)
+    interpretation: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class ReportBriefing(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    period: Literal["evening", "weekly", "monthly"]
+    analysis_run_id: str
+    user_id: str
+    date: DateValue
+    period_start: DateValue
+    period_end: DateValue
+    generated_at: datetime | None = None
+    report_context: dict[str, Any] = Field(default_factory=dict)
+    data_quality: dict[str, Any] = Field(default_factory=dict)
+    summary: list[str] = Field(default_factory=list)
+    sections: list[ReportSection] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_period(self):
+        days = {"evening": 1, "weekly": 7, "monthly": 28}[self.period]
+        if self.date != self.period_end or (self.period_end - self.period_start).days + 1 != days:
+            raise ValueError("报告日期必须与对应的日、7日或28日窗口一致")
+        return self
+
+
 class MorningBriefingReason(BaseModel):
     text: str
 
@@ -1397,7 +1519,7 @@ class MorningBriefingReason(BaseModel):
 class MorningBriefing(BaseModel):
     """Non-persistent observation and action projection of one DailyProfile."""
 
-    schema_version: Literal["2.0"] = "2.0"
+    schema_version: Literal["3.0"] = "3.0"
     analysis_run_id: str
     user_id: str
     date: DateValue
@@ -1406,10 +1528,11 @@ class MorningBriefing(BaseModel):
     action_label: str
     action_plan: ActionPlan
     report_context: dict[str, Any] = Field(default_factory=dict)
-    observations: list[MorningBriefingReason] = Field(default_factory=list, max_length=6)
-    key_reasons: list[MorningBriefingReason] = Field(default_factory=list, max_length=3)
-    cautions: list[str] = Field(default_factory=list, max_length=3)
-    feedback_prompt: str | None = None
+    summary: list[str] = Field(default_factory=list)
+    sections: list[ReportSection] = Field(default_factory=list)
+    observations: list[MorningBriefingReason] = Field(default_factory=list)
+    key_reasons: list[MorningBriefingReason] = Field(default_factory=list)
+    cautions: list[str] = Field(default_factory=list)
     data_quality: DataQuality
     evidence: DecisionEvidence
 

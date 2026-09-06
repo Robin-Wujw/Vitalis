@@ -159,6 +159,10 @@ background so PushPlus dark mode cannot place dark report text directly on black
 Evening report does not show the sleep-only RMSSD curve or infer continuous daytime
 HRV, stress, or emotion from sparse samples.
 
+### Reading the Four Reports and Feedback
+
+`GET /api/v1/intelligence/evening-briefing`, `GET /api/v1/intelligence/weekly-briefing`, and `GET /api/v1/intelligence/monthly-briefing` return `ReportBriefing 1.0` and use the same `sections` as the HTML renderer. They are explicit read capabilities, do not freely compose raw profiles, and do not add a cron job; the Monthly renderer runs only when explicitly called. Reports do not automatically request subjective feedback or prompt for RPE. When the user provides feedback explicitly, `tools/feedback.py add` remains available and existing feedback analysis is retained.
+
 Add the PushPlus token to Hermes' private `~/.hermes/.env`:
 
 ```dotenv
@@ -257,6 +261,8 @@ zepp_os/balance2_bridge/ Balance 2 device-side heart-rate bridge
 ```
 
 ## Verification
+
+`schema_export.py` produces seven deterministic exports from the Pydantic contracts and uses standard local `$ref` references; callers must not assume that only an explanation export exists. The exports describe the current contracts and contain no personal health values or real records.
 
 Run the complete suite:
 

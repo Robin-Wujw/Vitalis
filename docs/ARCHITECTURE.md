@@ -50,6 +50,14 @@ DecisionExplanation 投影；它不能创建快照、同步数据，也不能用
 两种形式都不会改变恢复状态或训练决策。`ahi_readiness` 和 `afib_readiness`
 是厂商就绪度组成项分数，并非 AHI 或 AFib 诊断。
 
+### 2.1 活动与能量
+
+`ActivityRecord` 的 `steps`、`active_minutes`、`calories`、`distance_km` 和 `resting_hr` 缺失时保持 `None`。JSON 中的 `observed_fields` 只标记载荷明确提供且通过校验的字段；旧记录中没有观测标志的默认 `0` 不会被重新解释为真实测量，旧正数可以保留并注明其兼容语义。每日指标的明确数值优先于旧 ActivityRecord 默认零。
+
+`ActivityMetric` 和 `EnergyObservation` 按 `(source, source_scope, device_id, unit)` 保持独立。距离只有在单位已知时才转换为 `km`，不同单位不会进入同一基线。泛称热量使用 `role=unspecified`，不声称是总能耗；重复入口不会相加，workout 热量也不会并入日总。没有摄入数据时不判断热量赤字。当前日尚未结束时，累计活动量不与完整日总量比较。
+
+训练覆盖从 29 日扩展为 56 个本地日，以支持连续两期 28 日分析；同步账本和分块仍受各自运行限制，覆盖范围不足时结果降级并保留限制。月报中的未知日仍是未知，不解释为休息日。
+
 训练摘要保留原始的厂商数字类型 ID。`sport_types.py` 将当前公开的全部 120 种
 Zepp OS 模式，以及另外两种公开的旧版 Huami 云历史模式，映射到稳定代码、
 准确的中文标签、宽泛类别和训练系列。已知的数字定义具有较高的识别置信度。
@@ -94,6 +102,7 @@ Zepp 增量/时间序列会解码为类型化指标样本。分圈仅保留已�
 | --- | --- |
 | `contracts.py` | 带版本的分析、建议、响应、个人模型、时间线和上下文契约 |
 | `profile.py` | 单个本地用户的加载器、来源信息、目标日事实和确定性质量标志 |
+| `activity.py` | 活动特征、能量角色、来源流优先级和训练热量/距离读取 |
 | `baseline.py` | 特定于设备/指标的 7 天和 28 天稳健统计 |
 | `analyzers.py` | 睡眠、HRV/RHR、恢复和训练特征提取 |
 | `running.py` | 设备/阈值心率区间、步频、功率、跑步动态、可比跑步基线、配速/HR 漂移、分段、训练类型和 7/28 天结构 |
@@ -113,7 +122,7 @@ Zepp 增量/时间序列会解码为类型化指标样本。分圈仅保留已�
 
 ### 3.1 DailyProfile
 
-线格式契约为 `schema_version=12.0`。每项结果分别携带 `analysis_run_id`、
+线格式契约为 `schema_version=13.0`。每项结果分别携带 `analysis_run_id`、
 `intelligence_version`、`decision_policy_version` 和 `evidence_version`：
 
 ```text
@@ -141,13 +150,13 @@ Vitalis 不提供未经校准的 0-100 恢复分数。厂商就绪度、Charge �
 
 #### 3.1.1 开放健康影子洞察
 
-DailyProfile 12.0、WeeklyProfile 5.0、MonthlyProfile 2.0 和 Agent Context 6.0
+DailyProfile 13.0、WeeklyProfile 6.0、MonthlyProfile 3.0 和 Agent Context 6.0
 公开一个带版本的 `open_health_insights` 数据块。其中包含透明的个人基线就绪度、
 稳健的多信号异常筛查、睡眠效率/规律性、用户目标睡眠差距、Banister TRIMP，
 以及描述性的 ATL/CTL/TSB。
 
 这些输出严格满足 `shadow_only=true`。它们绝不会进入 `RecoveryFeatures.state`、
-`DecisionEngine`、决策置信度、规则 ID 或 ActionPlan。当前决策策略仍为 8.0。
+`DecisionEngine`、决策置信度、规则 ID 或 ActionPlan。当前决策策略仍为 9.0。
 未来的策略若使用这些信号，必须显式划分版本并进行测试。
 
 用户确认的生理信息存储在带修订版本的 `UserProfile` 中。`sex` 和已确认的 HRmax
@@ -221,7 +230,7 @@ MAD 变异性、覆盖率、方向和置信度。缺失日期是缺失的观测�
 
 ### 3.5 WeeklyProfile 与反馈
 
-WeeklyProfile 5.0 覆盖截至请求日期的滚动七个本地日期，并将其与之前七天进行比较；
+WeeklyProfile 6.0 覆盖截至请求日期的滚动七个本地日期，并将其与之前七天进行比较；
 `report_context` 同时保留目标日是否结束和训练历史覆盖，未结束目标日必须明示。
 其契约将可穿戴设备/聚合 `facts`、Vitalis `inferences` 和确定性 `actions` 分开。
 恢复事件优先于通用训练量目标。主观 RPE、身体疲劳、精神状态、酸痛和备注
@@ -296,7 +305,7 @@ TRAIN_HARD | TRAIN_NORMAL | TRAIN_LIGHT | RECOVERY | REST | INSUFFICIENT_DATA
 已记录的 RPE 可补充每周上下文，但不能替代负荷、已完成的组数/重复次数/重量，
 也不能替代可靠的个体化有氧强度分类。
 
-训练内容是确定性引擎输出，而不是模型生成的建议。Decision Policy 8.0 返回一个
+训练内容是确定性引擎输出，而不是模型生成的建议。Decision Policy 9.0 返回一个
 `ActionPlan`，其中包含一个主要训练环节，以及至多一个兼容的可选附加项或替代项。
 每个训练环节都包含剂量、证据、进阶、停止条件和本地日期到期时间。当前训练库包括：
 
@@ -328,7 +337,7 @@ TRAIN_HARD | TRAIN_NORMAL | TRAIN_LIGHT | RECOVERY | REST | INSUFFICIENT_DATA
 
 ### 3.10 跑步分析
 
-DailyProfile 12.0 通过 Running Analysis v2 嵌入 `TrainingFeatures.running`。
+DailyProfile 13.0 通过 Running Analysis v2 嵌入 `TrainingFeatures.running`。
 每次训练会保留距离、时长、推导配速和等效配速、速度和步频中位数、步频变异性、
 功率、触地时间、垂直振幅、垂直步幅比、HR 区间时长、心率漂移、检测到的
 做功/恢复分段、分类证据、置信度和局限性。
@@ -370,7 +379,7 @@ Vitalis 不会根据年龄估算最大 HR。心率漂移要求至少 20 分钟�
 
 ### 3.11 力量训练分析
 
-DailyProfile 12.0 通过 Strength Analysis v1 嵌入 `TrainingFeatures.strength`。
+DailyProfile 13.0 通过 Strength Analysis v1 嵌入 `TrainingFeatures.strength`。
 用户可以针对自己拥有的一项力量训练确认动作名称、组数、重复次数、负荷、RPE/RIR、
 休息和训练重点。Vitalis 会将已知的中文或英文动作名称规范化为动作模式和肌肉群，
 同时保留原始名称作为可审计事实。
@@ -396,7 +405,7 @@ DailyProfile 12.0 通过 Strength Analysis v1 嵌入 `TrainingFeatures.strength`
 
 ### 3.12 夜间恢复上下文
 
-DailyProfile 12.0 将带时间戳的普通心率与每日指标序列分开保存。对于每个睡眠区间，
+DailyProfile 13.0 将带时间戳的普通心率与每日指标序列分开保存。对于每个睡眠区间，
 引擎会隔离设备数据流，并要求至少覆盖 120 分钟且区间覆盖率达到 50%。它会推导
 夜间中位数、滚动五分钟中位数低点、前半段和后半段中位数以及覆盖率。选中的夜间
 数据流仅与其自身之前 28 晚的历史比较。
@@ -412,8 +421,11 @@ DailyProfile 12.0 将带时间戳的普通心率与每日指标序列分开保�
 ```text
 POST /api/v1/intelligence/analyze
 GET  /api/v1/intelligence/daily
+GET  /api/v1/intelligence/evening-briefing
 GET  /api/v1/intelligence/weekly
+GET  /api/v1/intelligence/weekly-briefing
 GET  /api/v1/intelligence/monthly
+GET  /api/v1/intelligence/monthly-briefing
 GET  /api/v1/intelligence/trends
 GET  /api/v1/intelligence/events
 GET  /api/v1/intelligence/explain
@@ -440,9 +452,11 @@ POST /api/v1/intelligence/events/{event_id}/acknowledge
 无需兼容性契约。
 
 `skills/vitalis` 为已持久化的 Daily、Weekly、Monthly、趋势、事件、训练响应、
-关联、Personal Model、时间线和上下文提供 Read 工具。Analyze 是显式 POST 工具。
-Act 涵盖同步、建议完成、主观反馈和事件确认。每个面向用户的值都来自中文标签或
-结构化引擎字段。Hermes 绝不会从一个健康智能契约推导另一个契约。
+关联、Personal Model、时间线和上下文提供 Read 工具；`evening_briefing.py`、
+`weekly_briefing.py` 和 `monthly_briefing.py` 提供 `ReportBriefing 1.0`，并与 HTML
+renderer 共享相同的 `sections`。Analyze 是显式 POST 工具。Act 涵盖同步、建议完成、
+用户主动反馈和事件确认。每个面向用户的值都来自中文标签或结构化引擎字段。Hermes
+绝不会从 raw profile 自由拼接报告，也不会从一个健康智能契约推导另一个契约。
 
 ## 5. 计划任务流程
 
@@ -457,13 +471,14 @@ Act 涵盖同步、建议完成、主观反馈和事件确认。每个面向用�
 
 以上是 Vitalis 内置调度入口。Hermes 的 09:30-21:30 每小时晨间任务和 22:30 晚间任务
 是替代入口，不是与内置调度同一套计划；部署时只应由一个入口负责实际投递。
+Monthly renderer 是显式的读取/展示能力，不新增 cron。报告不会自动请求主观反馈或主动催填 RPE；只有用户主动提供反馈时，才通过反馈工具记录，并在已有反馈分析中保留。
 
 如果当天睡眠记录没有醒来时间，晨间调度器会延后处理，并且绝不会用过时的健康结果
 替代。晨间和晚间使用相互独立、按用户和日期划分的发送标记，因此重试和重叠调用
 不会重复一次已成功的 PushPlus 发送。晚间报告不受晨间睡眠门控阻止。
 
 晨间渲染器是完整 DailyProfile 之上的确定性展示选择层。它通过 `MorningBriefing
-schema_version=2.0` 输出睡眠与身体状态观察、当天可用的跑步/力量上下文、一个结论、具体的
+schema_version=3.0` 输出睡眠与身体状态观察、当天可用的跑步/力量上下文、一个结论、具体的
 主要/可选操作、简短理由、至多一个可采取行动的事件，以及仅有实质影响的注意事项。
 当天尚未有 workout 不是缺项；只有决策所需信号不足才会返回 `INSUFFICIENT_DATA`。
 按设备划分的数据流、原始趋势窗口、空信号组、未知安全输入、已通过的检查、规划门控

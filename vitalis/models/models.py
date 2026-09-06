@@ -106,7 +106,12 @@ class Workout(BaseModel):
     heart_rate_max: int = Field(default=0, ge=0)
     load: int = Field(default=0, ge=0, description="厂商训练负荷（非负，无固定上限）")
     calories: int = Field(default=0, ge=0)
+    vendor_reported_sets: int | None = Field(default=None, ge=1, description="Positive group count explicitly reported in the vendor strength summary")
     distance_km: float | None = Field(default=None, ge=0)
+    observed_fields: list[str] = Field(
+        default_factory=list,
+        description="Normalized fields whose vendor payload explicitly contained an observation",
+    )
     vendor_source: str | None = Field(default=None, description="Zepp workout detail source")
     vendor_type_id: int | None = Field(
         default=None,
@@ -249,18 +254,22 @@ class TrainingRecord(BaseModel):
 
 
 class ActivityRecord(BaseModel):
-    """日常活动（步数/卡路里/运动时长等）。"""
+    """日常活动（步数/卡路里/运动时长等）。缺失值保持为 None。"""
 
     model_config = ConfigDict(from_attributes=True)
 
     user_id: str
     date: Optional[DateType] = None
     source: str = "zepp"
-    steps: int = Field(default=0, ge=0)
-    active_minutes: int = Field(default=0, ge=0)
-    calories: int = Field(default=0, ge=0)
-    distance_km: float = Field(default=0, ge=0)
-    resting_hr: int = Field(default=0, ge=0, description="静息心率 bpm")
+    steps: int | None = Field(default=None, ge=0)
+    active_minutes: int | None = Field(default=None, ge=0)
+    calories: int | None = Field(default=None, ge=0)
+    distance_km: float | None = Field(default=None, ge=0)
+    resting_hr: int | None = Field(default=None, ge=0, description="静息心率 bpm")
+    observed_fields: list[str] = Field(
+        default_factory=list,
+        description="活动字段在厂商载荷中明确出现且通过校验的字段名",
+    )
 
 
 class NormalizedDaily(BaseModel):

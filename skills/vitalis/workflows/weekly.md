@@ -2,9 +2,10 @@
 
 [English](weekly.en.md)
 
-全程使用中文，只渲染 WeeklyProfile。周期是截至请求日期的滚动 7 个本地日期；如果
+全程使用中文，先调用 `tools/weekly_briefing.py`，只渲染返回的 `ReportBriefing 1.0`。
+其 `sections` 与 HTML renderer 相同，不得从 WeeklyProfile 或 raw profile 自由拼接。周期是截至请求日期的滚动 7 个本地日期；如果
 `report_context.target_day_complete` 为 `false`，必须明示目标日尚未结束，不能把它
-当成完整的一天。
+当成完整的一天。该能力不是新的 cron。
 
 1. 用 `data_quality.status_label` 和 `confidence_label` 说明分析可信度。
 2. 从 `facts.sleep`、`facts.recovery`、`facts.training`、`facts.activity` 和

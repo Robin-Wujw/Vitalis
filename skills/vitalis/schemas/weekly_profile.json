@@ -1,158 +1,1797 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/weekly-profile-5.0.json",
-  "title": "Vitalis WeeklyProfile 5.0",
-  "type": "object",
-  "required": ["schema_version", "analysis_run_id", "intelligence_version", "decision_policy_version", "evidence_version", "user_id", "period_start", "period_end", "generated_at", "data_quality", "report_context", "facts", "inferences", "actions", "evidence_refs", "open_health_period_summary", "open_health_coverage"],
-  "properties": {
-    "schema_version": {"const": "5.0"},
-    "analysis_run_id": {"type": "string"},
-    "intelligence_version": {"const": "11.0"},
-    "decision_policy_version": {"const": "8.0"},
-    "evidence_version": {"const": "2026-09a"},
-    "user_id": {"type": "string"},
-    "period_start": {"type": "string", "format": "date"},
-    "period_end": {"type": "string", "format": "date"},
-    "generated_at": {"type": "string", "format": "date-time"},
-    "data_quality": {
-      "type": "object",
-      "required": ["status", "status_label", "confidence", "confidence_label", "limitations"],
-      "properties": {
-        "status": {"enum": ["SUFFICIENT", "PARTIAL", "INSUFFICIENT"]},
-        "status_label": {"type": "string"},
-        "sleep_days": {"type": "integer", "minimum": 0, "maximum": 7},
-        "hrv_days": {"type": "integer", "minimum": 0, "maximum": 7},
-        "activity_days": {"type": "integer", "minimum": 0, "maximum": 7},
-        "training_days": {"type": "integer", "minimum": 0, "maximum": 7},
-        "confidence": {"enum": ["NONE", "LOW", "MODERATE", "HIGH"]},
-        "confidence_label": {"type": "string"},
-        "limitations": {"type": "array", "items": {"type": "string"}}
-      }
+  "$defs": {
+    "Availability": {
+      "enum": [
+        "AVAILABLE",
+        "INSUFFICIENT_DATA"
+      ],
+      "title": "Availability",
+      "type": "string"
     },
-    "report_context": {
-      "type": "object",
-      "required": ["as_of", "timezone", "target_date", "target_day_complete", "training_history", "latest_observations"],
+    "ConfidenceBand": {
+      "enum": [
+        "NONE",
+        "LOW",
+        "MODERATE",
+        "HIGH"
+      ],
+      "title": "ConfidenceBand",
+      "type": "string"
+    },
+    "DailySleepHrvPoint": {
       "properties": {
-        "as_of": {"type": "string", "format": "date-time"},
-        "timezone": {"type": "string"},
-        "target_date": {"type": "string", "format": "date"},
-        "target_day_complete": {"type": "boolean"},
-        "training_history": {
-          "type": "object",
-          "required": ["status", "verified_days", "last_synced_at", "prior_7d_verified"],
-          "properties": {
-            "status": {"enum": ["COMPLETE", "PARTIAL", "UNKNOWN"]},
-            "verified_days": {"type": "array", "items": {"type": "string", "format": "date"}},
-            "last_synced_at": {"type": ["string", "null"], "format": "date-time"},
-            "prior_7d_verified": {"type": "boolean"}
-          }
+        "date": {
+          "format": "date",
+          "title": "Date",
+          "type": "string"
         },
-        "latest_observations": {"type": "object", "additionalProperties": {"type": "string"}},
-        "period_start": {"type": "string", "format": "date"},
-        "period_end": {"type": "string", "format": "date"},
-        "training_coverage": {"type": "object"}
-      }
+        "value_ms": {
+          "exclusiveMinimum": 0,
+          "title": "Value Ms",
+          "type": "number"
+        },
+        "sample_count": {
+          "minimum": 1,
+          "title": "Sample Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "date",
+        "value_ms",
+        "sample_count"
+      ],
+      "title": "DailySleepHrvPoint",
+      "type": "object"
     },
-    "facts": {
-      "type": "object",
-      "required": ["sleep", "recovery", "training", "activity", "feedback"],
+    "EventLifecycle": {
+      "enum": [
+        "DETECTED",
+        "PERSISTING",
+        "IMPROVING",
+        "RESOLVED"
+      ],
+      "title": "EventLifecycle",
+      "type": "string"
+    },
+    "EventSeverity": {
+      "enum": [
+        "INFO",
+        "MODERATE",
+        "HIGH"
+      ],
+      "title": "EventSeverity",
+      "type": "string"
+    },
+    "EvidenceRef": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        },
+        "applies_to": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Applies To",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "url"
+      ],
+      "title": "EvidenceRef",
+      "type": "object"
+    },
+    "HealthEvent": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "type_label": {
+          "title": "Type Label",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/EventSeverity"
+        },
+        "severity_label": {
+          "title": "Severity Label",
+          "type": "string"
+        },
+        "metric": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metric"
+        },
+        "metric_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metric Label"
+        },
+        "start_date": {
+          "format": "date",
+          "title": "Start Date",
+          "type": "string"
+        },
+        "end_date": {
+          "format": "date",
+          "title": "End Date",
+          "type": "string"
+        },
+        "duration_days": {
+          "minimum": 1,
+          "title": "Duration Days",
+          "type": "integer"
+        },
+        "deviation_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Deviation Percent"
+        },
+        "baseline_window_days": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Baseline Window Days"
+        },
+        "confidence": {
+          "$ref": "#/$defs/ConfidenceBand"
+        },
+        "confidence_label": {
+          "title": "Confidence Label",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/HealthEventEvidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/EventLifecycle",
+          "default": "DETECTED"
+        },
+        "lifecycle_label": {
+          "default": "已发现",
+          "title": "Lifecycle Label",
+          "type": "string"
+        },
+        "last_observed_date": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Observed Date"
+        },
+        "last_evaluated_date": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Evaluated Date"
+        },
+        "resolved_at": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolved At"
+        },
+        "acknowledged": {
+          "default": false,
+          "title": "Acknowledged",
+          "type": "boolean"
+        },
+        "acknowledged_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Acknowledged At"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "type_label",
+        "severity",
+        "severity_label",
+        "start_date",
+        "end_date",
+        "duration_days",
+        "confidence",
+        "confidence_label",
+        "summary"
+      ],
+      "title": "HealthEvent",
+      "type": "object"
+    },
+    "HealthEventEvidence": {
+      "properties": {
+        "fact": {
+          "title": "Fact",
+          "type": "string"
+        },
+        "fact_label": {
+          "title": "Fact Label",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        }
+      },
+      "required": [
+        "fact",
+        "fact_label"
+      ],
+      "title": "HealthEventEvidence",
+      "type": "object"
+    },
+    "OpenHealthCoverage": {
+      "description": "Typed coverage summary used by period reports, not a recomputation.",
+      "properties": {
+        "window_days": {
+          "minimum": 0,
+          "title": "Window Days",
+          "type": "integer"
+        },
+        "observed_days": {
+          "minimum": 0,
+          "title": "Observed Days",
+          "type": "integer"
+        },
+        "required_days": {
+          "minimum": 0,
+          "title": "Required Days",
+          "type": "integer"
+        },
+        "ratio": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Ratio",
+          "type": "number"
+        },
+        "status": {
+          "$ref": "#/$defs/OpenHealthStatus"
+        }
+      },
+      "required": [
+        "window_days",
+        "observed_days",
+        "required_days",
+        "ratio",
+        "status"
+      ],
+      "title": "OpenHealthCoverage",
+      "type": "object"
+    },
+    "OpenHealthPeriodSummary": {
+      "properties": {
+        "period_start": {
+          "format": "date",
+          "title": "Period Start",
+          "type": "string"
+        },
+        "period_end": {
+          "format": "date",
+          "title": "Period End",
+          "type": "string"
+        },
+        "period_days": {
+          "minimum": 0,
+          "title": "Period Days",
+          "type": "integer"
+        },
+        "scope": {
+          "const": "TARGET_DAY_WITH_PERIOD_COVERAGE",
+          "default": "TARGET_DAY_WITH_PERIOD_COVERAGE",
+          "title": "Scope",
+          "type": "string"
+        },
+        "target_date": {
+          "format": "date",
+          "title": "Target Date",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/OpenHealthStatus"
+        },
+        "drivers": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 4,
+          "title": "Drivers",
+          "type": "array"
+        },
+        "refusal_reasons": {
+          "items": {
+            "$ref": "#/$defs/OpenHealthRefusalReason"
+          },
+          "maxItems": 4,
+          "title": "Refusal Reasons",
+          "type": "array"
+        }
+      },
+      "required": [
+        "period_start",
+        "period_end",
+        "period_days",
+        "target_date",
+        "status"
+      ],
+      "title": "OpenHealthPeriodSummary",
+      "type": "object"
+    },
+    "OpenHealthRefusalReason": {
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "missing_inputs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Inputs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "code",
+        "detail"
+      ],
+      "title": "OpenHealthRefusalReason",
+      "type": "object"
+    },
+    "OpenHealthStatus": {
+      "enum": [
+        "AVAILABLE",
+        "PARTIAL",
+        "REFUSED"
+      ],
+      "title": "OpenHealthStatus",
+      "type": "string"
+    },
+    "PeriodActivityMetric": {
+      "properties": {
+        "metric": {
+          "title": "Metric",
+          "type": "string"
+        },
+        "unit": {
+          "title": "Unit",
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "enum": [
+                "daily_total",
+                "activity",
+                "workout",
+                "unspecified"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role"
+        },
+        "source_field": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Field"
+        },
+        "period_days": {
+          "minimum": 1,
+          "title": "Period Days",
+          "type": "integer"
+        },
+        "available_days": {
+          "minimum": 0,
+          "title": "Available Days",
+          "type": "integer"
+        },
+        "complete_days": {
+          "minimum": 0,
+          "title": "Complete Days",
+          "type": "integer"
+        },
+        "previous_available_days": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Previous Available Days",
+          "type": "integer"
+        },
+        "previous_complete_days": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Previous Complete Days",
+          "type": "integer"
+        },
+        "total": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total"
+        },
+        "average": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Average"
+        },
+        "previous_total": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Previous Total"
+        },
+        "previous_average": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Previous Average"
+        },
+        "change_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Change Percent"
+        },
+        "total_change_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Change Percent"
+        },
+        "totals_are_partial": {
+          "default": true,
+          "title": "Totals Are Partial",
+          "type": "boolean"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "metric",
+        "unit",
+        "provenance",
+        "period_days",
+        "available_days",
+        "complete_days"
+      ],
+      "title": "PeriodActivityMetric",
+      "type": "object"
+    },
+    "Provenance": {
+      "properties": {
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "source_scope": {
+          "default": "unknown",
+          "title": "Source Scope",
+          "type": "string"
+        },
+        "device_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device Id"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "title": "Provenance",
+      "type": "object"
+    },
+    "QualityStatus": {
+      "enum": [
+        "SUFFICIENT",
+        "PARTIAL",
+        "INSUFFICIENT"
+      ],
+      "title": "QualityStatus",
+      "type": "string"
+    },
+    "TrendDirection": {
+      "enum": [
+        "RISING",
+        "STABLE",
+        "FALLING",
+        "INSUFFICIENT_DATA"
+      ],
+      "title": "TrendDirection",
+      "type": "string"
+    },
+    "TrendFeature": {
+      "properties": {
+        "metric": {
+          "title": "Metric",
+          "type": "string"
+        },
+        "metric_label": {
+          "title": "Metric Label",
+          "type": "string"
+        },
+        "window_days": {
+          "enum": [
+            7,
+            28,
+            90
+          ],
+          "title": "Window Days",
+          "type": "integer"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "source_scope": {
+          "title": "Source Scope",
+          "type": "string"
+        },
+        "device_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device Id"
+        },
+        "unit": {
+          "title": "Unit",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/Availability"
+        },
+        "status_label": {
+          "title": "Status Label",
+          "type": "string"
+        },
+        "current_distinct_days": {
+          "minimum": 0,
+          "title": "Current Distinct Days",
+          "type": "integer"
+        },
+        "previous_distinct_days": {
+          "minimum": 0,
+          "title": "Previous Distinct Days",
+          "type": "integer"
+        },
+        "minimum_days": {
+          "minimum": 1,
+          "title": "Minimum Days",
+          "type": "integer"
+        },
+        "coverage_ratio": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Coverage Ratio",
+          "type": "number"
+        },
+        "current_median": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current Median"
+        },
+        "previous_median": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Previous Median"
+        },
+        "change_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Change Percent"
+        },
+        "slope_per_day": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Slope Per Day"
+        },
+        "variability_mad": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Variability Mad"
+        },
+        "direction": {
+          "$ref": "#/$defs/TrendDirection"
+        },
+        "direction_label": {
+          "title": "Direction Label",
+          "type": "string"
+        },
+        "confidence": {
+          "$ref": "#/$defs/ConfidenceBand"
+        },
+        "confidence_label": {
+          "title": "Confidence Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "metric",
+        "metric_label",
+        "window_days",
+        "source",
+        "source_scope",
+        "unit",
+        "status",
+        "status_label",
+        "current_distinct_days",
+        "previous_distinct_days",
+        "minimum_days",
+        "coverage_ratio",
+        "direction",
+        "direction_label",
+        "confidence",
+        "confidence_label"
+      ],
+      "title": "TrendFeature",
+      "type": "object"
+    },
+    "WeeklyActions": {
+      "properties": {
+        "recommendations": {
+          "items": {
+            "$ref": "#/$defs/WeeklyRecommendation"
+          },
+          "title": "Recommendations",
+          "type": "array"
+        }
+      },
+      "title": "WeeklyActions",
+      "type": "object"
+    },
+    "WeeklyActivityFacts": {
+      "properties": {
+        "metrics": {
+          "items": {
+            "$ref": "#/$defs/PeriodActivityMetric"
+          },
+          "title": "Metrics",
+          "type": "array"
+        },
+        "available_days": {
+          "maximum": 7,
+          "minimum": 0,
+          "title": "Available Days",
+          "type": "integer"
+        },
+        "previous_available_days": {
+          "default": 0,
+          "maximum": 7,
+          "minimum": 0,
+          "title": "Previous Available Days",
+          "type": "integer"
+        },
+        "total_steps": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Steps"
+        },
+        "average_steps": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Average Steps"
+        },
+        "previous_average_steps": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Previous Average Steps"
+        },
+        "steps_change_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Steps Change Percent"
+        },
+        "active_minutes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Active Minutes"
+        }
+      },
+      "required": [
+        "available_days"
+      ],
+      "title": "WeeklyActivityFacts",
+      "type": "object"
+    },
+    "WeeklyDataQuality": {
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/QualityStatus"
+        },
+        "status_label": {
+          "title": "Status Label",
+          "type": "string"
+        },
+        "sleep_days": {
+          "maximum": 7,
+          "minimum": 0,
+          "title": "Sleep Days",
+          "type": "integer"
+        },
+        "hrv_days": {
+          "maximum": 7,
+          "minimum": 0,
+          "title": "Hrv Days",
+          "type": "integer"
+        },
+        "activity_days": {
+          "maximum": 7,
+          "minimum": 0,
+          "title": "Activity Days",
+          "type": "integer"
+        },
+        "training_days": {
+          "maximum": 7,
+          "minimum": 0,
+          "title": "Training Days",
+          "type": "integer"
+        },
+        "confidence": {
+          "$ref": "#/$defs/ConfidenceBand"
+        },
+        "confidence_label": {
+          "title": "Confidence Label",
+          "type": "string"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "status",
+        "status_label",
+        "sleep_days",
+        "hrv_days",
+        "activity_days",
+        "training_days",
+        "confidence",
+        "confidence_label"
+      ],
+      "title": "WeeklyDataQuality",
+      "type": "object"
+    },
+    "WeeklyFacts": {
       "properties": {
         "sleep": {
-          "type": "object",
-          "required": ["available_days", "previous_available_days"],
-          "properties": {
-            "available_days": {"type": "integer", "minimum": 0, "maximum": 7},
-            "previous_available_days": {"type": "integer", "minimum": 0, "maximum": 7},
-            "average_minutes": {"type": ["number", "null"]},
-            "median_minutes": {"type": ["number", "null"]},
-            "previous_average_minutes": {"type": ["number", "null"]},
-            "change_percent": {"type": ["number", "null"]},
-            "bedtime_regularity_minutes": {"type": ["number", "null"]}
-          }
+          "$ref": "#/$defs/WeeklySleepFacts"
         },
         "recovery": {
-          "type": "object",
-          "properties": {
-            "hrv_available_days": {"type": "integer", "minimum": 0, "maximum": 7},
-            "hrv_metric": {"type": ["string", "null"]},
-            "hrv_metric_label": {"type": ["string", "null"]},
-            "hrv_device_id": {"type": ["string", "null"]},
-            "hrv_median_ms": {"type": ["number", "null"]},
-            "hrv_previous_median_ms": {"type": ["number", "null"]},
-            "hrv_change_percent": {"type": ["number", "null"]},
-            "sleep_hrv_device_id": {"type": ["string", "null"]},
-            "sleep_hrv_daily": {"type": "array", "items": {"type": "object"}},
-            "rhr_available_days": {"type": "integer", "minimum": 0, "maximum": 7},
-            "rhr_metric": {"type": ["string", "null"]},
-            "rhr_median_bpm": {"type": ["number", "null"]},
-            "rhr_previous_median_bpm": {"type": ["number", "null"]},
-            "rhr_change_percent": {"type": ["number", "null"]}
-          }
+          "$ref": "#/$defs/WeeklyRecoveryFacts"
         },
         "training": {
-          "type": "object",
-          "required": ["workout_count", "training_days", "record_days", "unknown_days", "coverage_status", "totals_are_partial"],
-          "properties": {
-            "workout_count": {"type": "integer", "minimum": 0},
-            "training_days": {"type": "integer", "minimum": 0, "maximum": 7},
-            "record_days": {"type": "integer", "minimum": 0, "maximum": 7},
-            "unknown_days": {"type": "integer", "minimum": 0, "maximum": 7},
-            "coverage_status": {"enum": ["COMPLETE", "PARTIAL", "UNKNOWN"]},
-            "totals_are_partial": {"type": "boolean"},
-            "rest_days": {"type": ["integer", "null"], "minimum": 0, "maximum": 7},
-            "duration_minutes": {"type": ["integer", "null"], "minimum": 0},
-            "vendor_load": {"type": ["number", "null"], "minimum": 0},
-            "previous_vendor_load": {"type": ["number", "null"], "minimum": 0},
-            "load_change_percent": {"type": ["number", "null"]},
-            "aerobic_minutes": {"type": ["integer", "null"], "minimum": 0},
-            "strength_sessions": {"type": ["integer", "null"], "minimum": 0},
-            "sport_mode_counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}
-          }
+          "$ref": "#/$defs/WeeklyTrainingFacts"
         },
         "activity": {
-          "type": "object",
-          "required": ["available_days", "previous_available_days"],
-          "properties": {
-            "available_days": {"type": "integer", "minimum": 0, "maximum": 7},
-            "previous_available_days": {"type": "integer", "minimum": 0, "maximum": 7},
-            "total_steps": {"type": ["integer", "null"], "minimum": 0},
-            "average_steps": {"type": ["number", "null"], "minimum": 0},
-            "previous_average_steps": {"type": ["number", "null"], "minimum": 0},
-            "steps_change_percent": {"type": ["number", "null"]},
-            "active_minutes": {"type": ["integer", "null"], "minimum": 0}
-          }
+          "$ref": "#/$defs/WeeklyActivityFacts"
         },
         "feedback": {
-          "type": "object",
-          "properties": {
-            "response_count": {"type": "integer", "minimum": 0},
-            "average_session_rpe": {"type": ["number", "null"], "minimum": 1, "maximum": 10},
-            "average_physical_fatigue": {"type": ["number", "null"], "minimum": 1, "maximum": 5},
-            "average_mental_state": {"type": ["number", "null"], "minimum": 1, "maximum": 5},
-            "average_muscle_soreness": {"type": ["number", "null"], "minimum": 1, "maximum": 5}
-          }
+          "$ref": "#/$defs/WeeklyFeedbackFacts"
         }
-      }
+      },
+      "required": [
+        "sleep",
+        "recovery",
+        "training",
+        "activity",
+        "feedback"
+      ],
+      "title": "WeeklyFacts",
+      "type": "object"
+    },
+    "WeeklyFeedbackFacts": {
+      "properties": {
+        "response_count": {
+          "minimum": 0,
+          "title": "Response Count",
+          "type": "integer"
+        },
+        "average_session_rpe": {
+          "anyOf": [
+            {
+              "maximum": 10,
+              "minimum": 1,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Average Session Rpe"
+        },
+        "average_physical_fatigue": {
+          "anyOf": [
+            {
+              "maximum": 5,
+              "minimum": 1,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Average Physical Fatigue"
+        },
+        "average_mental_state": {
+          "anyOf": [
+            {
+              "maximum": 5,
+              "minimum": 1,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Average Mental State"
+        },
+        "average_muscle_soreness": {
+          "anyOf": [
+            {
+              "maximum": 5,
+              "minimum": 1,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Average Muscle Soreness"
+        }
+      },
+      "required": [
+        "response_count"
+      ],
+      "title": "WeeklyFeedbackFacts",
+      "type": "object"
+    },
+    "WeeklyInferences": {
+      "properties": {
+        "trends": {
+          "items": {
+            "$ref": "#/$defs/TrendFeature"
+          },
+          "title": "Trends",
+          "type": "array"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/HealthEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        },
+        "key_changes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Key Changes",
+          "type": "array"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        }
+      },
+      "title": "WeeklyInferences",
+      "type": "object"
+    },
+    "WeeklyRecommendation": {
+      "properties": {
+        "priority": {
+          "minimum": 1,
+          "title": "Priority",
+          "type": "integer"
+        },
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reasons",
+          "type": "array"
+        }
+      },
+      "required": [
+        "priority",
+        "code",
+        "title",
+        "action"
+      ],
+      "title": "WeeklyRecommendation",
+      "type": "object"
+    },
+    "WeeklyRecoveryFacts": {
+      "properties": {
+        "hrv_available_days": {
+          "maximum": 7,
+          "minimum": 0,
+          "title": "Hrv Available Days",
+          "type": "integer"
+        },
+        "hrv_metric": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hrv Metric"
+        },
+        "hrv_metric_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hrv Metric Label"
+        },
+        "hrv_device_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hrv Device Id"
+        },
+        "hrv_median_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hrv Median Ms"
+        },
+        "hrv_previous_median_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hrv Previous Median Ms"
+        },
+        "hrv_change_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hrv Change Percent"
+        },
+        "sleep_hrv_device_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sleep Hrv Device Id"
+        },
+        "sleep_hrv_daily": {
+          "items": {
+            "$ref": "#/$defs/DailySleepHrvPoint"
+          },
+          "maxItems": 7,
+          "title": "Sleep Hrv Daily",
+          "type": "array"
+        },
+        "rhr_available_days": {
+          "maximum": 7,
+          "minimum": 0,
+          "title": "Rhr Available Days",
+          "type": "integer"
+        },
+        "rhr_metric": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rhr Metric"
+        },
+        "rhr_median_bpm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rhr Median Bpm"
+        },
+        "rhr_previous_median_bpm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rhr Previous Median Bpm"
+        },
+        "rhr_change_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rhr Change Percent"
+        }
+      },
+      "required": [
+        "hrv_available_days",
+        "rhr_available_days"
+      ],
+      "title": "WeeklyRecoveryFacts",
+      "type": "object"
+    },
+    "WeeklySleepFacts": {
+      "properties": {
+        "available_days": {
+          "maximum": 7,
+          "minimum": 0,
+          "title": "Available Days",
+          "type": "integer"
+        },
+        "previous_available_days": {
+          "default": 0,
+          "maximum": 7,
+          "minimum": 0,
+          "title": "Previous Available Days",
+          "type": "integer"
+        },
+        "average_minutes": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Average Minutes"
+        },
+        "median_minutes": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Median Minutes"
+        },
+        "previous_average_minutes": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Previous Average Minutes"
+        },
+        "change_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Change Percent"
+        },
+        "bedtime_regularity_minutes": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bedtime Regularity Minutes"
+        }
+      },
+      "required": [
+        "available_days"
+      ],
+      "title": "WeeklySleepFacts",
+      "type": "object"
+    },
+    "WeeklyTrainingFacts": {
+      "properties": {
+        "vendor_reported_sets": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vendor Reported Sets"
+        },
+        "vendor_sets_sessions": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Vendor Sets Sessions",
+          "type": "integer"
+        },
+        "running_sessions": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Running Sessions"
+        },
+        "running_distance_km": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Running Distance Km"
+        },
+        "running_duration_minutes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Running Duration Minutes"
+        },
+        "running_classification_counts": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Running Classification Counts",
+          "type": "object"
+        },
+        "strength_duration_minutes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Strength Duration Minutes"
+        },
+        "strength_explicit_sessions": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Strength Explicit Sessions"
+        },
+        "strength_sets": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Strength Sets"
+        },
+        "workout_calories_kcal": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workout Calories Kcal"
+        },
+        "workout_calories_sessions": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Workout Calories Sessions",
+          "type": "integer"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        },
+        "workout_count": {
+          "minimum": 0,
+          "title": "Workout Count",
+          "type": "integer"
+        },
+        "training_days": {
+          "maximum": 7,
+          "minimum": 0,
+          "title": "Training Days",
+          "type": "integer"
+        },
+        "record_days": {
+          "default": 0,
+          "maximum": 7,
+          "minimum": 0,
+          "title": "Record Days",
+          "type": "integer"
+        },
+        "unknown_days": {
+          "default": 7,
+          "maximum": 7,
+          "minimum": 0,
+          "title": "Unknown Days",
+          "type": "integer"
+        },
+        "coverage_status": {
+          "default": "UNKNOWN",
+          "enum": [
+            "COMPLETE",
+            "PARTIAL",
+            "UNKNOWN"
+          ],
+          "title": "Coverage Status",
+          "type": "string"
+        },
+        "totals_are_partial": {
+          "default": true,
+          "title": "Totals Are Partial",
+          "type": "boolean"
+        },
+        "rest_days": {
+          "anyOf": [
+            {
+              "maximum": 7,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rest Days"
+        },
+        "duration_minutes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Minutes"
+        },
+        "vendor_load": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vendor Load"
+        },
+        "previous_vendor_load": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Previous Vendor Load"
+        },
+        "load_change_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Load Change Percent"
+        },
+        "aerobic_minutes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Aerobic Minutes"
+        },
+        "strength_sessions": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Strength Sessions"
+        },
+        "sport_mode_counts": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Sport Mode Counts",
+          "type": "object"
+        }
+      },
+      "required": [
+        "workout_count",
+        "training_days"
+      ],
+      "title": "WeeklyTrainingFacts",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "default": "6.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "analysis_run_id": {
+      "title": "Analysis Run Id",
+      "type": "string"
+    },
+    "intelligence_version": {
+      "default": "12.0",
+      "title": "Intelligence Version",
+      "type": "string"
+    },
+    "decision_policy_version": {
+      "default": "9.0",
+      "title": "Decision Policy Version",
+      "type": "string"
+    },
+    "evidence_version": {
+      "default": "2026-09a",
+      "title": "Evidence Version",
+      "type": "string"
+    },
+    "user_id": {
+      "title": "User Id",
+      "type": "string"
+    },
+    "period_start": {
+      "format": "date",
+      "title": "Period Start",
+      "type": "string"
+    },
+    "period_end": {
+      "format": "date",
+      "title": "Period End",
+      "type": "string"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "data_quality": {
+      "$ref": "#/$defs/WeeklyDataQuality"
+    },
+    "report_context": {
+      "additionalProperties": true,
+      "title": "Report Context",
+      "type": "object"
+    },
+    "facts": {
+      "$ref": "#/$defs/WeeklyFacts"
     },
     "inferences": {
-      "type": "object",
-      "required": ["trends", "events", "key_changes", "limitations"],
-      "properties": {
-        "trends": {"type": "array", "items": {"type": "object"}},
-        "events": {"type": "array", "items": {"type": "object"}},
-        "key_changes": {"type": "array", "items": {"type": "string"}},
-        "limitations": {"type": "array", "items": {"type": "string"}}
-      }
+      "$ref": "#/$defs/WeeklyInferences"
     },
     "actions": {
-      "type": "object",
-      "required": ["recommendations"],
-      "properties": {
-        "recommendations": {"type": "array", "items": {"type": "object", "required": ["priority", "code", "title", "action", "reasons"]}}
-      }
+      "$ref": "#/$defs/WeeklyActions"
     },
-    "evidence_refs": {"type": "array", "items": {"type": "object"}},
-    "open_health_period_summary": {"type": ["object", "null"]},
-    "open_health_coverage": {"type": "object", "additionalProperties": {"type": "object"}}
-  }
+    "evidence_refs": {
+      "items": {
+        "$ref": "#/$defs/EvidenceRef"
+      },
+      "title": "Evidence Refs",
+      "type": "array"
+    },
+    "open_health_period_summary": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OpenHealthPeriodSummary"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "open_health_coverage": {
+      "additionalProperties": {
+        "$ref": "#/$defs/OpenHealthCoverage"
+      },
+      "title": "Open Health Coverage",
+      "type": "object"
+    }
+  },
+  "required": [
+    "analysis_run_id",
+    "user_id",
+    "period_start",
+    "period_end",
+    "data_quality",
+    "facts",
+    "inferences",
+    "actions"
+  ],
+  "title": "Vitalis WeeklyProfile 6.0",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vitalis.local/schemas/weekly-profile-6.0.json"
 }

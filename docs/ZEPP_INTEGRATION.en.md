@@ -168,6 +168,10 @@ Vitalis currently normalizes:
 - decoded second-level heart rate from dense `SEC_HR` cloud files, with per-device
   coverage and decode status retained alongside the samples.
 
+Missing activity fields remain `None`. `ActivityRecord` `observed_fields` records only fields that were explicitly present and valid in the payload; a legacy JSON default `0` without observation evidence is not a measurement, while positive legacy values may be retained with compatibility semantics. Steps, distance, active minutes, and calories enter independent source streams, and distance is converted to `km` only when its unit is known.
+
+The energy role of generic calories remains `unspecified` and is never described as total energy expenditure. Duplicate ActivityRecord, DailyMetric, and workout entries are not added, and workout calories are not added to a daily total. Without intake data, no energy-deficit conclusion is made. Different `source_scope`, devices, and units remain separate.
+
 ### Stress and Charge
 
 The user-scoped `all_day_stress` event supplies two verified contracts:

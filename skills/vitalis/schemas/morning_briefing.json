@@ -1,0 +1,1078 @@
+{
+  "$defs": {
+    "ActionPlan": {
+      "properties": {
+        "schema_version": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "goal": {
+          "const": "HEALTH_FIRST_CONCURRENT",
+          "default": "HEALTH_FIRST_CONCURRENT",
+          "title": "Goal",
+          "type": "string"
+        },
+        "goal_label": {
+          "default": "综合健康优先，跑步与力量并行",
+          "title": "Goal Label",
+          "type": "string"
+        },
+        "valid_for_date": {
+          "format": "date",
+          "title": "Valid For Date",
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "safety_status": {
+          "enum": [
+            "CLEAR",
+            "LIMITED",
+            "UNKNOWN"
+          ],
+          "title": "Safety Status",
+          "type": "string"
+        },
+        "safety_status_label": {
+          "title": "Safety Status Label",
+          "type": "string"
+        },
+        "weekly_balance": {
+          "$ref": "#/$defs/ConcurrentWeeklyBalance"
+        },
+        "primary_session": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlannedSession"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "optional_session": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlannedSession"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "session_relationship": {
+          "default": "NONE",
+          "enum": [
+            "ADDITION",
+            "ALTERNATIVE",
+            "NONE"
+          ],
+          "title": "Session Relationship",
+          "type": "string"
+        },
+        "session_relationship_label": {
+          "title": "Session Relationship Label",
+          "type": "string"
+        },
+        "conflict_checks": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Conflict Checks",
+          "type": "array"
+        },
+        "missing_input_gates": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Input Gates",
+          "type": "array"
+        }
+      },
+      "required": [
+        "valid_for_date",
+        "expires_at",
+        "safety_status",
+        "safety_status_label",
+        "weekly_balance",
+        "session_relationship_label"
+      ],
+      "title": "ActionPlan",
+      "type": "object"
+    },
+    "ConcurrentWeeklyBalance": {
+      "properties": {
+        "running_completed_7d": {
+          "minimum": 0,
+          "title": "Running Completed 7D",
+          "type": "integer"
+        },
+        "running_target_7d": {
+          "minimum": 1,
+          "title": "Running Target 7D",
+          "type": "integer"
+        },
+        "running_completed_28d": {
+          "minimum": 0,
+          "title": "Running Completed 28D",
+          "type": "integer"
+        },
+        "running_target_28d": {
+          "minimum": 4,
+          "title": "Running Target 28D",
+          "type": "integer"
+        },
+        "strength_completed_7d": {
+          "minimum": 0,
+          "title": "Strength Completed 7D",
+          "type": "integer"
+        },
+        "strength_target_7d": {
+          "minimum": 1,
+          "title": "Strength Target 7D",
+          "type": "integer"
+        },
+        "strength_completed_28d": {
+          "minimum": 0,
+          "title": "Strength Completed 28D",
+          "type": "integer"
+        },
+        "strength_target_28d": {
+          "minimum": 4,
+          "title": "Strength Target 28D",
+          "type": "integer"
+        },
+        "running_due": {
+          "title": "Running Due",
+          "type": "boolean"
+        },
+        "strength_due": {
+          "title": "Strength Due",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "running_completed_7d",
+        "running_target_7d",
+        "running_completed_28d",
+        "running_target_28d",
+        "strength_completed_7d",
+        "strength_target_7d",
+        "strength_completed_28d",
+        "strength_target_28d",
+        "running_due",
+        "strength_due"
+      ],
+      "title": "ConcurrentWeeklyBalance",
+      "type": "object"
+    },
+    "Coverage": {
+      "properties": {
+        "metric": {
+          "title": "Metric",
+          "type": "string"
+        },
+        "sample_count": {
+          "minimum": 0,
+          "title": "Sample Count",
+          "type": "integer"
+        },
+        "distinct_days": {
+          "minimum": 0,
+          "title": "Distinct Days",
+          "type": "integer"
+        },
+        "first_observed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "First Observed At"
+        },
+        "last_observed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Observed At"
+        },
+        "device_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Device Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "metric",
+        "sample_count",
+        "distinct_days"
+      ],
+      "title": "Coverage",
+      "type": "object"
+    },
+    "DataQuality": {
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/QualityStatus"
+        },
+        "status_label": {
+          "default": "",
+          "title": "Status Label",
+          "type": "string"
+        },
+        "required_signals": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Required Signals",
+          "type": "array"
+        },
+        "required_signal_labels": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Required Signal Labels",
+          "type": "array"
+        },
+        "missing_required_signals": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Required Signals",
+          "type": "array"
+        },
+        "missing_required_signal_labels": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Required Signal Labels",
+          "type": "array"
+        },
+        "coverage": {
+          "items": {
+            "$ref": "#/$defs/Coverage"
+          },
+          "title": "Coverage",
+          "type": "array"
+        },
+        "flags": {
+          "items": {
+            "$ref": "#/$defs/QualityFlag"
+          },
+          "title": "Flags",
+          "type": "array"
+        },
+        "device_validity": {
+          "items": {
+            "$ref": "#/$defs/DeviceValidity"
+          },
+          "title": "Device Validity",
+          "type": "array"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "DataQuality",
+      "type": "object"
+    },
+    "DecisionAction": {
+      "enum": [
+        "TRAIN_HARD",
+        "TRAIN_NORMAL",
+        "TRAIN_LIGHT",
+        "RECOVERY",
+        "REST",
+        "INSUFFICIENT_DATA"
+      ],
+      "title": "DecisionAction",
+      "type": "string"
+    },
+    "DecisionEvidence": {
+      "properties": {
+        "facts": {
+          "items": {
+            "$ref": "#/$defs/DecisionEvidenceFact"
+          },
+          "title": "Facts",
+          "type": "array"
+        },
+        "gates": {
+          "items": {
+            "$ref": "#/$defs/DecisionGateEvidence"
+          },
+          "title": "Gates",
+          "type": "array"
+        }
+      },
+      "title": "DecisionEvidence",
+      "type": "object"
+    },
+    "DecisionEvidenceFact": {
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "baseline_reference": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Baseline Reference"
+        },
+        "baseline_window_days": {
+          "anyOf": [
+            {
+              "enum": [
+                7,
+                21,
+                28
+              ],
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Baseline Window Days"
+        },
+        "deviation_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Deviation Percent"
+        },
+        "robust_z": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Robust Z"
+        },
+        "direction": {
+          "anyOf": [
+            {
+              "enum": [
+                "above",
+                "near",
+                "below",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Direction"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "source_scope": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Scope"
+        },
+        "device_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device Id"
+        }
+      },
+      "required": [
+        "code",
+        "label"
+      ],
+      "title": "DecisionEvidenceFact",
+      "type": "object"
+    },
+    "DecisionGateEvidence": {
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "triggered": {
+          "title": "Triggered",
+          "type": "boolean"
+        },
+        "observed_value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observed Value"
+        },
+        "expected_condition": {
+          "title": "Expected Condition",
+          "type": "string"
+        },
+        "observed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observed At"
+        }
+      },
+      "required": [
+        "code",
+        "label",
+        "triggered",
+        "expected_condition"
+      ],
+      "title": "DecisionGateEvidence",
+      "type": "object"
+    },
+    "DeviceValidity": {
+      "description": "Evidence metadata, never a synthetic measurement-quality probability.",
+      "properties": {
+        "device_id": {
+          "title": "Device Id",
+          "type": "string"
+        },
+        "device_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device Label"
+        },
+        "measurement_site": {
+          "default": "unknown",
+          "enum": [
+            "upper_arm",
+            "wrist",
+            "unknown"
+          ],
+          "title": "Measurement Site",
+          "type": "string"
+        },
+        "status": {
+          "default": "UNKNOWN",
+          "enum": [
+            "UNKNOWN",
+            "SUPPORTED_BY_EVIDENCE",
+            "LIMITED_BY_EVIDENCE"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "evidence_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "device_id"
+      ],
+      "title": "DeviceValidity",
+      "type": "object"
+    },
+    "MorningBriefingReason": {
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "MorningBriefingReason",
+      "type": "object"
+    },
+    "PlannedSession": {
+      "properties": {
+        "role": {
+          "enum": [
+            "PRIMARY",
+            "OPTIONAL"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "role_label": {
+          "title": "Role Label",
+          "type": "string"
+        },
+        "session_type": {
+          "enum": [
+            "RUNNING",
+            "STRENGTH",
+            "RECOVERY",
+            "REST"
+          ],
+          "title": "Session Type",
+          "type": "string"
+        },
+        "session_type_label": {
+          "title": "Session Type Label",
+          "type": "string"
+        },
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "focus": {
+          "title": "Focus",
+          "type": "string"
+        },
+        "goal": {
+          "title": "Goal",
+          "type": "string"
+        },
+        "intensity": {
+          "enum": [
+            "high",
+            "moderate",
+            "low",
+            "none"
+          ],
+          "title": "Intensity",
+          "type": "string"
+        },
+        "intensity_label": {
+          "title": "Intensity Label",
+          "type": "string"
+        },
+        "total_duration_minutes": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Duration Minutes"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/TrainingStep"
+          },
+          "title": "Steps",
+          "type": "array"
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "evidence_ref_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ref Ids",
+          "type": "array"
+        },
+        "personalization_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Personalization Reasons",
+          "type": "array"
+        },
+        "progression": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Progression",
+          "type": "array"
+        },
+        "stop_conditions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Stop Conditions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "role",
+        "role_label",
+        "session_type",
+        "session_type_label",
+        "code",
+        "title",
+        "focus",
+        "goal",
+        "intensity",
+        "intensity_label"
+      ],
+      "title": "PlannedSession",
+      "type": "object"
+    },
+    "QualityFlag": {
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "detail"
+      ],
+      "title": "QualityFlag",
+      "type": "object"
+    },
+    "QualityStatus": {
+      "enum": [
+        "SUFFICIENT",
+        "PARTIAL",
+        "INSUFFICIENT"
+      ],
+      "title": "QualityStatus",
+      "type": "string"
+    },
+    "ReportSection": {
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "facts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Facts",
+          "type": "array"
+        },
+        "interpretation": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Interpretation",
+          "type": "array"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "title"
+      ],
+      "title": "ReportSection",
+      "type": "object"
+    },
+    "TrainingStep": {
+      "properties": {
+        "order": {
+          "minimum": 1,
+          "title": "Order",
+          "type": "integer"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "duration_minutes": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Minutes"
+        },
+        "sets": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sets"
+        },
+        "repetitions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repetitions"
+        },
+        "load_kg": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Load Kg"
+        },
+        "rest_seconds": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rest Seconds"
+        },
+        "intensity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Intensity"
+        },
+        "instructions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Instructions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "order",
+        "name"
+      ],
+      "title": "TrainingStep",
+      "type": "object"
+    }
+  },
+  "description": "Non-persistent observation and action projection of one DailyProfile.",
+  "properties": {
+    "schema_version": {
+      "const": "3.0",
+      "default": "3.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "analysis_run_id": {
+      "title": "Analysis Run Id",
+      "type": "string"
+    },
+    "user_id": {
+      "title": "User Id",
+      "type": "string"
+    },
+    "date": {
+      "format": "date",
+      "title": "Date",
+      "type": "string"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "decision_action": {
+      "$ref": "#/$defs/DecisionAction"
+    },
+    "action_label": {
+      "title": "Action Label",
+      "type": "string"
+    },
+    "action_plan": {
+      "$ref": "#/$defs/ActionPlan"
+    },
+    "report_context": {
+      "additionalProperties": true,
+      "title": "Report Context",
+      "type": "object"
+    },
+    "summary": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Summary",
+      "type": "array"
+    },
+    "sections": {
+      "items": {
+        "$ref": "#/$defs/ReportSection"
+      },
+      "title": "Sections",
+      "type": "array"
+    },
+    "observations": {
+      "items": {
+        "$ref": "#/$defs/MorningBriefingReason"
+      },
+      "title": "Observations",
+      "type": "array"
+    },
+    "key_reasons": {
+      "items": {
+        "$ref": "#/$defs/MorningBriefingReason"
+      },
+      "title": "Key Reasons",
+      "type": "array"
+    },
+    "cautions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Cautions",
+      "type": "array"
+    },
+    "data_quality": {
+      "$ref": "#/$defs/DataQuality"
+    },
+    "evidence": {
+      "$ref": "#/$defs/DecisionEvidence"
+    }
+  },
+  "required": [
+    "analysis_run_id",
+    "user_id",
+    "date",
+    "generated_at",
+    "decision_action",
+    "action_label",
+    "action_plan",
+    "data_quality",
+    "evidence"
+  ],
+  "title": "Vitalis MorningBriefing 3.0",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vitalis.local/schemas/morning-briefing-3.0.json"
+}

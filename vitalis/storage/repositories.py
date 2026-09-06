@@ -1,5 +1,6 @@
 """仓储层：封装对 ORM 的读写，业务层只依赖仓储接口。"""
 
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import hashlib
@@ -449,6 +450,105 @@ class HealthRepository:
                 row["device_id"] or None,
                 row["unit"],
             ))
+        return output
+
+    def metric_window_summaries(
+        self,
+        user_id: str,
+        metrics: tuple[str, ...],
+        start: datetime,
+        end: datetime,
+    ) -> list[dict]:
+        """Aggregate a bounded single-local-day metric window in SQL.
+
+        This intentionally returns group summaries rather than raw points.  The
+        caller supplies UTC bounds derived from a local day; a 23/24/25-hour
+        window is accepted, while broad history queries are rejected here.
+        """
+        allowed_metrics = {"heart_rate", "stress"}
+        requested = tuple(dict.fromkeys(metrics))
+        if not requested or any(metric not in allowed_metrics for metric in requested):
+            raise ValueError("metric_window_summaries 仅支持 heart_rate/stress")
+        start_utc = _naive_utc(start)
+        end_utc = _naive_utc(end)
+        if end_utc <= start_utc:
+            raise ValueError("指标窗口结束时间必须晚于开始时间")
+        if end_utc - start_utc > timedelta(hours=26):
+            raise ValueError("指标窗口必须是单一本地日的合理范围")
+
+        dialect = self.db.get_bind().dialect.name
+        if dialect == "sqlite":
+            minute_bucket = func.strftime(
+                "%Y-%m-%d %H:%M:00", orm.MetricSample.timestamp
+            )
+        elif dialect == "postgresql":
+            minute_bucket = func.date_trunc("minute", orm.MetricSample.timestamp)
+        else:
+            raise ValueError("metric_window_summaries 仅支持 SQLite/PostgreSQL")
+
+        statement = (
+            select(
+                orm.MetricSample.metric,
+                orm.MetricSample.unit,
+                orm.MetricSample.source,
+                orm.MetricSample.source_scope,
+                orm.MetricSample.device_id,
+                func.count(orm.MetricSample.id).label("sample_count"),
+                func.count(func.distinct(minute_bucket)).label("observed_minutes"),
+                func.min(orm.MetricSample.timestamp).label("first_observed_at"),
+                func.max(orm.MetricSample.timestamp).label("last_observed_at"),
+                func.min(orm.MetricSample.value).label("minimum"),
+                func.max(orm.MetricSample.value).label("maximum"),
+                func.avg(orm.MetricSample.value).label("average"),
+            )
+            .where(
+                orm.MetricSample.user_id == user_id,
+                orm.MetricSample.metric.in_(requested),
+                orm.MetricSample.timestamp >= start_utc,
+                orm.MetricSample.timestamp < end_utc,
+            )
+            .group_by(
+                orm.MetricSample.metric,
+                orm.MetricSample.unit,
+                orm.MetricSample.source,
+                orm.MetricSample.source_scope,
+                orm.MetricSample.device_id,
+            )
+            .order_by(
+                orm.MetricSample.metric,
+                orm.MetricSample.source,
+                orm.MetricSample.source_scope,
+                orm.MetricSample.device_id,
+                orm.MetricSample.unit,
+            )
+            .limit(257)
+        )
+        rows = list(self.db.execute(statement).mappings())
+        truncated = len(rows) > 256
+        rows = rows[:256]
+        output = []
+        for row in rows:
+            first = row["first_observed_at"]
+            last = row["last_observed_at"]
+            if isinstance(first, str):
+                first = datetime.fromisoformat(first.replace("Z", "+00:00"))
+            if isinstance(last, str):
+                last = datetime.fromisoformat(last.replace("Z", "+00:00"))
+            output.append({
+                "metric": row["metric"],
+                "unit": row["unit"],
+                "source": row["source"],
+                "source_scope": row["source_scope"] or "unknown",
+                "device_id": row["device_id"] or None,
+                "sample_count": int(row["sample_count"] or 0),
+                "observed_minutes": int(row["observed_minutes"] or 0),
+                "first_observed_at": first,
+                "last_observed_at": last,
+                "minimum": float(row["minimum"]) if row["minimum"] is not None else None,
+                "maximum": float(row["maximum"]) if row["maximum"] is not None else None,
+                "average": float(row["average"]) if row["average"] is not None else None,
+                "truncated": truncated,
+            })
         return output
 
     def save_daily_metrics(self, metrics: list[DailyMetric]) -> int:
@@ -1417,10 +1517,10 @@ class HealthRepository:
     ) -> dict:
         """Report conservative, attempt-proven workout-history coverage.
 
-        Coverage is evidence from one completed attempt at a time.  A local
-        workout row is deliberately never used as proof: every expected Zepp
-        sport partition and every pagination successor must have completed
-        fetch, parse, and write stages in that same attempt.
+        Reads use stable keyset batches with explicit total budgets.  A budget
+        exhaustion is visible to callers and can never be reported complete.
+        Workout chunks for many attempts are fetched in grouped batches so the
+        proof check does not turn into one query per attempt.
         """
         if end < start:
             raise ValueError("训练历史覆盖窗口无效")
@@ -1434,54 +1534,98 @@ class HealthRepository:
             for offset in range((end - start).days + 1)
         }
         limitations: list[str] = []
-
         period_start_at, _ = local_day_utc_bounds(start)
         _, period_end_at = local_day_utc_bounds(end)
         period_start_utc = _naive_utc(period_start_at)
         period_end_utc = _naive_utc(period_end_at)
+        from vitalis.connectors.zepp.client import SPORTS
 
-        # This is intentionally two bounded set queries, not one query per
-        # attempt or partition.  Future terminal evidence is excluded here.
-        attempts = list(self.db.execute(
-            select(orm.SyncAttempt).where(
+        MAX_ATTEMPTS = 256
+        MAX_CHUNKS = 16_384
+        ATTEMPT_BATCH = 64
+        CHUNK_BATCH = 512
+        attempts = []
+        attempt_cursor = None
+        budget_exhausted = False
+        while True:
+            remaining = MAX_ATTEMPTS - len(attempts)
+            limit = ATTEMPT_BATCH if remaining > ATTEMPT_BATCH else remaining + 1
+            conditions = [
                 orm.SyncAttempt.user_id == user_id,
                 orm.SyncAttempt.source == "zepp",
                 orm.SyncAttempt.status.in_(("succeeded", "partial", "failed")),
                 orm.SyncAttempt.window_start < period_end_utc,
                 orm.SyncAttempt.window_end > period_start_utc,
                 orm.SyncAttempt.finished_at <= as_of_naive,
-            ).order_by(orm.SyncAttempt.finished_at.desc(), orm.SyncAttempt.created_at.desc())
-            .limit(64)
-        ).scalars().all())
-        attempt_ids = [row.id for row in attempts]
-        chunks = []
-        oversized_attempts: set[str] = set()
-        if attempt_ids:
-            chunk_counts = self.db.execute(
-                select(orm.SyncChunk.attempt_id, func.count(orm.SyncChunk.id))
-                .where(
-                    orm.SyncChunk.attempt_id.in_(attempt_ids),
-                    orm.SyncChunk.stream == "workouts",
-                )
-                .group_by(orm.SyncChunk.attempt_id)
-            ).all()
-            oversized_attempts = {
-                attempt_id for attempt_id, count in chunk_counts if count > 4096
-            }
-            chunks = list(self.db.execute(
-                select(orm.SyncChunk).where(
-                    orm.SyncChunk.attempt_id.in_(attempt_ids),
-                    orm.SyncChunk.stream == "workouts",
-                ).order_by(orm.SyncChunk.attempt_id, orm.SyncChunk.partition, orm.SyncChunk.ordinal)
-                .limit(4096)
+            ]
+            if attempt_cursor is not None:
+                finished_at, created_at, attempt_id = attempt_cursor
+                conditions.append(or_(
+                    orm.SyncAttempt.finished_at < finished_at,
+                    (orm.SyncAttempt.finished_at == finished_at)
+                    & (orm.SyncAttempt.created_at < created_at),
+                    (orm.SyncAttempt.finished_at == finished_at)
+                    & (orm.SyncAttempt.created_at == created_at)
+                    & (orm.SyncAttempt.id < attempt_id),
+                ))
+            batch = list(self.db.execute(
+                select(orm.SyncAttempt).where(*conditions).order_by(
+                    orm.SyncAttempt.finished_at.desc(),
+                    orm.SyncAttempt.created_at.desc(),
+                    orm.SyncAttempt.id.desc(),
+                ).limit(limit)
             ).scalars().all())
+            if not batch:
+                break
+            if len(batch) > remaining:
+                budget_exhausted = True
+                batch = batch[:remaining]
+            attempts.extend(batch)
+            if budget_exhausted or not batch:
+                break
+            last = batch[-1]
+            attempt_cursor = (last.finished_at, last.created_at, last.id)
 
-        chunks_by_attempt: dict[str, list[orm.SyncChunk]] = {}
-        for chunk in chunks:
-            chunks_by_attempt.setdefault(chunk.attempt_id, []).append(chunk)
-
-        # Import lazily to keep the storage layer's normal import graph small.
-        from vitalis.connectors.zepp.client import SPORTS
+        attempt_ids = [attempt.id for attempt in attempts]
+        chunks_by_attempt: dict[str, list[orm.SyncChunk]] = defaultdict(list)
+        chunk_cursor = None
+        chunks_read = 0
+        while attempt_ids:
+            remaining = MAX_CHUNKS - chunks_read
+            limit = CHUNK_BATCH if remaining > CHUNK_BATCH else remaining + 1
+            conditions = [
+                orm.SyncChunk.attempt_id.in_(attempt_ids),
+                orm.SyncChunk.stream == "workouts",
+            ]
+            if chunk_cursor is not None:
+                attempt_id, ordinal, chunk_id = chunk_cursor
+                conditions.append(or_(
+                    orm.SyncChunk.attempt_id > attempt_id,
+                    (orm.SyncChunk.attempt_id == attempt_id)
+                    & (orm.SyncChunk.ordinal > ordinal),
+                    (orm.SyncChunk.attempt_id == attempt_id)
+                    & (orm.SyncChunk.ordinal == ordinal)
+                    & (orm.SyncChunk.id > chunk_id),
+                ))
+            batch = list(self.db.execute(
+                select(orm.SyncChunk).where(*conditions).order_by(
+                    orm.SyncChunk.attempt_id,
+                    orm.SyncChunk.ordinal,
+                    orm.SyncChunk.id,
+                ).limit(limit)
+            ).scalars().all())
+            if not batch:
+                break
+            if len(batch) > remaining:
+                budget_exhausted = True
+                batch = batch[:remaining]
+            for chunk in batch:
+                chunks_by_attempt[chunk.attempt_id].append(chunk)
+            chunks_read += len(batch)
+            if budget_exhausted or not batch:
+                break
+            last = batch[-1]
+            chunk_cursor = (last.attempt_id, last.ordinal, last.id)
 
         verified_days: set[date] = set()
         saw_relevant_attempt = False
@@ -1491,7 +1635,8 @@ class HealthRepository:
 
         def verified_chunk(chunk: orm.SyncChunk) -> bool:
             return (
-                chunk.status == "succeeded" and chunk.fetch_status == "success"
+                chunk.status == "succeeded"
+                and chunk.fetch_status == "success"
                 and (chunk.parse_status, chunk.write_status) in {
                     ("success", "success"), ("empty", "not_run"),
                 }
@@ -1502,55 +1647,55 @@ class HealthRepository:
             if not attempt_chunks:
                 continue
             saw_relevant_attempt = True
-            if attempt.id in oversized_attempts:
-                limitations.append("attempt 的 workouts 分页 chunk 超出有界查询，未确认覆盖")
-                saw_partial_evidence = True
-                continue
-            # Never discard a future or unfinished successor.  Its presence
-            # means the attempt cannot prove the complete pagination chain.
-            if any(
-                chunk.finished_at is None or chunk.finished_at > as_of_naive
-                for chunk in attempt_chunks
-            ):
+            sport_seen = {sport: False for sport in SPORTS}
+            sport_complete = {sport: True for sport in SPORTS}
+            saw_verified = False
+            has_unfinished = False
+            for chunk in attempt_chunks:
+                if chunk.finished_at is None or chunk.finished_at > as_of_naive:
+                    has_unfinished = True
+                if chunk.partition in sport_seen:
+                    sport_seen[chunk.partition] = True
+                    if not verified_chunk(chunk):
+                        sport_complete[chunk.partition] = False
+                    else:
+                        saw_verified = True
+            if has_unfinished:
                 limitations.append("attempt 存在未完成或晚于 as_of 的 workouts 分页 chunk")
                 saw_partial_evidence = True
                 continue
-            by_partition: dict[str, list[orm.SyncChunk]] = {}
-            for chunk in attempt_chunks:
-                if chunk.partition in SPORTS:
-                    by_partition.setdefault(chunk.partition, []).append(chunk)
-            complete = True
-            for sport in SPORTS:
-                sport_chunks = by_partition.get(sport, [])
-                if not sport_chunks or any(not verified_chunk(chunk) for chunk in sport_chunks):
-                    complete = False
-                    break
-            if not complete:
-                if any(verified_chunk(chunk) for chunk in attempt_chunks):
+            if any(not sport_seen[sport] or not sport_complete[sport] for sport in SPORTS):
+                if saw_verified:
                     saw_partial_evidence = True
                 continue
-
             window_start = max(attempt.window_start, period_start_utc)
             window_end = min(attempt.window_end, period_end_utc)
             if window_start >= window_end:
                 continue
-            confirmed_for_attempt: set[date] = set()
+            confirmed_for_attempt = False
             for day in target_days:
                 if day > as_of_local_day:
                     continue
                 day_start, day_end = local_day_utc_bounds(day)
-                required_end = day_end
-                if day == as_of_local_day:
-                    required_end = min(day_end, as_of_utc)
+                if day == as_of_local_day and as_of_utc < day_end:
+                    continue
                 if (
                     window_start <= _naive_utc(day_start)
-                    and window_end >= _naive_utc(required_end)
+                    and window_end >= _naive_utc(day_end)
                 ):
-                    confirmed_for_attempt.add(day)
                     verified_days.add(day)
+                    confirmed_for_attempt = True
             if confirmed_for_attempt:
-                for chunk in attempt_chunks:
-                    candidate = chunk.finished_at.replace(tzinfo=timezone.utc)
+                finished = max(
+                    (
+                        chunk.finished_at for chunk in attempt_chunks
+                        if chunk.finished_at is not None
+                        and chunk.finished_at <= as_of_naive
+                    ),
+                    default=None,
+                )
+                if finished is not None:
+                    candidate = finished.replace(tzinfo=timezone.utc)
                     if last_synced_at is None or candidate > last_synced_at:
                         last_synced_at = candidate
 
@@ -1558,11 +1703,19 @@ class HealthRepository:
             limitations.append("没有截至 as_of 的 Zepp 同步 attempt 证据")
         elif not saw_relevant_attempt:
             limitations.append("匹配的 attempt 没有 workouts 分区记录")
+        if budget_exhausted:
+            limitations.append("训练覆盖查询达到总预算，未确认更早 attempt 或分页 chunk")
         if saw_relevant_attempt and len(verified_days) < len(target_days):
             limitations.append("至少一个窗口缺少完整的 required sport 分区或分页 chunk")
         if as_of_utc.date() < end:
             limitations.append("窗口末端晚于 as_of，未来日期不计入覆盖")
-        if not verified_days:
+        elif as_of_utc.date() == end:
+            _, target_end = local_day_utc_bounds(end)
+            if as_of_utc < target_end:
+                limitations.append("窗口末端当前本地日尚未结束，不计为完整覆盖")
+        if budget_exhausted:
+            status = "PARTIAL" if verified_days else "UNKNOWN"
+        elif not verified_days:
             status = "PARTIAL" if saw_partial_evidence else "UNKNOWN"
         elif verified_days == target_days:
             status = "COMPLETE"
@@ -1577,6 +1730,8 @@ class HealthRepository:
                 last_synced_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
                 if last_synced_at else None
             ),
+            "truncated": budget_exhausted,
+            "budget_exhausted": budget_exhausted,
             "limitations": limitations,
         }
 

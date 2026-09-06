@@ -2,9 +2,9 @@
 
 [简体中文](weekly.md)
 
-All runtime user-visible output must be Chinese. Render only WeeklyProfile. The period is the rolling seven local days ending on the requested date. When
+All runtime user-visible output must be Chinese. First call `tools/weekly_briefing.py` and render only its `ReportBriefing 1.0`. Its `sections` are the same as the HTML renderer; do not freely compose from WeeklyProfile or a raw profile. The period is the rolling seven local days ending on the requested date. When
 `report_context.target_day_complete` is `false`, state that the target day is not yet
-complete; do not treat it as a complete day.
+complete; do not treat it as a complete day. This capability is not a new cron job.
 
 1. Use `data_quality.status_label` and `confidence_label` to describe analysis confidence.
 2. Present available facts separately from `facts.sleep`, `facts.recovery`, `facts.training`, `facts.activity`, and `facts.feedback`. Never turn missing values into zero, and never write `UNKNOWN` days as rest days.

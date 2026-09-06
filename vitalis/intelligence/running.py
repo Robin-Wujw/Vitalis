@@ -62,7 +62,7 @@ class RunningAnalyzer:
 
         analyses = []
         historical_durations: list[int] = []
-        for workout in sorted(current, key=self._workout_date):
+        for workout in sorted(current, key=self._workout_sort_key):
             prior_runs = [
                 item for item in history
                 if self._workout_sort_key(item) < self._workout_sort_key(workout)

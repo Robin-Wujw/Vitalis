@@ -131,6 +131,11 @@ def classify_exercise(exercise_id: str | None, exercise_name: str | None):
     return "unknown", ()
 
 
+def reported_set_count(data: dict) -> int | None:
+    value = data.get("vendor_reported_sets")
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+
 class StrengthAnalyzer:
     def analyze(self, raw) -> StrengthAnalysis:
         start = raw.day - timedelta(days=27)
@@ -151,7 +156,7 @@ class StrengthAnalyzer:
         threshold = RunningAnalyzer._lactate_threshold(raw)
         sessions = [
             self._session(raw, workout, threshold)
-            for workout in sorted(workouts, key=self._date)
+            for workout in sorted(workouts, key=RunningAnalyzer._workout_sort_key)
         ]
         explicit_count = sum(bool(item.explicit_exercises) for item in sessions)
         split, split_confidence = self._split(sessions)
@@ -234,6 +239,7 @@ class StrengthAnalyzer:
         if work_bouts is None:
             limitations.append("心率或圈段结构不足，未估计工作段和休息段。")
         return StrengthSessionAnalysis(
+            vendor_reported_sets=reported_set_count(workout.get("data") or {}),
             workout_id=str(workout.get("workout_id") or ""),
             source=str(workout.get("source") or "zepp"),
             date=self._date(workout),

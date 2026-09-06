@@ -11,7 +11,9 @@ from vitalis.intelligence.contracts import (
     DataQuality,
     DeviceValidity,
     MeasurementFact,
+    EnergyObservation,
     Provenance,
+    SampleWindowSummary,
     QualityFlag,
     QualityStatus,
     ProfileSource,
@@ -53,6 +55,7 @@ class SeriesPoint:
     source: str
     source_scope: str
     device_id: str | None = None
+    source_field: str | None = None
 
 
 @dataclass
@@ -74,6 +77,8 @@ class RawDailyProfile:
     device_models: dict[str, str] = field(default_factory=dict)
     dense_heart_rate_coverage: dict[str, dict] = field(default_factory=dict)
     facts: dict[str, list[MeasurementFact]] = field(default_factory=dict)
+    energy_observations: list[EnergyObservation] = field(default_factory=list)
+    sample_window_summaries: dict[str, SampleWindowSummary] = field(default_factory=dict)
     data_quality: DataQuality | None = None
     open_health_observations: list[OpenHealthObservation] = field(default_factory=list)
     open_health_load_workouts: list = field(default_factory=list)
@@ -106,7 +111,7 @@ class ProfileLoader:
         raw.sleep_by_day = _records_by_day(self.repo.sleep_range(user_id, start, day))
         raw.activity_by_day = _records_by_day(self.repo.activity_range(user_id, start, day))
         raw.training_by_day = _records_by_day(self.repo.training_range(user_id, start, day))
-        coverage_start = day - timedelta(days=28)
+        coverage_start = day - timedelta(days=55)
         raw.training_history_coverage = self.repo.training_history_coverage(
             user_id, coverage_start, day, cutoff
         )
@@ -120,6 +125,7 @@ class ProfileLoader:
         self._add_daily_metrics(raw, start)
         self._add_sample_metrics(raw, start)
         self._add_heart_rate_samples(raw, start)
+        self._add_sample_window_summaries(raw)
         try:
             self._add_open_health_inputs(raw)
         except Exception:
@@ -172,6 +178,7 @@ class ProfileLoader:
             }
             for row in workout_rows
         ]
+        self._add_energy_observations(raw)
         raw.facts = self._facts_for_day(raw)
         raw.data_quality = self._quality(raw)
         raw.report_context = {
@@ -421,8 +428,27 @@ class ProfileLoader:
             _append(raw, "sleep_score", record.get("sleep_score"), "score", day, record.get("source", "zepp"), "normalized_daily_record")
             _append(raw, "sleep_wake_count", record.get("wake_count"), "count", day, record.get("source", "zepp"), "normalized_daily_record")
         for day, record in raw.activity_by_day.items():
-            _append(raw, "resting_hr", record.get("resting_hr"), "bpm", day, record.get("source", "zepp"), "normalized_daily_record", positive=True)
-            _append(raw, "steps", record.get("steps"), "steps", day, record.get("source", "zepp"), "normalized_daily_record")
+            source = record.get("source", "zepp")
+            scope = record.get("source_scope", "normalized_daily_record")
+            observed = record.get("observed_fields")
+            for metric, field, unit in (
+                ("steps", "steps", "steps"),
+                ("distance_km", "distance_km", "km"),
+                ("active_minutes", "active_minutes", "min"),
+                ("calories", "calories", "kcal"),
+            ):
+                value = record.get(field)
+                if _record_field_observed(record, field, value):
+                    _append(
+                        raw, metric, value, unit, day, source, scope,
+                        source_field=f"activity.{field}",
+                    )
+            resting_hr = record.get("resting_hr")
+            if _record_field_observed(record, "resting_hr", resting_hr):
+                _append(
+                    raw, "resting_hr", resting_hr, "bpm", day, source, scope,
+                    source_field="activity.resting_hr", positive=True,
+                )
         for day, record in raw.training_by_day.items():
             source = record.get("source", "canonical_workouts")
             _append(raw, "training_load", record.get("total_load"), "load", day, source, "normalized_daily_record")
@@ -438,16 +464,27 @@ class ProfileLoader:
                 and source_scope == "unknown"
             ):
                 source_scope = "user_fused"
+            metric = row.metric
+            value = row.value
+            unit = row.unit
+            if metric == "distance":
+                if unit == "m":
+                    metric, value, unit = "distance_km", value / 1000, "km"
+                elif unit == "km":
+                    metric = "distance_km"
+                else:
+                    continue
             _append(
                 raw,
-                row.metric,
-                row.value,
-                row.unit,
+                metric,
+                value,
+                unit,
                 row.date,
                 row.source,
                 source_scope,
                 row.device_id or None,
                 positive=False,
+                source_field=f"daily.{metric}",
             )
 
     def _add_sample_metrics(self, raw: RawDailyProfile, start: date) -> None:
@@ -472,6 +509,135 @@ class ProfileLoader:
                     observed_at=row.timestamp,
                     positive=False,
                 )
+
+    def _add_energy_observations(self, raw: RawDailyProfile) -> None:
+        """Materialize one canonical daily energy stream plus separate workouts."""
+        from .activity import stream_priority, workout_calories_kcal
+
+        by_day: dict[date, dict[tuple, list[SeriesPoint]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+        for point in raw.series.get("calories", []):
+            by_day[point.day][(
+                point.source, point.source_scope, point.device_id, point.unit,
+            )].append(point)
+
+        observations: list[EnergyObservation] = []
+        for observation_day, streams in by_day.items():
+            if not streams:
+                continue
+            stream = max(streams, key=stream_priority)
+            points = streams[stream]
+            observations.append(EnergyObservation(
+                metric="calories",
+                value=round(float(median(point.value for point in points)), 3),
+                unit=stream[3],
+                observed_at=max(points, key=lambda point: _observed_key(point.observed_at)).observed_at,
+                provenance=Provenance(
+                    source=stream[0], source_scope=stream[1], device_id=stream[2],
+                ),
+                role="unspecified",
+                source_field=next(
+                    (point.source_field for point in points if point.source_field),
+                    "series.calories",
+                ),
+                estimated=True,
+                limitations=["energy_role_unverified"],
+            ))
+
+        for workout in raw.workouts:
+            value = workout_calories_kcal(workout.get("data") or {})
+            if value is None:
+                continue
+            started_at = workout.get("started_at")
+            workout_day = workout.get("local_day")
+            if workout_day is None and isinstance(started_at, datetime):
+                workout_day = local_day(started_at)
+            if not isinstance(workout_day, date):
+                continue
+            source = str(workout.get("source") or "unknown")
+            observations.append(EnergyObservation(
+                metric="calories",
+                value=value,
+                unit="kcal",
+                observed_at=started_at if isinstance(started_at, datetime) else workout_day,
+                provenance=Provenance(
+                    source=source, source_scope="workout_summary", device_id=None,
+                ),
+                role="workout",
+                source_field="workout.calories",
+                estimated=True,
+                limitations=["vendor_energy_estimate"],
+            ))
+        raw.energy_observations = sorted(
+            observations,
+            key=lambda item: (
+                _observed_key(item.observed_at), item.role, item.provenance.source,
+                item.provenance.source_scope, item.provenance.device_id or "",
+            ),
+        )
+
+    def _add_sample_window_summaries(self, raw: RawDailyProfile) -> None:
+        """Load target-day sample windows without treating them as all-day coverage."""
+        start_at, _ = local_day_utc_bounds(raw.day)
+        _, end_at = local_day_utc_bounds(raw.day)
+        end_at = min(end_at, raw.as_of)
+        if end_at <= start_at:
+            return
+        rows = self.repo.metric_window_summaries(
+            raw.user_id,
+            ("heart_rate", "stress"),
+            start_at,
+            end_at,
+        )
+        from .activity import stream_priority
+
+        selected: dict[str, dict] = {}
+        for row in rows:
+            metric = str(row.get("metric") or "")
+            if metric not in {"heart_rate", "stress"}:
+                continue
+            candidate = {
+                **row,
+                "source": str(row.get("source") or "unknown"),
+                "source_scope": str(row.get("source_scope") or "unknown"),
+                "device_id": row.get("device_id") or None,
+                "unit": str(row.get("unit") or ""),
+            }
+            current = selected.get(metric)
+            candidate_key = stream_priority((
+                candidate["source"], candidate["source_scope"],
+                candidate["device_id"], candidate["unit"],
+            ))
+            current_key = (
+                stream_priority((
+                    current["source"], current["source_scope"],
+                    current["device_id"], current["unit"],
+                )) if current else None
+            )
+            if current is None or candidate_key > current_key:
+                selected[metric] = candidate
+        raw.sample_window_summaries = {
+            metric: SampleWindowSummary(
+                metric=metric,
+                unit=row["unit"],
+                provenance=Provenance(
+                    source=row["source"],
+                    source_scope=row["source_scope"],
+                    device_id=row["device_id"],
+                ),
+                sample_count=max(int(row.get("sample_count") or 0), 0),
+                observed_minutes=max(int(row.get("observed_minutes") or 0), 0),
+                first_observed_at=_summary_datetime(row.get("first_observed_at")),
+                last_observed_at=_summary_datetime(row.get("last_observed_at")),
+                minimum=_summary_number(row.get("minimum")),
+                maximum=_summary_number(row.get("maximum")),
+                average=_summary_number(row.get("average")),
+                truncated=bool(row.get("truncated", False)),
+                limitations=list(row.get("limitations") or []),
+            )
+            for metric, row in selected.items()
+        }
 
     def _add_heart_rate_samples(self, raw: RawDailyProfile, start: date) -> None:
         heart_rate_start = max(start, raw.day - timedelta(days=27))
@@ -827,6 +993,7 @@ def _append(
     *,
     observed_at: datetime | date | None = None,
     positive: bool = False,
+    source_field: str | None = None,
 ) -> None:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return
@@ -842,7 +1009,38 @@ def _append(
         source=source,
         source_scope=source_scope,
         device_id=device_id,
+        source_field=source_field,
     ))
+
+
+def _record_field_observed(record: dict, field: str, value: object) -> bool:
+    observed_fields = record.get("observed_fields")
+    if isinstance(observed_fields, (list, tuple, set)):
+        if field in observed_fields:
+            return True
+        if observed_fields:
+            return False
+    if isinstance(observed_fields, dict):
+        return bool(observed_fields.get(field))
+    # Positive values in pre-marker JSON remain usable; legacy zero is unknown.
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+
+
+def _summary_number(value: object) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def _summary_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return None
 
 
 def _has_day(points: list[SeriesPoint], day: date) -> bool:

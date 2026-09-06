@@ -51,9 +51,9 @@ def test_daily_profile_after_sync(client):
     resp = client.get("/api/v1/intelligence/daily", headers={"X-User-Id": "001"})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["schema_version"] == "12.0"
-    assert body["intelligence_version"] == "11.0"
-    assert body["decision_policy_version"] == "8.0"
+    assert body["schema_version"] == "13.0"
+    assert body["intelligence_version"] == "12.0"
+    assert body["decision_policy_version"] == "9.0"
     assert body["evidence_version"] == "2026-09a"
     assert body["features"]["overnight_vitals"]["status"] == "INSUFFICIENT_DATA"
     assert body["analysis_run_id"]
@@ -86,7 +86,9 @@ def test_morning_briefing_projects_persisted_daily_snapshot(client):
     assert briefing["action_plan"] == daily["decision"]["action_plan"]
     assert briefing["evidence"] == daily["decision"]["evidence"]
     assert briefing == analyzed.json()["morning_briefing"]
-    assert len(briefing["key_reasons"]) <= 3
+    assert briefing["schema_version"] == "3.0"
+    assert len(briefing["sections"]) >= 3
+    assert "feedback_prompt" not in briefing
     assert client.get(
         "/api/v1/intelligence/morning-briefing",
         headers={"X-User-Id": "other-morning-briefing-user"},

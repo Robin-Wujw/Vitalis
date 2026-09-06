@@ -2,7 +2,7 @@ import importlib.util
 import json
 from pathlib import Path
 
-from vitalis.intelligence.schema_export import decision_explanation_schema
+from vitalis.intelligence.schema_export import decision_explanation_schema, skill_schemas
 
 
 ROOT = Path(__file__).parents[1]
@@ -38,48 +38,55 @@ def test_skill_is_renderer_only_and_uses_current_intelligence_contracts():
     assert "tools/analyze.py" in skill and "tools/sync.py" in skill
 
 
+def _resolve_schema(schema, node):
+    while "$ref" in node:
+        reference = node["$ref"]
+        assert reference.startswith("#/")
+        node = schema
+        for part in reference[2:].split("/"):
+            node = node[part.replace("~1", "/").replace("~0", "~")]
+    return node
+
+
 def test_skill_has_all_workflows_and_valid_schema():
     for name in ("morning.md", "evening.md", "weekly.md", "monthly.md", "on_demand.md", "daily_explanation.md"):
         assert (SKILL / "workflows" / name).is_file()
-    schema = json.loads((SKILL / "schemas" / "daily_profile.json").read_text(encoding="utf-8"))
-    assert schema["properties"]["schema_version"]["const"] == "12.0"
+    schemas = skill_schemas()
+    for name, expected in schemas.items():
+        stored = json.loads((SKILL / "schemas" / name).read_text(encoding="utf-8"))
+        assert stored == expected, name
+        assert "PydanticUndefined" not in stored["$id"]
+    schema = schemas["daily_profile.json"]
+    assert schema["properties"]["schema_version"]["const"] == "13.0"
     assert "analysis_run_id" in schema["required"]
     assert "model_version" not in schema["required"]
-    actions = schema["properties"]["decision"]["properties"]["action"]["enum"]
+    decision = _resolve_schema(schema, schema["properties"]["decision"])
+    actions = _resolve_schema(schema, decision["properties"]["action"])["enum"]
     assert "INSUFFICIENT_DATA" in actions
-    decision_required = schema["properties"]["decision"]["required"]
-    assert {"action_label", "confidence_label", "evidence", "action_plan"} <= set(decision_required)
-    assert "prescriptions" not in decision_required
-    workout_required = (
-        schema["properties"]["features"]["properties"]["training"]["properties"]
-        ["recent_workouts"]["items"]["required"]
-    )
-    assert {"sport_mode_label", "recognition_confidence_label"} <= set(workout_required)
-    assert {"trends", "events"} <= set(schema["required"])
-    assert "open_health_insights" in schema["required"]
-    weekly = json.loads((SKILL / "schemas" / "weekly_profile.json").read_text(encoding="utf-8"))
-    assert {"facts", "inferences", "actions"} <= set(weekly["required"])
-    monthly = json.loads((SKILL / "schemas" / "monthly_profile.json").read_text(encoding="utf-8"))
-    assert {"facts", "inferences", "actions"} <= set(monthly["required"])
-    assert "open_health_insights" not in weekly["required"]
-    assert "open_health_insights" not in monthly["required"]
-    assert "open_health_period_summary" in weekly["required"]
-    assert "open_health_period_summary" in monthly["required"]
-    context = json.loads((SKILL / "schemas" / "context.json").read_text(encoding="utf-8"))
-    assert {"open_health_summary", "insights_stale"} <= set(context["required"])
-    explanation = json.loads(
-        (SKILL / "schemas" / "decision_explanation.json").read_text(encoding="utf-8")
-    )
-    assert explanation == decision_explanation_schema()
-    assert {
-        "schema_version", "user_id", "date", "snapshot", "facts", "gates",
-        "action", "evidence_refs",
-    } <= set(explanation["required"])
+    assert "action_plan" in decision["required"]
+    assert {"action_label", "confidence_label", "evidence"} <= set(decision["properties"])
+    assert "prescriptions" not in decision["properties"]
+    features = _resolve_schema(schema, schema["properties"]["features"])
+    assert "activity" in features["properties"]
+    training = _resolve_schema(schema, features["properties"]["training"])
+    workout = _resolve_schema(schema, training["properties"]["recent_workouts"]["items"])
+    assert {"sport_mode_label", "recognition_confidence_label"} <= set(workout["required"])
+    assert {"calories_kcal", "distance_km"} <= set(workout["properties"])
+    assert {"trends", "events", "open_health_insights"} <= set(schema["properties"])
+    for name in ("weekly_profile.json", "monthly_profile.json"):
+        period = schemas[name]
+        assert {"facts", "inferences", "actions"} <= set(period["required"])
+        assert "open_health_insights" not in period["properties"]
+        assert "open_health_period_summary" in period["properties"]
+    context = schemas["context.json"]
+    assert {"open_health_summary", "insights_stale"} <= set(context["properties"])
+    assert schemas["decision_explanation.json"] == decision_explanation_schema()
+    assert "feedback_prompt" not in schemas["morning_briefing.json"]["properties"]
+    assert "sections" in schemas["report_briefing.json"]["properties"]
     for name in (
-        "trends.json", "health_events.json", "context.json", "decision_explanation.json",
-        "training_responses.json", "personal_model.json", "personal_associations.json",
-        "timeline.json", "training_preferences.json", "strength_exercises.json",
-        "profile.json",
+        "trends.json", "health_events.json", "training_responses.json", "personal_model.json",
+        "personal_associations.json", "timeline.json", "training_preferences.json",
+        "strength_exercises.json", "profile.json",
     ):
         json.loads((SKILL / "schemas" / name).read_text(encoding="utf-8"))
 

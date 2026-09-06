@@ -6,11 +6,13 @@
 `X-User-Id` 请求头；不存在隐式的默认用户。健康智能 GET 请求无副作用；
 如果请求的快照尚未生成，则返回 `404`。
 
-DailyProfile 12.0 和 WeeklyProfile 5.0 的 `report_context` 都保留 `as_of`（ISO UTC）、
+DailyProfile 13.0、WeeklyProfile 6.0 和 MonthlyProfile 3.0 的 `report_context` 都保留 `as_of`（ISO UTC）、
 `timezone`、`target_date`、`target_day_complete`、`training_history` 和
 `latest_observations`。`training_history` 包含 `status`（`COMPLETE`/`PARTIAL`/`UNKNOWN`）、
 `verified_days`、`last_synced_at` 和 `prior_7d_verified`；它用于解释数据边界，不能把未知
 训练日期填成零或休息。
+
+活动事实中的缺失字段保持为 `None`；旧 `ActivityRecord` 中没有观测证据的默认 `0` 不作为真实测量。`ActivityMetric` 和 `EnergyObservation` 按 `source`、`source_scope`、`device_id` 和 `unit` 分流。泛称热量保持 `role=unspecified`，不解释为总能耗，不把重复入口或 workout 热量相加；没有摄入数据时不判断热量赤字。
 
 ## 连接与导入
 
@@ -38,10 +40,13 @@ HTTP `409`；现有凭据及两个用户的历史记录均保持不变。
 | POST | `/intelligence/analyze?day=YYYY-MM-DD` | 运行确定性分析并持久化不可变快照 |
 | GET | `/intelligence/profile` | 读取带修订版本的用户确认生理和睡眠档案 |
 | PATCH | `/intelligence/profile` | 在 `expected_revision` 冲突保护下修补明确指定的档案字段 |
-| GET | `/intelligence/daily?day=YYYY-MM-DD` | 读取 DailyProfile 12.0 事实、持久化的决策证据以及仅用于影子计算的开放健康洞察 |
-| GET | `/intelligence/morning-briefing?day=YYYY-MM-DD` | 读取 MorningBriefing schema_version=2.0 的晨间展示投影 |
-| GET | `/intelligence/weekly?day=YYYY-MM-DD` | 读取 WeeklyProfile 5.0 的滚动 7 天档案及与前一周的比较 |
-| GET | `/intelligence/monthly?day=YYYY-MM-DD` | 读取直接计算的 28 天档案 |
+| GET | `/intelligence/daily?day=YYYY-MM-DD` | 读取 DailyProfile 13.0 事实、持久化的决策证据以及仅用于影子计算的开放健康洞察 |
+| GET | `/intelligence/morning-briefing?day=YYYY-MM-DD` | 读取 MorningBriefing schema_version=3.0 的晨间展示投影 |
+| GET | `/intelligence/evening-briefing?day=YYYY-MM-DD` | 读取 ReportBriefing 1.0 的晚间展示投影 |
+| GET | `/intelligence/weekly?day=YYYY-MM-DD` | 读取 WeeklyProfile 6.0 的滚动 7 天档案及与前一周的比较 |
+| GET | `/intelligence/weekly-briefing?day=YYYY-MM-DD` | 读取 ReportBriefing 1.0 的每周展示投影 |
+| GET | `/intelligence/monthly?day=YYYY-MM-DD` | 读取 MonthlyProfile 3.0 的直接计算的 28 天档案 |
+| GET | `/intelligence/monthly-briefing?day=YYYY-MM-DD` | 读取 ReportBriefing 1.0 的每月展示投影 |
 | GET | `/intelligence/trends?day=YYYY-MM-DD` | 读取按设备隔离的 7/28/90 天趋势 |
 | GET | `/intelligence/events?start=&end=&event_type=` | 读取健康事件生命周期状态 |
 | GET | `/intelligence/explain?day=YYYY-MM-DD` | 读取一项已持久化的决策解释，包括快照来源和数据质量 |
@@ -130,7 +135,7 @@ curl 'http://localhost:8000/api/v1/intelligence/monthly?day=2026-08-28' \
   -H 'X-User-Id: <local-user-id>'
 ```
 
-记录训练后反馈。Session RPE 必须使用真实的训练 ID：
+记录用户主动提供的反馈。Session RPE 必须使用真实的训练 ID：
 
 ```bash
 curl -X POST 'http://localhost:8000/api/v1/intelligence/feedback' \
@@ -167,14 +172,15 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/st
 
 ## 契约边界
 
-- `GET /intelligence/morning-briefing` 返回 `MorningBriefing schema=2.0` 的 `observations`、`key_reasons`、`cautions` 和 `report_context`；当天没有 workout 不构成缺项。
+- `GET /intelligence/morning-briefing` 返回 `MorningBriefing schema=3.0` 的 `observations`、`key_reasons`、`cautions` 和 `report_context`；当天没有 workout 不构成缺项。
+- `GET /intelligence/evening-briefing`、`GET /intelligence/weekly-briefing` 和 `GET /intelligence/monthly-briefing` 返回 `ReportBriefing 1.0`。这些报告使用与 HTML renderer 相同的 `sections`；它们不能从 raw profile 自由拼接，也不是新的定时任务。
 - `POST /intelligence/analyze` 是计算命令；GET 端点不会运行或更改分析。
   当不存在快照时，`GET /intelligence/explain` 返回 404；Hermes 解释必须报告该状态，
   不得进行同步或分析。
 - Daily、Weekly、Monthly、Training Response、Personal Association 和 Personal Model
   快照共享同一个 AnalysisRun 身份。
 - 事实、推断和操作在周期档案中保持相互独立。
-- `open_health_insights` 仅用于影子计算。它可以解释就绪度、睡眠、TRIMP、ATL、CTL 和 TSB，但不会改变 Decision Policy 8.0、恢复状态、操作、规则 ID 或 ActionPlan。
+- `open_health_insights` 仅用于影子计算。它可以解释就绪度、睡眠、TRIMP、ATL、CTL 和 TSB，但不会改变 Decision Policy 9.0、恢复状态、操作、规则 ID 或 ActionPlan。
 - 用户确认的档案值具有带修订版本的来源信息。年龄公式、训练最大心率、Zepp 分数和设备心率区间边界绝不会静默填充已确认的 HRmax。
 - 缺失的测量值保持为 null，或产生明确的数据不足/拒绝状态。
 - 规范训练身份为 `(source, workout_id)`。详情读取、建议完成、反馈、力量训练确认、
@@ -197,6 +203,7 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/st
 - 内部枚举代码用于程序控制；中文 `*_label` 字段是展示契约。
 - 关联响应属于观察性结果，并始终带有 `association_only=true`。
 
-完整的 Pydantic 模型位于 `vitalis/intelligence/contracts.py`。面向 Hermes 的传输
-schema 位于 `skills/vitalis/schemas/`。计算策略记录在
-[ARCHITECTURE.md](ARCHITECTURE.md) 中。
+完整的 Pydantic 模型位于 `vitalis/intelligence/contracts.py`。`schema_export.py` 从 Pydantic
+来源生成 7 份确定性导出，并使用标准本地 `$ref`；调用方不能假定只有 explanation 导出，
+导出中不包含个人健康数值或真实记录。面向 Hermes 的传输 schema 位于
+`skills/vitalis/schemas/`。计算策略记录在 [ARCHITECTURE.md](ARCHITECTURE.md) 中。

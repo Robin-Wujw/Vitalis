@@ -75,18 +75,22 @@
 
 日期：2026-09-06
 
-- 本次本地报告与训练推荐修复及跨日热修复通过完整 Python 套件 529 项；晨报、晚报、周报使用合成样例，在 390 像素手机布局和 1100 像素桌面布局下均无横向溢出。`9750945` 已部署，之后的真实测试因跨日压力解析失败而未发送；热修复会区分合法补边空结果与畸形载荷，并支持仅回顾历史事实的显式日期测试晚报。
-- 当前契约为 Daily 12.0、Weekly 5.0、MorningBriefing 2.0、Agent Context 6.0、Intelligence 11.0、Decision Policy 8.0。已修复力量明细刷新、次数类型与剂量保真、训练覆盖门控及报告可读性；受控云详情核验确认 `strengthSets` 可能为空，App 修正动作仍未取得，不能从 `strengthAssess` 猜测。
+- 本轮四报告数据层、报告路由和 Skill 工作流已通过本地集成验收：Windows 完整 Python 套件 `591` 项通过，包含双语 Markdown、本地链接/锚点、schema 导出和报告链路测试。用户已明确授权提交、部署到现有服务器并发送一次新版测试晚报；服务器部署与真实投递仍需后续核验。
+- 当前契约为 Daily 13.0、Weekly 6.0、Monthly 3.0、MorningBriefing 3.0、Agent Context 6.0、Intelligence 12.0、Decision Policy 9.0。新增的 `GET /intelligence/evening-briefing`、`GET /intelligence/weekly-briefing` 和 `GET /intelligence/monthly-briefing` 返回 `ReportBriefing 1.0`，并与 HTML 使用相同的 `sections`。
+- 本轮字段可用性检查不展开个人健康数值；可以描述一般能力，但不把个人健康数值、真实记录或未取得的 App 修正动作写入仓库，也不声称已取得真实 App 动作数据。
+- 周/月活动汇总按本地日期归属；同日不同训练热量相加，日汇总重复观测仍取中位数，不混合来源。报告保留指标单位和部分覆盖限制，未知热量单位不补为千卡。
+- 活动缺失保持 `None`；旧 `ActivityRecord` 默认零没有观测证据时不是真实测量。热量泛称保持 `role=unspecified`，不当作总能耗，不合并重复入口或 workout 热量；没有摄入记录时不判断热量赤字。不同 source/scope/device/unit 始终分流。
+- ProfileLoader 的训练历史覆盖范围为 56 个本地日；同步账本和分块仍受各自运行限制，范围不足时降级并保留限制，月报未知日不解释为休息日。Monthly renderer 是显式能力，不新增 cron；retrospective 路径继续保留安全边界。
 
-以下为 2026-09-04 的已验证基线记录，本次未重新核验服务器或真实压力数据：
+以下为当前核验与仍保留的历史基线：
 
-- 当前工作分支为 `fix/zepp-identity-ownership`，以已部署的 `aef653c` 为基线；本次文档工作将全部 39 个项目 Markdown 收敛为 19 对中英文件和唯一的内联双语入口 `docs/README.md`。
-- 变更后的完整 Python 套件通过 473 项；`tests/test_bilingual_markdown.py` 的 47 项双语契约测试和 Balance 2 的 6 项 Node 测试全部通过。Zepp 身份唯一性与迁移 hardening、中英文文档入口、SQLite 当前 schema 迁移和 `all_day_stress` 本地日时间序列均已验证。
-- 同账号、同设备、日期匹配的 Zepp 数据与界面对照确认：压力日汇总来自 `all_day_stress` 字段，曲线来自其显式时间戳 `data` 数组。`Charge/stress_data` protobuf 和 `Charge/insight_data` 仍无可证明语义，继续不请求。
-- 本地和服务器 SQLite schema/身份审计均 clean；真实 `zepp-sync-v4` 压力流 fetch/parse/write success，2026-09-03 本地日写入 234 点、范围 5-65。完整 attempt 因可选 capability unavailable 为 `partial`、failed chunk 为 0；确定性分析为 `SUFFICIENT` / `TRAIN_NORMAL`，Morning 与 Evening 投影均成功。
-- 服务器已部署 `fix/zepp-identity-ownership@aef653c`，API/worker active、`healthz=ok`、错误日志为 0；Morning `PushPlus --test` 返回 `test_sent` 且未改变正式调度标记。
+- 当前工作分支为 `fix/zepp-identity-ownership`；本轮文档只同步当前本地契约，不改变英文 sidecar 的运行时角色。
+- 本轮 Windows 完整 Python 套件通过 `591` 项；服务器 API 健康、Zepp 身份映射和 SQLite schema 只读审计正常。部署前 SQLite 备份通过 `quick_check`，未执行结构迁移；服务器测试和新版投递尚待完成。
+- 已确认的 Zepp 语义继续有效：压力日汇总来自 `all_day_stress` 字段，曲线来自显式时间戳 `data` 数组；`Charge/stress_data` protobuf 和 `Charge/insight_data` 仍无可证明语义，继续不请求。
+- 本轮只使用用户于 2026-09-06 明确给出的新版部署和单次测试晚报授权，不复用旧的一次性推送授权；测试不修改正式投递去重标记。
 
 ## 10. 当前未完成事项
 
+- [ ] 完成本轮已验证四报告的服务器部署验收与一次实际测试晚报，收集用户内容反馈。
 - [ ] 为持久同步账本建立生产备份/恢复演练与长期数据保留策略。
 - [ ] 取得 Zepp App 修正力量动作组的可验证数据来源；当前云端空 `strengthSets` 不能证明 App 没有记录，也不能用识别评估字段补造动作或重量。

@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 from math import log
 from statistics import mean, median
 
+from .activity import workout_calories_kcal, workout_distance_km
 from .baseline import BaselineEngine, daily_stream_values
 from .contracts import (
     Availability,
@@ -38,7 +39,7 @@ from .profile import (
     device_measurement_site,
 )
 from .running import RunningAnalyzer
-from .strength import StrengthAnalyzer
+from .strength import StrengthAnalyzer, reported_set_count
 from vitalis.time import local_sleep_window, utc_to_local
 from vitalis.connectors.zepp.sport_types import CATEGORY_LABELS, FAMILY_LABELS
 from .localization import (
@@ -1023,6 +1024,7 @@ class TrainingAnalyzer:
                 strength_days.append(workout_day)
             recent_workouts.append(WorkoutFeature(
                 date=workout_day,
+                vendor_reported_sets=reported_set_count(data) if family == "strength" else None,
                 started_at=workout.get("started_at"),
                 type=workout_type,
                 type_label=CATEGORY_LABELS.get(workout_type, "其他运动"),
@@ -1036,6 +1038,8 @@ class TrainingAnalyzer:
                 recognition_source_label=str(data.get("recognition_source_label", "缺少厂商运动类型")),
                 vendor_type_id=data.get("vendor_type_id"),
                 duration_minutes=int(data.get("duration", 0) or 0),
+                calories_kcal=workout_calories_kcal(data),
+                distance_km=workout_distance_km(data),
                 vendor_load=float(data.get("load", 0) or 0),
                 heart_rate_avg_bpm=int(data.get("heart_rate_avg", 0) or 0) or None,
                 heart_rate_max_bpm=int(data.get("heart_rate_max", 0) or 0) or None,

@@ -28,6 +28,7 @@ from .contracts import (
 from .localization import CONFIDENCE_LABELS, QUALITY_LABELS
 from .open_health.projection import coverage_summary, period_summary
 from .profile import RawDailyProfile
+from .period_activity import build_period_activity_metrics, period_training_details
 
 
 PERIOD_DAYS = 7
@@ -190,16 +191,17 @@ def _weekly_sleep_hrv_daily(
     streams = defaultdict(list)
     for point in raw.series.get("sleep_hrv", []):
         if period_start <= point.day <= raw.day and point.value > 0:
-            streams[(point.source, point.source_scope, point.device_id)].append(point)
+            streams[(point.source, point.source_scope, point.device_id, point.unit)].append(point)
     if not streams:
         return None, []
-    (_, _, device_id), points = max(
+    (_, _, device_id, _), points = max(
         streams.items(),
         key=lambda item: (
-            int(_is_vendor_fused_stream(item[0])),
+            int(_is_vendor_fused_stream(item[0][:3])),
             int(item[0][2] == preferred_device_id and preferred_device_id is not None),
             len({point.day for point in item[1]}),
             len(item[1]),
+            item[0][3],
         ),
     )
     by_day = defaultdict(list)
@@ -275,11 +277,10 @@ def _training_facts(
     record_workout_count = sum(
         int(item.get("workout_count", 0) or 0) for item in current_records
     )
-    workout_count = (
-        record_workout_count
-        if current_records
-        else len(workouts) if workouts else 0
-    )
+    workout_count = max(
+        record_workout_count,
+        len(workouts),
+    ) if current_records or workouts else 0
     duration = _optional_sum(current_records, "total_duration", int)
     current_load = _optional_sum(current_records, "total_load", float)
     previous_load = _optional_sum(previous_records, "total_load", float)
@@ -294,6 +295,7 @@ def _training_facts(
         and coverage.get("current_complete", False)
         and coverage.get("previous_complete", False)
     )
+    details = period_training_details(raw, period_start, raw.day)
     values = dict(
         workout_count=workout_count,
         training_days=training_days,
@@ -314,6 +316,7 @@ def _training_facts(
         unknown_days=unknown_days,
         coverage_status=coverage["coverage_status"],
         totals_are_partial=coverage["totals_are_partial"],
+        **details,
     )
     return WeeklyTrainingFacts(**values)
 
@@ -323,34 +326,48 @@ def _activity_facts(
     period_start: date,
     previous_start: date,
 ) -> WeeklyActivityFacts:
-    current = [
-        item for day, item in raw.activity_by_day.items()
-        if period_start <= day <= raw.day
-    ]
-    previous = [
-        item for day, item in raw.activity_by_day.items()
-        if previous_start <= day < period_start
-    ]
-    steps = [float(item["steps"]) for item in current if item.get("steps") is not None]
-    prior_steps = [float(item["steps"]) for item in previous if item.get("steps") is not None]
-    average = _mean(steps)
-    previous_average = _mean(prior_steps)
-    comparable = len(steps) >= MIN_COMPARISON_DAYS and len(prior_steps) >= MIN_COMPARISON_DAYS
-    active_values = [
-        int(item["active_minutes"])
-        for item in current if item.get("active_minutes") is not None
-    ]
+    metrics = build_period_activity_metrics(raw, period_start, PERIOD_DAYS, previous_start)
+    steps_metric = next((item for item in metrics if item.metric == "steps"), None)
+    active_metric = next((item for item in metrics if item.metric == "active_minutes"), None)
+    if steps_metric is None and not (getattr(raw, "series", {}) or {}):
+        current = [
+            item for day, item in raw.activity_by_day.items()
+            if period_start <= day <= raw.day and item.get("steps") is not None
+        ]
+        previous = [
+            item for day, item in raw.activity_by_day.items()
+            if previous_start <= day < period_start and item.get("steps") is not None
+        ]
+        steps = [float(item["steps"]) for item in current]
+        prior_steps = [float(item["steps"]) for item in previous]
+        steps_values = {
+            "available_days": len(steps),
+            "previous_available_days": len(prior_steps),
+            "total_steps": int(sum(steps)) if steps else None,
+            "average_steps": _rounded(_mean(steps)),
+            "previous_average_steps": _rounded(_mean(prior_steps)) if prior_steps else None,
+            "steps_change_percent": (
+                _rounded(_percent_change(_mean(steps), _mean(prior_steps)))
+                if len(steps) >= MIN_COMPARISON_DAYS and len(prior_steps) >= MIN_COMPARISON_DAYS
+                else None
+            ),
+        }
+    else:
+        steps_values = {
+            "available_days": steps_metric.available_days if steps_metric else 0,
+            "previous_available_days": steps_metric.previous_available_days if steps_metric else 0,
+            "total_steps": int(steps_metric.total) if steps_metric and steps_metric.total is not None else None,
+            "average_steps": steps_metric.average if steps_metric else None,
+            "previous_average_steps": steps_metric.previous_average if steps_metric else None,
+            "steps_change_percent": steps_metric.change_percent if steps_metric else None,
+        }
+    active_minutes = (
+        int(active_metric.total) if active_metric and active_metric.total is not None else None
+    )
     return WeeklyActivityFacts(
-        available_days=len(steps),
-        previous_available_days=len(prior_steps),
-        total_steps=int(sum(steps)) if steps else None,
-        average_steps=_rounded(average),
-        previous_average_steps=_rounded(previous_average) if comparable else None,
-        steps_change_percent=(
-            _rounded(_percent_change(average, previous_average))
-            if comparable else None
-        ),
-        active_minutes=sum(active_values) if active_values else None,
+        metrics=metrics,
+        active_minutes=active_minutes,
+        **steps_values,
     )
 
 
@@ -618,6 +635,12 @@ def _training_coverage(raw: RawDailyProfile, period_start: date) -> dict:
     current_days = {
         period_start + timedelta(days=index) for index in range(PERIOD_DAYS)
     }
+    target_day_complete = bool(
+        (getattr(raw, "report_context", None) or {}).get("target_day_complete", True)
+    )
+    complete_current_days = set(current_days)
+    if not target_day_complete:
+        complete_current_days.discard(raw.day)
     verified_all = set()
     verified_current = set()
     for item in verified_days or []:
@@ -631,12 +654,12 @@ def _training_coverage(raw: RawDailyProfile, period_start: date) -> dict:
         else:
             continue
         verified_all.add(candidate)
-        if period_start <= candidate <= raw.day:
+        if period_start <= candidate <= raw.day and candidate in complete_current_days:
             verified_current.add(candidate)
     if verified_days is not None:
         record_days = len(verified_current)
         status = (
-            "COMPLETE" if current_days <= verified_all
+            "COMPLETE" if complete_current_days <= verified_all and target_day_complete
             else "PARTIAL" if verified_current
             else "UNKNOWN"
         )
@@ -646,11 +669,13 @@ def _training_coverage(raw: RawDailyProfile, period_start: date) -> dict:
         record_days = 0
     else:
         record_days = len(records)
+    if not target_day_complete and status == "COMPLETE":
+        status = "PARTIAL"
+        record_days = min(record_days, PERIOD_DAYS - 1)
     explicit_unknown_days = values.get("unknown_days")
-    unknown_days = (
-        int(explicit_unknown_days)
-        if explicit_unknown_days is not None
-        else max(PERIOD_DAYS - record_days, 0)
+    unknown_days = max(
+        int(explicit_unknown_days) if explicit_unknown_days is not None else 0,
+        max(PERIOD_DAYS - record_days, 0),
     )
     if status not in {"COMPLETE", "PARTIAL", "UNKNOWN"}:
         status = "PARTIAL" if records else "UNKNOWN"
@@ -667,7 +692,9 @@ def _training_coverage(raw: RawDailyProfile, period_start: date) -> dict:
         ),
         "covered_days": verified_current if verified_days is not None else None,
         "current_complete": (
-            verified_days is not None and current_days <= verified_all
+            verified_days is not None
+            and target_day_complete
+            and complete_current_days <= verified_all
         ),
         "previous_complete": (
             verified_days is not None and previous_days <= verified_all

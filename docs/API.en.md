@@ -42,7 +42,7 @@ credential and both users' historical records remain unchanged.
 | GET | `/intelligence/profile` | Read the revisioned user-confirmed physiology and sleep profile |
 | PATCH | `/intelligence/profile` | Patch explicit profile fields with `expected_revision` conflict protection |
 | GET | `/intelligence/daily?day=YYYY-MM-DD` | Read DailyProfile 14.0 facts, persisted decision evidence, and shadow-only open health insights |
-| GET | `/intelligence/morning-briefing?day=YYYY-MM-DD` | Read the MorningBriefing schema_version=3.0 morning presentation projection |
+| GET | `/intelligence/morning-briefing?day=YYYY-MM-DD` | Read the MorningBriefing schema_version=4.0 morning presentation projection |
 | GET | `/intelligence/evening-briefing?day=YYYY-MM-DD` | Read the ReportBriefing 1.0 evening presentation projection |
 | GET | `/intelligence/weekly?day=YYYY-MM-DD` | Read the rolling 7-day WeeklyProfile 6.0 and prior-week comparison |
 | GET | `/intelligence/weekly-briefing?day=YYYY-MM-DD` | Read the ReportBriefing 1.0 weekly presentation projection |
@@ -77,7 +77,7 @@ credential and both users' historical records remain unchanged.
 | GET | `/health/token-status` | Read credential state and next synchronization time |
 | GET | `/health/range?from=&to=&granularity=` | Read 180d/90d/30d/7d/1d aggregate blocks |
 | GET | `/health/workouts?from=&to=` | List workout summaries and detail availability |
-| GET | `/health/workouts/{workout_id}?source=` | Read current `WorkoutDetail 5.0` detail and source-isolated typed samples |
+| GET | `/health/workouts/{workout_id}?source=` | Read current `WorkoutDetail 5.1` detail and source-isolated typed samples |
 | GET | `/health/metrics/{metric}?from=&to=&resolution=` | Read timestamped measurements; raw/hour/day points retain source, scope, device, and unit |
 | GET | `/health/daily-metrics?metric=&from=&to=` | Read sparse daily metrics with source provenance |
 | GET | `/health/dense-files/second_heart_rate?from=&to=` | Read high-frequency file coverage without file IDs |
@@ -175,9 +175,10 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/st
 
 ## Contract Boundaries
 
-- `GET /intelligence/morning-briefing` returns the `MorningBriefing schema=3.0`
+- `GET /intelligence/morning-briefing` returns the `MorningBriefing schema=4.0`
   `observations`, `key_reasons`, `cautions`, and `report_context`; having no workout today
-  is not a missing item.
+  is not a missing item. Facts-only delivery is marked by `report_context.delivery_metadata.facts_only`;
+  its `action_plan` is null or omitted and prescriptions are forbidden; a full report still requires `action_plan`.
 - `GET /intelligence/evening-briefing`, `GET /intelligence/weekly-briefing`, and
   `GET /intelligence/monthly-briefing` return `ReportBriefing 1.0`. These reports use the
   same `sections` as the HTML renderer; they must not be freely composed from raw profiles
@@ -211,8 +212,8 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/st
   plus `vendor_exercise_code`, `weight_value`, `weight_unit`, and `limitations`; `lap_62` enters only
   ordered `observed_sets`, not `explicit_exercises`, exercise coverage, muscle coverage, or prescription.
   Unknown units remain unknown and `kg` is not added; negative sentinels remain `None` and are not
-  treated as bodyweight. Without a verified exercise dictionary, show only the code and do not invent
-  an exercise name. Confirmed records take precedence and the evening report shows sets one by one;
+  treated as bodyweight. Use only the limited display mapping in `ZEPP_STRENGTH_LAP_LABELS`, marked with
+  `exercise_name_reference_mapping`; do not invent names for unknown codes. Confirmed records take precedence and the evening report shows sets one by one;
   morning prescriptions do not mix in historical observed sets. Recent 28-day detail is refreshed
   within a bounded budget of at most 4, with refresh time in `fetched_at`, and one pass is not
   guaranteed to cover all.

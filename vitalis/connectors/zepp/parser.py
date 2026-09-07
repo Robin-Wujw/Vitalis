@@ -32,6 +32,16 @@ from .sport_types import resolve_sport_mode
 MAX_WORKOUT_SECONDS = 12 * 60 * 60
 MAX_WELLNESS_SAMPLES_PER_EVENT = 10_000
 
+# Verified app/cloud comparisons for this exact 62-column strength lap layout.
+# These are display-only reference labels, not a complete Zepp exercise dictionary.
+ZEPP_STRENGTH_LAP_LABELS = {
+    64: "引体向上",
+    60: "高位下拉",
+    66: "坐姿划船",
+    109: "上斜哑铃卧推",
+    65: "二头肌弯举",
+}
+
 _ALL_DAY_STRESS_FIELDS = (
     ("stress", ("avgStress", "averageStress", "stress"), "score"),
     ("stress_min", ("minStress",), "score"),
@@ -705,11 +715,17 @@ class ZeppParser:
             )
             if repetitions is None and weight is None and code is None:
                 continue
-            limitations = ["exercise_name_unverified"]
+            exercise_name = ZEPP_STRENGTH_LAP_LABELS.get(code)
+            limitations = [
+                "exercise_name_reference_mapping"
+                if exercise_name is not None
+                else "exercise_name_unverified"
+            ]
             limitations.append("weight_unit_unverified" if weight is not None else "weight_unavailable")
             output.append(StrengthSetObservation(
                 source="lap_62", order=order, vendor_exercise_code=code,
-                repetitions=repetitions, weight_value=weight, limitations=limitations,
+                exercise_name=exercise_name, repetitions=repetitions,
+                weight_value=weight, limitations=limitations,
             ))
         return output
 

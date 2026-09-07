@@ -40,7 +40,7 @@
 - destructive database 操作前必须确认精确目标、数据价值、恢复方式和用户授权。
 - 服务器数据库、密钥、Zepp 凭据和 PushPlus token 不得输出到日志、文档、提交或对话。
 - 服务器运行的是已验证提交；本地先修复 parser、数据契约、同步、晨报和测试，再推送、部署和验证。
-- PushPlus 晨报只在当前数据同步和分析满足契约时发送；不得用过期或部分验证的训练历史生成今天的训练建议。
+- PushPlus 训练处方晨报要求完整睡眠和已核验的前七天训练历史；当睡眠完整但历史未核验时，可发送明确标注限制的睡眠与身体状态事实版，不包含训练处方。日期、凭据、睡眠完整性和每日去重门控仍有效；不得用过期或部分验证的训练历史生成今天的训练建议。
 
 ## 6. 跨平台约定
 
@@ -75,8 +75,8 @@
 
 日期：2026-09-07
 
-- 本轮实现阶段仅修改本地力量观测解析、分析、晚报和相关契约；未推送、未部署、未访问生产。Windows 完整 Python 套件通过 `646` 项，其中双语 Markdown 与本地链接/锚点检查通过 `47` 项；`git diff --check` 通过。独立合成数据库的真实 HTTP 验证返回 200，确认逐组顺序、缺失负重、未知单位和处方隔离。`41a603e` 部署与服务器完整套件 `591` 项通过属于历史基线，不作为本轮新验证。
-- 当前契约为 `WorkoutDetail 5.0`（共享 `WORKOUT_DETAIL_SCHEMA_VERSION`）、Daily 14.0、Weekly 6.0、Monthly 3.0、MorningBriefing 3.0、Agent Context 6.0、Intelligence 13.0、StrengthAnalysis 2.0、Decision Policy 9.0。`GET /intelligence/evening-briefing`、`GET /intelligence/weekly-briefing` 和 `GET /intelligence/monthly-briefing` 返回 `ReportBriefing 1.0`，并与 HTML 使用相同的 `sections`。
+- `7b48a51` 力量明细版已部署，Windows 与服务器 Linux 完整套件各通过 `646` 项，真实晚报 API 和一次测试投递已验证。新增事实版晨报和有限动作名称显示映射在本地通过 `674` 项，包含 `47` 项双语 Markdown 与本地链接/锚点检查；部署验收尚待完成。
+- 本地当前契约为 `WorkoutDetail 5.1`（共享 `WORKOUT_DETAIL_SCHEMA_VERSION`）、Daily 14.0、Weekly 6.0、Monthly 3.0、MorningBriefing 4.0、Agent Context 6.0、Intelligence 14.0、StrengthAnalysis 2.0、Decision Policy 9.0。`GET /intelligence/evening-briefing`、`GET /intelligence/weekly-briefing` 和 `GET /intelligence/monthly-briefing` 返回 `ReportBriefing 1.0`，并与 HTML 使用相同的 `sections`。
 - 本轮字段可用性检查不展开个人健康数值；可以描述一般能力，但不把个人健康数值、真实记录或未取得的 App 修正动作写入仓库，也不声称已取得真实 App 动作数据。
 - 仅当 `training_family=strength` 且 lap 行恰为 62 列时，才从 0-based 21、22、28 读取有限的重量、次数和动作 code 观测；这些观测保留组序并进入独立的 `observed_sets`，不作为 `explicit_exercises`、肌群覆盖或训练处方依据。
 - 周/月活动汇总按本地日期归属；同日不同训练热量相加，日汇总重复观测仍取中位数，不混合来源。报告保留指标单位和部分覆盖限制，未知热量单位不补为千卡。
@@ -86,12 +86,12 @@
 以下为当前核验与仍保留的历史基线：
 
 - 当前工作分支为 `fix/zepp-identity-ownership`；本轮文档只同步当前本地契约，不改变英文 sidecar 的运行时角色。
-- Windows 与服务器 Linux 完整 Python 套件各通过 `591` 项、服务器 API/同步 worker active 以及 `healthz=ok` 均属于此前部署的历史基线；本轮没有新的服务器验证或生产访问。此前部署前 SQLite 备份通过 `quick_check`，未执行结构迁移。
+- 已核验晨报调度持续执行但返回 `stored_data_incomplete`：通用历史入口成功，而其余运动分类入口不可用，前七天训练历史未获完整证明。事实版不会把不可用解释为空记录，也不会修改历史覆盖标记。服务器备份和 schema 审计通过，未执行结构迁移。
 - 已确认的 Zepp 语义继续有效：压力日汇总来自 `all_day_stress` 字段，曲线来自显式时间戳 `data` 数组；`Charge/stress_data` protobuf 和 `Charge/insight_data` 仍无可证明语义，继续不请求。
-- 2026-09-06 的部署和单次测试晚报投递属于此前授权的历史记录；本轮实现只修改本地代码、合成测试和文档，不重复部署、生产访问或测试推送，也不延伸此前授权。
+- 本轮只执行当前明确授权的备份、部署、服务重启和报告验收；晚报测试不写正式标记，事实版晨报成功后按正常每日标记去重。不复用更早的单次推送授权。
 
 ## 10. 当前未完成事项
 
 - [ ] 根据用户对新版实际测试晚报的内容反馈进行后续调整；额外测试推送需要新的明确授权。
 - [ ] 为持久同步账本建立生产备份/恢复演练与长期数据保留策略。
-- [ ] 取得可验证的 Zepp 动作字典和 App 修正力量动作组来源；当前实现只支持已观测力量 62 列中的有限字段，`unit` 和动作 `name` 仍未知，不得把 code 臆造为动作名称。
+- [ ] 完善 Zepp 动作字典和 App 修正力量动作组来源；当前只有有限、已核验的名称显示对照，不能泛化到未知代码；`unit` 和未映射动作的 `name` 仍未知。

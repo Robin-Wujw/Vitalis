@@ -239,7 +239,7 @@ from an endpoint name or descriptive text.
 Zepp workout history is returned by `/v1/sport/run/history.json`; the response may mix
 multiple activities, so each record's numeric `type` is authoritative. Workout detail
 comes from `/v1/sport/run/detail.json`. Vitalis normalizes its compressed series into
-typed UTC observations in `workout_metric_samples`; the current `WorkoutDetail` contract is `5.0`
+typed UTC observations in `workout_metric_samples`; the current `WorkoutDetail` contract is `5.1`
 and shares `WORKOUT_DETAIL_SCHEMA_VERSION`. The current contract supports heart rate, speed,
 equivalent pace, cadence, stride length, cumulative distance, altitude, running power,
 ground-contact time, vertical oscillation, vertical stride ratio, laps, pauses, and explicit
@@ -267,14 +267,15 @@ Observations use `source`=`strength_sets` or `lap_62`, plus `vendor_exercise_cod
 `weight_unit`, and `limitations`; `lap_62` is limited to these observed fields and enters independent
 ordered `observed_sets`, not `explicit_exercises`, exercise/muscle coverage, or prescription evidence.
 Integer `reps` are converted to a string across layers. Unknown units remain unknown and are not given
-`kg`; negative sentinels remain `None` and are not treated as bodyweight. Without a verified exercise
-dictionary, only the code is shown and no exercise name is invented. Local whole-session user
+`kg`; negative sentinels remain `None` and are not treated as bodyweight. Names are displayed only for the limited verified codes in `ZEPP_STRENGTH_LAP_LABELS`,
+with `exercise_name_reference_mapping` identifying their source; unknown codes remain codes,
+and no exercise name is invented. Local whole-session user
 confirmation takes precedence over vendor sets. Cached workout details from the recent 28 days are
 refreshed within a budget of at most 4 per pass, with no guarantee that one pass covers all; refresh
 time is recorded in `fetched_at`. Controlled checks confirmed that the cloud can return
 `strengthSets="[]"`, empty `memo`, and nonempty `strengthAssess`; this does not prove that
 app-corrected records are absent. The lap suffix is not wholly undecodable: only limited fields
-from the observed strength 62-column layout are supported; unit/name remain unknown, and
+from the observed strength 62-column layout are supported; unit and unmapped exercise names remain unknown, and
 other trailing columns without definitions are not decoded.
 
 `second_heart_rate/real_data` returns file indexes rather than samples. Ordinary health

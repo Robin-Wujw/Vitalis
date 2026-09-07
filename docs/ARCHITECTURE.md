@@ -86,15 +86,15 @@ Zepp 失败带有机器可读的类型。只有显式的 `not_available` 响应�
 不受支持的可选能力；身份认证、网络、服务和厂商响应失败仍然是失败。
 空的成功云响应和非空的未识别载荷会保留不同的获取/解析/写入状态。
 
-训练详情仅采用当前契约（`schema_version=5.0`，共享 `WORKOUT_DETAIL_SCHEMA_VERSION`）。
+训练详情仅采用当前契约（`schema_version=5.1`，共享 `WORKOUT_DETAIL_SCHEMA_VERSION`）。
 在后续同步窗口中，旧版详情契约的行会分批、限量获取和替换，以免历史升级耗尽整个健康同步预算。
 Zepp 增量/时间序列会解码为类型化指标样本。分圈仅保留已验证的序号、时长和距离语义；暂停保留开始时间和时长。
 对于力量训练，`strength_sets` 的有效观测优先；仅当 `training_family=strength` 且 lap 行恰为 62 列时，才从
 0-based 21、22、28 读取重量原数值、正整数次数和正整数 `vendor_exercise_code`，保留 `order`，并以
 `source`=`strength_sets` 或 `lap_62`、`weight_value`、`weight_unit`、`limitations` 等字段独立保存。
 `lap_62` 只进入有序 `observed_sets`，不进入 `explicit_exercises`，不抬高覆盖、肌群或训练处方；有效
-`strength_sets` 不与其重复叠加。负 sentinel 保持 `None`，不认定自重；无单位不补 `kg`，无验证动作字典时
-只显示 code，不臆造动作名称。跑步分析从规范化数据流中推导移动时间、每公里配速、心率和海拔；空白或无文档
+`strength_sets` 不与其重复叠加。负 sentinel 保持 `None`，不认定自重；无单位不补 `kg`，已核验名称仅来自 `ZEPP_STRENGTH_LAP_LABELS` 的有限显示对照，标记 `exercise_name_reference_mapping`；
+未知 code 不臆造动作名称。跑步分析从规范化数据流中推导移动时间、每公里配速、心率和海拔；空白或无文档
 说明的厂商字段保持缺失，力量评估载荷不会被重新解释为动作名称。
 
 ## 3. 健康智能层
@@ -125,7 +125,7 @@ Zepp 增量/时间序列会解码为类型化指标样本。分圈仅保留已�
 
 ### 3.1 DailyProfile
 
-线格式契约为 `schema_version=14.0`，并使用 `Intelligence 13.0`。每项结果分别携带 `analysis_run_id`、
+线格式契约为 `schema_version=14.0`，并使用 `Intelligence 14.0`。每项结果分别携带 `analysis_run_id`、
 `intelligence_version`、`decision_policy_version` 和 `evidence_version`：
 
 ```text
@@ -383,7 +383,7 @@ Vitalis 不会根据年龄估算最大 HR。心率漂移要求至少 20 分钟�
 ### 3.11 力量训练分析
 
 DailyProfile 14.0 通过 Strength Analysis v2 嵌入 `TrainingFeatures.strength`，并使用
-`Intelligence 13.0`。用户可以针对自己拥有的一项力量训练确认动作名称、组数、重复次数、负荷、
+`Intelligence 14.0`。用户可以针对自己拥有的一项力量训练确认动作名称、组数、重复次数、负荷、
 RPE/RIR、休息和训练重点。Vitalis 会将已知的中文或英文动作名称规范化为动作模式和肌肉群，
 同时保留原始名称作为可审计事实。
 
@@ -395,7 +395,7 @@ RPE/RIR、休息和训练重点。Vitalis 会将已知的中文或英文动作�
 肌群覆盖或训练处方。缺少明确动作时，训练心率或经验证的零距离分圈可以估算做功组数和做功/休息时长，
 但无法识别深蹲、卧推或任何目标肌肉。力量训练心率区间仅描述心血管上下文，绝不代表负荷强度。
 `strengthSets` 可为字符串或列表；跨层会将整数 `reps` 转为字符串。负 sentinel 保持 `None`，不认定自重；
-未知单位不补写 `kg`，无经验证动作字典时只显示 code，不臆造动作名称。本地整场用户确认数据优先于
+未知单位不补写 `kg`，已核验代码可使用有限显示名称对照，未知 code 不臆造动作名称。本地整场用户确认数据优先于
 供应商组数据，晚报逐组显示确认记录或观测组，晨报处方不混入历史观测组。近期 28 日已缓存的力量详情
 只做有界刷新（每次最多 4 个预算，不能保证一次覆盖全部），刷新时间记录在 `fetched_at`。
 
@@ -484,7 +484,7 @@ Monthly renderer 是显式的读取/展示能力，不新增 cron。报告不会
 不会重复一次已成功的 PushPlus 发送。晚间报告不受晨间睡眠门控阻止。
 
 晨间渲染器是完整 DailyProfile 之上的确定性展示选择层。它通过 `MorningBriefing
-schema_version=3.0` 输出睡眠与身体状态观察、当天可用的跑步/力量上下文、一个结论、具体的
+schema_version=4.0` 输出睡眠与身体状态观察、当天可用的跑步/力量上下文、一个结论、具体的
 主要/可选操作、简短理由、至多一个可采取行动的事件，以及仅有实质影响的注意事项。
 当天尚未有 workout 不是缺项；只有决策所需信号不足才会返回 `INSUFFICIENT_DATA`。
 晨报处方不混入历史 `observed_sets`。按设备划分的数据流、原始趋势窗口、空信号组、未知安全输入、

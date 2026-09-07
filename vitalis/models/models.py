@@ -189,13 +189,13 @@ class StrengthSetObservation(BaseModel):
     rest_seconds: int | None = Field(default=None, ge=0)
 
 
-WORKOUT_DETAIL_SCHEMA_VERSION = "5.0"
+WORKOUT_DETAIL_SCHEMA_VERSION = "5.1"
 
 
 class WorkoutDetail(BaseModel):
     """Current normalized workout-detail contract."""
 
-    schema_version: Literal["5.0"] = WORKOUT_DETAIL_SCHEMA_VERSION
+    schema_version: Literal["5.1"] = WORKOUT_DETAIL_SCHEMA_VERSION
     workout_id: str
     metrics_present: list[str] = Field(default_factory=list)
     metric_sample_counts: dict[str, int] = Field(default_factory=dict)

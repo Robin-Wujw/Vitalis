@@ -1,6 +1,7 @@
 from datetime import date
 from types import SimpleNamespace
 
+from vitalis.connectors.zepp.parser import ZEPP_STRENGTH_LAP_LABELS
 from vitalis.intelligence.contracts import StrengthExerciseInput, TrainingPreferences
 from vitalis.intelligence.evening_briefing import EveningBriefingEngine
 from vitalis.intelligence.strength import StrengthAnalyzer, normalize_exercise
@@ -81,6 +82,47 @@ def test_evening_prefers_observed_rows_and_preserves_units_and_missing_weight():
     assert not any(item.startswith("动作 卧推：") for item in facts)
 
 
+def test_mapped_lap_names_render_while_unknown_codes_stay_unconfirmed():
+    observed_sets = [
+        {
+            "source": "lap_62",
+            "order": order,
+            "vendor_exercise_code": code,
+            "exercise_name": name,
+            "limitations": ["exercise_name_reference_mapping"],
+            "repetitions": 8,
+        }
+        for order, (code, name) in enumerate(ZEPP_STRENGTH_LAP_LABELS.items(), start=1)
+    ]
+    observed_sets.append({
+        "source": "lap_62",
+        "order": 6,
+        "vendor_exercise_code": 801,
+        "limitations": ["exercise_name_unverified"],
+        "repetitions": 8,
+    })
+    raw = RawDailyProfile(user_id="synthetic-mapped-lap", day=TARGET)
+    raw.workouts = [_workout({"strength_sets": observed_sets})]
+
+    session = StrengthAnalyzer()._session(raw, raw.workouts[0], None)
+    mapped_only_raw = RawDailyProfile(user_id="synthetic-mapped-only", day=TARGET)
+    mapped_only_raw.workouts = [_workout({"strength_sets": observed_sets[:-1]})]
+    mapped_only_session = StrengthAnalyzer()._session(mapped_only_raw, mapped_only_raw.workouts[0], None)
+    report = EveningBriefingEngine().build(_payload(session.model_dump(mode="json")))
+    text = "\n".join(report.sections[0].facts)
+
+    assert not any("观测组动作名称未确认" in item for item in mapped_only_session.limitations)
+    assert session.explicit_exercises == []
+    assert session.focus == "UNKNOWN"
+    assert session.muscle_groups == []
+    assert any("已核验编码对照" in item for item in session.limitations)
+    assert any("观测组动作名称未确认" in item for item in session.limitations)
+    for name in ZEPP_STRENGTH_LAP_LABELS.values():
+        assert name in text
+    assert "动作代码 801（名称未确认）" in text
+    assert any("已核验编码对照" in item for item in report.sections[0].limitations)
+
+
 def test_confirmed_exercises_win_over_observed_rows_but_observations_remain_in_session():
     confirmed = normalize_exercise(
         "synthetic-confirmed",
@@ -107,7 +149,14 @@ def test_confirmed_exercises_win_over_observed_rows_but_observations_remain_in_s
 def test_lap_observation_does_not_raise_coverage_focus_or_prescription():
     raw = RawDailyProfile(user_id="synthetic-lap", day=TARGET)
     raw.workouts = [_workout({"strength_sets": [
-        {"source": "lap_62", "order": 4, "vendor_exercise_code": 62, "repetitions": 12},
+        {
+            "source": "lap_62",
+            "order": 4,
+            "vendor_exercise_code": 64,
+            "exercise_name": ZEPP_STRENGTH_LAP_LABELS[64],
+            "limitations": ["exercise_name_reference_mapping"],
+            "repetitions": 12,
+        },
     ]})]
 
     analysis = StrengthAnalyzer().analyze(raw)
@@ -124,7 +173,7 @@ def test_lap_observation_does_not_raise_coverage_focus_or_prescription():
     assert session.focus == "UNKNOWN"
     assert session.muscle_groups == []
     assert planned.code == "strength_full_body"
-    assert "动作代码 62" not in " ".join(step.name for step in planned.steps)
+    assert ZEPP_STRENGTH_LAP_LABELS[64] not in " ".join(step.name for step in planned.steps)
 
 
 def test_observed_report_uses_existing_html_escape_path():

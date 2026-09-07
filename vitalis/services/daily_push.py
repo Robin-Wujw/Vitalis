@@ -146,6 +146,9 @@ def deliver_daily_report(
                 "date": current_date.isoformat(),
                 "reason": "stale_plan_expired",
             }
+    if sync_status in {"needs_reauth", "token_required", "failed", "cancelled"}:
+        return {"status": "deferred", "period": period, "date": current_date.isoformat(),
+                "reason": "unusable_sync_state", "sync_status": sync_status}
     marker = _delivery_marker(Path(state_dir), user_id, current_date, period)
     guard = nullcontext() if test_delivery else _delivery_lock(marker)
     with guard:
@@ -181,14 +184,20 @@ def deliver_daily_report(
                 "sync_degraded": sync_degraded,
                 "sync_status": sync_status,
             }
-        payload = deepcopy(daily) if sync_degraded or retrospective else daily
-        if sync_degraded or retrospective:
+        facts_only_reason = (
+            _morning_facts_only_reason(daily) if period == "morning" else None
+        )
+        facts_only = facts_only_reason is not None
+        payload = deepcopy(daily) if sync_degraded or retrospective or facts_only else daily
+        if sync_degraded or retrospective or facts_only:
             metadata = dict(payload.get("delivery_metadata") or {})
             if sync_degraded:
                 metadata.update(sync_degraded=True, sync_status=sync_status, sync_detail=sync_detail)
             if retrospective:
                 metadata["retrospective"] = True
                 payload.pop("decision", None)
+            if facts_only:
+                metadata.update(facts_only=True, coverage_reason=facts_only_reason)
             payload["delivery_metadata"] = metadata
         results = PushService(pushplus_token=pushplus_token).push_daily_profile(
             user_id, payload, period=period
@@ -209,6 +218,12 @@ def deliver_daily_report(
             outcome["scheduled_delivery_unchanged"] = True
         if retrospective:
             outcome["retrospective"] = True
+        if facts_only:
+            outcome.update(
+                mode="facts_only",
+                facts_only=True,
+                coverage_reason=facts_only_reason,
+            )
         return outcome
 
 
@@ -303,7 +318,35 @@ def _analyze(client: httpx.Client, day: date) -> dict:
 
 def _sleep_is_complete(daily: dict) -> bool:
     sleep = daily.get("features", {}).get("sleep", {})
-    return sleep.get("status") == "AVAILABLE" and bool(sleep.get("wake_time"))
+    wake_time = sleep.get("wake_time")
+    return (
+        sleep.get("status") == "AVAILABLE"
+        and isinstance(wake_time, str)
+        and bool(wake_time.strip())
+    )
+
+
+def _training_history(daily: dict) -> dict | None:
+    context = daily.get("report_context")
+    history = context.get("training_history") if isinstance(context, dict) else None
+    if isinstance(history, dict):
+        return history
+    training = (daily.get("features") or {}).get("training") or {}
+    history = training.get("history_coverage") if isinstance(training, dict) else None
+    return history if isinstance(history, dict) else None
+
+
+def _morning_facts_only_reason(daily: dict) -> str | None:
+    if not _sleep_is_complete(daily):
+        return None
+    if (daily.get("data_quality") or {}).get("status") not in {"SUFFICIENT", "PARTIAL"}:
+        return None
+    history = _training_history(daily)
+    if history is None:
+        return "training_history_missing"
+    if history.get("prior_7d_verified") is True:
+        return None
+    return "prior_7d_unverified"
 
 
 def _stored_profile_is_usable(
@@ -316,13 +359,15 @@ def _stored_profile_is_usable(
     if not isinstance(history, dict):
         training = (daily.get("features") or {}).get("training") or {}
         history = training.get("history_coverage")
+    if period == "morning":
+        # Keep the established full-report gate, and separately admit only
+        # eligible facts-only profiles when training history is unverified.
+        return _sleep_is_complete(daily) and (
+            (isinstance(history, dict) and history.get("prior_7d_verified") is True)
+            or _morning_facts_only_reason(daily) is not None
+        )
     if not isinstance(history, dict):
         return False
-    if period == "morning":
-        # Morning delivery needs the prior seven days to be verified.  The
-        # current day may still be an in-progress window; absence of a workout
-        # today is not an incompleteness signal.
-        return bool(history.get("prior_7d_verified")) and _sleep_is_complete(daily)
     if history.get("status") in {"COMPLETE", "PARTIAL"}:
         return True
     # An unknown training window does not erase same-day facts.  Evening may

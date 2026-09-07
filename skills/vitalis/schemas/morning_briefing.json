@@ -977,11 +977,11 @@
       "type": "object"
     }
   },
-  "description": "Non-persistent observation and action projection of one DailyProfile.",
+  "description": "Non-persistent full or facts-only projection of one DailyProfile.",
   "properties": {
     "schema_version": {
-      "const": "3.0",
-      "default": "3.0",
+      "const": "4.0",
+      "default": "4.0",
       "title": "Schema Version",
       "type": "string"
     },
@@ -1011,7 +1011,15 @@
       "type": "string"
     },
     "action_plan": {
-      "$ref": "#/$defs/ActionPlan"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ActionPlan"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "report_context": {
       "additionalProperties": true,
@@ -1067,12 +1075,11 @@
     "generated_at",
     "decision_action",
     "action_label",
-    "action_plan",
     "data_quality",
     "evidence"
   ],
-  "title": "Vitalis MorningBriefing 3.0",
+  "title": "Vitalis MorningBriefing 4.0",
   "type": "object",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/morning-briefing-3.0.json"
+  "$id": "https://vitalis.local/schemas/morning-briefing-4.0.json"
 }

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from vitalis.connectors.zepp.fetcher import FetchedRecord, RawRecord
-from vitalis.connectors.zepp.parser import ZeppParser
+from vitalis.connectors.zepp.parser import ZEPP_STRENGTH_LAP_LABELS, ZeppParser
 from vitalis.connectors.zepp.sync_manager import SyncManager
 from vitalis.models import User, Workout, WorkoutDetail, WORKOUT_DETAIL_SCHEMA_VERSION
 from vitalis.storage import HealthRepository, session_scope
@@ -48,6 +48,17 @@ def test_strength_lap_keeps_order_codes_and_unconfirmed_weight_units():
     assert all(item.weight_kg is None and item.weight_unit is None for item in sets)
     assert all("weight_unit_unverified" in item.limitations for item in sets)
     assert WorkoutDetail.model_validate_json(detail.model_dump_json()).strength_sets == sets
+
+
+@pytest.mark.parametrize("code, expected_name", list(ZEPP_STRENGTH_LAP_LABELS.items()))
+def test_strength_lap_maps_only_verified_display_codes(code, expected_name):
+    observed, = detail_for(lap_row(code=str(code))).strength_sets
+    assert observed.vendor_exercise_code == code
+    assert observed.exercise_name == expected_name
+    assert observed.exercise_id is None
+    assert observed.source == "lap_62"
+    assert "exercise_name_reference_mapping" in observed.limitations
+    assert "exercise_name_unverified" not in observed.limitations
 
 
 @pytest.mark.parametrize("family", [None, "aerobic", "unknown", "Strength"])
@@ -121,6 +132,15 @@ def test_valid_strength_sets_take_precedence_without_merging_lap(explicit):
     assert observed.vendor_exercise_code is None
 
 
+def test_explicit_strength_sets_are_not_rewritten_by_lap_display_mapping():
+    detail = detail_for(lap_row(code="64"), explicit=[{"exerciseName": "用户确认动作", "reps": 7}])
+    observed, = detail.strength_sets
+    assert observed.source == "strength_sets"
+    assert observed.exercise_name == "用户确认动作"
+    assert observed.vendor_exercise_code is None
+    assert "exercise_name_reference_mapping" not in observed.limitations
+
+
 def test_explicit_strength_set_units_remain_distinct():
     detail = detail_for(lap_row(), explicit=[
         {"reps": 7, "weightKg": 12},
@@ -178,12 +198,13 @@ def test_sync_uses_stored_family_and_persists_ordered_observations(family, expec
         assert any("17.5（单位未确认）" in item for item in section["facts"])
 
 
-def test_fresh_previous_schema_still_enters_detail_backlog():
-    user = "lap-schema-backlog"
+@pytest.mark.parametrize("previous_schema", ["4.0", "5.0"])
+def test_fresh_previous_schema_still_enters_detail_backlog(previous_schema):
+    user = f"lap-schema-backlog-{previous_schema}"
     with session_scope() as db:
         repo = HealthRepository(db)
         repo.upsert_user(user)
-        for name, schema in (("old", "4.0"), ("current", WORKOUT_DETAIL_SCHEMA_VERSION)):
+        for name, schema in (("old", previous_schema), ("current", WORKOUT_DETAIL_SCHEMA_VERSION)):
             repo.save_workout(Workout(
                 user_id=user, workout_id=name, started_at=START, duration=5,
                 training_family="strength", vendor_source="synthetic-source",

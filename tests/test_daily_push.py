@@ -779,3 +779,69 @@ def test_evening_unknown_history_without_same_day_facts_defers(monkeypatch, tmp_
     )
     assert result["status"] == "deferred"
     assert result["reason"] == "stored_data_incomplete"
+
+
+def test_morning_unverified_history_sends_facts_only_once_after_sync(
+    monkeypatch, tmp_path
+):
+    requests = []
+    sent = []
+    profile = _daily()
+    profile["report_context"]["training_history"].update(
+        status="PARTIAL", prior_7d_verified=False
+    )
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def post(self, path, **kwargs):
+            requests.append((path, kwargs))
+            if path.endswith("/sync"):
+                return Response({"status": "synced", "success": True})
+            return Response({"daily": profile})
+
+    class Service:
+        def __init__(self, pushplus_token):
+            pass
+
+        def push_daily_profile(self, user_id, daily, period):
+            sent.append((user_id, daily, period))
+            return {"_pushplus_handler": "ok"}
+
+    monkeypatch.setattr(daily_push.httpx, "Client", Client)
+    monkeypatch.setattr(daily_push, "PushService", Service)
+    kwargs = {
+        "period": "morning",
+        "target_date": date(2026, 8, 29),
+        "state_dir": tmp_path,
+    }
+
+    first = daily_push.run_daily_push("explicit-user", "private-token", **kwargs)
+    second = daily_push.run_daily_push("explicit-user", "private-token", **kwargs)
+
+    assert requests == [
+        ("/api/v1/health/sync", {"params": {"days": 2, "enqueue_only": "true"}}),
+        ("/api/v1/intelligence/analyze", {"params": {"day": "2026-08-29"}}),
+    ]
+    assert first["status"] == "sent"
+    assert first["mode"] == "facts_only"
+    assert first["facts_only"] is True
+    assert first["coverage_reason"] == "prior_7d_unverified"
+    assert second == {
+        "status": "already_sent",
+        "period": "morning",
+        "date": "2026-08-29",
+    }
+    assert len(sent) == 1
+    assert sent[0][1]["delivery_metadata"] == {
+        "facts_only": True,
+        "coverage_reason": "prior_7d_unverified",
+    }
+    assert len(list(tmp_path.glob("*.sent"))) == 1

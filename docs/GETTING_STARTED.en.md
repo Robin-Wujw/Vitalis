@@ -146,6 +146,13 @@ Morning delivery already recorded for that date. The Morning report shows return
 body-state, and available same-day running/strength context; the absence of a workout so far
 today is not a missing item. It never substitutes yesterday's profile.
 
+When sleep is complete but training history for the previous seven days is unverified, the
+Morning report is facts-only: it shows only sleep and body state, explicitly discloses the
+history gap, and contains no exercise, intensity, or weight prescription. Incomplete sleep,
+expired dates, and invalid credentials still block delivery. A successful facts-only delivery
+also writes the daily Morning deduplication marker, so subsequent hourly retries do not send
+it again; test mode leaves the scheduled marker unchanged.
+
 A separate Hermes job runs at 22:30, synchronizes one day, and sends an Evening report for
 the current date. The Evening report reviews actual workout details in `started_at` order;
 when returned, it shows running metrics, confirmed strength records, and ordered `observed_sets`,

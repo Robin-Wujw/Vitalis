@@ -7088,8 +7088,8 @@
       "type": "string"
     },
     "intelligence_version": {
-      "const": "13.0",
-      "default": "13.0",
+      "const": "14.0",
+      "default": "14.0",
       "title": "Intelligence Version",
       "type": "string"
     },

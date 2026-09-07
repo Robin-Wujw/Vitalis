@@ -155,13 +155,20 @@ def _render_report_html(lines: list[str]) -> str:
 
 def _render_morning(briefing: dict) -> tuple[str, list[str]]:
     date = briefing.get("date", "日期未提供")
-    plan = briefing.get("action_plan") or {}
-    primary = plan.get("primary_session") or {}
-    title_label = primary.get("title") or briefing.get("action_label", "今日安排")
-    title = f"Vitalis 晨报 · {date} · {title_label}"
+    metadata = (briefing.get("report_context") or {}).get("delivery_metadata") or {}
+    facts_only = bool(metadata.get("facts_only"))
+    if facts_only:
+        title = f"Vitalis 晨报 · {date} · 事实版"
+    else:
+        plan = briefing.get("action_plan") or {}
+        primary = plan.get("primary_session") or {}
+        title_label = primary.get("title") or briefing.get("action_label", "今日安排")
+        title = f"Vitalis 晨报 · {date} · {title_label}"
     lines = _timing_lines(briefing) + [f"# 晨报 · {date}", "", *briefing.get("summary", [])]
-    retrospective = bool((briefing.get("report_context") or {}).get("delivery_metadata", {}).get("retrospective"))
+    retrospective = bool(metadata.get("retrospective"))
     for section in briefing.get("sections", []):
+        if facts_only and section.get("key") not in {"sleep", "recovery"}:
+            continue
         if retrospective and section.get("key") == "today_plan":
             continue
         lines.extend(["", f"## {section.get('title', '分析')}", ""])
@@ -171,10 +178,11 @@ def _render_morning(briefing: dict) -> tuple[str, list[str]]:
     if briefing.get("cautions"):
         lines.extend(["", "## 必要限制", ""])
         lines.extend(f"- {item}" for item in briefing["cautions"])
-    safety = MorningBriefingEngine.safety_lines(briefing)
-    if safety:
-        lines.extend(["", "## 安全限制", ""])
-        lines.extend(f"- {item}" for item in safety)
+    if not facts_only:
+        safety = MorningBriefingEngine.safety_lines(briefing)
+        if safety:
+            lines.extend(["", "## 安全限制", ""])
+            lines.extend(f"- {item}" for item in safety)
     return title, lines
 
 

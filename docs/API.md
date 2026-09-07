@@ -41,7 +41,7 @@ HTTP `409`；现有凭据及两个用户的历史记录均保持不变。
 | GET | `/intelligence/profile` | 读取带修订版本的用户确认生理和睡眠档案 |
 | PATCH | `/intelligence/profile` | 在 `expected_revision` 冲突保护下修补明确指定的档案字段 |
 | GET | `/intelligence/daily?day=YYYY-MM-DD` | 读取 DailyProfile 14.0 事实、持久化的决策证据以及仅用于影子计算的开放健康洞察 |
-| GET | `/intelligence/morning-briefing?day=YYYY-MM-DD` | 读取 MorningBriefing schema_version=3.0 的晨间展示投影 |
+| GET | `/intelligence/morning-briefing?day=YYYY-MM-DD` | 读取 MorningBriefing schema_version=4.0 的晨间展示投影 |
 | GET | `/intelligence/evening-briefing?day=YYYY-MM-DD` | 读取 ReportBriefing 1.0 的晚间展示投影 |
 | GET | `/intelligence/weekly?day=YYYY-MM-DD` | 读取 WeeklyProfile 6.0 的滚动 7 天档案及与前一周的比较 |
 | GET | `/intelligence/weekly-briefing?day=YYYY-MM-DD` | 读取 ReportBriefing 1.0 的每周展示投影 |
@@ -76,7 +76,7 @@ HTTP `409`；现有凭据及两个用户的历史记录均保持不变。
 | GET | `/health/token-status` | 读取凭据状态和下次同步时间 |
 | GET | `/health/range?from=&to=&granularity=` | 读取 180d/90d/30d/7d/1d 聚合数据块 |
 | GET | `/health/workouts?from=&to=` | 列出训练摘要及详细信息的可用性 |
-| GET | `/health/workouts/{workout_id}?source=` | 读取当前 `WorkoutDetail 5.0` 训练详情及按数据源隔离的类型化样本 |
+| GET | `/health/workouts/{workout_id}?source=` | 读取当前 `WorkoutDetail 5.1` 训练详情及按数据源隔离的类型化样本 |
 | GET | `/health/metrics/{metric}?from=&to=&resolution=` | 读取带时间戳的测量值；raw/hour/day 数据点保留数据源、范围、设备和单位 |
 | GET | `/health/daily-metrics?metric=&from=&to=` | 读取带数据源来源信息的稀疏每日指标 |
 | GET | `/health/dense-files/second_heart_rate?from=&to=` | 读取不含文件 ID 的高频文件覆盖信息 |
@@ -172,7 +172,7 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/st
 
 ## 契约边界
 
-- `GET /intelligence/morning-briefing` 返回 `MorningBriefing schema=3.0` 的 `observations`、`key_reasons`、`cautions` 和 `report_context`；当天没有 workout 不构成缺项。
+- `GET /intelligence/morning-briefing` 返回 `MorningBriefing schema=4.0` 的 `observations`、`key_reasons`、`cautions` 和 `report_context`；当天没有 workout 不构成缺项。事实版投递通过 `report_context.delivery_metadata.facts_only` 标识，`action_plan` 为空或省略，禁止包含处方；完整晨报仍要求 `action_plan`。
 - `GET /intelligence/evening-briefing`、`GET /intelligence/weekly-briefing` 和 `GET /intelligence/monthly-briefing` 返回 `ReportBriefing 1.0`。这些报告使用与 HTML renderer 相同的 `sections`；它们不能从 raw profile 自由拼接，也不是新的定时任务。
 - `POST /intelligence/analyze` 是计算命令；GET 端点不会运行或更改分析。
   当不存在快照时，`GET /intelligence/explain` 返回 404；Hermes 解释必须报告该状态，
@@ -199,8 +199,8 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/st
   `vendor_exercise_code`，并保留 `order`。这些观测使用 `source`=`strength_sets` 或 `lap_62`，
   以及 `vendor_exercise_code`、`weight_value`、`weight_unit`、`limitations` 字段；`lap_62`
   仅进入有序 `observed_sets`，不进入 `explicit_exercises`，不抬高动作覆盖、肌群覆盖或训练处方。
-  未知单位保持未知，不补 `kg`；负 sentinel 保持 `None`，不认定自重；没有经验证动作字典时只显示
-  code，不臆造动作名称。确认记录优先，晚报逐组展示；晨报处方不混入历史观测组。近期 28 日详情
+  未知单位保持未知，不补 `kg`；负 sentinel 保持 `None`，不认定自重；仅使用 `ZEPP_STRENGTH_LAP_LABELS` 的有限显示映射，并用 `exercise_name_reference_mapping` 标注来源；未知
+  code 不臆造动作名称。确认记录优先，晚报逐组展示；晨报处方不混入历史观测组。近期 28 日详情
   最多按 4 个预算有界刷新，`fetched_at` 记录刷新时间，不保证一次覆盖全部。
 - `decision.action_plan` 包含一个主要训练环节，以及至多一个可选的附加项或替代项。
   它包含 7/28 天平衡、安全状态、冲突检查、证据、剂量、停止条件、

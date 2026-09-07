@@ -100,7 +100,7 @@ may be treated as an unsupported optional capability; authentication, network, s
 and vendor-response failures remain failures. Empty successful cloud responses and
 non-empty unrecognized payloads keep distinct fetch/parse/write states.
 
-Workout detail is current-contract-only (`schema_version=5.0`, shared
+Workout detail is current-contract-only (`schema_version=5.1`, shared
 `WORKOUT_DETAIL_SCHEMA_VERSION`). Rows from older detail contracts are fetched and replaced
 in bounded batches during subsequent synchronization windows so a historical upgrade cannot
 consume the whole health-sync budget. Zepp delta/time series are decoded into typed metric
@@ -112,8 +112,8 @@ positions 21, 22, and 28, with `order` retained and `source`=`strength_sets` or 
 `weight_value`, `weight_unit`, and `limitations` preserved independently. `lap_62` enters only
 ordered `observed_sets`, never `explicit_exercises`, coverage, muscle coverage, or prescription,
 and valid `strength_sets` are not double-counted with it. Negative sentinels remain `None` and
-are not treated as bodyweight; missing units do not become `kg`, and without a verified exercise
-dictionary only the code is shown, never an invented exercise name. Running analysis derives
+are not treated as bodyweight; missing units do not become `kg`, and verified names come only from the limited display reference `ZEPP_STRENGTH_LAP_LABELS`,
+marked `exercise_name_reference_mapping`; names are never invented for unknown codes. Running analysis derives
 moving time, per-kilometre pace, heart rate, and elevation from these normalized streams. Empty
 or undocumented vendor fields remain absent, and strength assessment payloads are not
 reinterpreted as exercise names.
@@ -146,7 +146,7 @@ The implementation lives in `vitalis/intelligence`:
 
 ### 3.1 DailyProfile
 
-The wire contract is `schema_version=14.0` and uses `Intelligence 13.0`. Every result carries `analysis_run_id`,
+The wire contract is `schema_version=14.0` and uses `Intelligence 14.0`. Every result carries `analysis_run_id`,
 `intelligence_version`, `decision_policy_version`, and `evidence_version` separately:
 
 ```text
@@ -440,7 +440,7 @@ natural observation, never as a universal cadence target.
 ### 3.11 Strength Analysis
 
 DailyProfile 14.0 embeds `TrainingFeatures.strength` with Strength Analysis v2 and uses
-`Intelligence 13.0`. A user can confirm exercise name, set count, repetitions, load, RPE/RIR,
+`Intelligence 14.0`. A user can confirm exercise name, set count, repetitions, load, RPE/RIR,
 rest, and session focus against a user-owned strength workout. Vitalis normalizes known Chinese
 or English exercise names to movement patterns and muscle groups while preserving the original
 name as the auditable fact.
@@ -458,7 +458,7 @@ duration, but cannot identify a squat, bench press, or any target muscle. Streng
 describe cardiovascular context only and never represent load intensity. `strengthSets` may be a
 string or a list; cross-layer handling converts integer `reps` to a string. Negative sentinels
 remain `None` and are not treated as bodyweight; unknown units remain unknown and `kg` is not added.
-Without a verified exercise dictionary, show only the code and do not invent an exercise name. Local
+Verified codes may use the limited display-name reference; do not invent names for unknown codes. Local
 whole-session user confirmation takes precedence over vendor sets; the evening report shows confirmed
 records or observed sets one by one, and morning prescriptions do not mix in historical observed sets.
 Cached strength detail from the recent 28 days is refreshed within a bounded budget (at most 4 per
@@ -559,7 +559,7 @@ delivery markers, so retries and overlapping invocations do not duplicate a succ
 PushPlus delivery. The evening report is not blocked by the morning sleep gate.
 
 The morning renderer is a deterministic presentation-selection layer over the complete
-DailyProfile. With `MorningBriefing schema_version=3.0`, it emits sleep and body-state observations,
+DailyProfile. With `MorningBriefing schema_version=4.0`, it emits sleep and body-state observations,
 available same-day running/strength context, one conclusion, concrete primary/optional actions,
 short reasons, at most one actionable event, and only consequential cautions. The absence of a
 workout so far today is not a missing item; only insufficient decision signals produce

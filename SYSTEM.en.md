@@ -40,7 +40,7 @@ Historical tasks, completed TODOs, session records, and per-run verification res
 - Before a destructive database operation, confirm the exact target, data value, recovery method, and user authorization.
 - Server databases, secrets, Zepp credentials, and PushPlus tokens must not appear in logs, documentation, commits, or conversation.
 - The server runs a verified commit. Fix parsers, data contracts, synchronization, morning reports, and tests locally before pushing, deploying, and verifying.
-- Send a PushPlus morning report only when current synchronization and analysis satisfy the contract; never generate today's training advice from stale or partially verified training history.
+- A PushPlus morning report with training prescriptions requires complete sleep and verified training history for the previous seven days. When sleep is complete but history is unverified, a clearly limited sleep and body-state facts-only report may be sent without training prescriptions. Date, credential, sleep-completeness, and daily deduplication gates still apply; never generate today's training advice from stale or partially verified training history.
 
 ## 6. Cross-Platform Conventions
 
@@ -75,8 +75,8 @@ Historical tasks, completed TODOs, session records, and per-run verification res
 
 Date: 2026-09-07
 
-- This implementation phase changes only local strength-observation parsing, analysis, evening reports, and related contracts; nothing was pushed or deployed, and production was not accessed. The full Windows Python suite passed `646` tests, including `47` bilingual Markdown and local link/anchor checks; `git diff --check` passed. Real HTTP verification using an isolated synthetic database returned 200 and confirmed set order, missing weight, unknown units, and prescription isolation. The `41a603e` deployment and the server full-suite result of `591` tests are historical baselines, not new verification for this round.
-- Current contracts are `WorkoutDetail 5.0` (shared `WORKOUT_DETAIL_SCHEMA_VERSION`), Daily 14.0, Weekly 6.0, Monthly 3.0, MorningBriefing 3.0, Agent Context 6.0, Intelligence 13.0, StrengthAnalysis 2.0, and Decision Policy 9.0. `GET /intelligence/evening-briefing`, `GET /intelligence/weekly-briefing`, and `GET /intelligence/monthly-briefing` return `ReportBriefing 1.0` and share the same `sections` with HTML.
+- The `7b48a51` strength-detail version was deployed, with `646` tests passing on both Windows and server Linux; the real evening API and one test delivery were verified. The new facts-only morning report and limited exercise display-name mapping passed `674` local tests, including `47` bilingual Markdown and local link/anchor checks; deployment acceptance remains pending.
+- Current local contracts are `WorkoutDetail 5.1` (shared `WORKOUT_DETAIL_SCHEMA_VERSION`), Daily 14.0, Weekly 6.0, Monthly 3.0, MorningBriefing 4.0, Agent Context 6.0, Intelligence 14.0, StrengthAnalysis 2.0, and Decision Policy 9.0. `GET /intelligence/evening-briefing`, `GET /intelligence/weekly-briefing`, and `GET /intelligence/monthly-briefing` return `ReportBriefing 1.0` and share the same `sections` with HTML.
 - Field-availability checks do not expose personal health values. General capabilities may be described, but personal health values, real records, and unverified app-corrected exercises are not written to the repository or claimed as obtained.
 - Only when `training_family=strength` and a lap row has exactly 62 columns are the limited weight, repetition, and exercise-code observations read from 0-based positions 21, 22, and 28; their set order is retained in independent `observed_sets`, not used as `explicit_exercises`, muscle coverage, or prescription evidence.
 - Weekly/monthly activity aggregation uses local dates; distinct workouts on the same day have their energy summed, while repeated daily summaries retain median reduction without mixing sources. Reports preserve metric units and partial-coverage limitations; unknown energy units are not filled in as kilocalories.
@@ -86,12 +86,12 @@ Date: 2026-09-07
 The following records current verification and retained historical baselines:
 
 - The current working branch is `fix/zepp-identity-ownership`; this documentation sync does not change the runtime role of English sidecars.
-- The full Windows and server Linux suite results of `591` tests, active server API/synchronization workers, `healthz=ok`, and clean Zepp identity/SQLite schema audits are historical baselines from the earlier deployment; this round performed no new server verification or production access. That deployment's SQLite backup passed `quick_check` without a structural migration.
+- Morning scheduling was verified to keep running but return `stored_data_incomplete`: the general history endpoint succeeds while other sport-specific endpoints are unavailable, so the previous seven days lack complete training-history proof. Facts-only delivery does not reinterpret unavailable endpoints as empty records or change history-coverage markers. Server backup and schema audits passed without a structural migration.
 - Verified Zepp semantics remain unchanged: daily stress summaries come from `all_day_stress` fields and curves from explicit timestamped `data`; `Charge/stress_data` protobuf and `Charge/insight_data` still have no provable semantics and remain unrequested.
-- The 2026-09-06 deployment and one-test-evening-report delivery are historical records under the user's prior authorization; this implementation changes only local code, synthetic tests, and documentation and does not repeat deployment, production access, or test delivery, nor extend that authorization.
+- This round performs only the currently authorized backup, deployment, service restart, and report acceptance checks. Evening tests do not write scheduled markers; a successful facts-only morning report uses normal daily deduplication. Earlier one-time push authorizations are not reused.
 
 ## 10. Current Unfinished Work
 
 - [ ] Make follow-up adjustments based on user feedback on the actual new-version test evening report; additional test pushes require fresh explicit authorization.
 - [ ] Establish a production backup/recovery drill and long-term data-retention policy for the durable synchronization ledger.
-- [ ] Obtain a verifiable Zepp exercise dictionary and source for app-corrected strength sets; the current implementation supports only limited fields from observed strength 62-column rows, while `unit` and exercise `name` remain unknown, and a code must not be invented into an exercise name.
+- [ ] Expand the Zepp exercise dictionary and source for app-corrected strength sets; only a limited, verified display-name reference currently exists and must not be generalized to unknown codes; `unit` and unmapped exercise `name` remain unknown.

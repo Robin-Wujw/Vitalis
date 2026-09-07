@@ -52,7 +52,7 @@ def test_daily_profile_after_sync(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["schema_version"] == "14.0"
-    assert body["intelligence_version"] == "13.0"
+    assert body["intelligence_version"] == "14.0"
     assert body["decision_policy_version"] == "9.0"
     assert body["evidence_version"] == "2026-09a"
     assert body["features"]["overnight_vitals"]["status"] == "INSUFFICIENT_DATA"
@@ -86,7 +86,7 @@ def test_morning_briefing_projects_persisted_daily_snapshot(client):
     assert briefing["action_plan"] == daily["decision"]["action_plan"]
     assert briefing["evidence"] == daily["decision"]["evidence"]
     assert briefing == analyzed.json()["morning_briefing"]
-    assert briefing["schema_version"] == "3.0"
+    assert briefing["schema_version"] == "4.0"
     assert len(briefing["sections"]) >= 3
     assert "feedback_prompt" not in briefing
     assert client.get(

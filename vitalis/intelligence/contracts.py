@@ -15,7 +15,7 @@ DateValue = date
 DAILY_SCHEMA_VERSION = "14.0"
 WEEKLY_SCHEMA_VERSION = "6.0"
 MONTHLY_SCHEMA_VERSION = "3.0"
-INTELLIGENCE_VERSION = "13.0"
+INTELLIGENCE_VERSION = "14.0"
 DECISION_POLICY_VERSION = "9.0"
 EVIDENCE_VERSION = "2026-09a"
 TRAINING_RESPONSE_SCHEMA_VERSION = "1.0"
@@ -1465,7 +1465,7 @@ class SubjectiveFeedback(BaseModel):
 class DailyProfile(BaseModel):
     schema_version: Literal["14.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
-    intelligence_version: Literal["13.0"] = INTELLIGENCE_VERSION
+    intelligence_version: Literal["14.0"] = INTELLIGENCE_VERSION
     decision_policy_version: Literal["9.0"] = DECISION_POLICY_VERSION
     evidence_version: Literal["2026-09a"] = EVIDENCE_VERSION
     user_id: str
@@ -1520,16 +1520,16 @@ class MorningBriefingReason(BaseModel):
 
 
 class MorningBriefing(BaseModel):
-    """Non-persistent observation and action projection of one DailyProfile."""
+    """Non-persistent full or facts-only projection of one DailyProfile."""
 
-    schema_version: Literal["3.0"] = "3.0"
+    schema_version: Literal["4.0"] = "4.0"
     analysis_run_id: str
     user_id: str
     date: DateValue
     generated_at: datetime
     decision_action: DecisionAction
     action_label: str
-    action_plan: ActionPlan
+    action_plan: ActionPlan | None = None
     report_context: dict[str, Any] = Field(default_factory=dict)
     summary: list[str] = Field(default_factory=list)
     sections: list[ReportSection] = Field(default_factory=list)
@@ -1538,6 +1538,20 @@ class MorningBriefing(BaseModel):
     cautions: list[str] = Field(default_factory=list)
     data_quality: DataQuality
     evidence: DecisionEvidence
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_delivery_mode(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        context = value.get("report_context") or {}
+        metadata = context.get("delivery_metadata") if isinstance(context, dict) else None
+        facts_only = isinstance(metadata, dict) and bool(metadata.get("facts_only"))
+        if facts_only and value.get("action_plan") is not None:
+            raise ValueError("facts-only morning reports cannot contain an action plan")
+        if not facts_only and value.get("action_plan") is None:
+            raise ValueError("full morning reports require an action plan")
+        return value
 
 
 class TrendResponse(BaseModel):

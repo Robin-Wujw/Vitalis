@@ -152,6 +152,14 @@ class EveningBriefingEngine:
         if not facts:
             facts.append("当天没有已记录的正式训练场次；这不等同于已确认休息日。")
         limitations = []
+        if any(
+            row.get("source") == "lap_62"
+            and row.get("exercise_name")
+            and "exercise_name_reference_mapping" in (row.get("limitations") or [])
+            for item in strength
+            for row in (item.get("observed_sets") or [])
+        ):
+            limitations.append("观测动作名称中的已映射名称来自已核验编码对照，仅用于展示，不据此处方。")
         if strength and not any(
             item.get("explicit_exercises")
             or any(self._has_observed_content(row) for row in (item.get("observed_sets") or []))

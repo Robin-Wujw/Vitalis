@@ -1,6 +1,7 @@
 """Build the complete, action-first morning presentation from a DailyProfile."""
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from .contracts import DailyProfile, MorningBriefing, ReportSection
@@ -33,6 +34,9 @@ class MorningBriefingEngine:
 
     def build_payload(self, daily: dict[str, Any], delivery_metadata: dict | None = None) -> dict[str, Any]:
         payload = payload_of(daily)
+        metadata = dict(delivery_metadata or payload.get("delivery_metadata") or {})
+        if metadata.get("facts_only"):
+            return self._facts_only_payload(payload, metadata)
         sections = self._sections(payload)
         report_context = dict(payload.get("report_context") or {})
         if delivery_metadata:
@@ -41,7 +45,7 @@ class MorningBriefingEngine:
         reasons = self._reasons(payload)
         cautions = self._cautions(payload, delivery_metadata or {})
         return {
-            "schema_version": "3.0",
+            "schema_version": "4.0",
             "analysis_run_id": payload.get("analysis_run_id", ""),
             "user_id": payload.get("user_id", ""),
             "date": payload.get("date"),
@@ -58,6 +62,62 @@ class MorningBriefingEngine:
             "data_quality": payload.get("data_quality") or {},
             "evidence": ((payload.get("decision") or {}).get("evidence") or {"facts": [], "gates": []}),
         }
+
+    def _facts_only_payload(self, payload: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
+        """Project only measured sleep/body facts for an unverified training window."""
+        features = payload.get("features") or {}
+        sleep = features.get("sleep") or {}
+        hrv = features.get("hrv") or {}
+        vitals = features.get("overnight_vitals") or {}
+        # Do not evaluate the full report: recovery interpretations can depend
+        # on unverified training and carry advice or free-form labels.
+        sections = [
+            {"key": "sleep", "title": "昨晚睡眠", "facts": self._sleep_facts(sleep),
+             "interpretation": [], "limitations": []},
+            {"key": "recovery", "title": "今早恢复信号", "facts": self._recovery_facts(hrv, vitals),
+             "interpretation": [], "limitations": []},
+        ]
+        observations = [fact for section in sections for fact in section["facts"]]
+        report_context = self._facts_only_context(payload.get("report_context"), metadata)
+        history_notice = "训练历史覆盖尚未核验，本次仅发送睡眠和身体状态事实。"
+        cautions = [history_notice]
+        if metadata.get("sync_degraded"):
+            cautions.insert(0, "本次同步未完整完成，结论仅使用已经保存的数据。")
+        summary = [history_notice]
+        return {
+            "schema_version": "4.0",
+            "analysis_run_id": payload.get("analysis_run_id", ""),
+            "user_id": payload.get("user_id", ""),
+            "date": payload.get("date"),
+            "generated_at": payload.get("generated_at"),
+            "decision_action": "INSUFFICIENT_DATA",
+            "action_label": "事实版晨报：训练历史覆盖尚未核验",
+            "report_context": report_context,
+            "summary": summary,
+            "sections": sections,
+            "observations": [{"text": item} for item in observations],
+            "key_reasons": [],
+            "cautions": cautions,
+            "data_quality": {"status": (payload.get("data_quality") or {}).get("status", "INSUFFICIENT")},
+            "evidence": {"facts": [], "gates": []},
+        }
+
+    @staticmethod
+    def _facts_only_context(context: Any, metadata: dict[str, Any]) -> dict[str, Any]:
+        source = context if isinstance(context, dict) else {}
+        safe = {
+            key: deepcopy(source[key])
+            for key in ("as_of", "timezone", "target_date", "target_day_complete")
+            if key in source
+        }
+        safe_metadata = {
+            key: metadata[key]
+            for key in ("facts_only", "coverage_reason", "sync_degraded", "sync_status")
+            if key in metadata
+        }
+        safe_metadata["facts_only"] = True
+        safe["delivery_metadata"] = safe_metadata
+        return safe
 
     def _sections(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         features = payload.get("features") or {}

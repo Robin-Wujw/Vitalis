@@ -55,7 +55,7 @@ Vitalis 是健康智能 API 之上的渲染器和编排器。Python 引擎负责
 - 列出反馈：调用 `tools/feedback.py list`。
 - 使用 `tools/training_preferences.py` 读取或替换跑步/力量目标、轮换、跑步机/天气后备方案、可用时间、经验、器材和疼痛/伤病状态；明确进行完整替换时使用 `set`，只更新明确提供的字段时使用 `patch`。凡关联锻炼时都必须提供 `workout_source`。
 - 只有依据用户陈述，才能调用 `tools/strength_exercises.py` 确认力量训练的具体动作；绝不能根据心率推导动作。
-- 返回 `observed_sets` 时，确认记录优先并逐组复述已有字段；保留 `source` 的 `strength_sets` / `lap_62` literal、`order`、`vendor_exercise_code`、`weight_value`、`weight_unit` 和 `limitations`。没有验证动作字典时只显示 code，不臆造动作名称；无单位不补 `kg`，负 sentinel 保持 `None`，也不认定自重。晨报处方不得混入历史观测组。
+- 返回 `observed_sets` 时，确认记录优先并逐组复述已有字段；保留 `source` 的 `strength_sets` / `lap_62` literal、`order`、`vendor_exercise_code`、`weight_value`、`weight_unit` 和 `limitations`。优先复述返回的 `exercise_name` 并保留来源限制；未知 code 不臆造动作名称；无单位不补 `kg`，负 sentinel 保持 `None`，也不认定自重。晨报处方不得混入历史观测组。
 - 只有在用户要求后才确认事件：调用 `tools/acknowledge_event.py`。
 - 只有在用户要求后才同步源数据：调用 `tools/sync.py`。
 - 只有在用户要求后才配置自动 PushPlus 推送：为可感知睡眠并重试的晨间推送调度 `tools/daily_push.py --period morning`，为晚间回顾调度 `tools/daily_push.py --period evening`。该功能需要私密的 `VITALIS_USER` 和 `PUSHPLUS_TOKEN` 环境变量，并让模型不接触令牌处理和报告组装。使用 `--test` 执行真实的手动推送；该模式不得读取或写入定时报告的每日去重标记。

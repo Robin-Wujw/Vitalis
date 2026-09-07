@@ -233,9 +233,25 @@ class StrengthAnalyzer:
         limitations = []
         if not explicit:
             limitations.append("没有已确认动作，未推测具体动作或目标肌群。")
-            if observed_sets:
+            mapped_observed = any(
+                item.source == "lap_62"
+                and item.exercise_name
+                and "exercise_name_reference_mapping" in item.limitations
+                for item in observed_sets
+            )
+            unverified_observed = any(
+                item.source == "lap_62"
+                and not item.exercise_name
+                and "exercise_name_unverified" in item.limitations
+                for item in observed_sets
+            )
+            if mapped_observed:
+                limitations.append("观测动作名称中的已映射名称来自已核验编码对照，仅用于展示，不据此处方。")
+            if unverified_observed:
                 limitations.append("观测组动作名称未确认；仅作为本次事实展示，不用于处方。")
-            elif workout.get("detail_available"):
+            if not mapped_observed and not unverified_observed and observed_sets:
+                limitations.append("观测组动作名称未确认；仅作为本次事实展示，不用于处方。")
+            elif not observed_sets and workout.get("detail_available"):
                 limitations.append("当前云详情未返回明确动作组；App 中的修正内容尚未在已读取字段中取得。")
         elif focus == "UNKNOWN":
             limitations.append("已记录动作但训练重点未识别；分化未知，不套用全身动作模板。")

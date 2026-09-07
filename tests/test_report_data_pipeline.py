@@ -152,7 +152,8 @@ def test_stored_observations_reach_analysis_and_all_four_reports():
     text = evening.model_dump_json()
     assert "步数 8,200" in text and "活动距离 6.2" in text
     assert "700" in text and "卧推" in text and "活动时长" in text
-    assert "每组 8 次" in text and "放松区间" in text
+    assert all(f"第 {order} 组：卧推；8 次；40 千克" in text for order in range(1, 5))
+    assert "放松区间" in text
     assert weekly.period_end == TARGET and monthly.period_end == TARGET
 
 

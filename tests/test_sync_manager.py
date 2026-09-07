@@ -19,7 +19,7 @@ from vitalis.connectors.zepp.fetcher import (
     RawRecord,
 )
 from vitalis.connectors.zepp.sync_manager import SyncManager
-from vitalis.models import User, Workout, WorkoutType
+from vitalis.models import User, Workout, WorkoutType, WORKOUT_DETAIL_SCHEMA_VERSION
 from vitalis.storage import HealthRepository, init_db, session_scope
 
 
@@ -495,7 +495,7 @@ class TestSyncManager:
         assert {
             key: value for key, value in workout.detail.items() if key != "fetched_at"
         } == {
-            "schema_version": "4.0",
+            "schema_version": WORKOUT_DETAIL_SCHEMA_VERSION,
             "workout_id": str(int(start.timestamp())),
             "metrics_present": ["heart_rate"],
             "metric_sample_counts": {"heart_rate": 4},

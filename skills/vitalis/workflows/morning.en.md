@@ -4,7 +4,7 @@
 
 Use the requested date, or today's date when none is given. Read `tools/morning_briefing.py` first and render only its fields. Do not reconstruct a report from DailyProfile features. All runtime user-visible output must be ordinary Chinese, phrased like a coach explaining what to do today.
 
-First show the returned sleep and body-state entries in `observations`; include returned same-day running or strength context when present. The absence of a workout so far today is not a missing item and must not turn the Morning briefing into `INSUFFICIENT_DATA`.
+First show the returned sleep and body-state entries in `observations`; include returned same-day running or strength context when present. The absence of a workout so far today is not a missing item and must not turn the Morning briefing into `INSUFFICIENT_DATA`. Morning prescriptions must not mix in historical `observed_sets`.
 
 Render in this order:
 

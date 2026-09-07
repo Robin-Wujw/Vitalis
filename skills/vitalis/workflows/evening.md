@@ -9,7 +9,7 @@
 
 1. 从 `recent_workouts` 使用 `sport_mode_label` 展示当天每次运动、`started_at`、时长、厂商负荷
    和 `recognition_confidence_label`；不得只展示宽泛 `type`。按开始时间说明真实训练明细；没有正式训练时如实说明，不把它当作异常。
-2. 如果 `features.training.running` 或 `features.training.strength` 返回专项明细，展示其中已有的跑步指标、力量训练组和动作确认；保留 null、未知单位和缺失，不得补写 `kg`、动作名称或重量。
+2. 如果 `features.training.running` 或 `features.training.strength` 返回专项明细，展示其中已有的跑步指标、力量训练组和动作确认；确认记录优先，之后按 `order` 逐组展示 `observed_sets`。保留 `source` 的 `strength_sets` / `lap_62` literal、`vendor_exercise_code`、`weight_value`、`weight_unit` 和 `limitations`；无验证动作字典时只显示 code，不得补写 `kg`、动作名称或重量，负 sentinel 保持 null。
 3. 展示今日负荷、7 日时长、7 日负荷和 `load_state_label`；7 日汇总若受覆盖影响，按 `history_coverage` 和 `totals_are_partial` 明示。
 4. 使用中文状态、`positive_signal_labels`、`negative_signal_labels` 和动作标签说明
    恢复状态及今晚是否继续活动。

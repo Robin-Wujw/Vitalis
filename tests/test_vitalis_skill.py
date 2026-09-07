@@ -57,7 +57,7 @@ def test_skill_has_all_workflows_and_valid_schema():
         assert stored == expected, name
         assert "PydanticUndefined" not in stored["$id"]
     schema = schemas["daily_profile.json"]
-    assert schema["properties"]["schema_version"]["const"] == "13.0"
+    assert schema["properties"]["schema_version"]["const"] == "14.0"
     assert "analysis_run_id" in schema["required"]
     assert "model_version" not in schema["required"]
     decision = _resolve_schema(schema, schema["properties"]["decision"])

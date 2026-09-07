@@ -9,6 +9,7 @@ from base64 import b64decode
 from binascii import Error as BinasciiError
 from datetime import date, datetime, time, timedelta, timezone
 import json
+from math import isfinite
 
 from vitalis.models import (
     ActivityRecord,
@@ -294,7 +295,7 @@ class ZeppParser:
 
     @staticmethod
     def parse_workout_detail(
-        raw: dict, summary_end: datetime | None = None
+        raw: dict, summary_end: datetime | None = None, *, training_family: str | None = None
     ) -> WorkoutDetail | None:
         """Normalize the current Zepp workout-detail payload.
 
@@ -344,13 +345,16 @@ class ZeppParser:
         for sample in samples:
             counts[sample.metric] = counts.get(sample.metric, 0) + 1
 
+        strength_sets = ZeppParser._strength_sets(data.get("strengthSets"))
+        if not strength_sets and training_family == "strength":
+            strength_sets = ZeppParser._strength_lap_sets(data.get("lap"))
         return WorkoutDetail(
             workout_id=workout_id,
             metrics_present=sorted(counts),
             metric_sample_counts=dict(sorted(counts.items())),
             laps=ZeppParser._workout_laps(data.get("lap")),
             pauses=ZeppParser._workout_pauses(data.get("pause")),
-            strength_sets=ZeppParser._strength_sets(data.get("strengthSets")),
+            strength_sets=strength_sets,
             samples=samples,
         )
 
@@ -634,7 +638,7 @@ class ZeppParser:
         if not isinstance(items, list):
             return []
         output = []
-        for item in items:
+        for order, item in enumerate(items, start=1):
             if not isinstance(item, dict):
                 continue
             started = ZeppParser._parse_datetime_value(
@@ -643,7 +647,15 @@ class ZeppParser:
             ended = ZeppParser._parse_datetime_value(
                 item.get("endTime") or item.get("endedAt")
             )
-            output.append(StrengthSetObservation(
+            weight_kg = ZeppParser._strength_weight_kg(item)
+            weight_value = weight_kg
+            weight_unit = "kg" if weight_kg is not None else ZeppParser._first_text(
+                item, ("weightUnit", "weight_unit", "unit", "weightUnitName")
+            )
+            if weight_value is None:
+                weight_value = ZeppParser._strength_number(item, ("weight",), 0, 2000)
+            observation = StrengthSetObservation(
+                order=order,
                 started_at=ZeppParser._utc(started) if started else None,
                 ended_at=ZeppParser._utc(ended) if ended else None,
                 exercise_id=ZeppParser._first_text(
@@ -652,22 +664,77 @@ class ZeppParser:
                 exercise_name=ZeppParser._first_text(
                     item, ("exerciseName", "exercise_name", "name")
                 ),
-                repetitions=ZeppParser._bounded_int(
-                    item, ("repetitions", "reps", "count"), 1, 1000
+                repetitions=ZeppParser._strength_number(
+                    item, ("repetitions", "reps", "count"), 1, 1000, integer=True,
                 ),
-                weight_kg=ZeppParser._strength_weight_kg(item),
-                duration_seconds=ZeppParser._bounded_int(
-                    item, ("durationSeconds", "duration", "workTime"), 0, MAX_WORKOUT_SECONDS
+                weight_kg=weight_kg,
+                weight_value=weight_value,
+                weight_unit=weight_unit if weight_value is not None else None,
+                duration_seconds=ZeppParser._strength_number(
+                    item, ("durationSeconds", "duration", "workTime"), 0, MAX_WORKOUT_SECONDS, integer=True,
                 ),
-                rest_seconds=ZeppParser._bounded_int(
-                    item, ("restSeconds", "rest", "restTime"), 0, MAX_WORKOUT_SECONDS
+                rest_seconds=ZeppParser._strength_number(
+                    item, ("restSeconds", "rest", "restTime"), 0, MAX_WORKOUT_SECONDS, integer=True,
                 ),
+            )
+            if any(getattr(observation, key) is not None for key in (
+                "started_at", "ended_at", "exercise_id", "exercise_name",
+                "repetitions", "weight_value", "duration_seconds", "rest_seconds",
+            )):
+                output.append(observation)
+        return output
+
+    @staticmethod
+    def _strength_lap_sets(encoded: object) -> list[StrengthSetObservation]:
+        """Read observed fields of the supported strength-only 62-column layout."""
+        if not isinstance(encoded, str):
+            return []
+        output = []
+        for order, row in enumerate(encoded.split(";"), start=1):
+            fields = row.split(",")
+            if len(fields) != 62:
+                continue
+            repetitions = ZeppParser._strength_number(
+                {"value": fields[22]}, ("value",), 1, 1000, integer=True,
+            )
+            weight = ZeppParser._strength_number(
+                {"value": fields[21]}, ("value",), 0, 2000,
+            )
+            code = ZeppParser._strength_number(
+                {"value": fields[28]}, ("value",), 1, 2**31 - 1, integer=True,
+            )
+            if repetitions is None and weight is None and code is None:
+                continue
+            limitations = ["exercise_name_unverified"]
+            limitations.append("weight_unit_unverified" if weight is not None else "weight_unavailable")
+            output.append(StrengthSetObservation(
+                source="lap_62", order=order, vendor_exercise_code=code,
+                repetitions=repetitions, weight_value=weight, limitations=limitations,
             ))
         return output
 
     @staticmethod
+    def _strength_number(
+        item: dict, keys: tuple[str, ...], minimum: float, maximum: float, *, integer: bool = False,
+    ) -> float | int | None:
+        for key in keys:
+            value = item.get(key)
+            if value is None or isinstance(value, bool):
+                continue
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if not isfinite(numeric) or not minimum <= numeric <= maximum:
+                continue
+            if integer and not numeric.is_integer():
+                continue
+            return int(numeric) if integer else numeric
+        return None
+
+    @staticmethod
     def _strength_weight_kg(item: dict) -> float | None:
-        explicit = ZeppParser._bounded_float(
+        explicit = ZeppParser._strength_number(
             item, ("weightKg", "weight_kg"), 0, 2000
         )
         if explicit is not None:
@@ -680,7 +747,7 @@ class ZeppParser:
         normalized = (unit or "").strip().lower().replace(" ", "")
         if normalized not in {"kg", "kgs", "kilogram", "kilograms", "公斤", "千克"}:
             return None
-        return ZeppParser._bounded_float(item, ("weight",), 0, 2000)
+        return ZeppParser._strength_number(item, ("weight",), 0, 2000)
 
     @staticmethod
     def _deduplicate_workout_samples(

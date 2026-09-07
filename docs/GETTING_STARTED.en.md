@@ -148,12 +148,12 @@ today is not a missing item. It never substitutes yesterday's profile.
 
 A separate Hermes job runs at 22:30, synchronizes one day, and sends an Evening report for
 the current date. The Evening report reviews actual workout details in `started_at` order;
-when returned, it shows running metrics, explicit strength sets, and confirmed exercises,
-preserving missing and unknown units without inventing `kg` or exercise names. It also reviews
-daily activity and stress, a seven-night sleep-HRV trend, and rolling training load through
-today, then gives a practical recovery action and leaves tomorrow's intensity to the next
-complete overnight assessment. Both reports are sent with PushPlus' HTML template using
-portable inline styling; report
+when returned, it shows running metrics, confirmed strength records, and ordered `observed_sets`,
+giving confirmed records precedence and preserving the `source` literal, code, missing fields, and
+unknown units without inventing `kg` or exercise names. It also reviews daily activity and stress,
+a seven-night sleep-HRV trend, and rolling training load through today, then gives a practical
+recovery action and leaves tomorrow's intensity to the next complete overnight assessment. Both
+reports are sent with PushPlus' HTML template using portable inline styling; report
 values are escaped before HTML generation. The HTML root has its own high-contrast light
 background so PushPlus dark mode cannot place dark report text directly on black. The
 Evening report does not show the sleep-only RMSSD curve or infer continuous daytime

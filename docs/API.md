@@ -6,7 +6,7 @@
 `X-User-Id` 请求头；不存在隐式的默认用户。健康智能 GET 请求无副作用；
 如果请求的快照尚未生成，则返回 `404`。
 
-DailyProfile 13.0、WeeklyProfile 6.0 和 MonthlyProfile 3.0 的 `report_context` 都保留 `as_of`（ISO UTC）、
+DailyProfile 14.0、WeeklyProfile 6.0 和 MonthlyProfile 3.0 的 `report_context` 都保留 `as_of`（ISO UTC）、
 `timezone`、`target_date`、`target_day_complete`、`training_history` 和
 `latest_observations`。`training_history` 包含 `status`（`COMPLETE`/`PARTIAL`/`UNKNOWN`）、
 `verified_days`、`last_synced_at` 和 `prior_7d_verified`；它用于解释数据边界，不能把未知
@@ -40,7 +40,7 @@ HTTP `409`；现有凭据及两个用户的历史记录均保持不变。
 | POST | `/intelligence/analyze?day=YYYY-MM-DD` | 运行确定性分析并持久化不可变快照 |
 | GET | `/intelligence/profile` | 读取带修订版本的用户确认生理和睡眠档案 |
 | PATCH | `/intelligence/profile` | 在 `expected_revision` 冲突保护下修补明确指定的档案字段 |
-| GET | `/intelligence/daily?day=YYYY-MM-DD` | 读取 DailyProfile 13.0 事实、持久化的决策证据以及仅用于影子计算的开放健康洞察 |
+| GET | `/intelligence/daily?day=YYYY-MM-DD` | 读取 DailyProfile 14.0 事实、持久化的决策证据以及仅用于影子计算的开放健康洞察 |
 | GET | `/intelligence/morning-briefing?day=YYYY-MM-DD` | 读取 MorningBriefing schema_version=3.0 的晨间展示投影 |
 | GET | `/intelligence/evening-briefing?day=YYYY-MM-DD` | 读取 ReportBriefing 1.0 的晚间展示投影 |
 | GET | `/intelligence/weekly?day=YYYY-MM-DD` | 读取 WeeklyProfile 6.0 的滚动 7 天档案及与前一周的比较 |
@@ -76,7 +76,7 @@ HTTP `409`；现有凭据及两个用户的历史记录均保持不变。
 | GET | `/health/token-status` | 读取凭据状态和下次同步时间 |
 | GET | `/health/range?from=&to=&granularity=` | 读取 180d/90d/30d/7d/1d 聚合数据块 |
 | GET | `/health/workouts?from=&to=` | 列出训练摘要及详细信息的可用性 |
-| GET | `/health/workouts/{workout_id}?source=` | 读取当前 v4.0 训练详情及按数据源隔离的类型化样本 |
+| GET | `/health/workouts/{workout_id}?source=` | 读取当前 `WorkoutDetail 5.0` 训练详情及按数据源隔离的类型化样本 |
 | GET | `/health/metrics/{metric}?from=&to=&resolution=` | 读取带时间戳的测量值；raw/hour/day 数据点保留数据源、范围、设备和单位 |
 | GET | `/health/daily-metrics?metric=&from=&to=` | 读取带数据源来源信息的稀疏每日指标 |
 | GET | `/health/dense-files/second_heart_rate?from=&to=` | 读取不含文件 ID 的高频文件覆盖信息 |
@@ -192,11 +192,16 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/st
   而不是应用原始的 50,000 行上限。
 - 训练响应重叠身份使用 `source:workout_id`；可比跑步基线
   返回并行的训练数据源数组和 ID 数组。
-- 精确的力量训练动作只能来自明确的厂商组数据或用户确认。
-  心率可以估算做功/休息结构，但不能确定动作身份或负荷。`strengthSets` 支持字符串或列表，
-  跨层将整数 `reps` 转成字符串；同剂量但不同重量/次数组保留。未知单位保持未知，不补 `kg`。
-  本地整场确认优先；近期 28 日详情最多按 4 个预算有界刷新，`fetched_at` 记录刷新时间，
-  不保证一次覆盖全部；未核验真实云端详情，不宣称已获得。
+- 精确的力量训练动作只能来自明确的厂商组数据或用户确认；心率可以估算做功/休息结构，
+  但不能确定动作身份或负荷。`strengthSets` 支持字符串或列表，跨层将整数 `reps` 转成字符串；
+  有效的 `strength_sets` 观测优先，不能与回退观测重复叠加。仅当 `training_family=strength`
+  且 lap 行恰有 62 列时，才从 0-based 21 读取重量原数值、22 读取正整数次数、28 读取正整数
+  `vendor_exercise_code`，并保留 `order`。这些观测使用 `source`=`strength_sets` 或 `lap_62`，
+  以及 `vendor_exercise_code`、`weight_value`、`weight_unit`、`limitations` 字段；`lap_62`
+  仅进入有序 `observed_sets`，不进入 `explicit_exercises`，不抬高动作覆盖、肌群覆盖或训练处方。
+  未知单位保持未知，不补 `kg`；负 sentinel 保持 `None`，不认定自重；没有经验证动作字典时只显示
+  code，不臆造动作名称。确认记录优先，晚报逐组展示；晨报处方不混入历史观测组。近期 28 日详情
+  最多按 4 个预算有界刷新，`fetched_at` 记录刷新时间，不保证一次覆盖全部。
 - `decision.action_plan` 包含一个主要训练环节，以及至多一个可选的附加项或替代项。
   它包含 7/28 天平衡、安全状态、冲突检查、证据、剂量、停止条件、
   缺失输入门控和本地日期到期时间。已移除的通用训练处方列表字段不会保留。

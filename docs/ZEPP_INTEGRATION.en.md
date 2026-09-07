@@ -239,12 +239,13 @@ from an endpoint name or descriptive text.
 Zepp workout history is returned by `/v1/sport/run/history.json`; the response may mix
 multiple activities, so each record's numeric `type` is authoritative. Workout detail
 comes from `/v1/sport/run/detail.json`. Vitalis normalizes its compressed series into
-typed UTC observations in `workout_metric_samples`. The current contract supports
-heart rate, speed, equivalent pace, cadence, stride length, cumulative distance, altitude, running
-power, ground-contact time, vertical oscillation, vertical stride ratio, laps, pauses,
-and explicit vendor strength sets when present. The three `runPosture` sentinels are
-discarded rather than stored as zero. Workout summaries retain a valid six-boundary
-`heart_range` and `heartrate_setting_type` for device-aligned zone analysis.
+typed UTC observations in `workout_metric_samples`; the current `WorkoutDetail` contract is `5.0`
+and shares `WORKOUT_DETAIL_SCHEMA_VERSION`. The current contract supports heart rate, speed,
+equivalent pace, cadence, stride length, cumulative distance, altitude, running power,
+ground-contact time, vertical oscillation, vertical stride ratio, laps, pauses, and explicit
+vendor strength sets when present. The three `runPosture` sentinels are discarded rather than
+stored as zero. Workout summaries retain a valid six-boundary `heart_range` and
+`heartrate_setting_type` for device-aligned zone analysis.
 
 This is a workout-only stream, not continuous all-day high-frequency heart rate. The
 detail response does not identify the sensor for each sample, so normalized detail
@@ -258,16 +259,23 @@ intelligence layer. It may estimate work/rest structure from heart rate while ke
 the movement and target muscle unknown until an explicit vendor set or user
 confirmation is available.
 
-Cloud workout-detail `strengthSets` accepts a string or list; cross-layer handling converts
-integer `reps` to a string, combines identical exercise/dose groups, and preserves groups with
-different weights or repetitions separately. Unknown units are not given `kg`. Local whole-session
-user confirmation takes precedence over vendor sets. Cached workout details from the recent 28 days
-are refreshed within a budget of at most 4 per pass, with no guarantee that one pass covers all;
-refresh time is recorded in `fetched_at`. Controlled validation confirmed that the cloud can return
-`strengthSets="[]"`, empty `memo`, and nonempty `strengthAssess`; this does not prove the app has no
-corrected records, and neither `bcId` nor undocumented trailing `lap` columns can be treated as an
-exercise ID. Reports explain that corrected details have not been obtained; upstream ZeppBridge
-v2.1.0 also has no strength-sets decoder that establishes those exercise semantics.
+Cloud workout-detail `strengthSets` accepts a string or list; valid `strength_sets` observations take
+precedence and are not double-counted with fallback observations. Only when `training_family=strength`
+and a lap row has exactly 62 columns are weight raw value, positive integer repetitions, and positive
+integer `vendor_exercise_code` read from 0-based positions 21, 22, and 28, with `order` retained.
+Observations use `source`=`strength_sets` or `lap_62`, plus `vendor_exercise_code`, `weight_value`,
+`weight_unit`, and `limitations`; `lap_62` is limited to these observed fields and enters independent
+ordered `observed_sets`, not `explicit_exercises`, exercise/muscle coverage, or prescription evidence.
+Integer `reps` are converted to a string across layers. Unknown units remain unknown and are not given
+`kg`; negative sentinels remain `None` and are not treated as bodyweight. Without a verified exercise
+dictionary, only the code is shown and no exercise name is invented. Local whole-session user
+confirmation takes precedence over vendor sets. Cached workout details from the recent 28 days are
+refreshed within a budget of at most 4 per pass, with no guarantee that one pass covers all; refresh
+time is recorded in `fetched_at`. Controlled checks confirmed that the cloud can return
+`strengthSets="[]"`, empty `memo`, and nonempty `strengthAssess`; this does not prove that
+app-corrected records are absent. The lap suffix is not wholly undecodable: only limited fields
+from the observed strength 62-column layout are supported; unit/name remain unknown, and
+other trailing columns without definitions are not decoded.
 
 `second_heart_rate/real_data` returns file indexes rather than samples. Ordinary health
 sync stores those indexes without downloading large archives. When

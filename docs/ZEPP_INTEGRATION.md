@@ -158,13 +158,13 @@ Zepp OS 公开目录提供 120 个当前活动 ID，另有两个公开的旧版 
 
 ## 训练详情
 
-Zepp 训练历史由 `/v1/sport/run/history.json` 返回；响应可能混合多种活动，因此每条记录的数值 `type` 才是权威依据。训练详情来自 `/v1/sport/run/detail.json`。Vitalis 将其压缩序列规范化为 `workout_metric_samples` 中带类型的 UTC 观测值。当前契约支持心率、速度、等效配速、步频、步幅、累计距离、海拔、跑步功率、触地时间、垂直振幅、垂直步幅比、圈、暂停，以及存在时供应商明确提供的力量训练组。三个 `runPosture` 哨兵值会被丢弃，而不是存为零。训练汇总会保留有效的六边界 `heart_range` 和 `heartrate_setting_type`，用于与设备一致的分区分析。
+Zepp 训练历史由 `/v1/sport/run/history.json` 返回；响应可能混合多种活动，因此每条记录的数值 `type` 才是权威依据。训练详情来自 `/v1/sport/run/detail.json`。Vitalis 将其压缩序列规范化为 `workout_metric_samples` 中带类型的 UTC 观测值，当前 `WorkoutDetail` 契约为 `5.0` 并共享 `WORKOUT_DETAIL_SCHEMA_VERSION`。当前契约支持心率、速度、等效配速、步频、步幅、累计距离、海拔、跑步功率、触地时间、垂直振幅、垂直步幅比、圈、暂停，以及存在时供应商明确提供的力量训练组。三个 `runPosture` 哨兵值会被丢弃，而不是存为零。训练汇总会保留有效的六边界 `heart_range` 和 `heartrate_setting_type`，用于与设备一致的分区分析。
 
 这是仅限训练的数据流，并非全天连续的高频心率。详情响应不会标明每个样本来自哪个传感器，因此规范化详情样本会保留 `source_scope=workout_detail` 和 `device_id=null`。训练汇总与 Balance 2 关联不足以证明其样本来自 Balance 2 或 Helio。
 
 空字段会保持缺失。具体来说，力量训练可能包含秒级心率和供应商评估数据，却没有明确的动作组。在这种情况下，Vitalis 不会在连接器边界或智能层推断动作名称。它可以根据心率估算训练/休息结构，但在获得明确的供应商组或用户确认之前，动作和目标肌群保持未知。
 
-云训练详情中的 `strengthSets` 支持字符串或列表；跨层会将整数 `reps` 转为字符串，同动作同剂量的组合并，不同重量/次数的组分别保留。未知单位不补 `kg`。本地整场用户确认优先于供应商组。近期 28 日已缓存训练详情进行有界刷新（每次最多 4 条，不能保证一次覆盖全部），刷新时间写入 `fetched_at`。受控验收确认云端可能返回 `strengthSets="[]"`、空 `memo` 和非空 `strengthAssess`；这不证明 App 中没有修正记录，也不能把 `bcId` 或无列定义的 `lap` 尾列当作动作 ID。报告会说明修正明细未取得；上游 ZeppBridge v2.1.0 也没有提供可证明这些动作语义的力量组 decoder。
+云训练详情中的 `strengthSets` 支持字符串或列表；有效 `strength_sets` 观测优先，不与回退观测重复叠加。仅当 `training_family=strength` 且 lap 行恰为 62 列时，才从 0-based 21 读取重量原数值、22 读取正整数次数、28 读取正整数 `vendor_exercise_code`，并保留 `order`。观测使用 `source`=`strength_sets` 或 `lap_62`，以及 `vendor_exercise_code`、`weight_value`、`weight_unit`、`limitations` 字段；`lap_62` 只保留这些已观测字段并进入独立有序的 `observed_sets`，不进入 `explicit_exercises`，不抬高动作/肌群覆盖或训练处方。跨层会将整数 `reps` 转为字符串。未知单位不补 `kg`；负 sentinel 保持 `None`，不认定自重；没有经验证动作字典时只显示 code，不臆造动作名称。本地整场用户确认优先于供应商组。近期 28 日已缓存训练详情进行有界刷新（每次最多 4 条，不能保证一次覆盖全部），刷新时间写入 `fetched_at`。受控验收确认云端可能返回 `strengthSets="[]"`、空 `memo` 和非空 `strengthAssess`；这不证明 App 中没有修正记录。lap 后缀并非完全无法解码：当前仅支持已观测力量 62 列中的有限字段，unit/name 仍未知，不解码无列定义的其他尾列。
 
 `second_heart_rate/real_data` 返回文件索引而非样本。普通健康同步会存储这些索引而不下载大型归档。当明确请求 `decode_dense_files=true` 时，Vitalis 最多通过 Zepp 官方 `queryDownUrlList` 端点解码一个新归档。下载已签名的 HTTPS ZIP 时不会转发 `apptoken`，随后其 protobuf 心跳数据块会存储为设备范围内的心率样本。
 每个数据块从 Unix 秒级时间戳开始，并包含连续的一秒级心率值；`255` 视为缺失。ZIP 条目通过全局一对一最大重叠匹配分配给已索引的设备。成功解码的索引行会存储 `parse_status=decoded` 和 `sample_count`；后续同步会跳过这些确切的文件/设备/时间行，因此不会反复下载历史文件。文件标识符保持私有，不会通过健康查询 API 暴露。

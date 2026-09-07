@@ -6,14 +6,16 @@ from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from vitalis.models import StrengthSetObservation
+
 
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "13.0"
+DAILY_SCHEMA_VERSION = "14.0"
 WEEKLY_SCHEMA_VERSION = "6.0"
 MONTHLY_SCHEMA_VERSION = "3.0"
-INTELLIGENCE_VERSION = "12.0"
+INTELLIGENCE_VERSION = "13.0"
 DECISION_POLICY_VERSION = "9.0"
 EVIDENCE_VERSION = "2026-09a"
 TRAINING_RESPONSE_SCHEMA_VERSION = "1.0"
@@ -820,6 +822,7 @@ class StrengthSessionAnalysis(BaseModel):
     confidence: ConfidenceBand
     confidence_label: str
     explicit_exercises: list[StrengthExerciseRecord] = Field(default_factory=list)
+    observed_sets: list[StrengthSetObservation] = Field(default_factory=list)
     hypotheses: list[ExerciseHypothesis] = Field(default_factory=list)
     movement_patterns: list[str] = Field(default_factory=list)
     movement_pattern_labels: list[str] = Field(default_factory=list)
@@ -846,7 +849,7 @@ class MuscleRecoveryStatus(BaseModel):
 
 
 class StrengthAnalysis(BaseModel):
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["2.0"] = "2.0"
     status: Availability
     status_label: str
     sessions_7d: int = Field(ge=0)
@@ -1460,9 +1463,9 @@ class SubjectiveFeedback(BaseModel):
 
 
 class DailyProfile(BaseModel):
-    schema_version: Literal["13.0"] = DAILY_SCHEMA_VERSION
+    schema_version: Literal["14.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
-    intelligence_version: Literal["12.0"] = INTELLIGENCE_VERSION
+    intelligence_version: Literal["13.0"] = INTELLIGENCE_VERSION
     decision_policy_version: Literal["9.0"] = DECISION_POLICY_VERSION
     evidence_version: Literal["2026-09a"] = EVIDENCE_VERSION
     user_id: str

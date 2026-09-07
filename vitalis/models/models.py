@@ -171,22 +171,31 @@ class WorkoutPause(BaseModel):
 
 
 class StrengthSetObservation(BaseModel):
-    """One explicit vendor strength set; absent fields remain absent."""
+    """One ordered vendor set observation, separate from action recognition."""
 
+    source: Literal["strength_sets", "lap_62"] = "strength_sets"
+    order: int | None = Field(default=None, ge=1)
+    vendor_exercise_code: int | None = Field(default=None, ge=0)
+    weight_value: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    weight_unit: str | None = None
+    limitations: list[str] = Field(default_factory=list)
     started_at: datetime | None = None
     ended_at: datetime | None = None
     exercise_id: str | None = None
     exercise_name: str | None = None
     repetitions: int | None = Field(default=None, ge=1)
-    weight_kg: float | None = Field(default=None, ge=0)
+    weight_kg: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     duration_seconds: int | None = Field(default=None, ge=0)
     rest_seconds: int | None = Field(default=None, ge=0)
+
+
+WORKOUT_DETAIL_SCHEMA_VERSION = "5.0"
 
 
 class WorkoutDetail(BaseModel):
     """Current normalized workout-detail contract."""
 
-    schema_version: Literal["4.0"] = "4.0"
+    schema_version: Literal["5.0"] = WORKOUT_DETAIL_SCHEMA_VERSION
     workout_id: str
     metrics_present: list[str] = Field(default_factory=list)
     metric_sample_counts: dict[str, int] = Field(default_factory=dict)

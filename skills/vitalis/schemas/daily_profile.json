@@ -4990,8 +4990,8 @@
     "StrengthAnalysis": {
       "properties": {
         "schema_version": {
-          "const": "1.0",
-          "default": "1.0",
+          "const": "2.0",
+          "default": "2.0",
           "title": "Schema Version",
           "type": "string"
         },
@@ -5372,6 +5372,13 @@
           "title": "Explicit Exercises",
           "type": "array"
         },
+        "observed_sets": {
+          "items": {
+            "$ref": "#/$defs/StrengthSetObservation"
+          },
+          "title": "Observed Sets",
+          "type": "array"
+        },
         "hypotheses": {
           "items": {
             "$ref": "#/$defs/ExerciseHypothesis"
@@ -5538,6 +5545,182 @@
         "confidence_label"
       ],
       "title": "StrengthSessionAnalysis",
+      "type": "object"
+    },
+    "StrengthSetObservation": {
+      "description": "One ordered vendor set observation, separate from action recognition.",
+      "properties": {
+        "source": {
+          "default": "strength_sets",
+          "enum": [
+            "strength_sets",
+            "lap_62"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "order": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Order"
+        },
+        "vendor_exercise_code": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vendor Exercise Code"
+        },
+        "weight_value": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Weight Value"
+        },
+        "weight_unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Weight Unit"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Started At"
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ended At"
+        },
+        "exercise_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exercise Id"
+        },
+        "exercise_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exercise Name"
+        },
+        "repetitions": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repetitions"
+        },
+        "weight_kg": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Weight Kg"
+        },
+        "duration_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Seconds"
+        },
+        "rest_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rest Seconds"
+        }
+      },
+      "title": "StrengthSetObservation",
       "type": "object"
     },
     "TrainingDecision": {
@@ -6895,8 +7078,8 @@
   },
   "properties": {
     "schema_version": {
-      "const": "13.0",
-      "default": "13.0",
+      "const": "14.0",
+      "default": "14.0",
       "title": "Schema Version",
       "type": "string"
     },
@@ -6905,8 +7088,8 @@
       "type": "string"
     },
     "intelligence_version": {
-      "const": "12.0",
-      "default": "12.0",
+      "const": "13.0",
+      "default": "13.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -7020,8 +7203,8 @@
     "states",
     "decision"
   ],
-  "title": "Vitalis DailyProfile 13.0",
+  "title": "Vitalis DailyProfile 14.0",
   "type": "object",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vitalis.local/schemas/daily-profile-13.0.json"
+  "$id": "https://vitalis.local/schemas/daily-profile-14.0.json"
 }

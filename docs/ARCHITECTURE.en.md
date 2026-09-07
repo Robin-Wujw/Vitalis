@@ -100,15 +100,22 @@ may be treated as an unsupported optional capability; authentication, network, s
 and vendor-response failures remain failures. Empty successful cloud responses and
 non-empty unrecognized payloads keep distinct fetch/parse/write states.
 
-Workout detail is current-contract-only (`schema_version=4.0`). Rows from older detail
-contracts are fetched and replaced in bounded batches during subsequent synchronization
-windows so a historical upgrade cannot consume the whole health-sync budget. Zepp delta/time series
-are decoded into typed metric samples. Laps retain only verified index, duration, and
-distance semantics; pauses retain start and duration. Running analysis derives moving
-time and per-kilometre pace, heart rate, and elevation from these normalized streams.
-Explicit vendor strength sets may
-carry exercise identity, repetitions, weight, work duration, and rest. Empty or
-undocumented vendor fields remain absent, and strength assessment payloads are not
+Workout detail is current-contract-only (`schema_version=5.0`, shared
+`WORKOUT_DETAIL_SCHEMA_VERSION`). Rows from older detail contracts are fetched and replaced
+in bounded batches during subsequent synchronization windows so a historical upgrade cannot
+consume the whole health-sync budget. Zepp delta/time series are decoded into typed metric
+samples. Laps retain only verified index, duration, and distance semantics; pauses retain
+start and duration. For strength workouts, valid `strength_sets` observations take precedence;
+only when `training_family=strength` and a lap row has exactly 62 columns are weight raw value,
+positive integer repetitions, and positive integer `vendor_exercise_code` read from 0-based
+positions 21, 22, and 28, with `order` retained and `source`=`strength_sets` or `lap_62`,
+`weight_value`, `weight_unit`, and `limitations` preserved independently. `lap_62` enters only
+ordered `observed_sets`, never `explicit_exercises`, coverage, muscle coverage, or prescription,
+and valid `strength_sets` are not double-counted with it. Negative sentinels remain `None` and
+are not treated as bodyweight; missing units do not become `kg`, and without a verified exercise
+dictionary only the code is shown, never an invented exercise name. Running analysis derives
+moving time, per-kilometre pace, heart rate, and elevation from these normalized streams. Empty
+or undocumented vendor fields remain absent, and strength assessment payloads are not
 reinterpreted as exercise names.
 
 ## 3. Intelligence Layer
@@ -139,7 +146,7 @@ The implementation lives in `vitalis/intelligence`:
 
 ### 3.1 DailyProfile
 
-The wire contract is `schema_version=13.0`. Every result carries `analysis_run_id`,
+The wire contract is `schema_version=14.0` and uses `Intelligence 13.0`. Every result carries `analysis_run_id`,
 `intelligence_version`, `decision_policy_version`, and `evidence_version` separately:
 
 ```text
@@ -167,7 +174,7 @@ sleep scores are labeled as vendor context and do not become the Vitalis result.
 
 #### 3.1.1 Open Health shadow insights
 
-DailyProfile 13.0, WeeklyProfile 6.0, MonthlyProfile 3.0, and Agent Context 6.0 expose a versioned `open_health_insights` block. It contains transparent personal-baseline readiness, robust multi-signal anomaly screening, sleep efficiency/regularity, user-target sleep gaps, Banister TRIMP, and descriptive ATL/CTL/TSB.
+DailyProfile 14.0, WeeklyProfile 6.0, MonthlyProfile 3.0, and Agent Context 6.0 expose a versioned `open_health_insights` block. It contains transparent personal-baseline readiness, robust multi-signal anomaly screening, sleep efficiency/regularity, user-target sleep gaps, Banister TRIMP, and descriptive ATL/CTL/TSB.
 
 These outputs are strictly `shadow_only=true`. They never enter `RecoveryFeatures.state`, `DecisionEngine`, decision confidence, rule IDs, or ActionPlan. The current decision policy remains 9.0. A future policy must explicitly version and test any use of these signals.
 
@@ -377,7 +384,7 @@ may still be explained. Events with lifecycle `RESOLVED` are no longer current r
 
 ### 3.10 Running Analysis
 
-DailyProfile 13.0 embeds `TrainingFeatures.running` with Running Analysis v2. Each
+DailyProfile 14.0 embeds `TrainingFeatures.running` with Running Analysis v2. Each
 session preserves distance, duration, derived and equivalent pace, median speed and cadence,
 cadence variability, power, ground-contact time, vertical oscillation, vertical stride
 ratio, HR-zone duration, cardiac drift, detected work/recovery segments, classification
@@ -432,25 +439,30 @@ natural observation, never as a universal cadence target.
 
 ### 3.11 Strength Analysis
 
-DailyProfile 13.0 embeds `TrainingFeatures.strength` with Strength Analysis v1. A user
-can confirm exercise name, set count, repetitions, load, RPE/RIR, rest, and session
-focus against a user-owned strength workout. Vitalis normalizes known Chinese or
-English exercise names to movement patterns and muscle groups while preserving the
-original name as the auditable fact.
+DailyProfile 14.0 embeds `TrainingFeatures.strength` with Strength Analysis v2 and uses
+`Intelligence 13.0`. A user can confirm exercise name, set count, repetitions, load, RPE/RIR,
+rest, and session focus against a user-owned strength workout. Vitalis normalizes known Chinese
+or English exercise names to movement patterns and muscle groups while preserving the original
+name as the auditable fact.
 
-Explicit vendor sets and user-confirmed exercises are the only sources of exact
-exercise identity. When they are absent, workout heart rate or verified zero-distance
-laps may estimate work-bout count and work/rest duration, but cannot identify a squat,
-bench press, or any target muscle. Strength heart-rate zones describe cardiovascular
-context only and never represent load intensity. The Balance 2 app's `strengthSets` may be a
-string or a list; cross-layer handling converts integer `reps` to a string and preserves sets
-with the same dose but different weight/repetition values. Unknown units remain unknown; `kg` is
-not added. Local whole-session user confirmation takes precedence over vendor sets. Cached
-strength detail from the recent 28 days is refreshed within a bounded budget (at most 4 per
+Explicit vendor sets and user-confirmed exercises are the only sources of exact exercise identity.
+Valid `strength_sets` observations take precedence and are not double-counted with fallback
+observations. Only when `training_family=strength` and a lap row has exactly 62 columns are weight
+raw value, positive integer repetitions, and positive integer `vendor_exercise_code` read from
+0-based positions 21, 22, and 28, with `order` retained. Observations use `source`=`strength_sets`
+or `lap_62`, plus `vendor_exercise_code`, `weight_value`, `weight_unit`, and `limitations`;
+`lap_62` enters independent ordered `observed_sets`, not `explicit_exercises`, and does not raise
+exercise coverage, muscle coverage, or prescription evidence. When explicit actions are absent,
+workout heart rate or verified zero-distance laps may estimate work-bout count and work/rest
+duration, but cannot identify a squat, bench press, or any target muscle. Strength heart-rate zones
+describe cardiovascular context only and never represent load intensity. `strengthSets` may be a
+string or a list; cross-layer handling converts integer `reps` to a string. Negative sentinels
+remain `None` and are not treated as bodyweight; unknown units remain unknown and `kg` is not added.
+Without a verified exercise dictionary, show only the code and do not invent an exercise name. Local
+whole-session user confirmation takes precedence over vendor sets; the evening report shows confirmed
+records or observed sets one by one, and morning prescriptions do not mix in historical observed sets.
+Cached strength detail from the recent 28 days is refreshed within a bounded budget (at most 4 per
 refresh, with no guarantee that one pass covers all), and refresh time is recorded as `fetched_at`.
-Three or four real cloud-detail sessions from users have not been verified, so the system does
-not claim to have obtained them; upstream ZeppBridge v2.1.0 also has no directly provable
-strength-sets decoder.
 
 The last 28 days support confidence-bounded full-body, upper/lower, push-pull-legs, and
 five-day split detection. A next focus is returned only after a recognizable rotation
@@ -467,7 +479,7 @@ rule.
 
 ### 3.12 Nocturnal Recovery Context
 
-DailyProfile 13.0 keeps timestamped ordinary heart rate separate from daily metric
+DailyProfile 14.0 keeps timestamped ordinary heart rate separate from daily metric
 series. For each sleep interval, the engine isolates device streams and requires at
 least 120 covered minutes and 50% interval coverage. It derives the nightly median, a
 rolling five-minute median low point, first- and second-half medians, and coverage.
@@ -551,13 +563,14 @@ DailyProfile. With `MorningBriefing schema_version=3.0`, it emits sleep and body
 available same-day running/strength context, one conclusion, concrete primary/optional actions,
 short reasons, at most one actionable event, and only consequential cautions. The absence of a
 workout so far today is not a missing item; only insufficient decision signals produce
-`INSUFFICIENT_DATA`. Per-device streams, raw trend windows, empty signal groups, unknown safety
-inputs, passed checks, planning gates, and generic limitations stay in the structured profile
-instead of being copied into the daily push.
+`INSUFFICIENT_DATA`. Morning prescriptions do not mix in historical `observed_sets`. Per-device streams,
+raw trend windows, empty signal groups, unknown safety inputs, passed checks, planning gates, and generic
+limitations stay in the structured profile instead of being copied into the daily push.
 
 The evening renderer is a separate deterministic view. When present, it reports each actual
-workout today in `started_at` order, including running metrics and explicit strength sets;
-missing and unknown units remain missing, with no invented `kg` or exercise. It summarizes fused
+workout today in `started_at` order, including running metrics and explicit or ordered observed
+strength sets; confirmed records take precedence and `observed_sets` are shown one by one.
+Missing and unknown units remain missing, with no invented `kg` or exercise name. It summarizes fused
 daily activity and device-recorded stress, explains the recent completed-day training load, and
 closes with recovery and next-day continuity actions. It does not turn a day without formal training into a
 problem, infer readiness from load alone, or print low-confidence workout type and

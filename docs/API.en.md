@@ -6,7 +6,7 @@ All paths below are prefixed with `/api/v1`. User-scoped endpoints require an ex
 `X-User-Id` header; there is no implicit default user. Intelligence GET requests are
 side-effect free and return `404` when the requested snapshot has not been generated.
 
-`report_context` in DailyProfile 13.0, WeeklyProfile 6.0, and MonthlyProfile 3.0 retains `as_of` (ISO UTC),
+`report_context` in DailyProfile 14.0, WeeklyProfile 6.0, and MonthlyProfile 3.0 retains `as_of` (ISO UTC),
 `timezone`, `target_date`, `target_day_complete`, `training_history`, and
 `latest_observations`. `training_history` contains `status` (`COMPLETE`/`PARTIAL`/`UNKNOWN`),
 `verified_days`, `last_synced_at`, and `prior_7d_verified`; it explains data boundaries and
@@ -41,7 +41,7 @@ credential and both users' historical records remain unchanged.
 | POST | `/intelligence/analyze?day=YYYY-MM-DD` | Run deterministic analysis and persist immutable snapshots |
 | GET | `/intelligence/profile` | Read the revisioned user-confirmed physiology and sleep profile |
 | PATCH | `/intelligence/profile` | Patch explicit profile fields with `expected_revision` conflict protection |
-| GET | `/intelligence/daily?day=YYYY-MM-DD` | Read DailyProfile 13.0 facts, persisted decision evidence, and shadow-only open health insights |
+| GET | `/intelligence/daily?day=YYYY-MM-DD` | Read DailyProfile 14.0 facts, persisted decision evidence, and shadow-only open health insights |
 | GET | `/intelligence/morning-briefing?day=YYYY-MM-DD` | Read the MorningBriefing schema_version=3.0 morning presentation projection |
 | GET | `/intelligence/evening-briefing?day=YYYY-MM-DD` | Read the ReportBriefing 1.0 evening presentation projection |
 | GET | `/intelligence/weekly?day=YYYY-MM-DD` | Read the rolling 7-day WeeklyProfile 6.0 and prior-week comparison |
@@ -77,7 +77,7 @@ credential and both users' historical records remain unchanged.
 | GET | `/health/token-status` | Read credential state and next synchronization time |
 | GET | `/health/range?from=&to=&granularity=` | Read 180d/90d/30d/7d/1d aggregate blocks |
 | GET | `/health/workouts?from=&to=` | List workout summaries and detail availability |
-| GET | `/health/workouts/{workout_id}?source=` | Read current v4.0 workout detail and source-isolated typed samples |
+| GET | `/health/workouts/{workout_id}?source=` | Read current `WorkoutDetail 5.0` detail and source-isolated typed samples |
 | GET | `/health/metrics/{metric}?from=&to=&resolution=` | Read timestamped measurements; raw/hour/day points retain source, scope, device, and unit |
 | GET | `/health/daily-metrics?metric=&from=&to=` | Read sparse daily metrics with source provenance |
 | GET | `/health/dense-files/second_heart_rate?from=&to=` | Read high-frequency file coverage without file IDs |
@@ -201,14 +201,21 @@ curl -X POST 'http://localhost:8000/api/v1/intelligence/workouts/<workout-id>/st
   aggregate queries stream the complete range rather than applying the raw 50,000-row cap.
 - Training-response overlap identities use `source:workout_id`; comparable-run baselines
   return parallel workout source and ID arrays.
-- Exact strength exercises come only from explicit vendor sets or user confirmation.
-  Heart rate can estimate work/rest structure but not exercise identity or load. `strengthSets`
-  accepts a string or list, and cross-layer handling converts integer `reps` to a string;
-  same-dose sets with different weight/repetition values are preserved. Unknown units remain
-  unknown and `kg` is not added. Local whole-session confirmation takes precedence; recent
-  28-day detail is refreshed within a bounded budget of at most 4, with refresh time in
-  `fetched_at`, and one pass is not guaranteed to cover all. Unverified real cloud detail is
-  not claimed as obtained.
+- Exact strength exercises come only from explicit vendor sets or user confirmation. Heart rate
+  can estimate work/rest structure but not exercise identity or load. `strengthSets` accepts a string
+  or list, and cross-layer handling converts integer `reps` to a string; valid `strength_sets`
+  observations take precedence and are not double-counted with fallback observations. Only when
+  `training_family=strength` and a lap row has exactly 62 columns are weight raw value, positive
+  integer repetitions, and positive integer `vendor_exercise_code` read from 0-based positions 21,
+  22, and 28, with `order` retained. These observations use `source`=`strength_sets` or `lap_62`,
+  plus `vendor_exercise_code`, `weight_value`, `weight_unit`, and `limitations`; `lap_62` enters only
+  ordered `observed_sets`, not `explicit_exercises`, exercise coverage, muscle coverage, or prescription.
+  Unknown units remain unknown and `kg` is not added; negative sentinels remain `None` and are not
+  treated as bodyweight. Without a verified exercise dictionary, show only the code and do not invent
+  an exercise name. Confirmed records take precedence and the evening report shows sets one by one;
+  morning prescriptions do not mix in historical observed sets. Recent 28-day detail is refreshed
+  within a bounded budget of at most 4, with refresh time in `fetched_at`, and one pass is not
+  guaranteed to cover all.
 - `decision.action_plan` contains one primary session and at most one optional addition
   or alternative. It includes 7/28-day balance, safety state, conflict checks, evidence,
   dose, stop conditions, missing-input gates, and local-day expiry. Removed generic

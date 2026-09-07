@@ -120,6 +120,10 @@ class EveningBriefingEngine:
                 facts.append(f"跑步心率分布：{zones}。")
         for session in strength:
             explicit = session.get("explicit_exercises") or []
+            observed = [
+                item for item in (session.get("observed_sets") or [])
+                if self._has_observed_content(item)
+            ]
             known_focus = session.get("focus") not in {None, "UNKNOWN"} and bool(explicit)
             bits = [session.get("focus_label", "力量训练") if known_focus else "力量训练"]
             if session.get("duration_minutes") is not None:
@@ -133,21 +137,85 @@ class EveningBriefingEngine:
             if session.get("average_heart_rate_bpm") is not None:
                 bits.append(f"平均心率 {number(session['average_heart_rate_bpm'], 0)} 次/分钟")
             facts.append("力量专项：" + "；".join(bits) + "。")
-            exercises = session.get("explicit_exercises") or []
-            if exercises:
-                facts.extend(self._exercise_lines(exercises))
+            confirmed = [
+                item for item in explicit
+                if item.get("source") in {None, "user_confirmed"}
+            ]
+            if confirmed:
+                facts.extend(self._exercise_lines(confirmed))
+            elif observed:
+                facts.extend(self._observed_set_lines(observed))
+            elif explicit:
+                facts.extend(self._exercise_lines(explicit))
             else:
                 facts.append("力量动作明细：逐组动作、重复次数和重量尚未取得；设备总组数也不能还原这些明细。")
         if not facts:
             facts.append("当天没有已记录的正式训练场次；这不等同于已确认休息日。")
         limitations = []
-        if strength and not any(item.get("explicit_exercises") or item.get("vendor_reported_sets") for item in strength):
+        if strength and not any(
+            item.get("explicit_exercises")
+            or any(self._has_observed_content(row) for row in (item.get("observed_sets") or []))
+            or item.get("vendor_reported_sets")
+            for item in strength
+        ):
             limitations.append("心率估计工作段不能替代明确组数，当前不据此评价肌群分配或重量进阶。")
         return {
             "key": "training", "title": "逐场训练", "facts": facts,
             "interpretation": self._training_interpretation(workouts, running, strength),
             "limitations": limitations,
         }
+
+    @staticmethod
+    def _has_observed_content(item: dict) -> bool:
+        return any(
+            item.get(key) not in (None, "")
+            for key in (
+                "exercise_name", "exercise_id", "vendor_exercise_code", "repetitions",
+                "weight_kg", "weight_value", "started_at", "ended_at",
+                "duration_seconds", "rest_seconds",
+            )
+        )
+
+    @classmethod
+    def _observed_set_lines(cls, observed_sets: list[dict]) -> list[str]:
+        output = []
+        for index, item in enumerate(observed_sets, start=1):
+            order = item.get("order")
+            if not isinstance(order, int) or isinstance(order, bool) or order < 1:
+                order = index
+            name = item.get("exercise_name") or item.get("exercise_id")
+            if not name:
+                code = item.get("vendor_exercise_code")
+                name = (
+                    f"动作代码 {code}（名称未确认）"
+                    if code is not None
+                    else "动作名称未确认"
+                )
+            bits = []
+            repetitions = repetitions_text(item.get("repetitions"))
+            if repetitions:
+                bits.append(repetitions)
+            else:
+                bits.append("次数未记录")
+            weight_kg = item.get("weight_kg")
+            if isinstance(weight_kg, (int, float)) and not isinstance(weight_kg, bool) and weight_kg >= 0:
+                bits.append(f"{number(weight_kg)} 千克")
+            else:
+                weight_value = item.get("weight_value")
+                if isinstance(weight_value, (int, float)) and not isinstance(weight_value, bool) and weight_value >= 0:
+                    unit = item.get("weight_unit")
+                    if unit:
+                        bits.append(f"负重 {number(weight_value)} {unit}")
+                    else:
+                        bits.append(f"负重 {number(weight_value)}（单位未确认）")
+                else:
+                    bits.append("负重未记录")
+            if item.get("duration_seconds") is not None:
+                bits.append(f"用时 {number(item['duration_seconds'], 0)} 秒")
+            if item.get("rest_seconds") is not None:
+                bits.append(f"休息 {number(item['rest_seconds'], 0)} 秒")
+            output.append(f"第 {order} 组：{name}；" + "；".join(bits) + "。")
+        return output
 
     @staticmethod
     def _exercise_lines(exercises: list[dict]) -> list[str]:

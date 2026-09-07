@@ -20,6 +20,7 @@ from vitalis.models import (
     MetricSample,
     TrainingRecord,
     Workout,
+    WORKOUT_DETAIL_SCHEMA_VERSION,
     WorkoutMetricSample,
 )
 from vitalis.intelligence.contracts import (
@@ -849,7 +850,7 @@ class HealthRepository:
 
         Unsynced/old-schema rows are always preferred.  ``refresh_after`` allows
         scheduled runs to re-fetch recent strength sessions even when their
-        current detail already has schema 4.0; the timestamp lives in the JSON
+        current detail already has the current schema; the timestamp lives in the JSON
         detail metadata so no schema migration is needed.
         """
         budget = max(0, int(limit))
@@ -880,7 +881,7 @@ class HealthRepository:
             orm.Workout.detail_synced.is_(None),
             orm.Workout.detail.is_(None),
             schema_version.is_(None),
-            schema_version != "4.0",
+            schema_version != WORKOUT_DETAIL_SCHEMA_VERSION,
         )
         order = (orm.Workout.started_at.desc(), orm.Workout.id.desc())
         backlog_rows = list(self.db.execute(
@@ -889,7 +890,7 @@ class HealthRepository:
         rows = list(backlog_rows)
 
         # A refresh is a second bounded query.  It only considers current
-        # schema details with an old/missing fetched_at; fresh 4.0 details are
+        # schema details with an old/missing fetched_at; fresh current details are
         # never returned merely because the caller requested a batch.
         remaining = budget - len(rows)
         if refresh_after is not None and remaining > 0:
@@ -901,7 +902,7 @@ class HealthRepository:
                 select(orm.Workout).where(
                     *conditions,
                     orm.Workout.detail_synced.is_(True),
-                    schema_version == "4.0",
+                    schema_version == WORKOUT_DETAIL_SCHEMA_VERSION,
                     or_(fetched_at.is_(None), fetched_at < cutoff_iso),
                 ).order_by(fetched_at.asc().nulls_first(), *order).limit(remaining)
             ).scalars().all())
@@ -912,7 +913,7 @@ class HealthRepository:
             not (
                 not row.detail_synced
                 or not isinstance(row.detail, dict)
-                or row.detail.get("schema_version") != "4.0"
+                or row.detail.get("schema_version") != WORKOUT_DETAIL_SCHEMA_VERSION
             ),
             -(row.started_at.timestamp() if row.started_at else 0),
             -row.id,

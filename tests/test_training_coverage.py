@@ -1,7 +1,7 @@
 from datetime import date, datetime, timedelta, timezone
 
 from vitalis.connectors.zepp.client import SPORTS
-from vitalis.models import MetricSample, Workout
+from vitalis.models import MetricSample, Workout, WORKOUT_DETAIL_SCHEMA_VERSION
 from vitalis.connectors.zepp.fetcher import FetchWindow
 from vitalis.services.zepp_sync_coordinator import stable_chunk_key
 from vitalis.storage import HealthRepository, session_scope
@@ -155,7 +155,7 @@ def test_workout_detail_refresh_prefers_backlog_and_records_fetched_at():
             vendor_source="strength",
         ))
         repo.save_workout_detail(
-            user_id, "stale-cache", {"schema_version": "4.0"},
+            user_id, "stale-cache", {"schema_version": WORKOUT_DETAIL_SCHEMA_VERSION},
             fetched_at=NOW - timedelta(days=2),
         )
         repo.save_workout(Workout(
@@ -177,7 +177,7 @@ def test_workout_detail_refresh_prefers_backlog_and_records_fetched_at():
                 vendor_source="run",
             ))
             repo.save_workout_detail(
-                user_id, fresh_id, {"schema_version": "4.0"}, fetched_at=NOW
+                user_id, fresh_id, {"schema_version": WORKOUT_DETAIL_SCHEMA_VERSION}, fetched_at=NOW
             )
         backlog_only = repo.pending_workout_details(
             user_id,
@@ -205,7 +205,7 @@ def test_workout_detail_refresh_prefers_backlog_and_records_fetched_at():
         )
         assert [row.workout_id for row in mixed] == ["run-new", "stale-cache"]
         assert repo.save_workout_detail(
-            user_id, "old-schema", {"schema_version": "4.0"}, fetched_at=NOW
+            user_id, "old-schema", {"schema_version": WORKOUT_DETAIL_SCHEMA_VERSION}, fetched_at=NOW
         )
         saved = repo.workout(user_id, "old-schema")
         assert saved is not None
@@ -224,14 +224,14 @@ def test_detail_refresh_rotates_to_least_recently_fetched_history():
                 training_family="strength", vendor_source="strength",
             ))
             repo.save_workout_detail(
-                user_id, workout_id, {"schema_version": "4.0"},
+                user_id, workout_id, {"schema_version": WORKOUT_DETAIL_SCHEMA_VERSION},
                 fetched_at=NOW - timedelta(hours=offset),
             )
         rows = repo.pending_workout_details(
             user_id, NOW - timedelta(days=28), NOW, limit=1, refresh_after=NOW,
         )
         assert rows[0].workout_id == "session-3"
-        repo.save_workout_detail(user_id, "session-3", {"schema_version": "4.0"}, fetched_at=NOW)
+        repo.save_workout_detail(user_id, "session-3", {"schema_version": WORKOUT_DETAIL_SCHEMA_VERSION}, fetched_at=NOW)
         rows = repo.pending_workout_details(
             user_id, NOW - timedelta(days=28), NOW, limit=1,
             refresh_after=NOW + timedelta(minutes=1),

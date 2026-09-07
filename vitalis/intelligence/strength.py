@@ -8,6 +8,8 @@ from hashlib import sha256
 from statistics import median
 from uuid import uuid4
 
+from vitalis.models import StrengthSetObservation
+
 from .contracts import (
     Availability,
     ConfidenceBand,
@@ -185,6 +187,7 @@ class StrengthAnalyzer:
 
     def _session(self, raw, workout: dict, threshold: float | None) -> StrengthSessionAnalysis:
         confirmed = list(workout.get("confirmed_exercises") or [])
+        observed_sets = self._observed_sets(workout)
         explicit = (
             self._merge_exercises(confirmed)
             if confirmed
@@ -230,7 +233,9 @@ class StrengthAnalyzer:
         limitations = []
         if not explicit:
             limitations.append("没有已确认动作，未推测具体动作或目标肌群。")
-            if workout.get("detail_available"):
+            if observed_sets:
+                limitations.append("观测组动作名称未确认；仅作为本次事实展示，不用于处方。")
+            elif workout.get("detail_available"):
                 limitations.append("当前云详情未返回明确动作组；App 中的修正内容尚未在已读取字段中取得。")
         elif focus == "UNKNOWN":
             limitations.append("已记录动作但训练重点未识别；分化未知，不套用全身动作模板。")
@@ -249,6 +254,7 @@ class StrengthAnalyzer:
             confidence=confidence,
             confidence_label=CONFIDENCE_LABELS[confidence.value],
             explicit_exercises=explicit,
+            observed_sets=observed_sets,
             hypotheses=hypotheses,
             movement_patterns=patterns,
             movement_pattern_labels=[PATTERN_LABELS[item] for item in patterns],
@@ -273,14 +279,45 @@ class StrengthAnalyzer:
         )
 
     @staticmethod
+    def _observed_sets(workout: dict) -> list[StrengthSetObservation]:
+        detail = workout.get("detail") or {}
+        if isinstance(detail, dict):
+            items = detail.get("strength_sets") or []
+        else:
+            items = getattr(detail, "strength_sets", []) or []
+        output = []
+        for item in items:
+            if isinstance(item, StrengthSetObservation):
+                output.append(item)
+                continue
+            if not isinstance(item, dict):
+                try:
+                    item = item.model_dump(mode="python")
+                except AttributeError:
+                    continue
+            candidate = dict(item)
+            # Older raw payloads used -1 as an absent weight marker.
+            for key in ("weight_value", "weight_kg"):
+                value = candidate.get(key)
+                if isinstance(value, (int, float)) and value < 0:
+                    candidate[key] = None
+            try:
+                output.append(StrengthSetObservation.model_validate(candidate))
+            except (TypeError, ValueError):
+                continue
+        return output
+
+    @staticmethod
     def _vendor_exercises(user_id: str, workout: dict) -> list[StrengthExerciseRecord]:
         detail = workout.get("detail") or {}
-        items = detail.get("strength_sets") or [] if isinstance(detail, dict) else []
+        items = detail.get("strength_sets") or [] if isinstance(detail, dict) else getattr(detail, "strength_sets", []) or []
         output = []
         workout_source = str(workout.get("source") or "zepp")
         workout_id = str(workout.get("workout_id") or "")
         for order, item in enumerate(items, start=1):
             value = item.get if isinstance(item, dict) else getattr(item, "__dict__", {}).get
+            if value("source") == "lap_62":
+                continue
             name = value("exercise_name")
             exercise_id = value("exercise_id")
             if not name and not exercise_id:

@@ -1895,7 +1895,7 @@
       "type": "string"
     },
     "intelligence_version": {
-      "default": "12.0",
+      "default": "13.0",
       "title": "Intelligence Version",
       "type": "string"
     },

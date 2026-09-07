@@ -654,7 +654,10 @@ class SyncManager:
             summary_end = None
             if workout and isinstance(workout.data, dict):
                 summary_end = parser._parse_datetime_value(workout.data.get("ended_at"))
-            detail = parser.parse_workout_detail(payload, summary_end=summary_end)
+            training_family = (workout.data or {}).get("training_family") if workout else None
+            detail = parser.parse_workout_detail(
+                payload, summary_end=summary_end, training_family=training_family,
+            )
             parsed = int(bool(workout_id) and detail is not None)
             written = int(bool(workout_id) and detail is not None and repo.save_workout_detail(
                 user.id,

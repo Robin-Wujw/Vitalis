@@ -4,7 +4,7 @@
 
 使用请求的日期；如果未指定日期，则使用今天。先读取 `tools/morning_briefing.py`，并且只渲染其中的字段。不得根据 DailyProfile 特征重新构建报告。
 
-全程使用普通中文，像教练说明今天怎么做。先展示 `observations` 中已返回的睡眠和身体状态；如果有当天跑步或力量训练上下文，也一并展示。当天尚未有 workout 不是缺项，不得因此把晨报改成 `INSUFFICIENT_DATA`。
+全程使用普通中文，像教练说明今天怎么做。先展示 `observations` 中已返回的睡眠和身体状态；如果有当天跑步或力量训练上下文，也一并展示。当天尚未有 workout 不是缺项，不得因此把晨报改成 `INSUFFICIENT_DATA`。晨报处方不得混入历史 `observed_sets`。
 
 按以下顺序渲染：
 

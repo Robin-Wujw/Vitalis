@@ -83,6 +83,12 @@ Internal enum codes exist only for program control and must never appear in the 
   only explicitly supplied fields. `workout_source` is required whenever a workout is linked.
 - Confirm exact exercises for a strength workout only from the user's statement by
   calling `tools/strength_exercises.py`; never derive an exercise from heart rate.
+- When `observed_sets` is returned, give confirmed records precedence and repeat only the
+  available fields one set at a time. Preserve the `source` literals `strength_sets` / `lap_62`,
+  `order`, `vendor_exercise_code`, `weight_value`, `weight_unit`, and `limitations`. Without a
+  verified exercise dictionary, show only the code and never invent an exercise name; missing
+  units do not become `kg`, negative sentinels remain `None`, and they are not bodyweight.
+  Morning prescriptions must not mix in historical observed sets.
 - Acknowledge an event only after the user asks: call `tools/acknowledge_event.py`.
 - Synchronize source data only after the user asks: call `tools/sync.py`.
 - Configure automated PushPlus delivery only after the user asks: schedule

@@ -823,3 +823,33 @@ def test_all_day_stress_does_not_fill_null_summary_with_zero():
 
     assert daily == []
     assert samples == []
+
+
+def test_readiness_scores_are_bounded_and_hrv_baseline_255_is_absent():
+    raw = {"items": [{
+        "eventType": "readiness",
+        "timestamp": 1_777_334_400_000,
+        "value": {
+            "rdnsScore": 101,
+            "phyScore": -1,
+            "mentScore": 100,
+            "hrvScore": 255,
+            "hrvBaseline": 255,
+            "sleepHRV": 65,
+        },
+    }]}
+
+    daily = ZeppParser.parse_daily_metrics(raw)
+    samples = ZeppParser.parse_readiness_samples(raw)
+    daily_values = {row.metric: row.value for row in daily}
+    sample_values = {row.metric: row.value for row in samples}
+
+    assert "readiness" not in daily_values
+    assert "physical_readiness" not in daily_values
+    assert daily_values["mental_readiness"] == 100
+    assert "hrv_readiness" not in daily_values
+    assert "hrv_baseline" not in daily_values
+    assert sample_values["mental_readiness"] == 100
+    assert "hrv_readiness" not in sample_values
+    assert "hrv_baseline" not in sample_values
+    assert daily_values["sleep_hrv"] == 65

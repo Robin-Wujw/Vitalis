@@ -3,6 +3,14 @@
 [中文](SYSTEM_HISTORY.md)
 
 > This file preserves execution records and verification evidence for completed work solely for historical traceability. The repository-root `SYSTEM.en.md` is authoritative for current work rules, unfinished work, and the latest verification state.
+> 2026-09-23 security notice: the whole-app Quick Tunnel commands archived below are historical records, not current deployment steps. The complete API still lacks caller authentication; do not reuse those public forwarding commands. Follow the current boundary in `docs/GETTING_STARTED.en.md`.
+
+## 2026-09-23 Whole-project Audit and Scheduled Delivery Isolation
+
+- `AUD-001` was a conditional P0: with built-in scheduling, one global `PUSHPLUS_TOKEN`, and multiple data owners, the old code sent each user's report to the same recipient. `vitalis/services/zepp_sync_coordinator.py` now requires a nonempty `VITALIS_PUSH_USER` and token, and delivers only to the matching owner; other users still synchronize and undergo analysis without creating delivery markers. Review also found that the Hermes delivery CLI could override its configured identity with `--user`; `skills/vitalis/tools/daily_push.py` now requires a configured `VITALIS_USER` and rejects a different `--user`, unpaired users/tokens, or conflicting process/private settings. The code establishes the risk paths, not that a production disclosure occurred.
+- The user confirmed that the complete API is currently reachable only on loopback/private networks. The bilingual Getting Started guide removed the Quick Tunnel example that would directly publish the unauthenticated full API, and corrected built-in versus Hermes schedule times and the supplied systemd units' responsibilities. Public API authentication remains an open item.
+- Existing source directories were not moved; local IDE settings and two unreferenced JPGs were retained. After explicit authorization for the exact file, `backups/schema-hidden-dryrun-before.db` was rechecked byte for byte and removed as identical to the retained dated copy; no other database or backup was cleaned.
+- Local Windows verification: 8 new two-user scheduler scenarios, 11 Hermes CLI identity scenarios, all 705 Python tests, 47 bilingual Markdown/link checks, and 6 Balance 2 Node tests passed. No server connection, real health-data inspection, or real PushPlus delivery was performed; remaining issues are tracked in `SYSTEM.en.md`.
 
 ## 2026-09-04 Repository-wide Bilingual Markdown Contract
 

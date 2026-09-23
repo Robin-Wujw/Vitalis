@@ -10,6 +10,10 @@
 
 - 上游仓库：<https://github.com/lingcang728/ZeppBridge>
 - 已审查版本：`v2.1.0`（2026-09-02）；现有已转化约定所对应的精确历史源码 revision 尚未还原。
+- 最新比对基线：ZeppBridge `main` 的 `fd53afd9fd95389bb1a5192af561a6514e9855c5`
+  （2026-09-23）。本次按行为和回归测试借鉴、未整段复制以下上游修复：心率游标单位归一化
+  （`c491d2b8b455`）、ODI/OSA 本地日历日期请求（`afb130a09cad`）、SpO2 有界分窗与响应上限处理
+  （`592b685b652e`），以及 readiness 缺失值 sentinel 处理（`37e0b52b1425`）。
 - 明确引用 ZeppBridge 的 Vitalis 模块：`auth_parser.py`、`client.py`、`fetcher.py`、`parser.py`、`sync_manager.py` 和 `api/routes/connect.py`。
 - Vitalis 特有变更：Python/FastAPI/SQLAlchemy 架构、类型化规范合同、source/scope/device 来源信息、有界 chunk 编排、lease、retry、诊断和确定性分析边界。
 - 上游许可证：MIT。ZeppBridge 还在其上游声明文件中标明了衍生自 Apache-2.0 的锻炼解码。复制或改编更多上游代码之前，必须记录精确 revision，并保留所有适用的 MIT 和 Apache 声明。

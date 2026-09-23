@@ -930,6 +930,11 @@ class ZeppParser:
                         continue
                     if metric == "distance_km":
                         value = value / 1000
+                    if (
+                        (metric == "readiness" or metric.endswith("_readiness"))
+                        and not 0 <= value <= 100
+                    ):
+                        continue
                     store(DailyMetric(
                         date=day, metric=metric, value=value, unit=unit,
                         source_scope="device" if device else "user_fused", device_id=device,
@@ -948,7 +953,10 @@ class ZeppParser:
                         if reading is None:
                             continue
                         reading *= scale
-                        if minimum <= reading <= maximum:
+                        if (
+                            minimum <= reading <= maximum
+                            and not (metric == "hrv_baseline" and reading == 255)
+                        ):
                             store(DailyMetric(
                                 date=day, metric=metric, value=reading, unit=unit,
                                 source_scope="device" if device else "user_fused",
@@ -1029,7 +1037,10 @@ class ZeppParser:
                 if reading is None:
                     continue
                 reading *= scale
-                if minimum <= reading <= maximum:
+                if (
+                    minimum <= reading <= maximum
+                    and not (metric == "hrv_baseline" and reading == 255)
+                ):
                     output.append(MetricSample(
                         metric=metric, timestamp=timestamp, value=reading, unit=unit,
                         source_scope="device" if device_id else "user_fused",

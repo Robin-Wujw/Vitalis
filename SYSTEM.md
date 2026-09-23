@@ -73,9 +73,10 @@
 
 ## 9. 当前状态
 
-日期：2026-09-07
+日期：2026-09-23
 
-- `7b48a51` 力量明细版已部署，Windows 与服务器 Linux 完整套件各通过 `646` 项，真实晚报 API 和一次测试投递已验证。新增事实版晨报和有限动作名称显示映射在本地通过 `674` 项，包含 `47` 项双语 Markdown 与本地链接/锚点检查；部署验收尚待完成。
+- 2026-09-23 本地复盘已封闭 `AUD-001` 的条件性跨用户内置投递风险；Windows 完整 Python 测试 705 项、双语检查 47 项及 Balance 2 Node 测试 6 项通过。用户确认完整 API 当前仅本机/内网可达；未核查线上服务、执行部署或发送真实消息。已跟踪源码结构不搬迁；未解决的事项见第 10 节，完成证据见 `docs/SYSTEM_HISTORY.md`。
+- `2d98418` 已部署，Windows 与服务器 Linux 完整套件各通过 `674` 项，包含 `47` 项双语 Markdown 与本地链接/锚点检查。真实晚报 API 已验证有限动作名称显示；事实版晨报已由现有调度成功投递，并确认不含训练计划和当天去重标记存在。
 - 本地当前契约为 `WorkoutDetail 5.1`（共享 `WORKOUT_DETAIL_SCHEMA_VERSION`）、Daily 14.0、Weekly 6.0、Monthly 3.0、MorningBriefing 4.0、Agent Context 6.0、Intelligence 14.0、StrengthAnalysis 2.0、Decision Policy 9.0。`GET /intelligence/evening-briefing`、`GET /intelligence/weekly-briefing` 和 `GET /intelligence/monthly-briefing` 返回 `ReportBriefing 1.0`，并与 HTML 使用相同的 `sections`。
 - 本轮字段可用性检查不展开个人健康数值；可以描述一般能力，但不把个人健康数值、真实记录或未取得的 App 修正动作写入仓库，也不声称已取得真实 App 动作数据。
 - 仅当 `training_family=strength` 且 lap 行恰为 62 列时，才从 0-based 21、22、28 读取有限的重量、次数和动作 code 观测；这些观测保留组序并进入独立的 `observed_sets`，不作为 `explicit_exercises`、肌群覆盖或训练处方依据。
@@ -88,10 +89,27 @@
 - 当前工作分支为 `fix/zepp-identity-ownership`；本轮文档只同步当前本地契约，不改变英文 sidecar 的运行时角色。
 - 已核验晨报调度持续执行但返回 `stored_data_incomplete`：通用历史入口成功，而其余运动分类入口不可用，前七天训练历史未获完整证明。事实版不会把不可用解释为空记录，也不会修改历史覆盖标记。服务器备份和 schema 审计通过，未执行结构迁移。
 - 已确认的 Zepp 语义继续有效：压力日汇总来自 `all_day_stress` 字段，曲线来自显式时间戳 `data` 数组；`Charge/stress_data` protobuf 和 `Charge/insight_data` 仍无可证明语义，继续不请求。
-- 本轮只执行当前明确授权的备份、部署、服务重启和报告验收；晚报测试不写正式标记，事实版晨报成功后按正常每日标记去重。不复用更早的单次推送授权。
+- 2026-09-07 部署验收只在当时明确授权的范围内执行备份、部署、服务重启和报告验收；晚报测试不写正式标记，事实版晨报成功后按正常每日标记去重。不复用当时的单次推送授权；2026-09-23 本地复盘没有服务器操作或真实推送。
 
 ## 10. 当前未完成事项
 
-- [ ] 根据用户对新版实际测试晚报的内容反馈进行后续调整；额外测试推送需要新的明确授权。
-- [ ] 为持久同步账本建立生产备份/恢复演练与长期数据保留策略。
-- [ ] 完善 Zepp 动作字典和 App 修正力量动作组来源；当前只有有限、已核验的名称显示对照，不能泛化到未知代码；`unit` 和未映射动作的 `name` 仍未知。
+以下为 2026-09-23 本地代码审计发现的待办；级别按触发条件下的影响评估，不代表线上已发生事故。实际完整 API 仅本机/内网可达；未检查服务器密钥或个人健康值。已修复的条件性 P0 记录在 `docs/SYSTEM_HISTORY.md`，此处只保留未完成项。
+
+- [ ] `AUD-002` **P1 / 条件性 P0：公网鉴权边界**。`vitalis/api/deps.py` 的 `X-User-Id` 只选身份；直接公开完整 API 会允许跨用户读取、修改及设备令牌签发。现已移除双语指南中的整站 Quick Tunnel 示例，但代码尚无身份认证。完成：在任何公网入口启用前设计并测试所有敏感路由的鉴权、用户绑定及浏览器配对兼容性。
+- [ ] `AUD-003` **P1 / 部署**。`deploy/systemd/vitalis-worker.service` 依赖 `vitalis.service`，仓库提供的却是 `vitalis-api.service`；API 单元禁用内置调度，worker 仅执行到期分块，没有定时入队者。完成：统一服务名、明确调度所有权，并在全新安装上验证入队、重启和恢复。
+- [ ] `AUD-004` **P1 / 投递恢复**。`vitalis/services/zepp_sync_coordinator.py` 先终结同步尝试，再分析/投递；异常仅写日志，终态不进入恢复队列。完成：持久化独立的下游任务及结果，覆盖终态提交后崩溃、发送失败和重复外部投递的恢复测试。
+- [ ] `AUD-005` **P1 / 隐私日志**。`vitalis/services/push_service.py::_log_handler` 在 INFO 日志写入完整健康报告正文。完成：仅记录非敏感投递元数据，并验证日志不含个人报告内容。
+- [ ] `AUD-006` **P1 / 浏览器重新配对**。`browser_extension/background.js` 新配对时保留旧 `browserLinkToken`，提交凭据优先走旧连接，可能更新错误账户或向新服务发送旧令牌。完成：明确切换时废止旧连接，增加可执行的重新配对/换服务测试。
+- [ ] `AUD-007` **P1 / 内置晨报重试**。`vitalis/scheduler/jobs.py` 的内置晨报仅在 09:30 运行，睡眠不完整时当天不会自动重试；Hermes 每小时任务是另一入口。完成：确认内置调度的预期策略并测试延期后的重试与每日去重。
+- [ ] `AUD-008` **P1 / 备份与保留**。仍需为持久同步账本建立生产备份/恢复演练和长期保留策略；`vitalis/services/daily_push.py` 的标记在数据库外。完成：验证隔离恢复、schema、调度标记和覆盖证据，再定义不破坏历史证明的清理规则。
+- [ ] `AUD-009` **P1 / 训练历史覆盖**。真实运动分类接口不可用时前 7 天训练历史无法核验，晨报只能发送明确限制的事实版；不得把不可用当作无训练。完成：取得可核验的厂商响应或替代完整来源，并验证覆盖门控仍有效。
+- [ ] `AUD-010` **P2 / 手工导入页**。`vitalis/api/routes/connect.py` 的回退页面含双大括号 JavaScript 和固定的 `X-User-Id: '001'`。完成：使用真实页面交互验证解析、提交和身份选择；不影响已存在的优先配对入口。
+- [ ] `AUD-011` **P2 / 健康与可观测性**。`vitalis/api/app.py` 在调度器启动失败时继续提供固定 `healthz=ok`，缺少队列停滞和 worker 就绪信号。完成：区分存活/就绪，覆盖数据库、调度所有权、积压及启动失败告警。
+- [ ] `AUD-012` **P2 / 验证缺口**。仓库无自动 CI；`tests/conftest.py` 禁用调度并使用内存 SQLite，Node 设备测试和真实进程重启不在 Python 套件中。完成：建立可重复的跨平台 Python/Node 验证及进程级恢复测试。
+- [ ] `AUD-013` **P2 / PostgreSQL 路径**。`.env.example` 默认 PostgreSQL 但本地步骤未提供预置；`vitalis/storage/schema_migration.py` 仅实现 SQLite 审计/迁移。完成：提供可启动的本地默认和 PostgreSQL 安装、升级、并发与恢复验证。
+- [ ] `AUD-014` **P2 / 心率满页边界**。`vitalis/connectors/zepp/fetcher.py` 和 `vitalis/services/zepp_sync_coordinator.py` 把满页游标恰达独占窗口终点误判为 `partial`。完成：区分终点与无进展，并分别覆盖两条拉取路径的 1000 行边界回归。
+- [ ] `AUD-015` **P2 / 指定时区按天同步**。`vitalis/services/zepp_sync_coordinator.py::_window` 在 `create_attempt(days=1, timezone_name=...)` 中先按应用时区建窗，再按请求时区发日期。完成：同一时区计算今日和窗口，并测试跨本地日期/DST 的分界。
+- [ ] `AUD-016` **P3 / 回归隔离**。`tests/test_fetcher.py` 的混合秒/毫秒游标样例未覆盖毫秒样本更早的顺序，`tests/test_vitalis_skill.py` 的显式用户测试依赖环境中 `VITALIS_USER` 未设置。完成：补真实混合顺序/后继游标和显式环境隔离测试。
+- [ ] `AUD-017` **P2 / 力量动作证据**。完善 Zepp 动作字典及 App 修正组来源；当前只有有限、已核验的显示名对照，未知 code 不泛化，`unit` 和未映射动作的 `name` 仍未知。完成：取得同设备同训练的脱敏对照样本并验证映射及来源优先级。
+- [ ] `AUD-018` **P3 / 待用户反馈**。根据新版真实测试晚报的内容反馈再调整；额外测试推送需要新的明确授权。完成：得到反馈后增加对应报告断言，不自行发送真实消息。
+- [ ] `AUD-019` **P2 / 旧依赖目录**。忽略的 `.codex_pydeps/` 含旧 Vitalis 安装快照；历史 `PYTHONPATH` 引用可能载入过期代码。完成：核对外部启动器均不再引用后再退役；当前不删除用户环境。

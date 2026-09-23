@@ -22,6 +22,7 @@ import time as time_mod
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Literal
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -340,18 +341,43 @@ class ZeppAPIClient:
         self,
         event_type: str,
         sub_type: str,
-        from_iso: str,
-        to_iso: str,
-        time_zone: str = "Asia/Shanghai",
+        from_iso: str | date,
+        to_iso: str | date,
+        time_zone: str | None = None,
         limit: int = 1000,
     ) -> dict:
+        """Fetch ODI/OSA using inclusive local calendar dates.
+
+        Older callers may still pass ISO timestamps; reducing them to their
+        date component keeps serialized attempts runnable while ensuring the
+        wire contract is the device-local civil-date form.
+        """
+        if time_zone is None:
+            from vitalis.config import settings
+
+            time_zone = settings.timezone
+
+        def calendar_date(value: str | date) -> str:
+            if isinstance(value, datetime):
+                parsed = value
+            elif isinstance(value, date):
+                return value.isoformat()
+            else:
+                text = str(value).strip()
+                try:
+                    parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+                except ValueError:
+                    return text[:10] if len(text) >= 10 else text
+            if parsed.tzinfo is None:
+                return parsed.date().isoformat()
+            return parsed.astimezone(ZoneInfo(time_zone)).date().isoformat()
         return self._get(
             API_USER_EVENTS_DATE.format(user_id=self.user_id),
             {
                 "eventType": event_type,
                 "subType": sub_type,
-                "from": from_iso,
-                "to": to_iso,
+                "from": calendar_date(from_iso),
+                "to": calendar_date(to_iso),
                 "timeZone": time_zone,
                 "limit": str(limit),
                 "reverse": "0",
@@ -513,7 +539,7 @@ class MockZeppClient:
     def fetch_user_events(self, event_type: str, sub_type: str | None, from_ms: int, to_ms: int, limit: int = 1000, reverse: bool = True) -> dict:
         return {"items": []}
 
-    def fetch_user_events_date_string(self, event_type: str, sub_type: str, from_iso: str, to_iso: str, time_zone: str = "Asia/Shanghai", limit: int = 1000) -> dict:
+    def fetch_user_events_date_string(self, event_type: str, sub_type: str, from_iso: str | date, to_iso: str | date, time_zone: str | None = None, limit: int = 1000) -> dict:
         return {"items": []}
 
     def fetch_sport_detail(self, track_id: str, source: str) -> dict:

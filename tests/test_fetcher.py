@@ -98,13 +98,13 @@ class TestHeartRateCursor:
             {"value": 99},  # malformed: skipped
             "not an object",  # malformed: skipped
         ]
-        # max is 1700007200000 ms, cursor advances one second
-        assert _heart_rate_cursor(items) == 1_700_007_201_000
+        # The mixed-unit maximum is normalized to seconds before advancing.
+        assert _heart_rate_cursor(items) == 1_700_007_201
 
     def test_generated_time_nested_in_value(self):
         assert _heart_rate_cursor([
             {"value": {"generatedTime": 1_700_000_000_000, "bpm": 72}}
-        ]) == 1_700_000_001_000
+        ]) == 1_700_000_001
 
     def test_empty(self):
         assert _heart_rate_cursor([]) is None
@@ -176,7 +176,9 @@ def test_daily_and_wellness_requests_are_chunked_for_long_history():
         if call[:2] in {("Charge", "stress_data"), ("Charge", "insight_data")}
     ]
     assert len(rmssd_calls) == 3
-    assert len(connector.date_events) == 6
+    # ODI and OSA each use inclusive local-date windows of at most 3 days.
+    assert len(connector.date_events) == 12
+    assert all("T" not in value and "Z" not in value for call in connector.date_events for value in call[2:])
 
 
 def test_dense_file_index_requests_are_chunked():
@@ -597,3 +599,82 @@ def test_wholly_unavailable_wellness_capabilities_do_not_create_partial():
 
     assert len(records) == 1
     assert records.partial is False
+
+
+def test_heart_rate_full_page_without_cursor_progress_is_incomplete():
+    class Connector:
+        def __init__(self):
+            self.calls = 0
+
+        def fetch_heart_rate(self, start, end, limit, hr_type):
+            self.calls += 1
+            return {
+                "items": [
+                    {"timestamp": start - 1, "value": 70}
+                    for _ in range(limit)
+                ]
+            }
+
+    start = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    records = DataFetcher(Connector()).fetch_heart_rate_records(
+        FetchWindow(start=start, end=start + timedelta(hours=1))
+    )
+
+    assert len(records) == 1
+    assert records.incomplete is True
+    assert records[0].incomplete is True
+    assert "cursor" in records[0].incomplete_reason
+
+
+def test_spo2_cap_retains_rows_and_marks_the_cap_incomplete():
+    class Connector:
+        def fetch_user_events(self, event_type, sub_type, *args, **kwargs):
+            if event_type == "blood_oxygen":
+                return {"items": [{"subType": "click"}] * 1000}
+            return {"items": []}
+
+        def fetch_events(self, *args, **kwargs):
+            return {"items": []}
+
+        def fetch_user_events_date_string(self, *args, **kwargs):
+            return {"items": []}
+
+    records = DataFetcher(Connector(), timezone_name="Asia/Shanghai").fetch_wellness_records(
+        FetchWindow.local_dates(date(2026, 8, 1), date(2026, 8, 3), "Asia/Shanghai")
+    )
+
+    spo2 = [record for record in records if ":spo2:" in record.raw.source_key]
+    assert spo2
+    assert any(record.incomplete for record in spo2)
+    assert records.incomplete is True
+    assert len(spo2[0].raw.payload["items"]) == 1000
+
+
+def test_spo2_odi_uses_inclusive_dates_in_configured_dst_zone():
+    class Connector:
+        def __init__(self):
+            self.calls = []
+
+        def fetch_user_events(self, *args, **kwargs):
+            return {"items": []}
+
+        def fetch_events(self, *args, **kwargs):
+            return {"items": []}
+
+        def fetch_user_events_date_string(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return {"items": []}
+
+    zone = "America/New_York"
+    window = FetchWindow.local_dates(date(2026, 3, 7), date(2026, 3, 9), zone)
+    connector = Connector()
+    DataFetcher(connector, timezone_name=zone).fetch_wellness_records(window)
+
+    assert connector.calls
+    first_args, first_kwargs = connector.calls[0]
+    assert first_args[2:4] == ("2026-03-07", "2026-03-09")
+    assert first_kwargs["time_zone"] == zone
+    assert all(
+        (date.fromisoformat(args[3]) - date.fromisoformat(args[2])).days < 3
+        for args, _kwargs in connector.calls
+    )

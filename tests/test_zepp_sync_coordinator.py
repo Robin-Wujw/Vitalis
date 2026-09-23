@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from vitalis.config import settings
 from vitalis.connectors.zepp.client import SPORTS, ZeppAuthError
 from vitalis.connectors.zepp.fetcher import (
     DAY_MILLISECONDS,
@@ -59,7 +60,7 @@ def _clean(user_id):
         HealthRepository(db).delete_for_user(user_id)
 
 
-def _one_chunk_attempt(user_id, connector, *, options=None, now=NOW, deadline=None):
+def _one_chunk_attempt(user_id, connector, *, options=None, now=NOW, deadline=None, trigger="manual"):
     coordinator = ZeppSyncCoordinator(
         connector=connector,
         wall_clock=lambda: now,
@@ -67,6 +68,7 @@ def _one_chunk_attempt(user_id, connector, *, options=None, now=NOW, deadline=No
     )
     attempt = coordinator.create_attempt(
         user_id, window=WINDOW, options=options or {}, deadline_at=deadline,
+        trigger=trigger,
     )
     with session_scope() as db:
         rows = HealthRepository(db).sync_chunks(attempt.id)
@@ -355,3 +357,189 @@ def test_link_refresh_terminal_projection_uses_bare_digest():
         assert link is not None
         assert link.last_sync_at is not None
         assert link.sync_attempt_id == attempt.id
+
+
+def test_coordinator_marks_full_page_no_progress_partial_without_retrying():
+    _clean("coord-incomplete")
+
+    class Connector:
+        def __init__(self):
+            self.calls = 0
+
+        def fetch_heart_rate(self, start, end, limit, hr_type):
+            self.calls += 1
+            return {"items": [
+                {"timestamp": start - 1, "value": 72}
+                for _ in range(limit)
+            ]}
+
+    connector = Connector()
+    coordinator, attempt = _one_chunk_attempt("coord-incomplete", connector)
+    report = coordinator.run_attempt(attempt.id, max_chunks=1)
+    state = coordinator.status(attempt.id)
+
+    assert connector.calls == 1
+    assert state["attempt"]["status"] == "partial"
+    heart_rate = next(
+        row for row in state["chunks"] if row["stream"] == "heart_rate"
+    )
+    assert heart_rate["status"] == "succeeded"
+    assert heart_rate["fetch_status"] == "partial"
+    assert heart_rate["error_kind"] == "partial_coverage"
+    assert report.success is False
+    # Terminal partial attempts are not re-queued by the ledger.
+    coordinator.run_attempt(attempt.id, max_chunks=1)
+    assert connector.calls == 1
+
+
+def test_manifest_uses_inclusive_three_day_local_odi_windows_across_dst():
+    zone = "America/New_York"
+    window = FetchWindow.local_dates(date(2026, 3, 7), date(2026, 3, 9), zone)
+    manifest = ZeppSyncCoordinator()._manifest(window, {}, zone)
+    odi = [
+        item for item in manifest
+        if item["partition"] == "spo2/odi"
+    ]
+    osa = [
+        item for item in manifest
+        if item["partition"] == "spo2/osa_event"
+    ]
+
+    assert len(odi) == len(osa) == 1
+    assert odi[0]["stages"]["params"] == {
+        "event_type": "blood_oxygen",
+        "sub_type": "odi",
+        "from_date": "2026-03-07",
+        "to_date": "2026-03-09",
+        "time_zone": zone,
+    }
+    point = [item for item in manifest if item["partition"] == "spo2"][0]
+    assert point["window_start"] == window.start
+    assert point["window_end"] == window.end
+
+
+def test_legacy_odi_iso_params_are_converted_to_local_inclusive_dates():
+    coordinator = ZeppSyncCoordinator()
+    assert coordinator._legacy_local_date(
+        "2026-08-01T16:00:00Z", "Asia/Shanghai"
+    ) == "2026-08-02"
+    assert coordinator._legacy_local_date(
+        "2026-08-02T16:00:00Z", "Asia/Shanghai", exclusive_end=True
+    ) == "2026-08-02"
+
+
+def test_manifest_defaults_to_application_timezone():
+    coordinator = ZeppSyncCoordinator()
+    window = FetchWindow.local_dates(date(2026, 8, 1), date(2026, 8, 1))
+    manifest = coordinator._manifest(window, {})
+    odi = next(item for item in manifest if item["partition"] == "spo2/odi")
+    assert odi["stages"]["params"]["time_zone"] == settings.timezone
+
+
+def test_coordinator_wellness_chunk_handles_non_capped_payload():
+    class Connector:
+        def fetch_events(self, *args):
+            return {"items": []}
+
+    start = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    end = start + timedelta(days=1)
+    chunk = {
+        "cursor": None,
+        "window_start": start,
+        "window_end": end,
+        "stream": "wellness",
+        "stages": {
+            "operation": "fetch_wellness",
+            "params": {
+                "label": "respiratory_rate",
+                "surface": "v2",
+                "event_type": "RespiratoryRate",
+                "sub_type": "real_data",
+                "from_ms": int(start.timestamp() * 1000),
+                "to_ms": int(end.timestamp() * 1000),
+            },
+        },
+    }
+
+    result = ZeppSyncCoordinator()._fetch_chunk(chunk, SyncControl(), Connector())
+
+    assert result.record is not None
+    assert result.incomplete is False
+
+
+@pytest.mark.parametrize("period", ("morning", "evening"))
+@pytest.mark.parametrize(
+    ("configured_user", "token", "recipient"),
+    [
+        ("coord-push-owner", "private-token", "coord-push-owner"),
+        ("coord-push-unbound", "private-token", None),
+        (None, "private-token", None),
+        ("coord-push-owner", None, None),
+    ],
+)
+def test_scheduled_push_requires_explicit_recipient_binding(
+    monkeypatch, tmp_path, period, configured_user, token, recipient
+):
+    from vitalis.intelligence.service import IntelligenceCommand
+    from vitalis.services import daily_push
+
+    if configured_user is None:
+        monkeypatch.delenv("VITALIS_PUSH_USER", raising=False)
+    else:
+        monkeypatch.setenv("VITALIS_PUSH_USER", configured_user)
+    if token is None:
+        monkeypatch.delenv("PUSHPLUS_TOKEN", raising=False)
+    else:
+        monkeypatch.setenv("PUSHPLUS_TOKEN", token)
+
+    report_day = date(2026, 8, 29)
+    monkeypatch.setattr(daily_push, "local_today", lambda: report_day)
+    monkeypatch.setattr(
+        daily_push, "local_day_utc_bounds",
+        lambda _day: (NOW, datetime(2100, 1, 1, tzinfo=timezone.utc)),
+    )
+    marker_for = daily_push._delivery_marker
+    monkeypatch.setattr(
+        daily_push, "_delivery_marker",
+        lambda _state_dir, user, day, report_period: marker_for(
+            tmp_path, user, day, report_period
+        ),
+    )
+    analyzed = []
+    sent = []
+
+    def analyze(_self, user_id):
+        analyzed.append(user_id)
+        return SimpleNamespace(daily={
+            "date": report_day.isoformat(),
+            "data_quality": {"status": "SUFFICIENT"},
+            "report_context": {"training_history": {
+                "status": "COMPLETE", "prior_7d_verified": True,
+            }},
+            "features": {"sleep": {"status": "AVAILABLE", "wake_time": "08:00:00"}},
+        })
+
+    class RecordingPushService:
+        def __init__(self, pushplus_token):
+            assert pushplus_token == "private-token"
+
+        def push_daily_profile(self, user_id, _daily, period):
+            sent.append((user_id, period))
+            return {"_pushplus_handler": "ok"}
+
+    monkeypatch.setattr(IntelligenceCommand, "analyze", analyze)
+    monkeypatch.setattr(daily_push, "PushService", RecordingPushService)
+
+    for user_id in ("coord-push-owner", "coord-push-other"):
+        _clean(user_id)
+        coordinator, attempt = _one_chunk_attempt(
+            user_id, HeartConnector(), trigger=period
+        )
+        assert coordinator.run_attempt(attempt.id).success
+
+    assert analyzed == ["coord-push-owner", "coord-push-other"]
+    assert sent == ([(recipient, period)] if recipient else [])
+    markers = list(tmp_path.glob("*.sent"))
+    assert markers == (
+        [marker_for(tmp_path, recipient, report_day, period)] if recipient else []
+    )

@@ -17,6 +17,7 @@ from threading import Event, Thread
 import time
 from typing import Any, Callable, Iterator
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_, select, update
 
@@ -26,12 +27,14 @@ from vitalis.connectors.zepp.fetcher import (
     CHUNK_DAYS,
     DAY_MILLISECONDS,
     HEART_RATE_PAGE_LIMIT,
+    SPO2_MAX_LOCAL_DAYS,
     DataFetcher,
     FetchWindow,
     FetchedRecord,
     RawRecord,
     _heart_rate_cursor,
     _heart_rate_items,
+    _payload_items,
 )
 from vitalis.connectors.zepp.parser import ZeppParser
 from vitalis.connectors.zepp.sync_manager import StreamReport, SyncManager, SyncReport
@@ -40,10 +43,9 @@ from vitalis.storage import HealthRepository
 from vitalis.storage.database import SessionLocal
 from vitalis.storage import models as orm
 from vitalis.storage.sync_types import SyncLease
-from vitalis.time import local_day_utc_bounds
 
 
-PLAN_VERSION = "zepp-sync-v4"
+PLAN_VERSION = "zepp-sync-v5"
 MAX_CHUNK_ATTEMPTS = 5
 CHUNK_LEASE_SECONDS = 120
 ATTEMPT_LEASE_SECONDS = 300
@@ -161,6 +163,8 @@ class _ChunkResult:
     archive: bytes | None = None
     decoded: Any | None = None
     error: Exception | None = None
+    incomplete: bool = False
+    incomplete_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -245,6 +249,30 @@ class ZeppSyncCoordinator:
             return value.astimezone(timezone.utc).replace(tzinfo=None)
         return value
 
+    @staticmethod
+    def _configured_timezone() -> str:
+        from vitalis.config import settings
+
+        return settings.timezone
+
+    @staticmethod
+    def _legacy_local_date(
+        value: Any, timezone_name: str, *, exclusive_end: bool = False
+    ) -> str:
+        """Translate v4 UTC timestamp params to inclusive local dates."""
+        text = str(value or "").strip()
+        if len(text) == 10 and text[4] == "-":
+            return text
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return text[:10]
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        if exclusive_end:
+            parsed -= timedelta(microseconds=1)
+        return parsed.astimezone(ZoneInfo(timezone_name)).date().isoformat()
+
     def _window(self, window: FetchWindow | tuple[datetime, datetime] | None, days: int | None) -> FetchWindow:
         if window is not None:
             if isinstance(window, FetchWindow):
@@ -263,18 +291,13 @@ class ZeppSyncCoordinator:
         return FetchWindow.local_dates(start_day, end_day)
 
     @staticmethod
-    def _local_windows(window: FetchWindow) -> list[FetchWindow]:
-        start_day = date.fromisoformat(window.start_day())
-        end_day = date.fromisoformat(window.end_day())
-        out: list[FetchWindow] = []
-        cursor = start_day
-        while cursor <= end_day:
-            last = min(end_day, cursor + timedelta(days=CHUNK_DAYS - 1))
-            start, _ = local_day_utc_bounds(cursor)
-            _, end = local_day_utc_bounds(last)
-            out.append(FetchWindow(start=start, end=end))
-            cursor = last + timedelta(days=1)
-        return out
+    def _local_windows(
+        window: FetchWindow, timezone_name: str | None = None,
+        chunk_days: int = CHUNK_DAYS,
+    ) -> list[FetchWindow]:
+        return window.local_chunks(
+            chunk_days, timezone_name or ZeppSyncCoordinator._configured_timezone()
+        )
 
     @staticmethod
     def _spec(
@@ -308,8 +331,14 @@ class ZeppSyncCoordinator:
             },
         }
 
-    def _manifest(self, window: FetchWindow, options: dict[str, Any]) -> list[dict[str, Any]]:
-        chunks = self._local_windows(window)
+    def _manifest(
+        self,
+        window: FetchWindow,
+        options: dict[str, Any],
+        timezone_name: str | None = None,
+    ) -> list[dict[str, Any]]:
+        timezone_name = timezone_name or self._configured_timezone()
+        chunks = self._local_windows(window, timezone_name)
         manifest: list[dict[str, Any]] = []
         ordinal = 0
 
@@ -325,12 +354,12 @@ class ZeppSyncCoordinator:
             manifest.append(self._spec(
                 "sleep", "sleep", item, health_stream="sleep", ordinal=ordinal,
                 allow_unavailable=True, operation="fetch_band_data",
-                params={"from_date": item.start_day(), "to_date": item.end_day(), "query_type": "detail"},
+                params={"from_date": item.start_day(timezone_name), "to_date": item.end_day(timezone_name), "query_type": "detail"},
             )); ordinal += 1
             manifest.append(self._spec(
                 "hrv", "hrv", item, health_stream="hrv", ordinal=ordinal,
                 allow_unavailable=True, operation="fetch_hrv",
-                params={"start_date": item.start_day(), "end_date": item.end_day()},
+                params={"start_date": item.start_day(timezone_name), "end_date": item.end_day(timezone_name)},
             )); ordinal += 1
             manifest.append(self._spec(
                 "dense_files", "dense_index", item, health_stream="heart_rate/dense_file", ordinal=ordinal,
@@ -359,39 +388,58 @@ class ZeppSyncCoordinator:
                 ("pai", "user", "PaiHealthInfo", None, "wellness/pai"),
             )
             for label, surface, event_type, sub_type, health in wellness_specs:
-                request_start_ms = (
-                    start_ms - DAY_MILLISECONDS
-                    if label == "all_day_stress" else start_ms
+                wellness_windows = (
+                    self._local_windows(item, timezone_name, SPO2_MAX_LOCAL_DAYS)
+                    if label == "spo2" else [item]
                 )
-                request_end_ms = (
-                    end_ms + DAY_MILLISECONDS
-                    if label == "all_day_stress" else end_ms
-                )
-                manifest.append(self._spec(
-                    "wellness", label, item, health_stream=health, ordinal=ordinal,
-                    allow_unavailable=True, operation="fetch_wellness",
-                    params={
-                        "label": label,
-                        "surface": surface,
-                        "event_type": event_type,
-                        "sub_type": sub_type,
-                        "from_ms": request_start_ms,
-                        "to_ms": request_end_ms,
-                    },
-                )); ordinal += 1
+                for wellness_window in wellness_windows:
+                    wellness_start_ms = int(wellness_window.start.timestamp() * 1000)
+                    wellness_end_ms = int(wellness_window.end.timestamp() * 1000)
+                    request_start_ms = (
+                        wellness_start_ms - DAY_MILLISECONDS
+                        if label == "all_day_stress" else wellness_start_ms
+                    )
+                    request_end_ms = (
+                        wellness_end_ms + DAY_MILLISECONDS
+                        if label == "all_day_stress" else wellness_end_ms
+                    )
+                    manifest.append(self._spec(
+                        "wellness", label, wellness_window, health_stream=health,
+                        ordinal=ordinal, allow_unavailable=True,
+                        operation="fetch_wellness",
+                        params={
+                            "label": label,
+                            "surface": surface,
+                            "event_type": event_type,
+                            "sub_type": sub_type,
+                            "from_ms": request_start_ms,
+                            "to_ms": request_end_ms,
+                        },
+                    )); ordinal += 1
             for subtype, health in (("odi", "wellness/spo2_odi"), ("osa_event", "wellness/spo2_osa")):
-                manifest.append(self._spec(
-                    "wellness", f"spo2/{subtype}", item, health_stream=health, ordinal=ordinal,
-                    allow_unavailable=True, operation="fetch_user_events_date_string",
-                    params={"event_type": "blood_oxygen", "sub_type": subtype, "from_iso": item.start.isoformat().replace("+00:00", "Z"), "to_iso": item.end.isoformat().replace("+00:00", "Z")},
-                )); ordinal += 1
+                for wellness_window in self._local_windows(
+                    item, timezone_name, SPO2_MAX_LOCAL_DAYS
+                ):
+                    manifest.append(self._spec(
+                        "wellness", f"spo2/{subtype}", wellness_window,
+                        health_stream=health, ordinal=ordinal,
+                        allow_unavailable=True,
+                        operation="fetch_user_events_date_string",
+                        params={
+                            "event_type": "blood_oxygen",
+                            "sub_type": subtype,
+                            "from_date": wellness_window.start_day(timezone_name),
+                            "to_date": wellness_window.end_day(timezone_name),
+                            "time_zone": timezone_name,
+                        },
+                    )); ordinal += 1
 
         for statistic in ("SPORT_LOAD", "VO2_MAX"):
             manifest.append(self._spec(
                 "daily_summary", f"watch/{statistic}", window,
                 health_stream=f"daily_summary/{statistic.lower()}", ordinal=ordinal,
                 allow_unavailable=True, operation="fetch_watch_statistics",
-                params={"statistic": statistic, "start_day": window.start_day(), "end_day": window.end_day(), "limit": 900, "reverse": True},
+                params={"statistic": statistic, "start_day": window.start_day(timezone_name), "end_day": window.end_day(timezone_name), "limit": 900, "reverse": True},
             )); ordinal += 1
 
         start_ts, end_ts = int(window.start.timestamp()), int(window.end.timestamp())
@@ -416,13 +464,14 @@ class ZeppSyncCoordinator:
         trigger: str = "manual",
         options: dict[str, Any] | None = None,
         *,
-        timezone_name: str = "UTC",
+        timezone_name: str | None = None,
         trigger_ref: str | None = None,
         deadline_at: datetime | None = None,
     ) -> orm.SyncAttempt:
         window = self._window(window, days)
         options = dict(options or {})
-        manifest = self._manifest(window, options)
+        timezone_name = timezone_name or self._configured_timezone()
+        manifest = self._manifest(window, options, timezone_name)
         with self._session() as db:
             repo = HealthRepository(db)
             return repo.create_or_reuse_sync_attempt(
@@ -448,6 +497,7 @@ class ZeppSyncCoordinator:
                 "id": row.id, "user_id": row.user_id, "status": row.status,
                 "trigger": row.trigger, "created_at": row.created_at,
                 "window_start": row.window_start, "window_end": row.window_end,
+                "timezone": row.timezone or "UTC",
                 "deadline_at": row.deadline_at, "options": dict(row.options or {}),
                 "cancel_requested_at": row.cancel_requested_at,
                 "lease_token": row.lease_token, "lease_epoch": row.lease_epoch,
@@ -501,18 +551,25 @@ class ZeppSyncCoordinator:
         if setter is not None:
             setter(timeout)
 
-    def _fetch_chunk(self, chunk: dict[str, Any], control: SyncControl, connector: Any) -> _ChunkResult:
+    def _fetch_chunk(
+        self,
+        chunk: dict[str, Any],
+        control: SyncControl,
+        connector: Any,
+        timezone_name: str = "UTC",
+    ) -> _ChunkResult:
         control.check()
         operation = chunk["stages"].get("operation")
         params = dict(chunk["stages"].get("params") or {})
         stream = chunk["stream"]
         start = chunk["window_start"]
         end = chunk["window_end"]
+        timezone_name = params.get("time_zone") or timezone_name or "UTC"
 
-        def call(method: str, *args: Any) -> Any:
+        def call(method: str, *args: Any, **kwargs: Any) -> Any:
             control.check()
             self._set_client_timeout(connector, control.request_timeout())
-            return getattr(connector, method)(*args)
+            return getattr(connector, method)(*args, **kwargs)
 
         try:
             if operation == "fetch_devices":
@@ -521,16 +578,33 @@ class ZeppSyncCoordinator:
                     "devices", "device_inventory", start, end, payload
                 )), 1)
             if operation == "fetch_heart_rate":
-                payload = call("fetch_heart_rate", int(chunk["cursor"] or params["cursor"]), params["end"], HEART_RATE_PAGE_LIMIT, 2)
+                cursor = int(chunk["cursor"] or params["cursor"])
+                window_end = int(params["end"])
+                payload = call(
+                    "fetch_heart_rate", cursor, window_end,
+                    HEART_RATE_PAGE_LIMIT, 2,
+                )
                 items = _heart_rate_items(payload)
                 nxt = None
+                incomplete = False
+                incomplete_reason = None
                 if len(items) >= HEART_RATE_PAGE_LIMIT:
                     candidate = _heart_rate_cursor(items)
-                    if candidate is not None and candidate > int(chunk["cursor"] or 0) and candidate < params["end"]:
+                    if candidate is not None and cursor < candidate < window_end:
                         nxt = candidate
-                return _ChunkResult(FetchedRecord(RawRecord(
-                    "heart_rate", f"heart_rate:{int(start.timestamp())}:{int(end.timestamp())}", start, end, payload
-                )), len(items), nxt)
+                    else:
+                        incomplete = True
+                        incomplete_reason = (
+                            "heart_rate: full page made no in-window cursor progress"
+                        )
+                record = FetchedRecord(RawRecord(
+                    "heart_rate", f"heart_rate:{int(start.timestamp())}:{int(end.timestamp())}",
+                    start, end, payload,
+                ), incomplete=incomplete, incomplete_reason=incomplete_reason)
+                return _ChunkResult(
+                    record, len(items), nxt, incomplete=incomplete,
+                    incomplete_reason=incomplete_reason,
+                )
             if operation == "fetch_band_data":
                 payload = call("fetch_band_data", params["from_date"], params["to_date"], "detail", 8, 0)
                 return _ChunkResult(FetchedRecord(RawRecord("sleep", f"band_data:detail:{params['from_date']}:{params['to_date']}", start, end, payload)), 1)
@@ -553,12 +627,72 @@ class ZeppSyncCoordinator:
                     payload = call("fetch_user_events", params["event_type"], params["sub_type"], params["from_ms"], params["to_ms"], 1000, True)
                 else:
                     payload = call("fetch_events", params["event_type"], params["sub_type"] or "real_data", params["from_ms"], params["to_ms"], 1000, True)
+                item_count = len(_payload_items(payload))
+                incomplete = (
+                    params["label"] == "spo2" and item_count >= 1000
+                )
+                incomplete_reason = (
+                    f"{params['label']}: response reached the 1000-item limit"
+                    if incomplete else None
+                )
                 key = f"wellness:{params['label']}:{params['surface']}:{start.date()}:{(end - timedelta(microseconds=1)).date()}"
-                return _ChunkResult(FetchedRecord(RawRecord("wellness", key, start, end, payload, "unverified")), 1)
+                record = FetchedRecord(
+                    RawRecord("wellness", key, start, end, payload, "unverified"),
+                    incomplete=incomplete,
+                    incomplete_reason=incomplete_reason,
+                )
+                return _ChunkResult(
+                    record, 1, incomplete=incomplete,
+                    incomplete_reason=incomplete_reason,
+                )
             if operation == "fetch_user_events_date_string":
-                payload = call("fetch_user_events_date_string", params["event_type"], params["sub_type"], params["from_iso"], params["to_iso"])
+                # New manifests carry inclusive local dates and the configured
+                # zone. Legacy serialized attempts retain from_iso/to_iso and
+                # remain runnable through the fallback below.
+                if "from_date" in params or "to_date" in params:
+                    request_timezone = timezone_name
+                    from_date = params.get("from_date")
+                    to_date = params.get("to_date")
+                else:
+                    # v4 stored UTC boundary timestamps while the endpoint's
+                    # dateString contract is in the application's local zone.
+                    request_timezone = self._configured_timezone()
+                    from_date = self._legacy_local_date(
+                        params.get("from_iso"), request_timezone
+                    )
+                    to_date = self._legacy_local_date(
+                        params.get("to_iso"), request_timezone, exclusive_end=True
+                    )
+                try:
+                    payload = call(
+                        "fetch_user_events_date_string",
+                        params["event_type"], params["sub_type"],
+                        from_date, to_date, time_zone=request_timezone,
+                    )
+                except TypeError as exc:
+                    if "time_zone" not in str(exc) and "keyword" not in str(exc):
+                        raise
+                    payload = call(
+                        "fetch_user_events_date_string",
+                        params["event_type"], params["sub_type"],
+                        from_date, to_date,
+                    )
+                item_count = len(_payload_items(payload))
+                incomplete = item_count >= 1000
+                incomplete_reason = (
+                    f"spo2/{params['sub_type']}: response reached the 1000-item limit"
+                    if incomplete else None
+                )
                 key = f"wellness:spo2:user_day:{start.date()}:{(end - timedelta(microseconds=1)).date()}:{params['sub_type']}"
-                return _ChunkResult(FetchedRecord(RawRecord("wellness", key, start, end, payload, "unverified")), 1)
+                record = FetchedRecord(
+                    RawRecord("wellness", key, start, end, payload, "unverified"),
+                    incomplete=incomplete,
+                    incomplete_reason=incomplete_reason,
+                )
+                return _ChunkResult(
+                    record, 1, incomplete=incomplete,
+                    incomplete_reason=incomplete_reason,
+                )
             if operation == "fetch_sport_history":
                 cursor = int(chunk["cursor"] or params["stop_track_id"])
                 payload = call("fetch_sport_history", params["sport"], params["start_track_id"], cursor, 1)
@@ -642,6 +776,7 @@ class ZeppSyncCoordinator:
             return ({"id": row.id, "user_id": row.user_id, "status": row.status,
                      "trigger": row.trigger, "created_at": row.created_at,
                      "window_start": row.window_start, "window_end": row.window_end,
+                     "timezone": row.timezone or "UTC",
                      "deadline_at": row.deadline_at, "options": dict(row.options or {}),
                      "cancel_requested_at": row.cancel_requested_at}, token, row.lease_epoch)
 
@@ -836,15 +971,31 @@ class ZeppSyncCoordinator:
                 )
             return True
         if result.record is not None:
-            manager = SyncManager(DataFetcher(connector), dense_archive_budget=0)
+            manager = SyncManager(
+                DataFetcher(connector, attempt.get("timezone") or "UTC"),
+                dense_archive_budget=0,
+            )
             with self._session() as db:
                 repo = HealthRepository(db)
                 report = manager._persist_record(result.record, repo, user)
+                incomplete = result.incomplete or result.record.incomplete
+                incomplete_reason = (
+                    result.incomplete_reason
+                    or result.record.incomplete_reason
+                    or "响应不完整，需要重试"
+                )
+                if incomplete and report.status == "success":
+                    report.status = "unverified"
+                    report.error_kind = "partial_coverage"
+                    report.message = incomplete_reason
                 stage_status = {
-                    **chunk["stages"], "fetch_status": "success",
+                    **chunk["stages"],
+                    "fetch_status": "partial" if incomplete else "success",
                     "parse_status": report.parse_status or ("success" if report.status == "success" else "failed"),
                     "write_status": report.write_status or ("success" if report.status == "success" else "not_run"),
                     "capability": report.capability,
+                    "incomplete": incomplete,
+                    "incomplete_reason": incomplete_reason if incomplete else None,
                 }
                 final_status = "succeeded"
                 error_kind = report.error_kind
@@ -860,7 +1011,10 @@ class ZeppSyncCoordinator:
                     raise StaleSyncLease("chunk lease expired before finalize")
                 repo.save_sync_stream_state(
                     attempt["user_id"], chunk["health_stream"] or chunk["stream"],
-                    fetch_status="unavailable" if final_status == "unavailable" else "success",
+                    fetch_status=(
+                        "unavailable" if final_status == "unavailable"
+                        else "partial" if incomplete else "success"
+                    ),
                     parse_status=stage_status["parse_status"], write_status=stage_status["write_status"],
                     fetched_at=report.fetched_at or now, parsed_at=report.parsed_at, written_at=report.written_at,
                     raw_records=max(result.raw_records, report.raw_records), records_written=report.records_written,
@@ -927,7 +1081,10 @@ class ZeppSyncCoordinator:
                 attempt["id"], attempt_token, attempt_epoch, claim
             ):
                 control.check()
-                result = self._fetch_chunk(claim.chunk, control, connector)
+                result = self._fetch_chunk(
+                    claim.chunk, control, connector,
+                    attempt.get("timezone") or "UTC",
+                )
                 control.check()
                 if claim.chunk["stream"] == "dense_archive" and result.archive is not None:
                     # Fetching is outside a transaction; decoding is also completed before write commit.
@@ -1025,6 +1182,24 @@ class ZeppSyncCoordinator:
                 return "queued" if repo.release_attempt_lease(
                     row.id, token, epoch, now=now, status="queued"
                 ) else "stale"
+
+            incomplete_chunks = [
+                item for item in chunks
+                if item.status == "succeeded"
+                and (
+                    item.fetch_status == "partial"
+                    or (item.stages or {}).get("incomplete")
+                    or item.error_kind == "partial_coverage"
+                )
+            ]
+            if incomplete_chunks:
+                first = incomplete_chunks[0]
+                ok = repo.finalize_attempt(
+                    row.id, token, epoch, "partial", now=now,
+                    error_kind="partial_coverage",
+                    error=first.error or "响应达到分页上限或分页游标没有进展；已保留已获取样本",
+                )
+                return "partial" if ok else "stale"
 
             stream_statuses: dict[str, set[str]] = {}
             for item in chunks:
@@ -1201,6 +1376,17 @@ class ZeppSyncCoordinator:
 
             result = IntelligenceCommand().analyze(user_id)
             if trigger in {"morning", "evening"}:
+                push_user = os.getenv("VITALIS_PUSH_USER", "")
+                pushplus_token = os.getenv("PUSHPLUS_TOKEN", "")
+                if not push_user or not pushplus_token:
+                    log.warning(
+                        "scheduled report delivery disabled: configure "
+                        "VITALIS_PUSH_USER and PUSHPLUS_TOKEN"
+                    )
+                    return
+                if user_id != push_user:
+                    return
+
                 from vitalis.services.daily_push import deliver_daily_report
 
                 daily = (
@@ -1209,7 +1395,7 @@ class ZeppSyncCoordinator:
                 )
                 deliver_daily_report(
                     user_id,
-                    os.getenv("PUSHPLUS_TOKEN", ""),
+                    pushplus_token,
                     daily,
                     period=trigger,
                 )
@@ -1267,13 +1453,27 @@ class ZeppSyncCoordinator:
         streams: list[StreamReport] = []
         for stream, rows in sorted(groups.items()):
             failed = next((row for row in rows if row["status"] == "failed"), None)
+            incomplete = next((
+                row for row in rows
+                if row["fetch_status"] == "partial"
+                or (row.get("stages") or {}).get("incomplete")
+                or row.get("error_kind") == "partial_coverage"
+            ), None)
             unavailable = all(row["status"] == "unavailable" for row in rows)
-            status = "failed" if failed else "unavailable" if unavailable else "success" if all(row["status"] in ("succeeded", "unavailable") for row in rows) else "unverified"
+            status = (
+                "failed" if failed
+                else "unavailable" if unavailable
+                else "unverified" if incomplete
+                else "success" if all(row["status"] in ("succeeded", "unavailable") for row in rows)
+                else "unverified"
+            )
             terminal = all(
                 row["status"] in ("succeeded", "unavailable") for row in rows
             )
             fetch_status = (
-                "failed" if failed else "unavailable" if unavailable
+                "failed" if failed
+                else "unavailable" if unavailable
+                else "partial" if incomplete
                 else "success" if terminal else "partial"
             )
             capabilities = {
@@ -1291,7 +1491,7 @@ class ZeppSyncCoordinator:
                     else "verified"
                 ),
                 needs_reauth=bool(failed and failed["error_kind"] == "auth"),
-                message=failed["error"] if failed else None,
+                message=(failed["error"] if failed else incomplete["error"] if incomplete else None),
                 diagnostic_stream=stream,
                 fetch_status=fetch_status,
                 parse_status=(
@@ -1304,7 +1504,10 @@ class ZeppSyncCoordinator:
                         row["write_status"] for row in rows
                     ])
                 ),
-                error_kind=failed["error_kind"] if failed else None,
+                error_kind=(
+                    failed["error_kind"] if failed
+                    else "partial_coverage" if incomplete else None
+                ),
             ))
         success = state["attempt"]["status"] == "succeeded"
         return SyncReport(success, streams=streams, records_written=sum(item.records_written for item in streams), message=state["attempt"].get("error"), progress=state["progress"])

@@ -25,8 +25,18 @@ def _runtime_value(name: str, private_env: dict, default: str | None = None) -> 
 def main() -> int:
     parser = argparse.ArgumentParser(description="同步、分析并推送 Vitalis 日报")
     private_env = dotenv_values(Path.home() / ".hermes" / ".env")
-    configured_user = _runtime_value("VITALIS_USER", private_env)
-    parser.add_argument("--user", default=configured_user, required=not configured_user)
+    process_user = os.getenv("VITALIS_USER")
+    private_user = private_env.get("VITALIS_USER")
+    process_token = os.getenv("PUSHPLUS_TOKEN")
+    private_token = private_env.get("PUSHPLUS_TOKEN")
+    if (process_token and not process_user) or (private_token and not private_user):
+        parser.error("PUSHPLUS_TOKEN requires VITALIS_USER in the same configuration")
+    if process_user and private_user and process_user != private_user:
+        parser.error("VITALIS_USER differs between process and Hermes configuration")
+    if process_token and private_token and process_token != private_token:
+        parser.error("PUSHPLUS_TOKEN differs between process and Hermes configuration")
+    configured_user = process_user or private_user
+    parser.add_argument("--user", default=configured_user)
     parser.add_argument("--period", choices=("morning", "evening"), default="morning")
     parser.add_argument("--days", type=int, choices=range(1, 8))
     parser.add_argument("--date", dest="report_date", type=date.fromisoformat, help="补发指定日期的事实晚报，仅用于 --period evening --test，限最近七天")
@@ -36,6 +46,10 @@ def main() -> int:
         help="真实发送测试报告，但不读取或写入正式调度的去重标记",
     )
     args = parser.parse_args()
+    if not configured_user:
+        parser.error("VITALIS_USER is required")
+    if args.user != configured_user:
+        parser.error("--user must match VITALIS_USER")
     if args.report_date is not None and (args.period != "evening" or not args.test):
         parser.error("--date 仅支持 --period evening --test")
     token = _runtime_value("PUSHPLUS_TOKEN", private_env)

@@ -1,5 +1,8 @@
 .venv/
 .codex_pydeps/
+/.idea/
+/.ruff_cache/
+/.claude/settings.local.json
 __pycache__/
 *.pyc
 *.db

@@ -1,6 +1,10 @@
 import importlib.util
 import json
 from pathlib import Path
+import sys
+
+import httpx
+import pytest
 
 from vitalis.intelligence.schema_export import decision_explanation_schema, skill_schemas
 
@@ -26,7 +30,7 @@ def test_skill_is_renderer_only_and_uses_current_intelligence_contracts():
     assert 'request("GET", "weekly"' in weekly
     assert 'request("GET", "monthly"' in monthly
     assert '"GET", "explain"' in explain
-    assert '"status": "snapshot_missing"' in explain
+    assert '"status": "snapshot_missing"' in (SKILL / "tools" / "_client.py").read_text(encoding="utf-8")
     assert not (SKILL / "tools" / "daily_profile.py").exists()
     analyze = (SKILL / "tools" / "analyze.py").read_text(encoding="utf-8")
     assert "request(" in analyze and '"POST"' in analyze and '"analyze"' in analyze
@@ -36,6 +40,18 @@ def test_skill_is_renderer_only_and_uses_current_intelligence_contracts():
     assert "decision.action_plan" in skill
     assert "daily_explanation.md" in skill
     assert "tools/analyze.py" in skill and "tools/sync.py" in skill
+
+
+def test_skill_routes_factual_questions_to_existing_read_only_profiles():
+    skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+    skill_en = (SKILL / "SKILL.en.md").read_text(encoding="utf-8")
+    workflow = (SKILL / "workflows" / "on_demand.md").read_text(encoding="utf-8")
+    for name in ("daily.py", "weekly.py", "monthly.py"):
+        assert f"tools/{name}" in skill
+        assert f"tools/{name}" in skill_en
+    assert "status=snapshot_missing" in workflow
+    assert "不自行拼接其他日期" in workflow
+    assert "Missing is not zero" in (SKILL / "workflows" / "on_demand.en.md").read_text(encoding="utf-8")
 
 
 def _resolve_schema(schema, node):
@@ -214,3 +230,102 @@ def test_skill_client_passes_exact_runtime_identity(monkeypatch):
         "headers": {"X-User-Id": "explicit-local-user"},
         "timeout": 60.0,
     }
+
+
+def test_skill_client_only_converts_missing_snapshots(monkeypatch):
+    monkeypatch.setenv("VITALIS_USER", "local-owner")
+    spec = importlib.util.spec_from_file_location(
+        "vitalis_skill_client_missing_test", SKILL / "tools" / "_client.py"
+    )
+    client = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(client)
+    calls = []
+    detail = ["指定日期尚未生成分析快照"]
+
+    def fake_request(method, url, **kwargs):
+        calls.append((method, url))
+        return httpx.Response(404, json={"detail": detail[0]}, request=httpx.Request(method, url))
+
+    monkeypatch.setattr(client.httpx, "request", fake_request)
+    assert client.request("GET", "daily", "local-owner", params={"day": "2026-09-20"}) == {
+        "status": "snapshot_missing", "http_status": 404, "date": "2026-09-20",
+    }
+    assert len(calls) == 1
+
+    detail[0] = "Not Found"
+    with pytest.raises(httpx.HTTPStatusError):
+        client.request("GET", "daily", "local-owner")
+    with pytest.raises(httpx.HTTPStatusError):
+        client.request("POST", "analyze", "local-owner")
+
+
+def test_skill_client_rejects_model_selected_identity(monkeypatch):
+    monkeypatch.setenv("VITALIS_USER", "local-owner")
+    spec = importlib.util.spec_from_file_location(
+        "vitalis_skill_client_identity_test", SKILL / "tools" / "_client.py"
+    )
+    client = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(client)
+    with pytest.raises(ValueError, match="VITALIS_USER"):
+        client.request("GET", "daily", "another-user")
+
+
+@pytest.mark.parametrize(
+    ("private_user", "private_token", "process_user", "process_token", "requested_user", "allowed"),
+    [
+        ("local-owner", "private-token", None, None, "another-user", False),
+        ("local-owner", "private-token", None, None, "local-owner", True),
+        ("local-owner", "private-token", None, None, None, True),
+        (None, "private-token", None, None, "another-user", False),
+        ("local-owner", "private-token", "another-user", None, None, False),
+        (None, None, "local-owner", "private-token", "another-user", False),
+        (None, None, "local-owner", "private-token", "local-owner", True),
+        ("local-owner", "private-token", None, "other-token", None, False),
+        ("local-owner", "private-token", "local-owner", "other-token", None, False),
+        ("local-owner", "private-token", "local-owner", "private-token", None, True),
+        ("local-owner", None, None, "other-token", None, False),
+    ],
+)
+def test_daily_push_skill_binds_user_before_network(
+    monkeypatch, private_user, private_token, process_user, process_token,
+    requested_user, allowed
+):
+    spec = importlib.util.spec_from_file_location(
+        "vitalis_skill_daily_push_test", SKILL / "tools" / "daily_push.py"
+    )
+    tool = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(tool)
+    monkeypatch.setattr(
+        tool, "dotenv_values",
+        lambda _path: {"VITALIS_USER": private_user, "PUSHPLUS_TOKEN": private_token},
+    )
+    if process_user is None:
+        monkeypatch.delenv("VITALIS_USER", raising=False)
+    else:
+        monkeypatch.setenv("VITALIS_USER", process_user)
+    if process_token is None:
+        monkeypatch.delenv("PUSHPLUS_TOKEN", raising=False)
+    else:
+        monkeypatch.setenv("PUSHPLUS_TOKEN", process_token)
+    argv = ["daily_push.py", "--period", "evening"]
+    if requested_user is not None:
+        argv.extend(["--user", requested_user])
+    monkeypatch.setattr(sys, "argv", argv)
+    calls = []
+
+    def fake_push(user_id, token, **kwargs):
+        calls.append((user_id, token, kwargs["period"]))
+        return {"status": "test_sent"}
+
+    monkeypatch.setattr(tool, "run_daily_push", fake_push)
+    if allowed:
+        assert tool.main() == 0
+        assert calls == [("local-owner", "private-token", "evening")]
+    else:
+        with pytest.raises(SystemExit) as raised:
+            tool.main()
+        assert raised.value.code == 2
+        assert calls == []

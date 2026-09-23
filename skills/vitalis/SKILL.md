@@ -12,12 +12,12 @@ Vitalis 是健康智能 API 之上的渲染器和编排器。Python 引擎负责
 ## 必需流程
 
 1. 将请求分类为读取（Read）、分析（Analyze）或操作（Act）。
-2. 只调用与请求完全对应的工具。读取工具绝不生成分析。仅当用户请求重新分析或完成明确要求的同步后，才使用 `tools/analyze.py`；仅在需要广泛的分层上下文时使用 `tools/context.py`。
-3. 从 `workflows/` 中只选择一个工作流。
+2. 只调用与请求完全对应的工具。读取工具绝不生成分析。仅当用户请求重新分析或完成明确要求的同步后，才使用 `tools/analyze.py`；仅在需要广泛的分层上下文时使用 `tools/context.py`。日常事实问答先选择最窄的已有快照工具。
+3. 从 `workflows/` 中只选择一个工作流。所有工具通过本 Skill 所在目录下的 `tools/` 路径执行，使用当前 Vitalis Python 环境；不要依赖 Hermes 的工作目录，不要把健康数据、用户 ID 或令牌写入日志或命令行参数。用户 ID 从私有环境配置读取。
 4. 如果用户明确提供性别、已确认的最大心率或睡眠目标，则携带当前资料 revision 调用 `tools/profile.py patch`；否则，在需要资料状态时调用 `tools/profile.py get`。
 5. 只渲染响应中已经存在的事实、推断、行动、比较、驱动因素、限制和建议。Open Health 字段只是描述性的影子洞察；渲染 `open_health_insights` 以及有类型定义的周期/上下文摘要时，不得重新计算，也不得用它们改变 `decision`。晚间、每周和每月报告工具返回 `ReportBriefing 1.0`，必须直接使用其与 HTML renderer 共用的 `sections`，不得从 raw profile 自由拼接。
 
-所有面向用户的内容都必须使用中文。渲染 `*_label`、`*_labels`、锻炼的 `sport_mode_label`、识别标签以及结构化的 `decision.action_plan`。内部枚举代码仅用于程序控制，绝不能出现在回答中。
+所有面向用户的内容都必须使用中文。优先渲染 `*_label`、`*_labels`、锻炼的 `sport_mode_label`、识别标签以及结构化的 `decision.action_plan`。内部枚举代码仅用于程序控制，绝不能出现在回答中；尤其不得输出 `SUFFICIENT`、`NEAR_BASELINE`、`INSUFFICIENT_DATA`、`HEALTH_FIRST_CONCURRENT`、`NONE`、`running_due`、`strength_due` 或规则 ID。若响应同时提供中文标签，只使用中文标签；没有标签时用忠实的中文描述，不得展示原始 code。
 
 ## 硬性边界
 
@@ -28,16 +28,18 @@ Vitalis 是健康智能 API 之上的渲染器和编排器。Python 引擎负责
 - 不得更改 `decision.action`、`decision.confidence`、强度、时长、驱动因素、限制或规则 ID。
 - 不得虚构锻炼、练习动作、组数、次数、心率区间或进阶安排。训练内容必须来自 `decision.action_plan`。
 - 保留 `primary_session`、`optional_session` 和 `session_relationship_label`。绝不能把替代选项说成附加项目，也不得合并规划器已分开的训练。
-- 不得把厂商 readiness、Charge、睡眠评分或睡眠阶段视为 Vitalis 事实。
+- 不得把厂商 readiness、Charge、睡眠评分或睡眠阶段视为 Vitalis 事实。普通事实回答不得直接展示 `sleep_score`、`readiness`、`charge` 或睡眠阶段原始字段，也不得在中文标签后用括号附这些英文原词；只有 API 返回的中文限制或描述性影子摘要，且明确标注为参考信息时，才能用中文按原样说明，例如“厂商准备度仅作参考”“身体电量仅作参考”。
 - 活动字段的 `None` 保持缺失；旧 `ActivityRecord` 默认零没有观测证据时不是真实测量。泛称热量的 `role=unspecified` 不得解释为总能耗，不得合并重复入口或 workout 热量；没有摄入记录时不判断热量赤字。不同 source/scope/device/unit 不得混合。
 - 如果行动为 `INSUFFICIENT_DATA`，指出缺失信号后停止。不得根据一般建议或前几日数据推断训练决策。
-- 如果读取工具返回 404，用中文说明所请求日期没有已生成的分析快照。不得回退到昨天、调用 `tools/analyze.py`、调用 `tools/sync.py`，也不得提供推断出的健康结论。
+- 如果只读工具返回 `status=snapshot_missing`，用中文说明所请求日期没有已生成的分析快照。不得回退到其他日期、调用 `tools/analyze.py`、调用 `tools/sync.py`，也不得提供推断出的健康结论。其他 HTTP 错误与连接故障不是缺失快照，必须如实说明。
 - 不得诊断疾病。持续偏离只能描述为观察结果；紧急症状或医疗问题需要寻求专业照护。
 - 不得在未说明的情况下合并本地用户或设备数据流。
 - 不得引用 `evidence_refs` 中不存在的证据。
 
 ## 工作流路由
 
+- 指定日期的个人事实（如睡眠、活动、实际训练和已有指标）：调用 `tools/daily.py` 并传入明确的 `--date`，然后使用 `workflows/on_demand.md`。没有指定日期时使用工具默认的本地今天；“昨晚睡眠”按醒来所在的本地日期查询。仅复述响应中实际存在的值、单位、观测范围与限制；缺失值不当作零。请求未覆盖的数据要明确说不可得。
+- 一周或近 28 天的具体分析字段：分别调用 `tools/weekly.py` 或 `tools/monthly.py`，然后使用 `workflows/on_demand.md`。如果询问的是完整周报/月报，则改用对应的 `*_briefing.py` 和报告工作流；不要从每日快照自行汇总。
 - 晨间状态或今日训练：调用 `tools/morning_briefing.py`，然后使用 `workflows/morning.md`。仅当用户询问晨报背后的依据时才使用 `tools/explain.py`。
 - 晚间总结或今晚重点：调用 `tools/evening_briefing.py`，然后使用 `workflows/evening.md`。
 - 每周回顾：调用 `tools/weekly_briefing.py`，然后使用 `workflows/weekly.md`。
@@ -67,5 +69,5 @@ Vitalis 是健康智能 API 之上的渲染器和编排器。Python 引擎负责
 | 环境变量 | 默认值 | 用途 |
 | --- | --- | --- |
 | `VITALIS_API` | `http://localhost:8000` | Vitalis API 源地址 |
-| `VITALIS_USER` | 必填 | 本地 Vitalis 用户 ID；不存在隐式用户回退 |
+| `VITALIS_USER` | 必填 | 私密配置中的单一本地 Vitalis 用户 ID；工具拒绝覆盖为其他 `--user` |
 | `PUSHPLUS_TOKEN` | 仅每日推送 | 私密的 PushPlus 推送 token |

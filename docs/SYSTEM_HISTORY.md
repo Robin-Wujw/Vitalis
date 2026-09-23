@@ -3,6 +3,14 @@
 [English](SYSTEM_HISTORY.en.md)
 
 > 本文件保存已完成工作的执行记录和验证证据，仅供追溯历史。当前有效的工作规则、未完成事项和最新验证状态以仓库根目录的 `SYSTEM.md` 为准。
+> 2026-09-23 安全提醒：下文归档的整站 Quick Tunnel 命令是历史记录，不是当前部署步骤；完整 API 尚无调用方鉴权，不得复用这些公网转发命令。请遵循 `docs/GETTING_STARTED.md` 的当前边界。
+
+## 2026-09-23 全局复盘与调度投递隔离
+
+- `AUD-001` 为条件性 P0：启用内置调度、配置单个全局 `PUSHPLUS_TOKEN` 且存在多个数据所有者时，原代码会把每位用户的报告发往同一个接收端。`vitalis/services/zepp_sync_coordinator.py` 现在要求非空 `VITALIS_PUSH_USER` 与令牌，仅为匹配用户投递；其他用户仍同步和分析，不创建投递标记。复核还发现 Hermes 投递 CLI 可用 `--user` 覆盖配置身份；`skills/vitalis/tools/daily_push.py` 现要求配置 `VITALIS_USER`，拒绝不同 `--user`、未成对的用户/令牌和冲突的进程/私有配置。代码证实风险路径，不代表生产环境曾发生泄露。
+- 用户确认当前完整 API 仅本机/内网可达；双语入门指南移除了会直接公开未经鉴权完整 API 的 Quick Tunnel 示例，校正内置调度与 Hermes 时刻和提供的 systemd 单元职责。公网鉴权设计仍为活跃待办。
+- 保持现有源码目录不搬迁；本地 IDE 设置及两张未引用 JPG 保留。获得针对精确文件的授权后，重新比对并删除与日期命名保留副本逐字节一致的 `backups/schema-hidden-dryrun-before.db`；其他数据库及备份未清理。
+- 本地 Windows 验证：新增双用户调度场景 8 项、Hermes CLI 身份场景 11 项、Python 完整测试 705 项、双语 Markdown/链接检查 47 项和 Balance 2 Node 测试 6 项通过。未连接服务器、读取真实健康内容或执行真实 PushPlus 投递；其余问题记录在 `SYSTEM.md`。
 
 ## 2026-09-04 全仓库 Markdown 双语契约
 

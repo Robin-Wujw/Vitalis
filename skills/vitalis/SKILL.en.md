@@ -12,8 +12,12 @@ personal models, and snapshots. Never reproduce those calculations in the model.
 1. Classify the request as Read, Analyze, or Act.
 2. Call exactly the relevant tool. Read tools never generate analysis. Use
    `tools/analyze.py` only when the user requests a fresh analysis or after an explicit
-   synchronization; use `tools/context.py` only for broad, layered context.
-3. Select exactly one workflow from `workflows/`.
+   synchronization; use `tools/context.py` only for broad, layered context. For
+   ordinary factual questions, start with the narrowest existing snapshot tool.
+3. Select exactly one workflow from `workflows/`. Run tools from this skill's own
+   `tools/` directory with the current Vitalis Python environment; do not rely
+   on Hermes' working directory or put health data, identity, or tokens in logs or
+   command-line arguments. Read the identity from the private environment.
 4. If the user explicitly provides sex, confirmed maximum heart rate, or sleep target,
    call `tools/profile.py patch` with the current profile revision; otherwise call
    `tools/profile.py get` when profile state is needed.
@@ -24,9 +28,13 @@ personal models, and snapshots. Never reproduce those calculations in the model.
    report tools return `ReportBriefing 1.0`; use their `sections` shared with the HTML
    renderer directly and never freely compose a report from a raw profile.
 
-All user-visible content must be Chinese. Render `*_label`, `*_labels`, workout
+All user-visible content must be Chinese. Prefer `*_label`, `*_labels`, workout
 `sport_mode_label`, recognition labels, and the structured `decision.action_plan`.
-Internal enum codes exist only for program control and must never appear in the answer.
+Internal enum codes exist only for program control and must never appear in the answer;
+in particular never output `SUFFICIENT`, `NEAR_BASELINE`, `INSUFFICIENT_DATA`,
+`HEALTH_FIRST_CONCURRENT`, `NONE`, `running_due`, `strength_due`, or rule IDs.
+When a Chinese label is returned, use only that label; otherwise give a faithful
+Chinese description without exposing the raw code.
 
 ## Hard Boundaries
 
@@ -42,12 +50,18 @@ Internal enum codes exist only for program control and must never appear in the 
 - Preserve `primary_session`, `optional_session`, and `session_relationship_label`.
   Never present an alternative as an addition or combine sessions the planner separated.
 - Do not treat vendor readiness, Charge, sleep score, or sleep stages as Vitalis truth.
+  Ordinary factual answers must not directly display raw `sleep_score`, `readiness`,
+  `charge`, or sleep-stage fields, and must not append those English names in
+  parentheses after Chinese labels. Repeat such information only as a Chinese
+  limitation or descriptive shadow summary explicitly labeled as reference information,
+  for example “厂商准备度仅作参考” or “身体电量仅作参考”.
 - Keep missing activity fields as `None`; a legacy `ActivityRecord` default zero without observation evidence is not a measurement. Do not interpret generic calories with `role=unspecified` as total energy expenditure, add duplicate entries or workout calories, or infer an energy deficit without intake data. Do not mix source/scope/device/unit streams.
 - If action is `INSUFFICIENT_DATA`, name the missing signals and stop. Do not infer a
   training decision from general advice or prior days.
-- If a read tool returns 404, state in Chinese that the requested date has no generated
-  analysis snapshot. Do not fall back to yesterday, call `tools/analyze.py`, call
-  `tools/sync.py`, or offer an inferred health conclusion.
+- If a read tool returns `status=snapshot_missing`, state in Chinese that the requested
+  date has no generated analysis snapshot. Do not fall back to another day, call
+  `tools/analyze.py`, call `tools/sync.py`, or offer an inferred health conclusion.
+  Other HTTP or connection failures are not missing snapshots; report them honestly.
 - Do not diagnose disease. Persistent deviations may be described only as observations;
   urgent symptoms or medical questions require professional care.
 - Do not silently merge local users or device streams.
@@ -55,6 +69,15 @@ Internal enum codes exist only for program control and must never appear in the 
 
 ## Workflow Routing
 
+- Personal facts for a particular day (sleep, activity, actual training, recorded metrics):
+  call `tools/daily.py` with the explicit `--date`, then `workflows/on_demand.md`.
+  Without a date, use the tool's local-today default; last night's sleep is indexed
+  by local wake date. Repeat only returned values, units, observation scope and
+  limitations; missing is not zero. Say when the requested data is unavailable.
+- Specific analysis fields for a week or recent 28 days: call `tools/weekly.py` or
+  `tools/monthly.py`, then `workflows/on_demand.md`. For a full weekly/monthly
+  report, use the corresponding `*_briefing.py` and report workflow instead;
+  never aggregate daily snapshots yourself.
 - Morning status or today's training: call `tools/morning_briefing.py`, then `workflows/morning.md`. Use `tools/explain.py` only when the person asks for the evidence behind the briefing.
 - Evening summary or tonight's focus: call `tools/evening_briefing.py`, then `workflows/evening.md`.
 - Weekly review: call `tools/weekly_briefing.py`, then `workflows/weekly.md`.
@@ -106,5 +129,5 @@ are summarized in `knowledge/evidence.md`.
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
 | `VITALIS_API` | `http://localhost:8000` | Vitalis API origin |
-| `VITALIS_USER` | required | Local Vitalis user ID; there is no implicit user fallback |
+| `VITALIS_USER` | required | One private local Vitalis user ID; tools reject a different `--user` |
 | `PUSHPLUS_TOKEN` | daily push only | Private PushPlus delivery token |

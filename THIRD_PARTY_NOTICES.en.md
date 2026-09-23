@@ -12,6 +12,12 @@ Some Zepp cloud endpoint, payload-normalization, and region-probing conventions 
 - Upstream repository: <https://github.com/lingcang728/ZeppBridge>
 - Reviewed release: `v2.1.0` (2026-09-02); the precise historical source revision for
   existing translated conventions has not yet been reconstructed.
+- Latest comparison baseline: ZeppBridge `main` at `fd53afd9fd95389bb1a5192af561a6514e9855c5`
+  (2026-09-23). The following upstream fixes were adapted as behavior and regression
+  guidance, not copied wholesale: heart-rate cursor normalization (`c491d2b8b455`),
+  local calendar-date ODI/OSA requests (`afb130a09cad`), bounded SpO2 windows and
+  response-cap handling (`592b685b652e`), and readiness missing sentinel handling
+  (`37e0b52b1425`).
 - Vitalis modules with explicit ZeppBridge references: `auth_parser.py`, `client.py`,
   `fetcher.py`, `parser.py`, `sync_manager.py`, and `api/routes/connect.py`.
 - Vitalis-specific changes: Python/FastAPI/SQLAlchemy architecture, typed normalized

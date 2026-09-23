@@ -14,6 +14,9 @@ def configured_user() -> str | None:
 
 
 def request(method: str, path: str, user: str, **kwargs) -> dict | list:
+    fixed_user = configured_user()
+    if fixed_user and user != fixed_user:
+        raise ValueError("请求的用户与 VITALIS_USER 不一致")
     response = httpx.request(
         method,
         f"{API}/api/v1/intelligence/{path.lstrip('/')}",
@@ -21,7 +24,21 @@ def request(method: str, path: str, user: str, **kwargs) -> dict | list:
         timeout=60.0,
         **kwargs,
     )
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError:
+        if method.upper() == "GET" and response.status_code == 404:
+            try:
+                detail = response.json().get("detail")
+            except (ValueError, AttributeError):
+                detail = None
+            if detail == "指定日期尚未生成分析快照":
+                return {
+                    "status": "snapshot_missing",
+                    "http_status": 404,
+                    "date": (kwargs.get("params") or {}).get("day"),
+                }
+        raise
     return response.json()
 
 

@@ -101,16 +101,27 @@ Run the audit again and start the API/worker only when it reports `clean=true`.
 
 ## Hermes Runtime
 
-Keep the checked-in Skill as the single source of truth by linking it into Hermes'
-local discovery tree from the repository root:
+Keep the checked-in Skill as the single source of truth. On Linux, link it from the
+repository root into Hermes' local discovery tree:
 
 ```bash
 mkdir -p "$HOME/.hermes/skills/health"
 ln -s "$PWD/skills/vitalis" "$HOME/.hermes/skills/health/vitalis"
 ```
 
-Do not copy the Skill or commit a local user identity. Configure the loopback API and
-the explicit local Vitalis user in Hermes' private `~/.hermes/.env` instead:
+For native Windows Hermes, use the active `HERMES_HOME` (typically
+`%LOCALAPPDATA%\\hermes`) and add the repository's **parent** skills directory to
+`config.yaml`, merging with any existing `skills` entries:
+
+```yaml
+skills:
+  external_dirs:
+    - D:/MyCodes/Vitalis/skills
+```
+
+This points at the source in the repository; do not copy the Skill or overwrite the
+rest of the private Hermes configuration. Set the loopback API and the **chosen**
+local Vitalis user in the same profile's private `.env` (not in git):
 
 ```dotenv
 VITALIS_API=http://127.0.0.1:8000
@@ -118,20 +129,31 @@ VITALIS_USER=<local-user-id>
 NO_PROXY=127.0.0.1,localhost
 ```
 
-Start Vitalis, then verify discovery and fresh-session loading:
+Start Vitalis with a schema-audited database and a loopback listener. Then use a new
+Hermes session to verify skill discovery and exercise a read-only tool:
 
 ```bash
 hermes skills list --source local --enabled-only
 hermes --skills vitalis prompt-size --json
+python skills/vitalis/tools/daily.py --user YOUR_LOCAL_USER_ID --date YYYY-MM-DD
+hermes chat --skills vitalis -q "昨天的睡眠有哪些已记录的事实？"
 ```
 
-The list must show `vitalis` as a local enabled Skill, and the prompt-size breakdown
-must resolve `vitalis` from the linked path. `VITALIS_USER` has no fallback: every tool
-passes that exact identity as `X-User-Id`. Hermes remains a Read / Analyze / Act
-orchestrator and must not calculate, merge, or fill health observations. Daily
-explanations use only the persisted `/intelligence/explain` projection; a missing
-snapshot is reported without automatic synchronization or analysis. Keep this API
-loopback/private because `X-User-Id` selects identity but does not authenticate a caller.
+A standalone shell does not load Hermes' private `.env`: replace `YOUR_LOCAL_USER_ID`
+with the selected local user ID, or set `VITALIS_USER` and `VITALIS_API` in the current
+shell. Run the tool command from the repository root with its Python environment active;
+on native Windows, `D:/MyCodes/Vitalis/.venv/Scripts/python.exe` is an explicit
+interpreter. A missing snapshot is reported as `status=snapshot_missing`; it must
+not cause automatic sync, analysis, or a fallback to a different date. For today's
+training advice use the persisted morning briefing; for its reasons use `explain`.
+Hermes only routes and renders Vitalis' structured evidence; it must not calculate,
+merge, diagnose, or invent a training plan. Keep `VITALIS_API` on loopback and do
+not expose unauthenticated intelligence routes through a public reverse proxy:
+`X-User-Id` selects an identity but does not authenticate the caller, including
+other processes on the same machine. With `VITALIS_USER` set, tools reject a
+model-supplied alternative `--user`. Hermes may retain conversations and send
+necessary structured health summaries to its configured model provider; review
+that provider before asking personal questions.
 
 ### Daily PushPlus Report
 
@@ -205,47 +227,52 @@ unchanged. Morning reports, non-test delivery, and future dates cannot use this 
 Running `hermes cron run <job-id>` is an official scheduled invocation: a successful
 delivery writes the daily marker and prevents that period from being sent twice.
 
-The tool exits before synchronization when either `VITALIS_USER` or `PUSHPLUS_TOKEN` is
-missing. The token is never passed to the model, included in a URL, or written to
-repository files and logs.
+The tool exits before synchronization if `VITALIS_USER` or `PUSHPLUS_TOKEN` is missing,
+a user and token are not paired in the same configuration source, `--user` differs
+from the configured identity, or the process and Hermes private configurations
+conflict on user or token. The configured token must belong to that user; it is never
+passed to the model, included in a URL, or written to repository files and logs.
+
+Built-in scheduler delivery is configured separately from private Hermes Cron: set both
+`VITALIS_PUSH_USER` (the local user ID belonging to the recipient) and `PUSHPLUS_TOKEN`
+in the built-in scheduler process's private environment. One global token is bound to
+one local user; other users are still synchronized and analyzed but are not sent to
+that token. If either setting is missing, built-in Morning and Evening delivery is
+disabled and no success marker is written. The Hermes tool still uses its explicit
+`VITALIS_USER` and private token, independently of `VITALIS_PUSH_USER`.
 
 ## Public Deployment
 
-Keep the application listener on a private or loopback interface and put a
-browser-trusted HTTPS reverse proxy or tunnel in front of it:
-
-```bash
-HOST=127.0.0.1
-VITALIS_PUBLIC_URL=https://health.example.com
-```
-
-A Cloudflare Quick Tunnel can be used for temporary integration testing:
-
-```bash
-cloudflared tunnel --url http://127.0.0.1:8000
-```
-
-Quick Tunnel addresses are temporary. Persistent deployments should use a stable
-domain and automatically renewed TLS certificates.
+The complete API is currently suitable only for trusted loopback or private-network
+access. `X-User-Id` is not authentication; even if the upstream listens on `127.0.0.1`,
+connecting it directly to a Cloudflare Quick Tunnel or public HTTPS reverse proxy
+also exposes health data reads, writes, and device-token issuance. Do not publish the
+complete application directly or rely on TLS, a temporary tunnel address, or CORS for
+protection. Leave `VITALIS_PUBLIC_URL` empty unless a trusted identity check and
+local-user authorization binding protect every sensitive route. Browser pairing needs
+a separate end-to-end design compatible with that gateway.
 
 ## Scheduled Jobs
 
-Synchronization, analysis, and push rendering are separate stages. The table describes the
-built-in scheduler times; Hermes' 09:30-21:30 hourly Morning job and 22:30 Evening job are
-alternative entry points, not the same schedule, so enable only one delivery entry point:
+Synchronization, analysis, and push rendering are separate stages. The table shows the
+actual built-in scheduler times; Hermes' 09:30-21:30 hourly Morning job and 22:30 Evening
+job are alternative entry points, so enable only one delivery entry point:
 
 | Local time | Job | Behavior |
 | --- | --- | --- |
 | 02:00 | Nightly sync | Enqueue 7 days; analyze after the durable attempt succeeds |
-| 09:30-21:30 hourly | Morning retry | Enqueue 2 days; analyze and send once after successful sync and complete sleep |
-| 22:30 | Evening | Enqueue 1 day; analyze and send the distinct Evening profile after successful sync |
+| 09:30 | Morning (once) | Enqueue 2 days; defer on incomplete sleep, without an automatic same-day built-in retry |
+| 21:30 | Evening (once) | Enqueue 1 day; analyze and attempt Evening delivery after successful sync |
 
-FastAPI lifespan owns scheduler startup and shutdown, so both `python -m vitalis.main` and
-direct `uvicorn vitalis.api.app:app` launches recover persisted work. Each dispatcher pass
-processes at most `SYNC_DISPATCHER_BATCH_CHUNKS` due chunks and rotates attempts by their
-last update. Network work runs outside database transactions; renewable attempt/chunk
-leases prevent a stale process from claiming or finalizing additional work after takeover.
-Set `VITALIS_NO_SCHEDULER=1` only when a separate process owns dispatch and recovery.
+Unless `VITALIS_NO_SCHEDULER=1` is set, FastAPI lifespan starts the built-in scheduler for
+both `python -m vitalis.main` and direct `uvicorn vitalis.api.app:app` launches. Each
+dispatcher pass processes at most `SYNC_DISPATCHER_BATCH_CHUNKS` due chunks and rotates
+attempts by their last update. Network work runs outside database transactions; renewable
+attempt/chunk leases prevent a stale process from claiming or finalizing additional work
+after takeover. The supplied `vitalis-api.service` explicitly disables its embedded
+scheduler and `vitalis-worker.service` only drains due sync chunks. Installing just these
+two units does not enqueue scheduled reports; a separate entry point must own enqueue
+and delivery, such as a configured Hermes Cron job.
 
 An insufficient profile remains insufficient. The scheduler does not replace it with
 an older result, a default score, or a generic training template.

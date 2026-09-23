@@ -2,8 +2,13 @@
 
 [English](on_demand.en.md)
 
-全程使用中文。用户明确回答个人资料问题后，使用 `tools/profile.py patch` 写入并携带当前
-revision；遇到 409 时重新读取 profile，不覆盖其他更新。当天训练建议的“为什么”问题必须
+全程使用中文。指定日期的事实问答只读取对应 `DailyProfile`；周或 28 天字段只读取
+对应周期快照。先确认返回的日期及数据覆盖范围，只复述存在的观测值、单位、设备来源
+和限制，缺失不等于零，也不自行拼接其他日期。遇到 `status=snapshot_missing` 就说明
+该日期没有快照并停止，不同步、不分析、不改用别的日期。
+
+用户明确回答个人资料问题后，使用 `tools/profile.py patch` 写入并携带当前 revision；
+遇到 409 时重新读取 profile，不覆盖其他更新。当天训练建议的“为什么”问题必须
 使用 `workflows/daily_explanation.md`，不在本工作流回退到 `tools/analyze.py` 或
 `tools/sync.py`。
 
@@ -11,7 +16,10 @@ revision；遇到 409 时重新读取 profile，不覆盖其他更新。当天�
 变化百分比、斜率、偏差或持续天数。多个依据同时存在时，说明这是多信号综合判断。
 展示可能改变解释的中文限制。不得把相关性说成因果，也不得根据偏差诊断疾病。回答
 训练内容时只能复述 `action.action_plan`，必须保留主项、可选项、二者关系、证据、剂量、
-停止条件和有效期，并使用所有中文标签，不得输出内部英文代码。
+停止条件和有效期，并使用所有中文标签，不得输出内部英文代码。普通事实回答也不得输出
+`SUFFICIENT`、`NEAR_BASELINE`、`INSUFFICIENT_DATA`、`HEALTH_FIRST_CONCURRENT`、`NONE`、
+`running_due`、`strength_due` 或规则 ID；若没有中文标签，只能忠实翻译为中文描述。不得直接展示
+`sleep_score`、`readiness`、`charge` 或睡眠阶段原始字段，也不得在中文标签后用括号附英文原词；只能用明确标注为参考信息的中文限制或影子摘要说明，例如“厂商准备度仅作参考”“身体电量仅作参考”。
 
 训练响应问题只使用 TrainingResponse：明确区分 T+1/T+2/T+3、设备流、缺失窗口与
 重叠训练；只有 `recovery_hours` 非空时才说明恢复时长。个人规律只使用 PersonalModel

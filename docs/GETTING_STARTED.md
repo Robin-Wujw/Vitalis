@@ -78,14 +78,22 @@ python -m vitalis.storage.schema_migration migrate \
 
 ## Hermes 运行时
 
-从仓库根目录将已签入的 Skill 链接到 Hermes 的本地发现目录树，以确保它是唯一事实来源：
+以仓库中的 Skill 为唯一事实来源。在 Linux 上从仓库根目录将其链接到 Hermes 的本地 `skills` 发现目录：
 
 ```bash
 mkdir -p "$HOME/.hermes/skills/health"
 ln -s "$PWD/skills/vitalis" "$HOME/.hermes/skills/health/vitalis"
 ```
 
-不要复制 Skill，也不要提交本地用户身份。请改为在 Hermes 私有的 `~/.hermes/.env` 中配置环回 API 和明确的本地 Vitalis 用户：
+原生 Windows 的 Hermes 使用当前 `HERMES_HOME`（通常为 `%LOCALAPPDATA%\\hermes`）。在该目录的私有 `config.yaml` 中合并以下配置；路径指向仓库中 Skill 的**父目录**，不要复制 Skill 或覆盖其他配置：
+
+```yaml
+skills:
+  external_dirs:
+    - D:/MyCodes/Vitalis/skills
+```
+
+在同一配置目录的私有 `.env` 中指定环回 API 和**选定的**本地用户，不要提交用户身份到仓库：
 
 ```dotenv
 VITALIS_API=http://127.0.0.1:8000
@@ -93,14 +101,18 @@ VITALIS_USER=<local-user-id>
 NO_PROXY=127.0.0.1,localhost
 ```
 
-启动 Vitalis，然后验证发现流程和新会话加载：
+先审计数据库架构，在环回地址启动 Vitalis；然后开启新的 Hermes 会话验证发现与只读读取：
 
 ```bash
 hermes skills list --source local --enabled-only
 hermes --skills vitalis prompt-size --json
+python skills/vitalis/tools/daily.py --user YOUR_LOCAL_USER_ID --date YYYY-MM-DD
+hermes chat --skills vitalis -q "昨天的睡眠有哪些已记录的事实？"
 ```
 
-列表必须将 `vitalis` 显示为已启用的本地 Skill，且提示词大小明细必须从链接路径解析 `vitalis`。`VITALIS_USER` 没有回退值：每个工具都将这个确切身份作为 `X-User-Id` 传递。Hermes 始终是 Read / Analyze / Act 编排器，不得计算、合并或补填健康观测。每日解释仅使用持久化的 `/intelligence/explain` 投影；如果缺少快照，则直接报告，不会自动进行同步或分析。请保持此 API 为环回/私有服务，因为 `X-User-Id` 只选择身份，并不对调用方进行身份验证。
+独立 shell 不会自动读取 Hermes 私有 `.env`：将 `YOUR_LOCAL_USER_ID` 换成已选的本地用户 ID，或先在当前 shell 设置 `VITALIS_USER` 和 `VITALIS_API`。工具命令在仓库根目录、Vitalis Python 环境下执行；原生 Windows 可显式使用 `D:/MyCodes/Vitalis/.venv/Scripts/python.exe`。没有快照时返回 `status=snapshot_missing`，不得自动同步、分析或改用其他日期。今日训练建议取已保存的晨报，解释依据取 `explain`；Hermes 只编排和复述 Vitalis 的结构化证据，不计算、合并、诊断或虚构训练计划。
+
+`VITALIS_API` 必须保持环回访问，不能将未经鉴权的健康智能路由暴露在公共反向代理后；`X-User-Id` 只选择身份，不验证调用方，包括同一机器的其他进程。设置 `VITALIS_USER` 后，工具拒绝模型传入其他 `--user`。Hermes 可能保存对话，并将必要的结构化健康摘要发送到其配置的模型提供方；提问前应确认该提供方符合个人数据要求。
 
 ### 每日 PushPlus 报告
 
@@ -140,37 +152,26 @@ hermes cron runs <job-id>
 
 运行 `hermes cron run <job-id>` 属于正式的计划调用：成功投递会写入每日标记，并防止该时段被重复发送。
 
-当缺少 `VITALIS_USER` 或 `PUSHPLUS_TOKEN` 时，该工具会在同步之前退出。令牌绝不会传递给模型、包含在 URL 中，也不会写入仓库文件和日志。
+当缺少 `VITALIS_USER` 或 `PUSHPLUS_TOKEN`、同一配置来源的用户与令牌未成对、`--user` 与已配置身份不一致，或进程环境与 Hermes 私有配置的用户/令牌冲突时，该工具会在同步之前退出。配置的令牌必须属于该用户；令牌绝不会传递给模型、包含在 URL 中，也不会写入仓库文件和日志。
+
+内置调度器的投递配置与 Hermes 私有 Cron 不同：在内置调度器所在进程的私有环境中同时设置 `VITALIS_PUSH_USER`（接收者对应的本地用户 ID）和 `PUSHPLUS_TOKEN`。一个全局令牌只绑定一个本地用户；其他用户仍可同步和分析，但不会向该令牌投递。任一配置缺失时，内置晨报和晚报均不投递，也不写成功标记。Hermes 工具仍使用明确指定的 `VITALIS_USER` 和它自己的私有令牌，不依赖 `VITALIS_PUSH_USER`。
 
 ## 公共部署
 
-让应用程序监听器保持在私有或环回接口上，并在其前方配置浏览器信任的 HTTPS 反向代理或隧道：
-
-```bash
-HOST=127.0.0.1
-VITALIS_PUBLIC_URL=https://health.example.com
-```
-
-临时集成测试可以使用 Cloudflare Quick Tunnel：
-
-```bash
-cloudflared tunnel --url http://127.0.0.1:8000
-```
-
-Quick Tunnel 地址是临时的。持久化部署应使用稳定域名和自动续期的 TLS 证书。
+当前完整 API 仅适合可信本机或内网访问。`X-User-Id` 不是鉴权；即使上游监听 `127.0.0.1`，将其直接接到 Cloudflare Quick Tunnel 或公开的 HTTPS 反向代理，也会把健康数据读取、修改和设备令牌签发接口一并暴露。不要将完整应用直接公开，且不要仅靠 TLS、临时隧道地址或 CORS 保护它。`VITALIS_PUBLIC_URL` 应保持为空，除非所有敏感路由前已有可信的身份鉴别及本地用户授权绑定；浏览器配对需要与该网关相容的单独端到端设计。
 
 ## 计划任务
 
-同步、分析和推送呈现是相互独立的阶段。下表描述内置调度器时间；Hermes 的
-09:30-21:30 每小时晨间任务和 22:30 晚间任务是替代入口，不是同一调度，部署时只启用一个投递入口：
+同步、分析和推送呈现是相互独立的阶段。下表是内置调度器的实际时间；Hermes 的
+09:30-21:30 每小时晨间任务和 22:30 晚间任务是替代入口，部署时只启用一个投递入口：
 
 | 本地时间 | 任务 | 行为 |
 | --- | --- | --- |
 | 02:00 | 夜间同步 | 将 7 天的数据同步任务入队；持久化尝试成功后进行分析 |
-| 09:30-21:30 每小时 | 晨间重试 | 将 2 天的数据同步任务入队；同步成功且睡眠完整后进行分析并发送一次 |
-| 22:30 | 晚间 | 将 1 天的数据同步任务入队；同步成功后分析并发送不同的晚间资料 |
+| 09:30 | 晨间（单次） | 将 2 天的数据同步任务入队；睡眠未完整时不投递，内置调度当天不会自动重试 |
+| 21:30 | 晚间（单次） | 将 1 天的数据同步任务入队；同步成功后分析并尝试投递晚报 |
 
-FastAPI 生命周期负责调度器的启动和关闭，因此通过 `python -m vitalis.main` 和直接执行 `uvicorn vitalis.api.app:app` 启动时都会恢复持久化工作。每轮调度最多处理 `SYNC_DISPATCHER_BATCH_CHUNKS` 个到期分块，并按尝试的最后更新时间轮换。网络操作在数据库事务之外运行；可续期的尝试/分块租约可防止陈旧进程在任务被接管后继续认领或完成其他工作。仅当有单独的进程负责调度和恢复时，才设置 `VITALIS_NO_SCHEDULER=1`。
+未设置 `VITALIS_NO_SCHEDULER=1` 时，FastAPI 生命周期在 `python -m vitalis.main` 或直接执行 `uvicorn vitalis.api.app:app` 时启动内置调度器。每轮调度最多处理 `SYNC_DISPATCHER_BATCH_CHUNKS` 个到期分块，并按尝试的最后更新时间轮换。网络操作在数据库事务之外运行；可续期的尝试/分块租约可防止陈旧进程在任务被接管后继续认领或完成其他工作。仓库提供的 `vitalis-api.service` 显式禁用内置调度器，`vitalis-worker.service` 只执行到期同步分块；仅安装这两个单元不会创建定时报表任务，还需要另一个明确负责入队和投递的入口（例如已配置的 Hermes Cron）。
 
 信息不足的资料仍然是信息不足。调度器不会用更早的结果、默认分数或通用训练模板来替代它。
 

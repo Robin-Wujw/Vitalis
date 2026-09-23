@@ -9,16 +9,46 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time as datetime_time, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from vitalis.connectors.zepp.client import ZeppAPIClient, ZeppAuthError
-from vitalis.time import local_day, local_day_utc_bounds
 
 MAX_SYNC_DAYS = 730  # 2 年
 CHUNK_DAYS = 7
+SPO2_MAX_LOCAL_DAYS = 3
 HEART_RATE_PAGE_LIMIT = 1000
 DAY_MILLISECONDS = 24 * 60 * 60 * 1000
+
+
+def _zone(timezone_name: str | None) -> ZoneInfo:
+    """Resolve a caller-selected IANA zone, preserving the app default."""
+    if timezone_name:
+        try:
+            return ZoneInfo(timezone_name)
+        except Exception as exc:
+            raise ZeppAuthError(
+                f"时区无效: {timezone_name}", kind="invalid_request"
+            ) from exc
+    from vitalis.time import local_timezone
+
+    return local_timezone()
+
+
+def _local_day(value: datetime, timezone_name: str | None = None) -> date:
+    zone = _zone(timezone_name)
+    aware = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return aware.astimezone(zone).date()
+
+
+def _local_day_utc_bounds(
+    day: date, timezone_name: str | None = None
+) -> tuple[datetime, datetime]:
+    zone = _zone(timezone_name)
+    start = datetime.combine(day, datetime_time.min, tzinfo=zone)
+    end = datetime.combine(day + timedelta(days=1), datetime_time.min, tzinfo=zone)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
 @dataclass
@@ -40,7 +70,9 @@ class FetchWindow:
         return cls(start=start, end=end)
 
     @classmethod
-    def local_dates(cls, start: date, end: date) -> "FetchWindow":
+    def local_dates(
+        cls, start: date, end: date, timezone_name: str | None = None
+    ) -> "FetchWindow":
         if start > end:
             start, end = end, start
         days = (end - start).days + 1
@@ -49,15 +81,17 @@ class FetchWindow:
                 f"同步天数必须在 1..{MAX_SYNC_DAYS} 之间",
                 kind="invalid_request",
             )
-        start_utc, _ = local_day_utc_bounds(start)
-        _, end_utc = local_day_utc_bounds(end)
+        start_utc, _ = _local_day_utc_bounds(start, timezone_name)
+        _, end_utc = _local_day_utc_bounds(end, timezone_name)
         return cls(start=start_utc, end=end_utc)
 
-    def start_day(self) -> str:
-        return local_day(self.start).isoformat()
+    def start_day(self, timezone_name: str | None = None) -> str:
+        return _local_day(self.start, timezone_name).isoformat()
 
-    def end_day(self) -> str:
-        return local_day(self.end - timedelta(microseconds=1)).isoformat()
+    def end_day(self, timezone_name: str | None = None) -> str:
+        return _local_day(
+            self.end - timedelta(microseconds=1), timezone_name
+        ).isoformat()
 
     def chunks(self, chunk_days: int = CHUNK_DAYS) -> list["FetchWindow"]:
         chunk_days = max(1, chunk_days)
@@ -71,6 +105,28 @@ class FetchWindow:
         if not chunks:
             chunks.append(self)
         return chunks
+
+    def local_chunks(
+        self, chunk_days: int = CHUNK_DAYS, timezone_name: str | None = None
+    ) -> list["FetchWindow"]:
+        """Split a UTC window on configured-local civil-day boundaries."""
+        chunk_days = max(1, int(chunk_days))
+        start_day = date.fromisoformat(self.start_day(timezone_name))
+        end_day = date.fromisoformat(self.end_day(timezone_name))
+        chunks: list[FetchWindow] = []
+        cursor = start_day
+        while cursor <= end_day:
+            last = min(end_day, cursor + timedelta(days=chunk_days - 1))
+            start, _ = _local_day_utc_bounds(cursor, timezone_name)
+            _, end = _local_day_utc_bounds(last, timezone_name)
+            chunks.append(
+                FetchWindow(
+                    start=max(self.start, start),
+                    end=min(self.end, end),
+                )
+            )
+            cursor = last + timedelta(days=1)
+        return [chunk for chunk in chunks if chunk.end > chunk.start]
 
 
 @dataclass
@@ -90,6 +146,9 @@ class FetchedRecord:
     """拉取结果。"""
 
     raw: RawRecord
+    # Retain usable rows while exposing a capped response or stalled cursor.
+    incomplete: bool = False
+    incomplete_reason: str | None = None
 
 
 class FetchBatch(list[FetchedRecord]):
@@ -101,18 +160,32 @@ class FetchBatch(list[FetchedRecord]):
         self.successful_chunks = 0
         self.unavailable_ranges: list[tuple[datetime, datetime]] = []
         self.unavailable_capabilities: list[tuple[str, str]] = []
+        self.incomplete_ranges: list[tuple[datetime, datetime]] = []
+        self.incomplete_reasons: list[str] = []
 
     @property
     def unavailable_chunks(self) -> int:
         return len(self.unavailable_ranges)
 
     @property
+    def incomplete(self) -> bool:
+        return bool(self.incomplete_ranges)
+
+    @property
     def partial(self) -> bool:
-        return self.successful_chunks > 0 and self.unavailable_chunks > 0
+        return self.incomplete or (
+            self.successful_chunks > 0 and self.unavailable_chunks > 0
+        )
 
     def add_success(self, record: FetchedRecord) -> None:
         self.append(record)
         self.successful_chunks += 1
+        if record.incomplete:
+            self.incomplete_ranges.append(
+                (record.raw.start_utc, record.raw.end_utc or record.raw.start_utc)
+            )
+            if record.incomplete_reason:
+                self.incomplete_reasons.append(record.incomplete_reason)
 
     def add_unavailable(self, window: FetchWindow) -> None:
         self.unavailable_ranges.append((window.start, window.end))
@@ -180,11 +253,13 @@ def _heart_rate_cursor(items: list[dict]) -> int | None:
             if item_ts is not None:
                 break
         if item_ts is not None:
-            max_ts = item_ts if max_ts is None else max(max_ts, item_ts)
+            # Normalize every observation before max; normalizing only the
+            # final maximum lets a millisecond value dominate mixed input.
+            normalized_ts = item_ts // 1000 if item_ts >= 10_000_000_000 else item_ts
+            max_ts = normalized_ts if max_ts is None else max(max_ts, normalized_ts)
     if max_ts is None:
         return None
-    # +1 秒（秒级）或 +1000 毫秒（毫秒级）
-    return max_ts + (1000 if max_ts >= 10_000_000_000 else 1)
+    return max_ts + 1
 
 
 def _payload_items(payload: dict) -> list[dict]:
@@ -206,8 +281,11 @@ def _payload_items(payload: dict) -> list[dict]:
 class DataFetcher:
     """Zepp 数据获取器（翻译自 Rust DataFetcher）。"""
 
-    def __init__(self, connector: ZeppAPIClient):
+    def __init__(
+        self, connector: ZeppAPIClient, timezone_name: str | None = None
+    ):
         self.connector = connector
+        self.timezone_name = timezone_name
 
     # ---- heart_rate ----
 
@@ -235,6 +313,8 @@ class DataFetcher:
         cursor = int(window.start.timestamp())
         merged: list[dict] = []
         payload: dict = {}
+        incomplete = False
+        incomplete_reason: str | None = None
         while True:
             payload = self.connector.fetch_heart_rate(
                 cursor, end, HEART_RATE_PAGE_LIMIT, 2
@@ -245,7 +325,11 @@ class DataFetcher:
             if page_len < HEART_RATE_PAGE_LIMIT:
                 break
             nxt = _heart_rate_cursor(merged)
-            if nxt is None or nxt <= cursor:
+            if nxt is None or nxt <= cursor or nxt >= end:
+                incomplete = True
+                incomplete_reason = (
+                    "heart_rate: full page made no in-window cursor progress"
+                )
                 break
             cursor = nxt
         out_payload: dict
@@ -261,7 +345,9 @@ class DataFetcher:
                 start_utc=window.start,
                 end_utc=window.end,
                 payload=out_payload,
-            )
+            ),
+            incomplete=incomplete,
+            incomplete_reason=incomplete_reason,
         )
 
     # ---- sleep ----
@@ -479,9 +565,15 @@ class DataFetcher:
                 records.expected_chunks += batch.expected_chunks
                 records.successful_chunks += batch.successful_chunks
                 records.unavailable_ranges.extend(batch.unavailable_ranges)
+            records.incomplete_ranges.extend(batch.incomplete_ranges)
+            records.incomplete_reasons.extend(batch.incomplete_reasons)
 
         for label, surface, event_type, sub_type, chunk_days in specs:
-            chunks = window.chunks(chunk_days or CHUNK_DAYS)
+            chunks = (
+                window.local_chunks(SPO2_MAX_LOCAL_DAYS, self.timezone_name)
+                if label == "spo2"
+                else window.chunks(chunk_days or CHUNK_DAYS)
+            )
             capability = FetchBatch(expected_chunks=len(chunks))
             for chunk in chunks:
                 from_ms = int(chunk.start.timestamp() * 1000)
@@ -514,26 +606,38 @@ class DataFetcher:
                     if records:
                         raise PartialFetchError(exc, records) from exc
                     raise
+                item_count = len(_payload_items(payload))
                 capability.add_success(FetchedRecord(raw=RawRecord(
                     stream="wellness",
-                    source_key=f"wellness:{label}:{surface}:{chunk.start_day()}:{chunk.end_day()}",
+                    source_key=f"wellness:{label}:{surface}:{chunk.start_day(self.timezone_name)}:{chunk.end_day(self.timezone_name)}",
                     start_utc=chunk.start,
                     end_utc=chunk.end,
                     payload=payload,
                     capability="unverified",
+                ), incomplete=label == "spo2" and item_count >= 1000, incomplete_reason=(
+                    f"{label}: response reached the 1000-item limit"
+                    if label == "spo2" and item_count >= 1000 else None
                 )))
             merge_capability(capability)
         for sub_type in ("odi", "osa_event"):
-            chunks = window.chunks(CHUNK_DAYS)
+            chunks = window.local_chunks(SPO2_MAX_LOCAL_DAYS, self.timezone_name)
             capability = FetchBatch(expected_chunks=len(chunks))
             for chunk in chunks:
                 try:
-                    payload = self.connector.fetch_user_events_date_string(
-                        "blood_oxygen",
-                        sub_type,
-                        chunk.start.isoformat().replace("+00:00", "Z"),
-                        chunk.end.isoformat().replace("+00:00", "Z"),
-                    )
+                    from_day = chunk.start_day(self.timezone_name)
+                    to_day = chunk.end_day(self.timezone_name)
+                    method = self.connector.fetch_user_events_date_string
+                    try:
+                        payload = method(
+                            "blood_oxygen", sub_type, from_day, to_day,
+                            time_zone=self.timezone_name,
+                        )
+                    except TypeError as exc:
+                        # Keep older test doubles runnable while new clients
+                        # receive the configured zone.
+                        if "time_zone" not in str(exc) and "keyword" not in str(exc):
+                            raise
+                        payload = method("blood_oxygen", sub_type, from_day, to_day)
                 except ZeppAuthError as exc:
                     if exc.kind == "not_available":
                         capability.add_unavailable(chunk)
@@ -542,13 +646,17 @@ class DataFetcher:
                     if records:
                         raise PartialFetchError(exc, records) from exc
                     raise
+                item_count = len(_payload_items(payload))
                 capability.add_success(FetchedRecord(raw=RawRecord(
                     stream="wellness",
-                    source_key=f"wellness:spo2:user_day:{chunk.start_day()}:{chunk.end_day()}:{sub_type}",
+                    source_key=f"wellness:spo2:user_day:{chunk.start_day(self.timezone_name)}:{chunk.end_day(self.timezone_name)}:{sub_type}",
                     start_utc=chunk.start,
                     end_utc=chunk.end,
                     payload=payload,
                     capability="unverified",
+                ), incomplete=item_count >= 1000, incomplete_reason=(
+                    f"spo2/{sub_type}: response reached the 1000-item limit"
+                    if item_count >= 1000 else None
                 )))
             merge_capability(capability)
         return records

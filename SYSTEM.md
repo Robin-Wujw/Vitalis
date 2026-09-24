@@ -75,7 +75,7 @@
 
 日期：2026-09-24
 
-- 2026-09-24 晨报信息密度改进仍在本地 `feat/richer-morning-evidence`，未提交、未部署或重新发送；本地 Python 完整测试 736 项、Balance 2 Node 测试 6 项通过。服务器上次核验仍运行 `165b6e7`；最近一次只读同步分区检查显示通用运动入口成功，另 12 个分类入口不可用，因此不能把已记录训练当作完整历史或据此生成训练剂量。今天用户收到的是旧版晨报，本轮仅用合成数据预览新投影。
+- 2026-09-24 `35a9d93` 晨报改进已推送并部署：升级前备份校验、schema/身份审计、编译和三项服务健康检查通过；本地 Python 完整测试 736 项、Balance 2 Node 测试 6 项通过，服务器未运行完整 pytest。今日新版分析快照已明确授权生成，只读验收覆盖昨夜、身体信号、昨天活动与已记录训练、今天截至分析时活动，且无训练处方。新版真实 PushPlus 测试投递被自动模式权限拦截，未由本会话发送；用户此前收到的是旧版晨报。只读同步分区检查显示通用运动入口成功，另 12 个分类入口不可用，因此不能把已记录训练当作完整历史或据此生成训练剂量。
 - 2026-09-23 本地复盘已封闭 `AUD-001` 的条件性跨用户内置投递风险；Windows 完整 Python 测试 705 项、双语检查 47 项及 Balance 2 Node 测试 6 项通过。用户确认完整 API 当前仅本机/内网可达；未核查线上服务、执行部署或发送真实消息。已跟踪源码结构不搬迁；未解决的事项见第 10 节，完成证据见 `docs/SYSTEM_HISTORY.md`。
 - `2d98418` 已部署，Windows 与服务器 Linux 完整套件各通过 `674` 项，包含 `47` 项双语 Markdown 与本地链接/锚点检查。真实晚报 API 已验证有限动作名称显示；事实版晨报已由现有调度成功投递，并确认不含训练计划和当天去重标记存在。
 - 本地当前契约为 `WorkoutDetail 5.1`（共享 `WORKOUT_DETAIL_SCHEMA_VERSION`）、Daily 14.0、Weekly 6.0、Monthly 3.0、MorningBriefing 4.0、Agent Context 6.0、Intelligence 14.0、StrengthAnalysis 2.0、Decision Policy 9.0。`GET /intelligence/evening-briefing`、`GET /intelligence/weekly-briefing` 和 `GET /intelligence/monthly-briefing` 返回 `ReportBriefing 1.0`，并与 HTML 使用相同的 `sections`。

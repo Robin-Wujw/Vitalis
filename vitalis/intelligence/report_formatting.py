@@ -82,6 +82,25 @@ def repetitions_text(value: Any) -> str | None:
     return f"{text} 次" if re.fullmatch(r"\d+(?:\s*[-–~]\s*\d+)?", text) else text
 
 
+def observed_exercise_name(item: dict[str, Any]) -> str:
+    name = item.get("exercise_name") or item.get("exercise_id")
+    if name:
+        return str(name)
+    code = item.get("vendor_exercise_code")
+    return f"动作代码 {code}（名称未确认）" if code is not None else "动作名称未确认"
+
+
+def observed_strength_summary(items: list[dict[str, Any]]) -> str:
+    blocks: list[tuple[str, int]] = []
+    for item in items:
+        name = observed_exercise_name(item)
+        if blocks and blocks[-1][0] == name:
+            blocks[-1] = (name, blocks[-1][1] + 1)
+        else:
+            blocks.append((name, 1))
+    return "、".join(f"{name} {count} 组" for name, count in blocks)
+
+
 def clock_text(value: Any) -> str | None:
     if not value:
         return None

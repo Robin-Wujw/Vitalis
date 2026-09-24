@@ -11,7 +11,7 @@ from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
 from vitalis.models import ActivityRecord, DailyMetric, MetricSample, NormalizedDaily, SleepRecord, Workout
 from vitalis.services import daily_push
 from vitalis.services.push_service import _render_morning, _render_report_html
-from vitalis.services.zepp_sync_coordinator import stable_chunk_key
+from vitalis.services.zepp_sync_coordinator import PLAN_VERSION, stable_chunk_key
 from vitalis.storage import HealthRepository, session_scope
 from vitalis.storage.database import get_engine
 from vitalis.time import local_day_utc_bounds
@@ -115,7 +115,8 @@ def synthetic_pipeline_example(*, morning=False, explicit_strength=True, history
             "window_start": window.start, "window_end": window.end, "allow_unavailable": True,
         } for index, sport in enumerate(SPORTS)]
         attempt = repo.create_or_reuse_sync_attempt(
-            user, window_start=window.start, window_end=window.end, manifest=specs,
+            user, plan_version=PLAN_VERSION, window_start=window.start,
+            window_end=window.end, manifest=specs,
         )
         finished = (analysis_time - timedelta(minutes=1)).replace(tzinfo=None)
         attempt.created_at = finished - timedelta(minutes=1)

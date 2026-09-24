@@ -323,7 +323,8 @@ git diff --check
 ## Development Contract
 
 The repository is pre-production and current-contract-only. It does not maintain legacy
-endpoints, backfills, dual reads, or old-data adapters. Re-ingest disposable local data after
+endpoints, automatic backfills, dual reads, or old-data adapters; historical workout details
+are refreshed only through an explicit bounded manual request. Re-ingest disposable local data after
 a contract change; known legacy SQLite layouts must first use the explicit schema-migration
 commands above for audit and migration. Missing observations remain missing and must never be
 replaced with zero or fabricated measurements.

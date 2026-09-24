@@ -27,7 +27,7 @@ from vitalis.models import (
     StrengthSetObservation,
     WorkoutType,
 )
-from .sport_types import resolve_sport_mode
+from .sport_types import resolve_cloud_sport_mode
 
 MAX_WORKOUT_SECONDS = 12 * 60 * 60
 MAX_WELLNESS_SAMPLES_PER_EVENT = 10_000
@@ -40,6 +40,9 @@ ZEPP_STRENGTH_LAP_LABELS = {
     66: "坐姿划船",
     109: "上斜哑铃卧推",
     65: "二头肌弯举",
+    1770: "坐姿杠铃颈前推肩",
+    14: "侧平举",
+    114: "蝴蝶机反向飞鸟",
 }
 
 _ALL_DAY_STRESS_FIELDS = (
@@ -243,7 +246,9 @@ class ZeppParser:
                 continue
             type_id = it.get("type")
             numeric_type: int | None = None
-            if isinstance(type_id, (int, float)):
+            if isinstance(type_id, int) and not isinstance(type_id, bool):
+                numeric_type = type_id
+            elif isinstance(type_id, float) and isfinite(type_id) and type_id.is_integer():
                 numeric_type = int(type_id)
             elif isinstance(type_id, str):
                 try:
@@ -252,7 +257,7 @@ class ZeppParser:
                     pass
             # This is an aggregate endpoint, so only the record's numeric type is
             # authoritative. Missing IDs never inherit the URL or a textual hint.
-            mode = resolve_sport_mode(numeric_type)
+            mode = resolve_cloud_sport_mode(numeric_type)
             wtype = WorkoutType(mode.category)
             started = self._parse_start(it)
             avg_hr = self._first_number(
@@ -1727,7 +1732,7 @@ class ZeppParser:
             if abs(number) >= 10_000_000_000:
                 number /= 1000
             return datetime.fromtimestamp(number, tz=timezone.utc)
-        except (TypeError, ValueError, OSError):
+        except (TypeError, ValueError, OverflowError, OSError):
             return None
 
     @staticmethod

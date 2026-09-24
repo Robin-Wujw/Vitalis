@@ -107,11 +107,14 @@ def validate_region_host(host: str) -> str:
 # Full public Zepp OS workout code -> canonical mode name.
 SPORT_TYPE_MAP = {code: mode.code for code, mode in ZEPP_SPORT_MODES.items()}
 
-# 全运动查询列表（对齐 ZeppBridge）
-SPORTS = [
+# Earlier plans queried these paths independently. The account-wide feed
+# actually lives under /run/history.json; the other paths normally return 404.
+LEGACY_SPORTS = (
     "run", "walking", "ride", "swimming", "indoor_run", "treadmill",
     "trail", "hiking", "strength", "elliptical", "rowing", "yoga", "climb",
-]
+)
+SPORTS = ["run"]
+WORKOUT_AGGREGATE_PLAN_VERSION = "zepp-sync-v6"
 
 
 ZeppErrorKind = Literal[

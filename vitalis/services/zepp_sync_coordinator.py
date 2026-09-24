@@ -21,7 +21,9 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_, select, update
 
-from vitalis.connectors.zepp.client import SPORTS, ZeppAPIClient, ZeppAuthError
+from vitalis.connectors.zepp.client import (
+    SPORTS, WORKOUT_AGGREGATE_PLAN_VERSION, ZeppAPIClient, ZeppAuthError,
+)
 from vitalis.connectors.zepp.dense_hr import decode_sec_hr_archive
 from vitalis.connectors.zepp.fetcher import (
     CHUNK_DAYS,
@@ -47,7 +49,7 @@ from vitalis.storage import models as orm
 from vitalis.storage.sync_types import SyncLease
 
 
-PLAN_VERSION = "zepp-sync-v5"
+PLAN_VERSION = WORKOUT_AGGREGATE_PLAN_VERSION
 MAX_CHUNK_ATTEMPTS = 5
 CHUNK_LEASE_SECONDS = 120
 ATTEMPT_LEASE_SECONDS = 300
@@ -333,12 +335,30 @@ class ZeppSyncCoordinator:
             },
         }
 
+    @classmethod
+    def _workout_specs(cls, window: FetchWindow, ordinal: int = 0) -> list[dict[str, Any]]:
+        start_ts, end_ts = int(window.start.timestamp()), int(window.end.timestamp())
+        return [
+            cls._spec(
+                "workouts", sport, window, cursor=end_ts,
+                health_stream="workouts", ordinal=ordinal + index,
+                allow_unavailable=True, operation="fetch_sport_history",
+                params={
+                    "sport": sport, "start_track_id": start_ts,
+                    "stop_track_id": end_ts, "need_sub_data": 1,
+                },
+            )
+            for index, sport in enumerate(SPORTS)
+        ]
+
     def _manifest(
         self,
         window: FetchWindow,
         options: dict[str, Any],
         timezone_name: str | None = None,
     ) -> list[dict[str, Any]]:
+        if options.get("workout_only") is True:
+            return self._workout_specs(window)
         timezone_name = timezone_name or self._configured_timezone()
         chunks = self._local_windows(window, timezone_name)
         manifest: list[dict[str, Any]] = []
@@ -444,14 +464,8 @@ class ZeppSyncCoordinator:
                 params={"statistic": statistic, "start_day": window.start_day(timezone_name), "end_day": window.end_day(timezone_name), "limit": 900, "reverse": True},
             )); ordinal += 1
 
-        start_ts, end_ts = int(window.start.timestamp()), int(window.end.timestamp())
-        for sport in SPORTS:
-            manifest.append(self._spec(
-                "workouts", sport, window, cursor=end_ts,
-                health_stream="workouts", ordinal=ordinal, allow_unavailable=True,
-                operation="fetch_sport_history",
-                params={"sport": sport, "start_track_id": start_ts, "stop_track_id": end_ts, "need_sub_data": 1},
-            )); ordinal += 1
+        manifest.extend(self._workout_specs(window, ordinal))
+        ordinal += len(SPORTS)
         manifest.append(self._spec(
             "devices", "inventory", window, health_stream="devices", ordinal=ordinal,
             allow_unavailable=True, operation="fetch_devices", params={},
@@ -470,8 +484,16 @@ class ZeppSyncCoordinator:
         trigger_ref: str | None = None,
         deadline_at: datetime | None = None,
     ) -> orm.SyncAttempt:
-        window = self._window(window, days)
         options = dict(options or {})
+        if not isinstance(options.get("workout_only", False), bool):
+            raise ZeppAuthError("workout_only 必须是布尔值", kind="invalid_request")
+        if options.get("workout_only") is True and trigger != "manual":
+            raise ZeppAuthError("workout_only 只能用于手动同步", kind="invalid_request")
+        if options.get("workout_only") is True and options.get("decode_dense_files") is True:
+            raise ZeppAuthError(
+                "workout_only 不能同时解码密集心率归档", kind="invalid_request"
+            )
+        window = self._window(window, days)
         timezone_name = timezone_name or self._configured_timezone()
         manifest = self._manifest(window, options, timezone_name)
         with self._session() as db:
@@ -862,7 +884,14 @@ class ZeppSyncCoordinator:
         detail_window = FetchWindow(chunk["window_start"], chunk["window_end"])
         strength_only = False
         refresh_after = None
-        if attempt.get("trigger") in {"manual", "morning", "evening"}:
+        if attempt.get("trigger") == "manual" and (
+            attempt.get("options", {}).get("detail_backfill") is True
+            or attempt.get("options", {}).get("workout_only") is True
+        ):
+            # Explicit manual backfills use the requested window, still capped
+            # at MAX_DETAIL_CHUNKS per attempt.
+            refresh_after = attempt.get("created_at")
+        elif attempt.get("trigger") in {"manual", "morning", "evening"}:
             # The daily health request stays at 1/2 days.  Only the bounded
             # detail refresh looks back 28 days, so old app detail caches are
             # refreshed without expanding every vendor request.  Manual is the
@@ -1219,6 +1248,16 @@ class ZeppSyncCoordinator:
                     row.id, token, epoch, "partial", now=now,
                     error_kind="partial_coverage",
                     error=first.error or "响应达到分页上限或分页游标没有进展；已保留已获取样本",
+                )
+                return "partial" if ok else "stale"
+            if row.plan_version == PLAN_VERSION and any(
+                item.stream == "workouts" and item.partition in SPORTS
+                and item.status == "unavailable" for item in chunks
+            ):
+                ok = repo.finalize_attempt(
+                    row.id, token, epoch, "partial", now=now,
+                    error_kind="partial_coverage",
+                    error="全运动汇总来源不可用，训练历史尚未核验",
                 )
                 return "partial" if ok else "stale"
 

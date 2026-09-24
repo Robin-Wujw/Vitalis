@@ -61,9 +61,32 @@ def test_strength_lap_maps_only_verified_display_codes(code, expected_name):
     assert "exercise_name_unverified" not in observed.limitations
 
 
+def test_user_confirmed_september_23_session_maps_four_ordered_blocks():
+    # The same session was checked against the app: four sets of each movement.
+    codes = [1770] * 4 + [14] * 4 + [64] * 4 + [114] * 4
+    detail = detail_for(";".join(lap_row(code=str(code)) for code in codes))
+    assert [item.vendor_exercise_code for item in detail.strength_sets] == codes
+    assert [item.exercise_name for item in detail.strength_sets] == (
+        ["坐姿杠铃颈前推肩"] * 4
+        + ["侧平举"] * 4
+        + ["引体向上"] * 4
+        + ["蝴蝶机反向飞鸟"] * 4
+    )
+    assert [item.order for item in detail.strength_sets] == list(range(1, 17))
+    assert all(item.weight_kg is None and item.weight_unit is None for item in detail.strength_sets)
+    assert all("exercise_name_reference_mapping" in item.limitations for item in detail.strength_sets)
+
+
 @pytest.mark.parametrize("family", [None, "aerobic", "unknown", "Strength"])
 def test_strength_lap_requires_explicit_strength_family(family):
     assert detail_for(lap_row(), family=family).strength_sets == []
+
+
+def test_observed_but_unverified_vendor_code_keeps_name_missing():
+    observed, = detail_for(lap_row(code="1988")).strength_sets
+    assert observed.vendor_exercise_code == 1988
+    assert observed.exercise_name is None
+    assert "exercise_name_unverified" in observed.limitations
 
 
 @pytest.mark.parametrize("columns", [3, 61, 63])
@@ -150,6 +173,39 @@ def test_explicit_strength_set_units_remain_distinct():
     assert [item.weight_value for item in detail.strength_sets] == [12, 12, 12]
     assert [item.weight_kg for item in detail.strength_sets] == [12, None, None]
     assert [item.weight_unit for item in detail.strength_sets] == ["kg", "lb", None]
+
+
+def test_detail_refresh_reparses_old_observation_with_verified_name():
+    user = User(id="lap-refresh-verified-name")
+    workout_id = str(int(START.timestamp()))
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user.id)
+        repo.save_workout(Workout(
+            user_id=user.id, workout_id=workout_id, started_at=START,
+            duration=30, training_family="strength", vendor_source="cloud",
+        ))
+        repo.save_workout_detail(user.id, workout_id, {
+            "schema_version": WORKOUT_DETAIL_SCHEMA_VERSION,
+            "strength_sets": [{
+                "source": "lap_62", "order": 1,
+                "vendor_exercise_code": 1770, "exercise_name": None,
+            }],
+        }, fetched_at=START)
+        record = FetchedRecord(raw=RawRecord(
+            stream="workout_detail", source_key=f"workout_detail:{workout_id}:cloud",
+            start_utc=START, end_utc=START + timedelta(minutes=30),
+            payload={"data": {"trackid": int(START.timestamp()), "lap": lap_row(code="1770")}},
+        ))
+        assert SyncManager(SimpleNamespace())._write_stream(record, repo, user) == 1
+    with session_scope() as db:
+        saved = HealthRepository(db).workout(user.id, workout_id)
+        assert saved is not None
+        observed, = saved.detail["strength_sets"]
+    assert observed["exercise_name"] == "坐姿杠铃颈前推肩"
+    assert observed["vendor_exercise_code"] == 1770
+    assert observed["weight_kg"] is None
+    assert observed["weight_unit"] is None
 
 
 @pytest.mark.parametrize("family, expected_count", [("strength", 1), ("aerobic", 0), (None, 0)])

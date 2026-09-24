@@ -166,19 +166,113 @@ def _report_summary(payload: dict) -> list[str]:
     ])
 
 
-def _section_lines(section: dict) -> list[str]:
+def _compact_period_metric(line: str) -> str:
+    if "本期有效日" not in line and "本期有记录" not in line:
+        return line
+    parts = line.rstrip("。").split("；")
+    selected = [parts[0]]
+    current = next((item for item in parts[1:] if item.startswith(("本期有效日", "本期有记录"))), None)
+    if current:
+        selected.append(current)
+    total = next((item for item in parts[1:] if "已记录小计" in item or "合计 " in item or item.startswith("本期 ")), None)
+    if total:
+        selected.append(total.split("，均值变化")[0].split("，完整日均值变化")[0])
+    average = next((item for item in parts[1:] if item.startswith("有记录日均")), None)
+    if average:
+        selected.append(average)
+    return "；".join(selected) + "。" if len(selected) > 1 else line
+
+
+def _display_facts(section: dict, period: str | None = None) -> list[str]:
+    facts = [
+        str(item).replace("（Zepp 汇总）", "").replace("（Zepp 厂商汇总）", "")
+        for item in section.get("facts") or []
+        if not str(item).startswith((
+            "设备睡眠评分", "设备准备度", "设备能量评分", "设备压力日记录",
+            "设备训练负荷指数", "设备训练负荷 ", "平均压力评分", "压力采样：",
+        ))
+    ]
+    key = section.get("key")
+
+    def first(*prefixes: str) -> str | None:
+        return next((item for item in facts if item.startswith(prefixes)), None)
+
+    if key == "sleep":
+        timing = [first(prefix) for prefix in ("睡眠时长", "入睡", "醒来", "夜间醒来")]
+        headline = "；".join(item.rstrip("。") for item in timing if item)
+        comparison = first("睡眠时长与个人参照")
+        return [*([headline + "。"] if headline else facts[:1]), *([comparison] if comparison else [])]
+    if key in {"yesterday_activity", "today_activity", "activity"}:
+        activity = [first(prefix) for prefix in ("步数", "活动距离", "活动时长")]
+        headline = "；".join(item.rstrip("。") for item in activity if item)
+        energies = unique([item for item in facts if "热量" in item or "总消耗" in item])[:2]
+        return unique([*([headline + "。"] if headline else facts[:1]), *energies])
+    if key in {"recovery", "sleep_recovery"}:
+        if key == "sleep_recovery":
+            return facts[:3]
+        hrv = first("睡眠 HRV", "HRV")
+        missing_hrv = hrv if hrv and "未取得" in hrv else None
+        if missing_hrv:
+            hrv = None
+        heart = first("静息心率", "睡眠静息心率", "夜间心率中位数")
+        if hrv or heart:
+            return unique([hrv, heart])
+        other = next((item for prefix in (
+            "夜间血氧中位数", "夜间呼吸频率", "夜间皮肤温度", "夜间最低五分钟心率中位数",
+        ) if (item := first(prefix))), None)
+        return unique([other, missing_hrv]) if other else facts[:1]
+    if key in {"observed_training", "today_plan"}:
+        return facts
+    if key == "training":
+        if period == "weekly":
+            return [item for item in (
+                first("训练场次"), first("跑步 "), first("力量："),
+            ) if item] or facts[:2]
+        return [item for item in facts if not item.startswith(("第 ", "跑步心率分布："))]
+    if key == "intraday":
+        return [item for item in facts if item.startswith("已记录心率")] or facts[:1]
+    if key == "training_activity":
+        chosen = [first("训练场次", "已记录训练场次"), first("跑步", "已记录跑步"), first("力量：", "已记录力量：")]
+        activity = first("步数：", "日常步数：")
+        energy = next((item for item in facts if ("热量" in item or "总消耗" in item) and "本期有记录" in item), None)
+        selected = [*chosen, _compact_period_metric(activity) if activity else None, _compact_period_metric(energy) if energy else None]
+        return unique([item for item in selected if item]) or facts[:2]
+    if key == "activity_feedback":
+        chosen = [first("活动有效"), next((item for item in facts if "热量" in item or "总消耗" in item), None), first("已记录主观反馈")]
+        return unique([_compact_period_metric(item) for item in chosen if item]) or facts[:2]
+    if key == "actions":
+        return facts[:1]
+    return facts[:2]
+
+
+def _section_lines(section: dict, displayed: set[str] | None = None, period: str | None = None) -> list[str]:
     lines = ["", f"## {section.get('title', '分析')}", ""]
-    facts = section.get("facts") or []
-    interpretation = [item for item in section.get("interpretation") or [] if item not in facts]
-    lines.extend(f"- {item}" for item in facts)
+    facts = [item for item in _display_facts(section, period) if displayed is None or item not in displayed]
+    interpretation = [
+        item for item in unique(section.get("interpretation") or [])
+        if item not in facts and (displayed is None or item not in displayed)
+    ]
+    key = section.get("key")
+    if key not in {"today_plan", "training"}:
+        important = [item for item in interpretation if "HRV" in item and ("分歧" in item or "不一致" in item)]
+        interpretation = unique(interpretation[:2] + important)
+    if facts:
+        lines.append(f"**{facts[0]}**")
+        lines.extend(f"- {item}" for item in facts[1:])
+    else:
+        lines.extend(f"- {item}" for item in interpretation[:1])
+        interpretation = interpretation[1:]
     lines.extend(f"- {item}" for item in interpretation)
     notes = unique([
         item for item in section.get("limitations") or []
         if item not in facts and item not in interpretation
+        and (displayed is None or item not in displayed)
     ])
     if notes:
         lines.extend(["", "### 数据说明", ""])
         lines.extend(f"- {item}" for item in notes)
+    if displayed is not None:
+        displayed.update([*facts, *interpretation, *notes])
     return lines
 
 
@@ -203,14 +297,10 @@ def _render_morning(briefing: dict) -> tuple[str, list[str]]:
         })
         and (not retrospective or section.get("key") != "today_plan")
     ]
+    displayed = set(summary)
     for section in sections:
-        lines.extend(_section_lines(section))
+        lines.extend(_section_lines(section, displayed, period="morning"))
     safety = MorningBriefingEngine.safety_lines(briefing) if not facts_only else []
-    displayed = set(summary) | {
-        item for section in sections
-        for key in ("facts", "interpretation", "limitations")
-        for item in section.get(key) or []
-    }
     cautions = unique([
         item for item in briefing.get("cautions") or []
         if item not in displayed and item not in safety
@@ -235,8 +325,9 @@ def _render_report_briefing(payload: dict, label: str) -> tuple[str, list[str]]:
     lines = _timing_lines(payload) + [f"# {label} · {end}", "", *summary]
     if metadata.get("retrospective"):
         lines.extend(["", "> 本报告仅回顾指定日期范围的已记录事实，不提供当前、今晚或明天的处方。"])
+    displayed = set(summary)
     for section in payload.get("sections", []):
-        lines.extend(_section_lines(section))
+        lines.extend(_section_lines(section, displayed, period=payload.get("period")))
     return title, lines
 
 

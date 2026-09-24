@@ -16,6 +16,7 @@ from .report_formatting import (
     metric_label,
     minutes_text,
     number,
+    observed_strength_summary,
     payload_of,
     range_text,
     repetitions_text,
@@ -138,13 +139,6 @@ class MorningBriefingEngine:
         except (TypeError, ValueError):
             return False
 
-    @staticmethod
-    def _source_label(value: dict[str, Any]) -> str:
-        provenance = value.get("provenance") or {}
-        if provenance.get("source") == "zepp":
-            return "Zepp 设备记录" if provenance.get("source_scope") == "device" else "Zepp 汇总"
-        return "设备记录" if provenance.get("source_scope") == "device" else "已保存记录"
-
     def _activity_facts(self, activity: dict[str, Any], day: date) -> list[str]:
         facts = []
         for key, label in (("steps", "步数"), ("distance_km", "活动距离"),
@@ -154,13 +148,30 @@ class MorningBriefingEngine:
                 continue
             value = value_with_unit(metric.get("value"), metric.get("unit"), 0 if key == "steps" else 1)
             if value is not None:
-                facts.append(f"{label} {value}（{self._source_label(metric)}）")
-        for energy in activity.get("energy") or []:
-            if energy.get("role") == "workout" or not self._on_day(energy.get("observed_at"), day):
-                continue
+                facts.append(f"{label} {value}")
+        energies = [
+            item for item in activity.get("energy") or []
+            if item.get("role") != "workout" and self._on_day(item.get("observed_at"), day)
+        ]
+        sources_by_role: dict[str | None, set[tuple[str | None, str | None, str | None]]] = {}
+        for energy in energies:
+            provenance = energy.get("provenance") or {}
+            sources_by_role.setdefault(energy.get("role"), set()).add((
+                provenance.get("source"), provenance.get("source_scope"), provenance.get("device_id"),
+            ))
+        for energy in energies:
             value = value_with_unit(energy.get("value"), energy.get("unit"))
-            if value is not None:
-                facts.append(f"{energy_label(energy.get('role'))} {value}（{self._source_label(energy)}）")
+            if value is None:
+                continue
+            suffix = ""
+            if len(sources_by_role[energy.get("role")]) > 1:
+                provenance = energy.get("provenance") or {}
+                if provenance.get("source") == "zepp":
+                    source = "设备记录" if provenance.get("source_scope") == "device" else "账户记录"
+                else:
+                    source = "其他设备记录" if provenance.get("source_scope") == "device" else "其他来源"
+                suffix = f"（{source}）"
+            facts.append(f"{energy_label(energy.get('role'))} {value}{suffix}")
         labels = {
             "stress": "平均压力评分", "stress_min": "最低压力评分", "stress_max": "最高压力评分",
             "stress_relaxed_pct": "放松区间", "stress_normal_pct": "正常区间",
@@ -243,6 +254,28 @@ class MorningBriefingEngine:
             if item.get("vendor_reported_sets") is not None:
                 parts.append(f"设备记录组数 {number(item['vendor_reported_sets'], 0)} 组")
             workouts.append(f"已记录{label}" + ("：" + "；".join(parts) if parts else ""))
+        for session in (training.get("strength") or {}).get("recent_sessions") or []:
+            if not isinstance(session, dict) or date_text(session.get("date")) != yesterday.isoformat():
+                continue
+            confirmed = [
+                item for item in session.get("explicit_exercises") or []
+                if item.get("source") in {None, "user_confirmed"} and item.get("exercise_name")
+            ]
+            named = confirmed or [
+                item for item in session.get("explicit_exercises") or [] if item.get("exercise_name")
+            ]
+            if named:
+                detail = "、".join(
+                    f"{item['exercise_name']} {number(item['sets'], 0)} 组"
+                    if item.get("sets") is not None else f"{item['exercise_name']}（组数未记录）"
+                    for item in named
+                )
+                label = "已确认动作" if confirmed else "设备明确动作"
+                workouts.append(f"{label}：{detail}。")
+            elif session.get("observed_sets"):
+                detail = observed_strength_summary(session["observed_sets"])
+                if detail:
+                    workouts.append(f"逐组观测动作：{detail}。")
         if workouts:
             sections.append({"key": "observed_training", "title": "昨天已记录的训练", "facts": workouts,
                              "interpretation": [], "limitations": []})
@@ -311,9 +344,7 @@ class MorningBriefingEngine:
         preferred = hrv.get("preferred_metric")
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             source = hrv.get("preferred_device_label")
-            if source == "Zepp 厂商汇总":
-                source = "Zepp 汇总"
-            suffix = f"（{source}）" if source else ""
+            suffix = f"（{source}）" if source and source != "Zepp 厂商汇总" else ""
             output.append(f"{metric_label(preferred)} {number(value)} 毫秒{suffix}")
             if hrv.get("deviation"):
                 output.append(f"{metric_label(preferred)}：{baseline_text(hrv['deviation'])}。")

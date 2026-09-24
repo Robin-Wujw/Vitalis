@@ -176,6 +176,30 @@ def test_lap_observation_does_not_raise_coverage_focus_or_prescription():
     assert ZEPP_STRENGTH_LAP_LABELS[64] not in " ".join(step.name for step in planned.steps)
 
 
+def test_evening_digest_groups_consecutive_sets_without_merging_a_b_a():
+    raw = RawDailyProfile(user_id="synthetic-ordered", day=TARGET)
+    raw.workouts = [_workout({"strength_sets": [
+        {"source": "lap_62", "order": 1, "exercise_name": "卧推", "repetitions": 8},
+        {"source": "lap_62", "order": 2, "exercise_name": "卧推", "repetitions": 9},
+        {"source": "lap_62", "order": 3, "exercise_name": "划船", "repetitions": 10},
+        {"source": "lap_62", "order": 4, "exercise_name": "卧推", "repetitions": 8},
+        {"source": "lap_62", "order": 5, "vendor_exercise_code": 801, "repetitions": 8},
+    ]})]
+    session = StrengthAnalyzer()._session(raw, raw.workouts[0], None)
+    payload = _payload(session.model_dump(mode="json"))
+    report = EveningBriefingEngine().build(payload)
+    title, lines = _render_evening(payload)
+    digest = "\n".join(lines)
+    detail = "\n".join(report.sections[0].facts)
+
+    assert title.startswith("Vitalis 晚报")
+    assert "逐组观测动作：卧推 2 组、划船 1 组、卧推 1 组、动作代码 801（名称未确认） 1 组。" in digest
+    assert "第 1 组" not in digest
+    assert "第 1 组：卧推；8 次；负重未记录。" in detail
+    assert "第 5 组：动作代码 801（名称未确认）" in detail
+    assert session.explicit_exercises == []
+
+
 def test_observed_report_uses_existing_html_escape_path():
     session = {
         "date": TARGET.isoformat(),

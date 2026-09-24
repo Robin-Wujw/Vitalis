@@ -78,6 +78,8 @@ def health_data_health(user_id: str = Depends(require_user_id)) -> dict:
 def health_sync(
     days: int = Query(7, ge=1, le=730, description="同步天数"),
     decode_dense_files: bool = Query(False, description="显式解码最多一个秒级心率归档"),
+    detail_backfill: bool = Query(False, description="仅手动补抓同步窗口内的历史训练明细，每次最多四份"),
+    workout_only: bool = Query(False, description="仅手动同步全运动历史与有界训练明细，不请求其他健康流"),
     enqueue_only: bool = Query(False, description="只创建持久同步任务，由 worker 执行"),
     user_id: str = Depends(require_user_id),
 ) -> dict:
@@ -94,6 +96,8 @@ def health_sync(
                 days=days,
                 trigger="manual",
                 decode_dense_files=decode_dense_files,
+                detail_backfill=detail_backfill,
+                workout_only=workout_only,
             )
             return {
                 "user_id": user_id,
@@ -108,6 +112,8 @@ def health_sync(
                 report = connector.sync_with_report(
                     User(id=user_id), days=days, repo=HealthRepository(db),
                     decode_dense_files=decode_dense_files,
+                    detail_backfill=detail_backfill,
+                    workout_only=workout_only,
                     max_chunks=max(1, settings.sync_dispatcher_batch_chunks),
                     trigger="manual",
                 )
@@ -115,6 +121,8 @@ def health_sync(
             report = connector.sync_with_report(
                 User(id=user_id), days=days,
                 decode_dense_files=decode_dense_files,
+                detail_backfill=detail_backfill,
+                workout_only=workout_only,
                 max_chunks=max(1, settings.sync_dispatcher_batch_chunks),
                 trigger="manual",
             )

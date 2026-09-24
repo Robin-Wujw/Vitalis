@@ -80,7 +80,7 @@ HTTP `409`；现有凭据及两个用户的历史记录均保持不变。
 | GET | `/health/metrics/{metric}?from=&to=&resolution=` | 读取带时间戳的测量值；raw/hour/day 数据点保留数据源、范围、设备和单位 |
 | GET | `/health/daily-metrics?metric=&from=&to=` | 读取带数据源来源信息的稀疏每日指标 |
 | GET | `/health/dense-files/second_heart_rate?from=&to=` | 读取不含文件 ID 的高频文件覆盖信息 |
-| POST | `/health/sync?days=&decode_dense_files=false` | 同步健康数据；除非明确启用单文件解码，否则密集归档仅建立索引 |
+| POST | `/health/sync?days=&decode_dense_files=false&detail_backfill=false&workout_only=false` | 同步健康数据；密集归档默认只建索引。手动 `detail_backfill=true` 在请求窗口补抓旧训练明细；手动 `workout_only=true` 仅获取全运动历史及最多四份训练明细，不抓其他健康流 |
 
 `GET /health/metrics/stress?resolution=raw` 返回厂商带时间戳的
 `all_day_stress.data` 观测值，其中包含数据源、范围、设备、单位和明确的缺口。

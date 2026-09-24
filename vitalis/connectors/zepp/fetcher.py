@@ -290,15 +290,23 @@ def _sport_history_page(payload: Any) -> tuple[list[Any] | None, Any]:
     that distinction here prevents both fetch paths from turning an upstream
     envelope change into proof that a sport has no history.
     """
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or payload.get("code", 1) not in (0, 1, "0", "1"):
         return None, _SPORT_HISTORY_MISSING
     data = payload.get("data")
     if not isinstance(data, dict):
         return None, _SPORT_HISTORY_MISSING
+    from vitalis.connectors.zepp.parser import ZeppParser
+
     for key in _SPORT_HISTORY_ITEM_KEYS:
         rows = data.get(key)
         if isinstance(rows, list):
-            if any(not isinstance(item, dict) for item in rows):
+            if any(
+                not isinstance(item, dict)
+                or isinstance(item.get("trackid") or item.get("trackId"), bool)
+                or not str(item.get("trackid") or item.get("trackId") or "").strip()
+                or ZeppParser._parse_start(item) is None
+                for item in rows
+            ):
                 return None, _SPORT_HISTORY_MISSING
             return rows, data.get("next", _SPORT_HISTORY_MISSING)
     return None, _SPORT_HISTORY_MISSING

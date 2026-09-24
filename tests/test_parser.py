@@ -8,7 +8,7 @@ import pytest
 from datetime import date, datetime, timedelta, timezone
 
 from vitalis.connectors.zepp.parser import ZeppParser
-from vitalis.connectors.zepp.sport_types import ZEPP_SPORT_MODES
+from vitalis.connectors.zepp.sport_types import ZEPP_SPORT_MODES, resolve_sport_mode
 from vitalis.models import WorkoutType
 
 SLEEP_RAW = {
@@ -182,20 +182,24 @@ def test_verified_zepp_strength_type_is_preserved_and_normalized():
 
 
 @pytest.mark.parametrize(
-    ("vendor_type_id", "expected_type", "expected_label"),
+    ("vendor_type_id", "expected_type", "expected_mode", "expected_label"),
     [
-        (1, WorkoutType.RUNNING, "户外跑"),
-        (6, WorkoutType.SWIMMING, "泳池游泳"),
-        (8, WorkoutType.CYCLING, "室内骑行"),
-        (9, WorkoutType.OTHER, "椭圆机"),
-        (10, WorkoutType.OTHER, "攀登"),
-        (18, WorkoutType.OTHER, "足球"),
-        (92, WorkoutType.OTHER, "羽毛球"),
-        (146, WorkoutType.OTHER, "民族舞"),
+        (1, WorkoutType.RUNNING, "outdoor_running", "户外跑"),
+        (6, WorkoutType.WALKING, "walking", "健走"),
+        (7, WorkoutType.RUNNING, "trail_running", "越野跑"),
+        (8, WorkoutType.RUNNING, "treadmill", "跑步机"),
+        (9, WorkoutType.CYCLING, "outdoor_cycling", "户外骑行"),
+        (10, WorkoutType.CYCLING, "indoor_cycling", "室内骑行"),
+        (14, WorkoutType.SWIMMING, "pool_swimming", "泳池游泳"),
+        (18, WorkoutType.OTHER, "soccer_legacy", "足球"),
+        (52, WorkoutType.STRENGTH, "strength_training", "力量训练"),
+        (92, WorkoutType.OTHER, "badminton", "羽毛球"),
+        (146, WorkoutType.OTHER, "folk_dance", "民族舞"),
+        (223, WorkoutType.OTHER, "activity", "AI 识别活动"),
     ],
 )
-def test_public_zepp_workout_modes_use_decimal_vendor_ids(
-    vendor_type_id, expected_type, expected_label
+def test_cloud_history_decodes_record_type_in_its_own_namespace(
+    vendor_type_id, expected_type, expected_mode, expected_label
 ):
     rows = ZeppParser().parse_sport_history({
         "data": {"summary": [{
@@ -206,9 +210,25 @@ def test_public_zepp_workout_modes_use_decimal_vendor_ids(
     })
 
     assert rows[0].type == expected_type
+    assert rows[0].sport_mode == expected_mode
     assert rows[0].sport_mode_label == expected_label
-    assert rows[0].recognition_confidence == "HIGH"
-    assert rows[0].recognition_source == "public_zepp_enum"
+    assert rows[0].recognition_source != "public_zepp_enum"
+
+
+@pytest.mark.parametrize("code, label", [
+    (6, "泳池游泳"), (7, "公开水域游泳"), (9, "椭圆机"), (64, "钓鱼"),
+])
+def test_device_mode_catalog_is_separate_from_cloud_history(code, label):
+    assert resolve_sport_mode(code).label_zh == label
+
+
+def test_unverified_device_only_code_is_unknown_in_cloud_history():
+    workout, = ZeppParser().parse_sport_history({
+        "data": {"summary": [{"trackid": 1_777_334_400, "type": 149}]}
+    })
+    assert resolve_sport_mode(149).label_zh == "单杠"
+    assert workout.sport_mode_label == "未知运动（编号 149）"
+    assert workout.training_family == "skill"
 
 
 def test_unknown_numeric_sport_type_does_not_inherit_run_endpoint():
@@ -240,6 +260,15 @@ def test_missing_numeric_sport_type_does_not_use_text_or_endpoint_fallback():
     assert rows[0].type == WorkoutType.OTHER
     assert rows[0].sport_mode_label == "未知运动"
     assert rows[0].recognition_confidence == "NONE"
+
+
+@pytest.mark.parametrize("raw_type", [True, float("nan"), float("inf"), 1.5])
+def test_non_integral_cloud_type_stays_unknown(raw_type):
+    workout, = ZeppParser().parse_sport_history({
+        "data": {"summary": [{"trackid": 1_777_334_400, "type": raw_type}]}
+    })
+    assert workout.vendor_type_id is None
+    assert workout.sport_mode_label == "未知运动"
 
 
 def test_sport_history_normalizes_vendor_negative_sentinels():

@@ -14,10 +14,23 @@ def main() -> int:
     configured_user = os.getenv("VITALIS_USER")
     parser.add_argument("--user", default=configured_user, required=not configured_user)
     parser.add_argument("--days", type=int, choices=range(1, 731), default=7)
+    parser.add_argument(
+        "--detail-backfill", action="store_true",
+        help="显式补抓窗口内旧训练明细；每次同步最多四份",
+    )
+    parser.add_argument(
+        "--workout-only", action="store_true",
+        help="仅同步全运动历史并有界补抓窗口内旧训练明细",
+    )
     args = parser.parse_args()
+    params = {"days": args.days}
+    if args.detail_backfill:
+        params["detail_backfill"] = "true"
+    if args.workout_only:
+        params["workout_only"] = "true"
     response = httpx.post(
         f"{API}/api/v1/health/sync",
-        params={"days": args.days},
+        params=params,
         headers={"X-User-Id": args.user},
         timeout=120.0,
     )

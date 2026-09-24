@@ -305,6 +305,46 @@ def test_facts_only_renders_dated_activity_and_observed_training_without_a_plan(
     assert "action_plan" not in text
 
 
+def test_facts_only_summarizes_yesterday_observed_sets_without_prescribing():
+    daily = _daily()
+    yesterday = (TARGET_DATE - timedelta(days=1)).isoformat()
+    daily["features"]["training"]["recent_workouts"].append({
+        "date": yesterday, "type_label": "力量训练", "duration_minutes": 52,
+        "training_family": "strength", "vendor_reported_sets": 4,
+    })
+    daily["features"]["training"]["strength"]["recent_sessions"] = [{
+        "date": yesterday, "explicit_exercises": [],
+        "observed_sets": [
+            {"order": 1, "source": "lap_62", "exercise_name": "引体向上", "vendor_exercise_code": 64},
+            {"order": 2, "source": "lap_62", "exercise_name": "引体向上", "vendor_exercise_code": 64},
+            {"order": 3, "source": "lap_62", "vendor_exercise_code": 801},
+        ],
+    }]
+
+    report = MorningBriefingEngine().build_payload(daily, {"facts_only": True})
+    observed = next(section for section in report["sections"] if section["key"] == "observed_training")
+    assert "逐组观测动作：引体向上 2 组、动作代码 801（名称未确认） 1 组。" in observed["facts"]
+    assert not observed["interpretation"]
+    assert "action_plan" not in report
+
+
+def test_facts_only_distinguishes_vendor_explicit_from_user_confirmed_actions():
+    daily = _daily()
+    yesterday = (TARGET_DATE - timedelta(days=1)).isoformat()
+    daily["features"]["training"]["strength"]["recent_sessions"] = [{
+        "date": yesterday,
+        "explicit_exercises": [{
+            "source": "vendor_explicit", "exercise_name": "侧平举", "sets": 4,
+        }],
+        "observed_sets": [],
+    }]
+
+    report = MorningBriefingEngine().build_payload(daily, {"facts_only": True})
+    facts = next(section for section in report["sections"] if section["key"] == "observed_training")["facts"]
+    assert facts == ["设备明确动作：侧平举 4 组。"]
+    assert "action_plan" not in report
+
+
 def test_facts_only_keeps_vendor_scores_separate_from_observed_hrv_trend():
     daily = _daily()
     daily["features"]["hrv"].update({

@@ -641,7 +641,8 @@ def test_await_sync_timeout_is_explicitly_retryable(monkeypatch):
     assert "可重试" in result["detail"]
 
 
-def test_await_sync_server_error_degrades_without_blocking():
+def test_await_sync_server_error_degrades_without_blocking(monkeypatch):
+    monkeypatch.setattr(daily_push, "SYNC_POLL_MAX_ATTEMPTS", 1)
     response = httpx.Response(
         503,
         request=httpx.Request("GET", "http://test/sync"),
@@ -658,6 +659,30 @@ def test_await_sync_server_error_degrades_without_blocking():
     )
     assert result["status"] == "transport_error"
     assert result["retryable"] is True
+
+
+def test_await_sync_retries_transient_status_error(monkeypatch):
+    monkeypatch.setattr(daily_push, "SYNC_POLL_INTERVAL_SECONDS", 0)
+    response = httpx.Response(500, request=httpx.Request("GET", "http://test/sync"))
+
+    class Client:
+        calls = 0
+
+        def get(self, path):
+            self.calls += 1
+            if self.calls == 1:
+                raise httpx.HTTPStatusError(
+                    "database temporarily locked", request=response.request, response=response,
+                )
+            return Response({"attempt": {"status": "succeeded"}, "progress": {}})
+
+    client = Client()
+    result = daily_push._await_sync(
+        client, {"status": "queued", "attempt_id": "attempt-retry"}
+    )
+    assert client.calls == 2
+    assert result["status"] == "synced"
+    assert result["success"] is True
 
 
 def test_stale_report_is_not_delivered_across_midnight(monkeypatch, tmp_path):

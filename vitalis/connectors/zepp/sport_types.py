@@ -4,7 +4,7 @@ Codes follow the public Zepp OS activity enum used by Gadgetbridge. Unknown futu
 codes remain explicit instead of being guessed into a known activity.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -181,11 +181,8 @@ FAMILY_LABELS = {
 }
 
 
-def resolve_sport_mode(vendor_type_id: int | None) -> SportMode:
+def _unknown_sport_mode(vendor_type_id: int | None) -> SportMode:
     if vendor_type_id is not None:
-        known = ZEPP_SPORT_MODES.get(vendor_type_id)
-        if known:
-            return known
         return _mode(
             f"unknown_{vendor_type_id}",
             f"未知运动（编号 {vendor_type_id}）",
@@ -196,7 +193,6 @@ def resolve_sport_mode(vendor_type_id: int | None) -> SportMode:
             recognition_source="unknown_vendor_code",
             recognition_source_label="厂商编号未公开",
         )
-
     return SportMode(
         code="unknown",
         label_zh="未知运动",
@@ -207,3 +203,60 @@ def resolve_sport_mode(vendor_type_id: int | None) -> SportMode:
         recognition_source="missing_vendor_type",
         recognition_source_label="缺少厂商运动类型",
     )
+
+
+def resolve_sport_mode(vendor_type_id: int | None) -> SportMode:
+    if vendor_type_id is not None and vendor_type_id in ZEPP_SPORT_MODES:
+        return ZEPP_SPORT_MODES[vendor_type_id]
+    return _unknown_sport_mode(vendor_type_id)
+
+
+def _cloud_mode(
+    code: str, label: str, category: str = "other", family: str = "skill",
+    *, verified: bool = True,
+) -> SportMode:
+    return _mode(
+        code, label, category, family,
+        recognition_confidence="HIGH" if verified else "MEDIUM",
+        recognition_confidence_label="较高" if verified else "参考",
+        recognition_source="zepp_cloud_observed" if verified else "zepp_cloud_reference",
+        recognition_source_label="Zepp 云端历史核验" if verified else "Zepp 云端历史参考",
+    )
+
+
+# The account-wide /run/history feed uses a cloud namespace, not the public
+# Zepp OS enum. Include only independently observed or referenced cloud modes.
+CLOUD_SPORT_MODES = {
+    1: _cloud_mode("outdoor_running", "户外跑", "running", "aerobic"),
+    6: _cloud_mode("walking", "健走", "walking", "aerobic"),
+    7: _cloud_mode("trail_running", "越野跑", "running", "aerobic"),
+    8: _cloud_mode("treadmill", "跑步机", "running", "aerobic", verified=False),
+    9: _cloud_mode("outdoor_cycling", "户外骑行", "cycling", "aerobic"),
+    10: _cloud_mode("indoor_cycling", "室内骑行", "cycling", "aerobic", verified=False),
+    12: _cloud_mode("elliptical", "椭圆机", "other", "aerobic", verified=False),
+    14: _cloud_mode("pool_swimming", "泳池游泳", "swimming", "aerobic", verified=False),
+    18: _cloud_mode("soccer_legacy", "足球", "other", "mixed"),
+    23: _cloud_mode("rowing", "划船机", "other", "aerobic", verified=False),
+    52: _cloud_mode("strength_training", "力量训练", "strength", "strength"),
+    92: _cloud_mode("badminton", "羽毛球"),
+    223: _cloud_mode("activity", "AI 识别活动"),
+}
+
+# These modes match the cloud reference catalog and the public device enum;
+# keep their cloud confidence below independently observed modes.
+_CLOUD_OS_COMPATIBLE_CODES = frozenset({2, 3, 4, 5, 15, 17, 21, 24, 146})
+
+
+def resolve_cloud_sport_mode(vendor_type_id: int | None) -> SportMode:
+    if vendor_type_id in CLOUD_SPORT_MODES:
+        return CLOUD_SPORT_MODES[vendor_type_id]
+    if vendor_type_id in _CLOUD_OS_COMPATIBLE_CODES:
+        mode = ZEPP_SPORT_MODES[vendor_type_id]
+        return replace(
+            mode,
+            recognition_confidence="MEDIUM",
+            recognition_confidence_label="参考",
+            recognition_source="zepp_os_cloud_compatible",
+            recognition_source_label="Zepp OS 与云端对照",
+        )
+    return _unknown_sport_mode(vendor_type_id)

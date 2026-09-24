@@ -255,7 +255,7 @@ def _await_sync(client: httpx.Client, sync: dict) -> dict:
     if sync.get("status") != "queued" or not attempt_id:
         return sync
     latest = sync
-    for _ in range(SYNC_POLL_MAX_ATTEMPTS):
+    for poll in range(SYNC_POLL_MAX_ATTEMPTS):
         try:
             response = client.get(f"/api/v1/health/sync/{attempt_id}")
             response.raise_for_status()
@@ -263,6 +263,9 @@ def _await_sync(client: httpx.Client, sync: dict) -> dict:
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code < 500:
                 raise
+            if poll + 1 < SYNC_POLL_MAX_ATTEMPTS:
+                time.sleep(SYNC_POLL_INTERVAL_SECONDS)
+                continue
             return {
                 **latest,
                 "status": "transport_error",
@@ -270,6 +273,9 @@ def _await_sync(client: httpx.Client, sync: dict) -> dict:
                 "detail": str(exc),
             }
         except httpx.RequestError as exc:
+            if poll + 1 < SYNC_POLL_MAX_ATTEMPTS:
+                time.sleep(SYNC_POLL_INTERVAL_SECONDS)
+                continue
             return {
                 **latest,
                 "status": "transport_error",

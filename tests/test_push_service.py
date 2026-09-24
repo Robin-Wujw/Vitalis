@@ -80,6 +80,45 @@ def test_morning_push_uses_complete_sections_and_no_automatic_questionnaire():
     assert "vendor_readiness" not in text
 
 
+def test_morning_digest_prioritizes_measured_facts_and_keeps_detail_structured():
+    daily = _daily_payload()
+    daily["features"]["sleep"].update({"vendor_sleep_score": 88, "deep_minutes": 95})
+    daily["features"]["recovery"].update({"vendor_readiness": 83, "vendor_charge": 71})
+    daily["features"]["hrv"].update({
+        "preferred_device_label": "Zepp 厂商汇总",
+        "recent_7d_median_ms": 66, "recent_7d_days": 5,
+    })
+    daily["features"]["activity"]["steps"].update({
+        "observed_at": daily["date"], "unit": "steps",
+    })
+    message = _sent(lambda service: service.push_daily_profile("test-user", daily, period="morning"))
+    text = _visible_text(message.body)
+    sleep = next(section for section in message.extras["sections"] if section["key"] == "sleep")
+    recovery = next(section for section in message.extras["sections"] if section["key"] == "recovery")
+
+    assert "睡眠时长" in text and "入睡" in text and "醒来" in text
+    assert "步数 8,200 步" in text
+    assert "Zepp 汇总" not in text
+    assert "设备睡眠评分" not in text and "设备准备度评分" not in text
+    assert "设备睡眠评分 88/100" in sleep["facts"]
+    assert "设备准备度评分 83/100（厂商参考值）" in recovery["facts"]
+    assert any("设备记录深睡" in item for item in sleep["facts"])
+    assert any("近 7 日同源" in item for item in recovery["facts"])
+
+
+def test_morning_separates_same_role_energy_only_when_sources_differ():
+    daily = _daily_payload()
+    daily["features"]["activity"]["energy"].append({
+        "value": 260, "unit": "kcal", "role": "unspecified", "observed_at": daily["date"],
+        "provenance": {"source": "other_device", "source_scope": "device"},
+    })
+    text = _visible_text(_sent(lambda service: service.push_daily_profile("test-user", daily, period="morning")).body)
+
+    assert "510 千卡（账户记录）" in text
+    assert "260 千卡（其他设备记录）" in text
+    assert "Zepp 汇总" not in text
+
+
 def test_morning_displays_sync_limitation_and_recovery_disagreement():
     payload = _daily_payload()
     payload["delivery_metadata"] = {"sync_degraded": True}
@@ -91,6 +130,22 @@ def test_morning_displays_sync_limitation_and_recovery_disagreement():
     assert "HRV 证据存在分歧" in text
     assert "单个 HRV 读数" in text
     assert "Amazfit" not in text
+
+
+def test_facts_only_morning_shows_oxygen_when_hrv_and_rhr_are_missing():
+    daily = _daily_payload()
+    daily["delivery_metadata"] = {"facts_only": True}
+    daily["features"]["hrv"].update({"value_ms": None, "rhr_bpm": None})
+    daily["features"]["overnight_vitals"].update({
+        "respiratory_rate": None,
+        "oxygen": {"status": "AVAILABLE", "median_percent": 96, "sample_count": 12},
+    })
+
+    message = _sent(lambda service: service.push_daily_profile("test-user", daily, period="morning"))
+    text = _visible_text(message.body)
+    assert "夜间血氧中位数 96%" in text
+    assert "睡眠 HRV 未取得可用读数" in text
+    assert "综合判定" not in text and "今天的安排" not in text
 
 
 def test_morning_insufficient_data_does_not_invent_training():
@@ -133,6 +188,21 @@ def test_evening_push_uses_complete_sections_and_actual_training_facts():
     assert "步数" in text and "活动距离" in text and "活动时长" in text
     assert "设备估算热量（统计范围待确认）" in text and "本次训练估算热量" in text
     assert "训练后告诉我" not in text
+
+
+def test_evening_stress_only_keeps_a_measured_reference_fact():
+    daily = _daily_payload()
+    activity = daily["features"]["activity"]
+    activity["heart_rate"] = None
+    activity["stress"] = None
+    activity["stress_summary"] = [{"metric": "stress", "value": 32, "unit": "score"}]
+
+    message = _sent(lambda service: service.push_daily_profile("test-user", daily, period="evening"))
+    text = _visible_text(message.body)
+    assert "压力记录：平均压力评分 32（设备评分，仅作参考）" in text
+    assert "设备压力日记录：" not in text
+    intraday = next(section for section in message.extras["sections"] if section["key"] == "intraday")
+    assert any(item.startswith("设备压力日记录：") for item in intraday["facts"])
 
 
 def test_evening_low_confidence_run_does_not_name_classification():
@@ -264,6 +334,20 @@ def test_reports_group_data_notes_without_repeating_summary_or_generic_limits():
     assert _visible_text(monthly.body).count("睡眠时长较前一期增加 5.7%") == 1
 
 
+def test_morning_keeps_all_distinct_coverage_and_safety_notes():
+    daily = _daily_payload()
+    notes = [
+        "运动记录覆盖尚未核实。", "夜间设备来源存在差异。",
+        "睡眠分期有缺项。", "训练记录时段不完整。",
+        "症状变化时停止训练并寻求评估。",
+    ]
+    daily["features"]["sleep"]["limitation_labels"] = notes
+    text = _visible_text(_sent(lambda service: service.push_daily_profile("test-user", daily, period="morning")).body)
+
+    assert "数据说明" in text
+    assert all(text.count(note) == 1 for note in notes)
+
+
 def test_facts_only_morning_mentions_unknown_history_once():
     daily = _daily_payload()
     daily["delivery_metadata"] = {"facts_only": True}
@@ -284,11 +368,14 @@ def test_evening_uses_supplied_energy_unit_and_only_observed_heart_rate_zones():
         "training_family": "strength", "duration_minutes": 52, "distance_km": 0,
         "calories_kcal": 220, "heart_rate_avg_bpm": 110,
     })
-    text = _visible_text(_sent(lambda service: service.push_daily_profile("test-user", daily, period="evening")).body)
+    message = _sent(lambda service: service.push_daily_profile("test-user", daily, period="evening"))
+    text = _visible_text(message.body)
+    detail = "\n".join(message.extras["sections"][0]["facts"])
 
     assert "510 kJ" in text and "510 千卡" not in text
-    assert "中等强度（130–150 次/分钟） 18%" in text
-    assert "低强度 0%" not in text
+    assert "中等强度（130–150 次/分钟） 18%" not in text
+    assert "中等强度（130–150 次/分钟） 18%" in detail
+    assert "低强度 0%" not in detail
     assert "力量训练：0.00 公里" not in text
     assert text.count("52 分钟") == 1
     assert "本次训练估算热量 220 千卡" in text

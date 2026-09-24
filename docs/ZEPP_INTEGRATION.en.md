@@ -228,10 +228,11 @@ download an additional HRV file or derive HRV from the one-second heart-rate arc
 UTC measurements are assigned to local days using `VITALIS_TIMEZONE` (default
 `Asia/Shanghai`). Sleep clocks preserve vendor-provided local offset semantics.
 
-The public Zepp OS catalog contributes 120 current activity IDs, and two additional
-public legacy Huami cloud-history IDs are mapped separately. Each known workout retains
-its vendor ID, stable mode, exact Chinese label, training family, mapping source, and
-recognition confidence. Unknown or missing IDs remain explicit and are never inferred
+The public Zepp OS catalog contributes 120 current activity IDs. Cloud-history `type`
+uses a separate namespace; only cloud IDs with observed or explicit reference evidence
+are mapped independently rather than copied from the Zepp OS enum. Each known workout
+retains its vendor ID, stable mode, exact Chinese label, training family, mapping source,
+and recognition confidence. Unknown or missing IDs remain explicit and are never inferred
 from an endpoint name or descriptive text.
 
 ## Workout Detail
@@ -277,6 +278,8 @@ time is recorded in `fetched_at`. Controlled checks confirmed that the cloud can
 app-corrected records are absent. The lap suffix is not wholly undecodable: only limited fields
 from the observed strength 62-column layout are supported; unit and unmapped exercise names remain unknown, and
 other trailing columns without definitions are not decoded.
+
+A long history sync does not automatically refresh every old workout detail: ordinary passes select from the recent 28 days and fetch at most four details. For an explicitly authorized historical refresh, back up first, then run `python skills/vitalis/tools/sync.py --days 730 --workout-only` (reduce the day count to the available history; this command contacts Zepp and writes to the local database). This manual-only option fully paginates the account-wide workout feed in the requested window and fetches at most four missing, old-schema, or stale details without re-requesting sleep and heart-rate streams. For a normal manual health sync that also refreshes old details, use `--detail-backfill` instead. Check attempt progress and remaining detail gaps, repeating bounded passes when needed; one successful attempt does not establish complete historical details. `python -m vitalis.workout_audit --database <db-file> --user <user-id>` inventories stored workouts, detail versions, cloud workout types, and strength codes in read-only mode, including old records whose now-verified codes still lack stored names. Its `source_coverage=NOT_ASSESSED` means it cannot replace sync-ledger proof of vendor coverage.
 
 `second_heart_rate/real_data` returns file indexes rather than samples. Ordinary health
 sync stores those indexes without downloading large archives. When

@@ -9,7 +9,7 @@ Zepp（华米）真实授权方式：网页登录拿 apptoken，非 OAuth2 扫�
 
 数据获取（对齐 ZeppBridge 已实测端点）：
   - 睡眠/活动：/v1/data/band_data.json（summary 为 base64 JSON）
-  - 运动：/v1/sport/{sport}/history.json（13 种运动类型）
+  - 运动：/v1/sport/run/history.json（账号内混合运动记录）
   - 训练负荷 / VO₂max：/v2/watch/users/{id}/WatchSportStatistics/{statistic}
   - HRV：/v2/users/me/events?eventType=hrv_sdnn
   - 每日摘要：/v2/users/me/events?eventType=DailyHealth
@@ -171,9 +171,12 @@ class ZeppConnector(HealthConnector):
     def create_attempt(
         self, user_id: str, *, days: int = 730, window: FetchWindow | None = None,
         trigger: str = "manual", trigger_ref: str | None = None,
-        decode_dense_files: bool = False,
+        decode_dense_files: bool = False, detail_backfill: bool = False,
+        workout_only: bool = False,
     ):
         """Create/reuse a durable attempt without doing network work."""
+        if (detail_backfill or workout_only) and trigger != "manual":
+            raise ValueError("historical workout options require a manual sync")
         from vitalis.services.zepp_sync_coordinator import ZeppSyncCoordinator
 
         coordinator = ZeppSyncCoordinator(
@@ -188,7 +191,11 @@ class ZeppConnector(HealthConnector):
             trigger=trigger,
             trigger_ref=trigger_ref,
             timezone_name=settings.timezone,
-            options={"decode_dense_files": decode_dense_files},
+            options={
+                "decode_dense_files": decode_dense_files,
+                **({"detail_backfill": True} if detail_backfill else {}),
+                **({"workout_only": True} if workout_only else {}),
+            },
         )
 
     def sync_with_report(
@@ -196,13 +203,18 @@ class ZeppConnector(HealthConnector):
         decode_dense_files: bool = False, max_chunks: int | None = None,
         window: FetchWindow | None = None, trigger: str = "manual",
         trigger_ref: str | None = None, attempt_id: str | None = None,
+        detail_backfill: bool = False, workout_only: bool = False,
     ) -> SyncReport:
         """Coordinator facade; ``repo`` remains only for legacy mock callers."""
+        if (detail_backfill or workout_only) and trigger != "manual":
+            raise ValueError("historical workout options require a manual sync")
         if self.mock:
             if attempt_id is None:
                 attempt = self.create_attempt(
                     user.id, days=days, window=window, trigger=trigger,
                     trigger_ref=trigger_ref, decode_dense_files=decode_dense_files,
+                    detail_backfill=detail_backfill,
+                    workout_only=workout_only,
                 )
                 attempt_id = attempt.id
             end = local_today()
@@ -259,7 +271,11 @@ class ZeppConnector(HealthConnector):
                 trigger=trigger,
                 trigger_ref=trigger_ref,
                 timezone_name=settings.timezone,
-                options={"decode_dense_files": decode_dense_files},
+                options={
+                    "decode_dense_files": decode_dense_files,
+                    **({"detail_backfill": True} if detail_backfill else {}),
+                    **({"workout_only": True} if workout_only else {}),
+                },
             )
             attempt_id = attempt.id
         return coordinator.run_attempt(attempt_id, max_chunks=max_chunks)

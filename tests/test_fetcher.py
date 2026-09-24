@@ -372,17 +372,47 @@ def test_all_workout_endpoints_unavailable_is_not_a_successful_empty_batch():
     assert raised.value.kind == "not_available"
 
 
-def test_successful_empty_workout_endpoints_keep_fetch_evidence():
+def test_successful_empty_account_wide_history_keeps_fetch_evidence():
     class Connector:
+        def __init__(self):
+            self.calls = []
+
         def fetch_sport_history(self, *args, **kwargs):
+            self.calls.append(args)
             return {"data": {"summary": [], "next": -1}}
 
-    records = DataFetcher(Connector()).fetch_workout_records(FetchWindow.days_back(1))
+    connector = Connector()
+    records = DataFetcher(connector).fetch_workout_records(FetchWindow.days_back(1))
 
-    assert records
+    assert len(connector.calls) == len(records) == records.expected_chunks == 1
+    assert connector.calls[0][0] == "run"
+    assert records.successful_chunks == 1
     assert records.incomplete is False
     assert records.partial is False
-    assert all(record.raw.payload["data"]["summary"] == [] for record in records)
+    assert records[0].raw.payload["data"]["summary"] == []
+
+
+def test_account_wide_history_follows_every_page_and_keeps_mixed_activities():
+    window = FetchWindow.local_dates(date(2026, 8, 1), date(2026, 8, 1))
+    start_ts, end_ts = int(window.start.timestamp()), int(window.end.timestamp())
+    cursor = end_ts - 3600
+
+    class Connector:
+        def __init__(self):
+            self.calls = []
+
+        def fetch_sport_history(self, sport, start, stop, need_sub_data):
+            self.calls.append((sport, start, stop, need_sub_data))
+            if stop == end_ts:
+                return {"data": {"summary": [{"trackid": end_ts - 1800, "type": 9}], "next": cursor}}
+            return {"data": {"summary": [{"trackid": start_ts + 3600, "type": 52}], "next": -1}}
+
+    connector = Connector()
+    records = DataFetcher(connector).fetch_workout_records(window)
+    assert [call[2] for call in connector.calls] == [end_ts, cursor]
+    assert [record.raw.payload["data"]["summary"][0]["type"] for record in records] == [9, 52]
+    assert records.successful_chunks == records.expected_chunks == 1
+    assert records.incomplete is False
 
 
 @pytest.mark.parametrize("next_value", [1, "not-a-cursor"])
@@ -430,6 +460,34 @@ def test_malformed_workout_row_keeps_observations_but_cannot_prove_emptiness():
     assert records.incomplete is True
     assert all(record.incomplete for record in records)
     assert all(record.raw.payload["data"]["summary"][0]["trackid"] == 1 for record in records)
+
+
+@pytest.mark.parametrize("row", [
+    {"type": 52, "start_time": "2026-08-01T08:00:00Z"},
+    {"trackid": "bad", "type": 52},
+    {"trackid": True, "type": 52, "start_time": "2026-08-01T08:00:00Z"},
+    {"trackid": None, "trackId": True, "type": 52, "start_time": "2026-08-01T08:00:00Z"},
+    {"trackid": "1e309", "type": 52},
+])
+def test_unidentifiable_workout_row_cannot_prove_complete_history(row):
+    class Connector:
+        def fetch_sport_history(self, *args, **kwargs):
+            return {"data": {"summary": [row], "next": -1}}
+
+    records = DataFetcher(Connector()).fetch_workout_records(FetchWindow.days_back(1))
+    assert records.incomplete is True
+    assert records[0].incomplete is True
+    assert "envelope" in (records[0].incomplete_reason or "")
+
+
+def test_vendor_error_code_with_empty_rows_is_not_empty_proof():
+    class Connector:
+        def fetch_sport_history(self, *args, **kwargs):
+            return {"code": 500, "data": {"summary": [], "next": -1}}
+
+    records = DataFetcher(Connector()).fetch_workout_records(FetchWindow.days_back(1))
+    assert records.incomplete is True
+    assert records[0].raw.payload["code"] == 500
 
 
 def test_local_date_window_uses_configured_timezone_bounds():
@@ -610,20 +668,24 @@ def test_terminal_chunk_failure_carries_completed_records():
     assert len(raised.value.records) == 1
 
 
-def test_mixed_workout_endpoint_availability_is_partial():
+def test_unsupported_sport_paths_are_not_queried():
     class Connector:
+        def __init__(self):
+            self.calls = []
+
         def fetch_sport_history(self, sport, *args, **kwargs):
-            if sport == "run":
-                return {"data": {"summary": [], "next": -1}}
-            raise ZeppAuthError("missing sport", kind="not_available")
+            self.calls.append(sport)
+            if sport != "run":
+                raise ZeppAuthError("unsupported endpoint", kind="not_available")
+            return {"data": {"summary": [], "next": -1}}
 
-    records = DataFetcher(Connector()).fetch_workout_records(
-        FetchWindow.days_back(1)
-    )
+    connector = Connector()
+    records = DataFetcher(connector).fetch_workout_records(FetchWindow.days_back(1))
 
-    assert records.partial is True
-    assert records.successful_chunks == 1
-    assert records.unavailable_chunks > 0
+    assert connector.calls == ["run"]
+    assert records.partial is False
+    assert records.successful_chunks == records.expected_chunks == 1
+    assert records.unavailable_chunks == 0
 
 
 def test_wholly_unavailable_wellness_capabilities_do_not_create_partial():

@@ -1539,7 +1539,9 @@ class HealthRepository:
         _, period_end_at = local_day_utc_bounds(end)
         period_start_utc = _naive_utc(period_start_at)
         period_end_utc = _naive_utc(period_end_at)
-        from vitalis.connectors.zepp.client import SPORTS
+        from vitalis.connectors.zepp.client import (
+            LEGACY_SPORTS, SPORTS, WORKOUT_AGGREGATE_PLAN_VERSION,
+        )
 
         MAX_ATTEMPTS = 256
         MAX_CHUNKS = 16_384
@@ -1631,6 +1633,7 @@ class HealthRepository:
         verified_days: set[date] = set()
         saw_relevant_attempt = False
         saw_partial_evidence = False
+        saw_intraday_fetch = False
         last_synced_at: datetime | None = None
         as_of_local_day = local_day(as_of_utc)
 
@@ -1648,8 +1651,12 @@ class HealthRepository:
             if not attempt_chunks:
                 continue
             saw_relevant_attempt = True
-            sport_seen = {sport: False for sport in SPORTS}
-            sport_complete = {sport: True for sport in SPORTS}
+            required_sports = (
+                SPORTS if attempt.plan_version == WORKOUT_AGGREGATE_PLAN_VERSION
+                else LEGACY_SPORTS
+            )
+            sport_seen = {sport: False for sport in required_sports}
+            sport_complete = {sport: True for sport in required_sports}
             saw_verified = False
             has_unfinished = False
             for chunk in attempt_chunks:
@@ -1665,10 +1672,14 @@ class HealthRepository:
                 limitations.append("attempt 存在未完成或晚于 as_of 的 workouts 分页 chunk")
                 saw_partial_evidence = True
                 continue
-            if any(not sport_seen[sport] or not sport_complete[sport] for sport in SPORTS):
+            if any(not sport_seen[sport] or not sport_complete[sport] for sport in required_sports):
                 if saw_verified:
                     saw_partial_evidence = True
                 continue
+            first_fetch_started = min(
+                chunk.started_at or attempt.created_at
+                for chunk in attempt_chunks if chunk.partition in sport_seen
+            )
             window_start = max(attempt.window_start, period_start_utc)
             window_end = min(attempt.window_end, period_end_utc)
             if window_start >= window_end:
@@ -1680,12 +1691,12 @@ class HealthRepository:
                 day_start, day_end = local_day_utc_bounds(day)
                 if day == as_of_local_day and as_of_utc < day_end:
                     continue
-                if (
-                    window_start <= _naive_utc(day_start)
-                    and window_end >= _naive_utc(day_end)
-                ):
-                    verified_days.add(day)
-                    confirmed_for_attempt = True
+                if window_start <= _naive_utc(day_start) and window_end >= _naive_utc(day_end):
+                    if first_fetch_started < _naive_utc(day_end):
+                        saw_intraday_fetch = True
+                    else:
+                        verified_days.add(day)
+                        confirmed_for_attempt = True
             if confirmed_for_attempt:
                 finished = max(
                     (
@@ -1707,7 +1718,9 @@ class HealthRepository:
         if budget_exhausted:
             limitations.append("训练覆盖查询达到总预算，未确认更早 attempt 或分页 chunk")
         if saw_relevant_attempt and len(verified_days) < len(target_days):
-            limitations.append("至少一个窗口缺少完整的 required sport 分区或分页 chunk")
+            limitations.append("至少一个日期缺少完整的运动来源或分页核验")
+        if saw_intraday_fetch and len(verified_days) < len(target_days):
+            limitations.append("有运动记录在当天结束前同步，不能证实当天已查全")
         if as_of_utc.date() < end:
             limitations.append("窗口末端晚于 as_of，未来日期不计入覆盖")
         elif as_of_utc.date() == end:

@@ -11,6 +11,8 @@ from .report_formatting import (
     metric_label,
     minutes_text,
     number,
+    observed_exercise_name,
+    observed_strength_summary,
     payload_of,
     repetitions_text,
     timestamp_text,
@@ -186,6 +188,7 @@ class EveningBriefingEngine:
             if confirmed:
                 facts.extend(self._exercise_lines(confirmed))
             elif observed:
+                facts.append(f"逐组观测动作：{observed_strength_summary(observed)}。")
                 facts.extend(self._observed_set_lines(observed))
             elif explicit:
                 facts.extend(self._exercise_lines(explicit))
@@ -233,14 +236,7 @@ class EveningBriefingEngine:
             order = item.get("order")
             if not isinstance(order, int) or isinstance(order, bool) or order < 1:
                 order = index
-            name = item.get("exercise_name") or item.get("exercise_id")
-            if not name:
-                code = item.get("vendor_exercise_code")
-                name = (
-                    f"动作代码 {code}（名称未确认）"
-                    if code is not None
-                    else "动作名称未确认"
-                )
+            name = observed_exercise_name(item)
             bits = []
             repetitions = repetitions_text(item.get("repetitions"))
             if repetitions:
@@ -363,11 +359,29 @@ class EveningBriefingEngine:
         summary_parts = []
         for item in activity.get("stress_summary") or []:
             metric = item.get("metric")
-            if metric in stress_labels and item.get("value") is not None:
+            shown = number(item.get("value"))
+            if metric in stress_labels and shown is not None:
                 suffix = "%" if metric.endswith("_pct") else ""
-                summary_parts.append(f"{stress_labels[metric]} {number(item['value'])}{suffix}")
+                summary_parts.append(f"{stress_labels[metric]} {shown}{suffix}")
         if summary_parts:
             facts.append("设备压力日记录：" + "；".join(summary_parts) + "。")
+            representative = next(
+                (part for part in summary_parts if part.startswith("平均压力评分")), summary_parts[0]
+            )
+            facts.append(f"压力记录：{representative}（设备评分，仅作参考）。")
+        elif number((activity.get("stress") or {}).get("average")) is not None:
+            facts.append(f"压力记录均值 {number(activity['stress']['average'])}（设备评分，仅作参考）。")
+        elif (activity.get("stress") or {}).get("sample_count"):
+            facts.append(f"设备压力已采样 {number(activity['stress']['sample_count'], 0)} 条，评分值未记录。")
+        heart = activity.get("heart_rate") or {}
+        if heart.get("sample_count"):
+            headline = []
+            if heart.get("average") is not None:
+                headline.append(f"记录均值 {number(heart['average'])} 次/分钟")
+            if heart.get("observed_minutes") is not None:
+                headline.append(f"分布在 {number(heart['observed_minutes'], 0)} 个有记录的分钟")
+            if headline:
+                facts.append("已记录心率：" + "；".join(headline) + "。")
         for key, label, unit in (("heart_rate", "心率采样", "次/分钟"), ("stress", "压力采样", "")):
             summary = activity.get(key)
             if not summary:

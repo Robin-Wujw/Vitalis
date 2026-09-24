@@ -83,7 +83,8 @@ def test_manifest_is_stable_and_request_is_reused():
     first = coordinator.create_attempt("coord-manifest", window=WINDOW, options={"decode_dense_files": False})
     second = coordinator.create_attempt("coord-manifest", window=WINDOW, options={"decode_dense_files": False})
     assert first.id == second.id
-    assert first.chunk_count == 31
+    assert first.chunk_count == 19
+    assert first.plan_version == "zepp-sync-v6"
     rows = coordinator.status(first.id)["chunks"]
     assert rows[0]["stable_key"] == stable_chunk_key(
         "heart_rate", "minute", WINDOW.start, WINDOW.end, int(WINDOW.start.timestamp())
@@ -97,6 +98,176 @@ def test_manifest_is_stable_and_request_is_reused():
         assert params["to_ms"] == int(WINDOW.end.timestamp() * 1000) + DAY_MILLISECONDS
 
 
+def test_manual_workout_only_manifest_skips_all_health_streams():
+    user_id = "coord-workout-only"
+    _clean(user_id)
+    window = FetchWindow.local_dates(date(2025, 1, 1), date(2026, 8, 1))
+    coordinator = ZeppSyncCoordinator(wall_clock=lambda: NOW)
+    attempt = coordinator.create_attempt(
+        user_id, window=window, trigger="manual", options={"workout_only": True},
+    )
+    with session_scope() as db:
+        chunks = HealthRepository(db).sync_chunks(attempt.id)
+    assert attempt.plan_version == "zepp-sync-v6"
+    assert attempt.chunk_count == len(chunks) == 1
+    assert chunks[0].stream == "workouts"
+    assert chunks[0].partition == "run"
+    assert chunks[0].stages["operation"] == "fetch_sport_history"
+    assert chunks[0].window_start == window.start.replace(tzinfo=None)
+    assert chunks[0].window_end == window.end.replace(tzinfo=None)
+
+    normal = coordinator.create_attempt(user_id, window=WINDOW, trigger="manual")
+    assert normal.id != attempt.id
+    assert normal.chunk_count == 19
+
+
+def test_workout_only_rejects_scheduled_or_non_boolean_options():
+    _clean("coord-workout-only-invalid")
+    coordinator = ZeppSyncCoordinator()
+    with pytest.raises(ZeppAuthError, match="只能用于手动同步"):
+        coordinator.create_attempt(
+            "coord-workout-only-invalid", window=WINDOW,
+            trigger="scheduled", options={"workout_only": True},
+        )
+    with pytest.raises(ZeppAuthError, match="必须是布尔值"):
+        coordinator.create_attempt(
+            "coord-workout-only-invalid", window=WINDOW,
+            options={"workout_only": "true"},
+        )
+    with pytest.raises(ZeppAuthError, match="不能同时解码密集心率归档"):
+        coordinator.create_attempt(
+            "coord-workout-only-invalid", window=WINDOW,
+            options={"workout_only": True, "decode_dense_files": True},
+        )
+    with session_scope() as db:
+        assert HealthRepository(db).sync_attempts("coord-workout-only-invalid") == []
+
+
+def test_repeated_workout_only_attempts_drain_historical_detail_backlog():
+    user_id = "coord-workout-backfill-progress"
+    _clean(user_id)
+    window = FetchWindow.local_dates(date(2025, 5, 1), date(2025, 5, 20))
+    workout_ids = [
+        str(int((window.start + timedelta(days=index + 1, hours=1)).timestamp()))
+        for index in range(6)
+    ]
+
+    class Connector:
+        def __init__(self):
+            self.history_calls = 0
+            self.detail_calls = []
+
+        def fetch_sport_history(self, sport, start, stop, need_sub_data):
+            assert sport == "run"
+            self.history_calls += 1
+            return {"data": {"summary": [
+                {"trackid": int(workout_id), "type": 52, "source": "cloud"}
+                for workout_id in workout_ids
+            ], "next": -1}}
+
+        def fetch_sport_detail(self, workout_id, source):
+            assert source == "cloud"
+            self.detail_calls.append(workout_id)
+            return {"data": {"trackid": int(workout_id), "strengthSets": "[]"}}
+
+    connector = Connector()
+    coordinator = ZeppSyncCoordinator(connector=connector)
+    first = coordinator.create_attempt(
+        user_id, window=window, options={"workout_only": True}, trigger="manual",
+    )
+    assert coordinator.run_attempt(first.id).success
+    with session_scope() as db:
+        remaining = HealthRepository(db).pending_workout_details(
+            user_id, window.start, window.end, limit=10,
+        )
+    assert len(connector.detail_calls) == 4
+    assert len(remaining) == 2
+    assert len(coordinator.status(first.id)["chunks"]) == 5
+
+    second = coordinator.create_attempt(
+        user_id, window=window, options={"workout_only": True}, trigger="manual",
+    )
+    assert second.id != first.id
+    assert coordinator.run_attempt(second.id).success
+    with session_scope() as db:
+        remaining = HealthRepository(db).pending_workout_details(
+            user_id, window.start, window.end, limit=10,
+        )
+    assert connector.history_calls == 2
+    assert len(set(connector.detail_calls)) == 6
+    assert len(connector.detail_calls) <= 8
+    assert remaining == []
+
+
+@pytest.mark.parametrize("failure", ["malformed", "stalled", "unavailable"])
+def test_workout_only_incomplete_run_cannot_prove_history(failure):
+    user_id = f"coord-workout-only-{failure}"
+    _clean(user_id)
+    start_ts, end_ts = int(WINDOW.start.timestamp()), int(WINDOW.end.timestamp())
+
+    class Connector:
+        def fetch_sport_history(self, sport, start, stop, need_sub_data):
+            assert sport == "run"
+            if failure == "unavailable":
+                raise ZeppAuthError("unsupported", kind="not_available")
+            if failure == "malformed":
+                return {"code": 1, "data": {"next": -1}}
+            return {"data": {"summary": [{
+                "trackid": start_ts + 3600, "type": 52, "source": "cloud",
+            }], "next": stop}}
+
+        def fetch_sport_detail(self, workout_id, source):
+            return {"data": {"trackid": int(workout_id)}}
+
+    coordinator = ZeppSyncCoordinator(connector=Connector(), wall_clock=lambda: NOW)
+    attempt = coordinator.create_attempt(
+        user_id, window=WINDOW, trigger="manual", options={"workout_only": True},
+    )
+    report = coordinator.run_attempt(attempt.id)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        coverage = repo.training_history_coverage(
+            user_id, date(2026, 8, 1), date(2026, 8, 1), NOW,
+        )
+        run_chunks = [chunk for chunk in repo.sync_chunks(attempt.id) if chunk.stream == "workouts"]
+    assert end_ts > start_ts
+    assert report.success is False
+    assert coverage["status"] != "COMPLETE"
+    assert coverage["verified_days"] == []
+    assert len(run_chunks) == 1
+    assert run_chunks[0].fetch_status != "success"
+    if failure == "unavailable":
+        assert report.progress["status"] == "partial"
+
+
+def test_normal_sync_with_unavailable_workout_feed_degrades_instead_of_succeeding():
+    user_id = "coord-normal-run-unavailable"
+    _clean(user_id)
+
+    class Connector:
+        def fetch_sport_history(self, *args):
+            raise ZeppAuthError("unsupported", kind="not_available")
+
+    coordinator = ZeppSyncCoordinator(connector=Connector(), wall_clock=lambda: NOW)
+    attempt = coordinator.create_attempt(user_id, window=WINDOW)
+    with session_scope() as db:
+        for chunk in HealthRepository(db).sync_chunks(attempt.id):
+            if chunk.stream != "workouts":
+                chunk.status = "succeeded"
+                chunk.fetch_status = "success"
+                chunk.parse_status = "empty"
+                chunk.write_status = "not_run"
+                chunk.finished_at = NOW.replace(tzinfo=None)
+    report = coordinator.run_attempt(attempt.id)
+    with session_scope() as db:
+        coverage = HealthRepository(db).training_history_coverage(
+            user_id, date(2026, 8, 1), date(2026, 8, 1), NOW,
+        )
+    assert report.progress["status"] == "partial"
+    assert report.success is False
+    assert coverage["verified_days"] == []
+
+
 def test_page_success_creates_atomic_successor():
     _clean("coord-page")
     base = int(WINDOW.start.timestamp())
@@ -105,8 +276,8 @@ def test_page_success_creates_atomic_successor():
     coordinator, attempt = _one_chunk_attempt("coord-page", connector)
     report = coordinator.run_attempt(attempt.id, max_chunks=1)
     state = coordinator.status(attempt.id)
-    assert report.progress["succeeded_chunks"] == 31
-    assert len(state["chunks"]) == 32
+    assert report.progress["succeeded_chunks"] == 19
+    assert len(state["chunks"]) == 20
     successors = [row for row in state["chunks"] if row["status"] == "queued"]
     assert len(successors) == 1
     assert successors[0]["stream"] == "heart_rate"
@@ -243,6 +414,37 @@ def test_manual_detail_refresh_mixes_cached_strength_and_new_running_workouts():
     assert (refresh_end - refresh_start).days == 28
 
 
+@pytest.mark.parametrize("options", [{"detail_backfill": True}, {"workout_only": True}])
+def test_manual_detail_backfill_uses_requested_historical_window_with_four_item_cap(options):
+    captured = {}
+
+    class Repository:
+        def sync_chunks(self, _attempt_id):
+            return []
+
+        def pending_workout_details(self, *args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return [SimpleNamespace(workout_id="historical-strength", vendor_source="cloud")]
+
+    window = FetchWindow.local_dates(date(2025, 1, 1), date(2025, 1, 14))
+    attempt = {
+        "id": "historical-backfill", "user_id": "backfill-user",
+        "trigger": "manual", "created_at": NOW.replace(tzinfo=None),
+        "window_start": window.start, "window_end": window.end,
+        "options": options,
+    }
+    chunk = {"stream": "workouts", "window_start": window.start, "window_end": window.end}
+    result = _ChunkResult(record=FetchedRecord(RawRecord(
+        "workouts", "sport_history:run", window.start, window.end, {"data": {}}
+    )))
+    specs = ZeppSyncCoordinator()._dynamic_specs(Repository(), attempt, chunk, result)
+    assert len(specs) == 1
+    assert (captured["args"][1], captured["args"][2]) == (window.start, window.end)
+    assert captured["kwargs"]["refresh_after"] == NOW.replace(tzinfo=None)
+    assert captured["kwargs"]["limit"] == 4
+
+
 def test_control_budget_is_monotonic_and_recovery_reclaims_expired_attempt():
     assert SyncControl.budget_for_days(7) <= SyncControl.budget_for_days(8)
     assert SyncControl.budget_for_days(8) <= SyncControl.budget_for_days(30)
@@ -265,7 +467,11 @@ def test_large_manifest_keeps_global_statistics_and_sports_singleton():
     operations = [item["stages"]["operation"] for item in manifest]
 
     assert operations.count("fetch_watch_statistics") == 2
-    assert operations.count("fetch_sport_history") == len(SPORTS)
+    assert SPORTS == ["run"]
+    assert operations.count("fetch_sport_history") == 1
+    workout, = (item for item in manifest if item["stream"] == "workouts")
+    assert workout["partition"] == "run"
+    assert workout["stages"]["params"]["sport"] == "run"
     assert operations.count("fetch_devices") == 1
 
 
@@ -492,6 +698,61 @@ def test_coordinator_stalled_workout_cursor_is_partial_and_keeps_rows():
     with session_scope() as db:
         saved = HealthRepository(db).workout(user_id, workout_id)
     assert saved is not None
+
+
+def test_account_wide_workout_pages_retain_mixed_types_and_prove_coverage():
+    user_id = "coord-account-wide"
+    _clean(user_id)
+    start_ts = int(WINDOW.start.timestamp())
+    end_ts = int(WINDOW.end.timestamp())
+    ride_id = end_ts - 3600
+    strength_id = start_ts + 3600
+    next_cursor = ride_id - 1
+
+    class Connector:
+        def __init__(self):
+            self.calls = []
+
+        def fetch_sport_history(self, sport, start, stop, need_sub_data):
+            self.calls.append((sport, start, stop, need_sub_data))
+            if stop == end_ts:
+                return {"data": {"summary": [{
+                    "trackid": ride_id, "type": 9, "source": "cloud",
+                }], "next": next_cursor}}
+            return {"data": {"summary": [{
+                "trackid": strength_id, "type": 52, "source": "cloud",
+            }], "next": -1}}
+
+        def fetch_sport_detail(self, workout_id, source):
+            return {"data": {"trackid": int(workout_id), "source": source}}
+
+    connector = Connector()
+    coordinator = ZeppSyncCoordinator(
+        connector=connector, wall_clock=lambda: NOW, random_fn=lambda: 0.0,
+    )
+    attempt = coordinator.create_attempt(user_id, window=WINDOW)
+    with session_scope() as db:
+        for chunk in HealthRepository(db).sync_chunks(attempt.id):
+            if chunk.stream != "workouts":
+                chunk.status = "succeeded"
+                chunk.fetch_status = "success"
+                chunk.parse_status = "empty"
+                chunk.write_status = "not_run"
+                chunk.finished_at = NOW.replace(tzinfo=None)
+    report = coordinator.run_attempt(attempt.id)
+    assert report.success
+    assert [call[2] for call in connector.calls] == [end_ts, next_cursor]
+    assert all(call[0] == "run" for call in connector.calls)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        ride = repo.workout(user_id, str(ride_id))
+        strength = repo.workout(user_id, str(strength_id))
+        coverage = repo.training_history_coverage(
+            user_id, date(2026, 8, 1), date(2026, 8, 1), NOW,
+        )
+    assert ride is not None and ride.data["sport_mode"] == "outdoor_cycling"
+    assert strength is not None and strength.data["sport_mode"] == "strength_training"
+    assert coverage["status"] == "COMPLETE"
 
 
 def test_manifest_uses_inclusive_three_day_local_odi_windows_across_dst():

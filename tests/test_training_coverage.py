@@ -1,9 +1,9 @@
 from datetime import date, datetime, timedelta, timezone
 
-from vitalis.connectors.zepp.client import SPORTS
+from vitalis.connectors.zepp.client import LEGACY_SPORTS, SPORTS
 from vitalis.models import MetricSample, Workout, WORKOUT_DETAIL_SCHEMA_VERSION
 from vitalis.connectors.zepp.fetcher import FetchWindow
-from vitalis.services.zepp_sync_coordinator import stable_chunk_key
+from vitalis.services.zepp_sync_coordinator import PLAN_VERSION, stable_chunk_key
 from vitalis.storage import HealthRepository, session_scope
 
 
@@ -11,11 +11,15 @@ NOW = datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
 WINDOW = FetchWindow.local_dates(date(2026, 8, 1), date(2026, 8, 2))
 
 
-def _attempt(user_id: str, *, missing: str | None = None, future: bool = False):
+def _attempt(
+    user_id: str, *, missing: str | None = None, future: bool = False,
+    plan_version: str = PLAN_VERSION,
+):
     with session_scope() as db:
         repo = HealthRepository(db)
         specs = []
-        for ordinal, sport in enumerate(SPORTS):
+        required = SPORTS if plan_version == PLAN_VERSION else LEGACY_SPORTS
+        for ordinal, sport in enumerate(required):
             if sport == missing:
                 continue
             specs.append({
@@ -39,8 +43,10 @@ def _attempt(user_id: str, *, missing: str | None = None, future: bool = False):
             user_id,
             window_start=WINDOW.start,
             window_end=WINDOW.end,
+            plan_version=plan_version,
             manifest=specs,
         )
+        attempt.created_at = (NOW - timedelta(minutes=2)).replace(tzinfo=None)
         attempt.status = "succeeded"
         attempt.finished_at = (
             datetime(2026, 8, 31, tzinfo=timezone.utc).replace(tzinfo=None)
@@ -55,7 +61,7 @@ def _attempt(user_id: str, *, missing: str | None = None, future: bool = False):
         return attempt.id
 
 
-def test_training_history_coverage_requires_all_sports_in_one_attempt():
+def test_training_history_coverage_accepts_complete_aggregate_feed():
     _attempt("coverage-complete")
     with session_scope() as db:
         result = HealthRepository(db).training_history_coverage(
@@ -66,8 +72,8 @@ def test_training_history_coverage_requires_all_sports_in_one_attempt():
     assert result["last_synced_at"] == "2026-08-30T12:00:00Z"
 
 
-def test_training_history_coverage_is_partial_without_required_partition():
-    _attempt("coverage-partial", missing=SPORTS[-1])
+def test_legacy_training_history_still_requires_all_thirteen_partitions():
+    _attempt("coverage-partial", missing=LEGACY_SPORTS[-1], plan_version="zepp-sync-v5")
     with session_scope() as db:
         result = HealthRepository(db).training_history_coverage(
             "coverage-partial", date(2026, 8, 1), date(2026, 8, 2), NOW
@@ -75,6 +81,75 @@ def test_training_history_coverage_is_partial_without_required_partition():
     assert result["status"] == "PARTIAL"
     assert result["verified_days"] == []
     assert result["limitations"]
+
+
+def test_legacy_complete_history_keeps_its_original_proof():
+    _attempt("coverage-legacy-complete", plan_version="zepp-sync-v5")
+    with session_scope() as db:
+        result = HealthRepository(db).training_history_coverage(
+            "coverage-legacy-complete", date(2026, 8, 1), date(2026, 8, 2), NOW,
+        )
+    assert result["status"] == "COMPLETE"
+
+
+def test_old_unavailable_sport_paths_are_not_reinterpreted_as_empty():
+    user_id = "coverage-old-unavailable"
+    attempt_id = _attempt(user_id, plan_version="zepp-sync-v5")
+    with session_scope() as db:
+        for chunk in HealthRepository(db).sync_chunks(attempt_id):
+            if chunk.partition != "run":
+                chunk.status = "unavailable"
+                chunk.fetch_status = "unavailable"
+                chunk.parse_status = "not_run"
+                chunk.write_status = "not_run"
+
+    with session_scope() as db:
+        result = HealthRepository(db).training_history_coverage(
+            user_id, date(2026, 8, 1), date(2026, 8, 2), NOW,
+        )
+    assert result["status"] == "PARTIAL"
+    assert result["verified_days"] == []
+
+
+def test_new_complete_feed_proves_history_despite_old_unavailable_paths():
+    user_id = "coverage-new-after-old"
+    old_id = _attempt(user_id, plan_version="zepp-sync-v5")
+    with session_scope() as db:
+        for chunk in HealthRepository(db).sync_chunks(old_id):
+            if chunk.partition != "run":
+                chunk.status = "unavailable"
+                chunk.fetch_status = "unavailable"
+                chunk.parse_status = "not_run"
+                chunk.write_status = "not_run"
+    _attempt(user_id)
+
+    with session_scope() as db:
+        result = HealthRepository(db).training_history_coverage(
+            user_id, date(2026, 8, 1), date(2026, 8, 2), NOW,
+        )
+    assert result["status"] == "COMPLETE"
+    assert result["verified_days"] == ["2026-08-01", "2026-08-02"]
+
+
+def test_aggregate_fetch_before_a_day_ends_cannot_later_prove_that_day():
+    user_id = "coverage-intraday"
+    attempt_id = _attempt(user_id)
+    day_one_end = WINDOW.start + timedelta(days=1)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        attempt = repo.sync_attempt(attempt_id)
+        assert attempt is not None
+        attempt.created_at = (day_one_end + timedelta(hours=1)).replace(tzinfo=None)
+        chunk, = repo.sync_chunks(attempt_id)
+        chunk.started_at = attempt.created_at
+
+    with session_scope() as db:
+        result = HealthRepository(db).training_history_coverage(
+            user_id, date(2026, 8, 1), date(2026, 8, 2), NOW,
+        )
+    assert result["status"] == "PARTIAL"
+    assert result["verified_days"] == ["2026-08-01"]
+    assert any("当天结束前" in note for note in result["limitations"])
 
 
 def test_training_history_coverage_excludes_future_attempts_and_other_users():

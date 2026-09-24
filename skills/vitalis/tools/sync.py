@@ -33,6 +33,7 @@ def main() -> int:
         params=params,
         headers={"X-User-Id": args.user},
         timeout=120.0,
+        trust_env=False,
     )
     response.raise_for_status()
     print(json.dumps(response.json(), ensure_ascii=False, indent=2))

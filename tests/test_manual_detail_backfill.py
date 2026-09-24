@@ -118,6 +118,7 @@ def test_sync_cli_only_sets_backfill_param_when_requested(monkeypatch, capsys):
             return {"status": "queued"}
 
     def fake_post(url, **kwargs):
+        assert kwargs["trust_env"] is False
         calls.append(kwargs["params"])
         return Response()
 

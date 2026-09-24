@@ -60,6 +60,9 @@ def test_workout_audit_is_user_scoped_read_only_and_does_not_claim_coverage(tmp_
     ]
     assert result["totals"]["untyped_zepp_workouts"] == 3
     assert result["totals"]["workouts"] == 5
+    assert result["totals"]["missing_workout_details"] == 2
+    assert result["totals"]["unsynced_workout_details"] == 2
+    assert result["totals"]["outdated_workout_details"] == 1
     assert result["totals"]["strength_workouts"] == 3
     assert result["totals"]["missing_strength_details"] == 1
     assert result["totals"]["unsynced_strength_details"] == 1

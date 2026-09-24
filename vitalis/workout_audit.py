@@ -84,6 +84,14 @@ def audit_workouts(
                 daily["workouts"] += 1
             if summary is None:
                 totals["invalid_summaries"] += 1
+            if not detail_synced:
+                totals["unsynced_workout_details"] += 1
+            if detail_json is None:
+                totals["missing_workout_details"] += 1
+            elif detail is None:
+                totals["invalid_workout_details"] += 1
+            elif detail.get("schema_version") != WORKOUT_DETAIL_SCHEMA_VERSION:
+                totals["outdated_workout_details"] += 1
             if source == "zepp" and summary is not None:
                 vendor_type = summary.get("vendor_type_id")
                 if isinstance(vendor_type, int) and not isinstance(vendor_type, bool):
@@ -160,6 +168,8 @@ def audit_workouts(
         "totals": {
             key: totals[key] for key in (
                 "workouts", "undated_workouts", "invalid_summaries",
+                "missing_workout_details", "unsynced_workout_details",
+                "invalid_workout_details", "outdated_workout_details",
                 "untyped_zepp_workouts", "strength_workouts", "missing_strength_details",
                 "unsynced_strength_details", "invalid_strength_details", "outdated_strength_details",
                 "missing_strength_sets", "empty_strength_sets", "observed_lap_sets",

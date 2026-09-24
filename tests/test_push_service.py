@@ -1,5 +1,6 @@
 from copy import deepcopy
 from html.parser import HTMLParser
+import logging
 
 import pytest
 
@@ -268,7 +269,7 @@ def test_facts_only_morning_mentions_unknown_history_once():
     daily["delivery_metadata"] = {"facts_only": True}
     text = _visible_text(_sent(lambda service: service.push_daily_profile("test-user", daily, period="morning")).body)
 
-    assert text.count("训练历史覆盖尚未核验") == 1
+    assert text.count("部分运动记录来源还未查全") == 1
     assert "今天的安排" not in text
 
 
@@ -345,7 +346,7 @@ def test_four_complete_fixture_entrypoints_build_the_same_sections():
     evening = EveningBriefingEngine().build(daily)
     weekly = WeeklyBriefingEngine().build(synthetic_period_fixture("weekly"))
     monthly = MonthlyBriefingEngine().build(synthetic_period_fixture("monthly"))
-    assert [section["key"] for section in morning["sections"]] == ["sleep", "recovery", "today_plan"]
+    assert [section["key"] for section in morning["sections"]] == ["sleep", "recovery", "today_activity", "today_plan"]
     assert [section.key for section in evening.sections] == ["training", "activity", "intraday", "recovery"]
     assert weekly.sections and monthly.sections
 
@@ -359,6 +360,20 @@ def test_retrospective_evening_has_no_current_or_future_prescription():
     assert "仅回顾指定日期范围" in text
     assert "## 今晚恢复" not in text and "## 明天衔接" not in text
     assert "主要安排" not in text
+
+
+def test_log_handler_never_logs_identity_or_health_report(caplog):
+    with caplog.at_level(logging.INFO, logger="vitalis.push"):
+        result = PushService(pushplus_token="").push(PushMessage(
+            title="Private morning report", body="Sensitive health value 42",
+            user_id="private-person",
+        ))
+
+    assert result["_log_handler"] == "ok"
+    assert "report rendered" in caplog.text
+    assert "private-person" not in caplog.text
+    assert "Private morning report" not in caplog.text
+    assert "Sensitive health value 42" not in caplog.text
 
 
 def test_pushplus_delivery_keeps_token_in_json_body(monkeypatch):

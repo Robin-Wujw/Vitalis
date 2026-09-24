@@ -4628,6 +4628,18 @@
           "default": null,
           "title": "Deep Minutes"
         },
+        "light_minutes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Light Minutes"
+        },
         "rem_minutes": {
           "anyOf": [
             {

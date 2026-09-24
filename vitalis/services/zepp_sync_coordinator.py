@@ -35,6 +35,8 @@ from vitalis.connectors.zepp.fetcher import (
     _heart_rate_cursor,
     _heart_rate_items,
     _payload_items,
+    _sport_history_next_cursor,
+    _sport_history_page,
 )
 from vitalis.connectors.zepp.parser import ZeppParser
 from vitalis.connectors.zepp.sync_manager import StreamReport, SyncManager, SyncReport
@@ -696,13 +698,32 @@ class ZeppSyncCoordinator:
             if operation == "fetch_sport_history":
                 cursor = int(chunk["cursor"] or params["stop_track_id"])
                 payload = call("fetch_sport_history", params["sport"], params["start_track_id"], cursor, 1)
-                data = payload.get("data") or {} if isinstance(payload, dict) else {}
-                nxt = data.get("next")
-                next_cursor = None
-                if nxt is not None and int(nxt) > params["start_track_id"] and int(nxt) < cursor:
-                    next_cursor = int(nxt)
+                items, cursor_value = _sport_history_page(payload)
+                incomplete_reason = None
+                if items is None:
+                    incomplete_reason = (
+                        "workouts: sport history response envelope is malformed"
+                    )
+                    next_cursor = None
+                else:
+                    next_cursor, incomplete_reason = _sport_history_next_cursor(
+                        cursor_value,
+                        start_track_id=int(params["start_track_id"]),
+                        stop_track_id=cursor,
+                    )
                 key = f"sport_history:{params['sport']}:{params['start_track_id']}:{cursor}"
-                return _ChunkResult(FetchedRecord(RawRecord("workouts", key, start, end, payload)), len(data.get("items") or []) if isinstance(data, dict) else 0, next_cursor)
+                record = FetchedRecord(
+                    RawRecord("workouts", key, start, end, payload),
+                    incomplete=incomplete_reason is not None,
+                    incomplete_reason=incomplete_reason,
+                )
+                return _ChunkResult(
+                    record,
+                    len(items or []),
+                    next_cursor,
+                    incomplete=incomplete_reason is not None,
+                    incomplete_reason=incomplete_reason,
+                )
             if operation == "fetch_workout_detail":
                 payload = call("fetch_sport_detail", params["workout_id"], params["source"])
                 key = f"workout_detail:{params['workout_id']}:{params['source']}"

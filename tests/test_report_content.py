@@ -301,7 +301,8 @@ def test_four_report_scenarios_have_full_sections(scenario):
     evening = EveningBriefingEngine().build(daily)
     weekly = WeeklyBriefingEngine().build(synthetic_period_fixture("weekly", scenario))
     monthly = MonthlyBriefingEngine().build(synthetic_period_fixture("monthly", scenario))
-    assert [item["key"] for item in morning["sections"]] == ["sleep", "recovery", "today_plan"]
+    expected_morning = ["sleep", "recovery"] + ([] if scenario == "missing" else ["today_activity"]) + ["today_plan"]
+    assert [item["key"] for item in morning["sections"]] == expected_morning
     assert [item.key for item in evening.sections] == ["training", "activity", "intraday", "recovery"]
     assert len(weekly.sections) == 5 and len(monthly.sections) == 5
     assert weekly.period_start == date.fromisoformat(synthetic_period_fixture("weekly", scenario)["period_start"])

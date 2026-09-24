@@ -141,15 +141,27 @@ class SleepAnalyzer:
             if wake_count is not None and wake_baseline else None
         )
         stages = record.get("stages") if isinstance(record.get("stages"), list) else []
+        observed_fields = record.get("observed_fields") or []
+        if not isinstance(observed_fields, (list, tuple, set)):
+            observed_fields = []
+
+        def stage_minutes(field: str) -> int | None:
+            value = record.get(field)
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+                return None
+            # Older stored records have default zeros with no observation evidence.
+            return int(value) if value > 0 or field in observed_fields else None
+
         return SleepFeatures(
             status=Availability.AVAILABLE,
             status_label=AVAILABILITY_LABELS[Availability.AVAILABLE.value],
             duration_minutes=duration,
             bedtime=str(record["bedtime"]) if record.get("bedtime") else None,
             wake_time=str(record["wake_time"]) if record.get("wake_time") else None,
-            deep_minutes=int(record.get("deep_sleep", 0)),
+            deep_minutes=stage_minutes("deep_sleep"),
+            light_minutes=stage_minutes("light_sleep"),
             rem_minutes=int(rem_sleep) if rem_sleep is not None else None,
-            awake_minutes=int(record.get("awake", 0)),
+            awake_minutes=stage_minutes("awake"),
             vendor_sleep_score=record.get("sleep_score"),
             duration_deviation=deviation,
             regularity_minutes=round(float(regularity), 1) if regularity is not None else None,
@@ -204,6 +216,9 @@ class HrvAnalyzer:
                 status=Availability.INSUFFICIENT_DATA,
                 status_label=AVAILABILITY_LABELS[Availability.INSUFFICIENT_DATA.value],
                 rhr_bpm=nocturnal_hr.median_bpm,
+                rhr_metric=("nocturnal_heart_rate" if nocturnal_hr.median_bpm is not None else None),
+                rhr_source_scope=("device" if nocturnal_hr.median_bpm is not None else None),
+                rhr_device_id=(nocturnal_hr.device_id if nocturnal_hr.median_bpm is not None else None),
                 rhr_deviation=nocturnal_deviation,
                 nocturnal_heart_rate=nocturnal_hr,
                 limitations=["target_day_hrv_missing"],

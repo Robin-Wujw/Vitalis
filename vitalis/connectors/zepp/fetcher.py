@@ -177,9 +177,10 @@ class FetchBatch(list[FetchedRecord]):
             self.successful_chunks > 0 and self.unavailable_chunks > 0
         )
 
-    def add_success(self, record: FetchedRecord) -> None:
+    def add_success(self, record: FetchedRecord, *, count_chunk: bool = True) -> None:
         self.append(record)
-        self.successful_chunks += 1
+        if count_chunk:
+            self.successful_chunks += 1
         if record.incomplete:
             self.incomplete_ranges.append(
                 (record.raw.start_utc, record.raw.end_utc or record.raw.start_utc)
@@ -276,6 +277,58 @@ def _payload_items(payload: dict) -> list[dict]:
                 if isinstance(inner, list):
                     return inner
     return []
+
+
+_SPORT_HISTORY_ITEM_KEYS = ("summary", "items", "records", "results", "list")
+_SPORT_HISTORY_MISSING = object()
+
+
+def _sport_history_page(payload: Any) -> tuple[list[Any] | None, Any]:
+    """Return structured sport-history rows and its raw pagination cursor.
+
+    A 200 response with no recognized row list is not an empty page. Keeping
+    that distinction here prevents both fetch paths from turning an upstream
+    envelope change into proof that a sport has no history.
+    """
+    if not isinstance(payload, dict):
+        return None, _SPORT_HISTORY_MISSING
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return None, _SPORT_HISTORY_MISSING
+    for key in _SPORT_HISTORY_ITEM_KEYS:
+        rows = data.get(key)
+        if isinstance(rows, list):
+            if any(not isinstance(item, dict) for item in rows):
+                return None, _SPORT_HISTORY_MISSING
+            return rows, data.get("next", _SPORT_HISTORY_MISSING)
+    return None, _SPORT_HISTORY_MISSING
+
+
+def _sport_history_next_cursor(
+    value: Any,
+    *,
+    start_track_id: int,
+    stop_track_id: int,
+) -> tuple[int | None, str | None]:
+    """Validate the vendor's backward-moving sport-history cursor."""
+    if value is _SPORT_HISTORY_MISSING or value is None:
+        return None, None
+    if isinstance(value, bool):
+        return None, "workouts: sport history cursor is invalid"
+    if isinstance(value, int):
+        cursor = value
+    elif isinstance(value, str):
+        try:
+            cursor = int(value.strip())
+        except ValueError:
+            return None, "workouts: sport history cursor is invalid"
+    else:
+        return None, "workouts: sport history cursor is invalid"
+    if cursor <= 0:
+        return None, None
+    if not start_track_id < cursor < stop_track_id:
+        return None, "workouts: sport history cursor did not advance within the window"
+    return cursor, None
 
 
 class DataFetcher:
@@ -419,9 +472,20 @@ class DataFetcher:
                         raise PartialFetchError(exc, records) from exc
                     raise
                 sport_available = True
-                data = payload.get("data") or {}
-                nxt = data.get("next")
-                records.append(
+                items, cursor_value = _sport_history_page(payload)
+                incomplete_reason = None
+                if items is None:
+                    incomplete_reason = (
+                        "workouts: sport history response envelope is malformed"
+                    )
+                    nxt = None
+                else:
+                    nxt, incomplete_reason = _sport_history_next_cursor(
+                        cursor_value,
+                        start_track_id=start_ts,
+                        stop_track_id=stop_track_id,
+                    )
+                records.add_success(
                     FetchedRecord(
                         raw=RawRecord(
                             stream="workouts",
@@ -429,12 +493,17 @@ class DataFetcher:
                             start_utc=window.start,
                             end_utc=window.end,
                             payload=payload,
-                        )
-                    )
+                        ),
+                        incomplete=incomplete_reason is not None,
+                        incomplete_reason=incomplete_reason,
+                    ),
+                    # A sport may have several pages, but coverage is counted
+                    # once per sport partition rather than once per response.
+                    count_chunk=False,
                 )
-                if nxt is None or int(nxt) <= 0 or int(nxt) >= stop_track_id or int(nxt) <= start_ts:
+                if incomplete_reason is not None or nxt is None:
                     break
-                stop_track_id = int(nxt)
+                stop_track_id = nxt
             if sport_available:
                 records.successful_chunks += 1
         if not records:

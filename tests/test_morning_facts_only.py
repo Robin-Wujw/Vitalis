@@ -54,7 +54,8 @@ def test_facts_only_projection_is_a_strict_sleep_body_whitelist():
         "facts_only": True,
         "coverage_reason": "prior_7d_unverified",
     }
-    assert any("训练历史覆盖尚未核验" in item for item in briefing["cautions"])
+    assert briefing["summary"] == ["部分运动记录来源还未查全；已记录的训练照常展示，今天暂不生成训练安排。"]
+    assert briefing["cautions"] == []
 
 
 def test_facts_only_push_renders_sleep_body_and_no_training_sections():
@@ -74,11 +75,11 @@ def test_facts_only_push_renders_sleep_body_and_no_training_sections():
     )
 
     message = received[0]
-    assert message.title.endswith("事实版")
+    assert message.title == f"Vitalis 晨报 · {TARGET_DATE.isoformat()}"
     assert "昨晚睡眠" in message.body
     assert "今早恢复信号" in message.body
     assert "今天的安排" not in message.body
-    assert "训练历史覆盖尚未核验" in message.body
+    assert "部分运动记录来源还未查全" in message.body
     assert "action_plan" not in repr(message.extras)
     assert "primary_session" not in repr(message.extras)
 
@@ -216,7 +217,7 @@ def test_facts_only_does_not_copy_recovery_or_free_form_interpretations():
     report = MorningBriefingEngine().build_payload(daily, {"facts_only": True, "sync_detail": marker})
     assert marker not in repr(report)
     assert all(not section["interpretation"] for section in report["sections"])
-    assert report["summary"] == ["训练历史覆盖尚未核验，本次仅发送睡眠和身体状态事实。"]
+    assert report["summary"] == ["部分运动记录来源还未查全；已记录的训练照常展示，今天暂不生成训练安排。"]
 
 
 @pytest.mark.parametrize("blocked", [
@@ -258,3 +259,88 @@ def test_missing_history_uses_explicit_facts_only_reason():
     daily["report_context"].pop("training_history")
     daily["features"]["training"].pop("history_coverage", None)
     assert daily_push._morning_facts_only_reason(daily) == "training_history_missing"
+
+
+def test_facts_only_renders_dated_activity_and_observed_training_without_a_plan():
+    daily = _daily()
+    day = TARGET_DATE.isoformat()
+    yesterday = (TARGET_DATE - timedelta(days=1)).isoformat()
+    daily["report_context"]["timezone"] = "Asia/Shanghai"
+    daily["report_context"]["previous_day_activity"] = {
+        "user_id": daily["user_id"], "date": yesterday,
+        "as_of": "2026-08-29T04:00:00+00:00",
+        "activity": {
+            "status": "AVAILABLE",
+            "steps": {"value": 8200, "unit": "steps", "observed_at": yesterday,
+                      "provenance": {"source": "zepp", "source_scope": "user_fused"}},
+            "energy": [{"value": 420, "unit": "kcal", "role": "unspecified",
+                        "observed_at": yesterday,
+                        "provenance": {"source": "zepp", "source_scope": "device"}}],
+        },
+    }
+    for key in ("steps", "distance_km", "active_minutes"):
+        daily["features"]["activity"][key]["observed_at"] = day
+    for item in daily["features"]["activity"]["energy"]:
+        item["observed_at"] = day
+    daily["features"]["training"]["recent_workouts"].append({
+        "date": yesterday, "type_label": "力量训练", "sport_mode_label": "力量训练",
+        "training_family": "strength", "duration_minutes": 52, "distance_km": 0,
+        "calories_kcal": 200, "heart_rate_avg_bpm": 112, "vendor_reported_sets": 8,
+    })
+    marker = "UNSAFE-PRESCRIPTION"
+    daily["features"]["recovery"].update({
+        "state_label": marker, "positive_signal_labels": [marker],
+    })
+    report = MorningBriefingEngine().build_payload(daily, {"facts_only": True})
+    MorningBriefing.model_validate(report)
+    keys = [section["key"] for section in report["sections"]]
+    assert keys == ["sleep", "recovery", "yesterday_activity", "observed_training", "today_activity"]
+    text = str(report)
+    assert "步数 8,200 步" in text
+    assert "设备估算热量（统计范围待确认） 420 千卡" in text
+    assert "已记录力量训练" in text and "设备记录组数 8 组" in text
+    assert "平均心率 112 次/分钟" in text
+    assert "距离 0 公里" not in text
+    assert marker not in text
+    assert "action_plan" not in text
+
+
+def test_facts_only_keeps_vendor_scores_separate_from_observed_hrv_trend():
+    daily = _daily()
+    daily["features"]["hrv"].update({
+        "recent_7d_median_ms": 66, "recent_7d_days": 5,
+        "previous_7d_median_ms": 61, "previous_7d_days": 4,
+    })
+    daily["features"]["recovery"].update({
+        "vendor_readiness": 82, "vendor_charge": 75,
+        "vendor_readiness_components": {"身体": 80, "心理": 73},
+        "state_label": "UNSAFE-RECOVERY-CONCLUSION",
+    })
+    report = MorningBriefingEngine().build_payload(daily, {"facts_only": True})
+    facts = next(section for section in report["sections"] if section["key"] == "recovery")["facts"]
+
+    assert any("近 7 日同源 睡眠 HRV：中位数 66 毫秒（有效 5 天）" in item for item in facts)
+    assert any("此前 7 日同源 睡眠 HRV：中位数 61 毫秒（有效 4 天）" in item for item in facts)
+    assert "设备准备度评分 82/100（厂商参考值）" in facts
+    assert "设备准备度（身体）80/100（厂商参考值）" in facts
+    assert "UNSAFE-RECOVERY-CONCLUSION" not in repr(report)
+
+
+@pytest.mark.parametrize("bad_field", ["user_id", "date", "as_of"])
+def test_facts_only_rejects_untrusted_previous_day_context(bad_field):
+    daily = _daily()
+    yesterday = (TARGET_DATE - timedelta(days=1)).isoformat()
+    daily["report_context"]["previous_day_activity"] = {
+        "user_id": daily["user_id"], "date": yesterday,
+        "as_of": "2026-08-29T04:00:00+00:00",
+        "activity": {"status": "AVAILABLE", "steps": {
+            "value": 100, "unit": "steps", "observed_at": yesterday,
+            "provenance": {"source": "zepp", "source_scope": "device"},
+        }},
+    }
+    daily["report_context"]["previous_day_activity"][bad_field] = {
+        "user_id": "another-user", "date": "2026-08-20",
+        "as_of": "2026-08-28T12:00:00+00:00",
+    }[bad_field]
+    report = MorningBriefingEngine().build_payload(daily, {"facts_only": True})
+    assert "yesterday_activity" not in [section["key"] for section in report["sections"]]

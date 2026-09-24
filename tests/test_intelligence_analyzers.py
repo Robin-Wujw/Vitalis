@@ -24,6 +24,7 @@ from vitalis.intelligence.contracts import (
     TrainingPreferences,
 )
 from vitalis.intelligence.decision import DecisionEngine
+from vitalis.intelligence.morning_briefing import MorningBriefingEngine
 from vitalis.intelligence.profile import RawDailyProfile, SeriesPoint
 from vitalis.intelligence.strength import normalize_exercise
 
@@ -89,6 +90,25 @@ def _analyze(raw):
         raw.training_preferences,
     )
     return sleep, sleep_state, hrv, training, recovery, decision
+
+
+def test_sleep_stages_keep_recorded_zero_separate_from_missing_defaults():
+    raw = _profile()
+    record = raw.sleep_by_day[TARGET]
+    record.update({"deep_sleep": 0, "light_sleep": 0, "awake": 0})
+    baselines = BaselineEngine().build(raw.series, raw.day)
+
+    legacy, _ = SleepAnalyzer().analyze(raw, baselines)
+    assert legacy.deep_minutes is None
+    assert legacy.light_minutes is None
+    assert legacy.awake_minutes is None
+
+    record["observed_fields"] = ["deep_sleep", "light_sleep"]
+    record["awake"] = 12
+    observed, _ = SleepAnalyzer().analyze(raw, baselines)
+    assert observed.deep_minutes == 0
+    assert observed.light_minutes == 0
+    assert observed.awake_minutes == 12
 
 
 def _with_genuinely_low_recent_load(raw):
@@ -475,7 +495,13 @@ def test_nocturnal_heart_rate_and_same_device_hrv_history_are_analyzed():
     )
     assert without_hrv.status == Availability.INSUFFICIENT_DATA
     assert without_hrv.nocturnal_heart_rate.status == Availability.AVAILABLE
+    assert without_hrv.rhr_metric == "nocturnal_heart_rate"
     assert without_hrv.rhr_deviation.direction == "below"
+    facts = MorningBriefingEngine()._recovery_facts(
+        without_hrv.model_dump(mode="json"), {"oxygen": {}}, {}
+    )
+    assert sum(item.startswith("夜间心率中位数 ") for item in facts) == 1
+    assert not any("静息心率" in item for item in facts)
 
 
 def test_nocturnal_heart_rate_prefers_complete_upper_arm_stream():

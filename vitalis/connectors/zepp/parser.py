@@ -143,6 +143,14 @@ class ZeppParser:
                         rem_sleep=int(rem) if rem is not None else None,
                         light_sleep=int(sleep.get("lt", 0) or 0),
                         awake=int(sleep.get("wk", 0) or 0),
+                        observed_fields=[
+                            name for name, key in (
+                                ("deep_sleep", "dp"), ("light_sleep", "lt"), ("awake", "wk")
+                            ) if sleep.get(key) is not None
+                            and not isinstance(sleep[key], bool)
+                            and (value := self._first_number(sleep, (key,))) is not None
+                            and value >= 0
+                        ],
                         sleep_score=int(sleep["ss"]) if sleep.get("ss") is not None else None,
                         bedtime=bedtime,
                         wake_time=wake_time,

@@ -516,6 +516,26 @@ def test_parse_band_sleep_renders_vendor_local_clock_time():
     assert sleep.bedtime.isoformat() == "00:58:00"
     assert sleep.wake_time.isoformat() == "08:36:00"
     assert sleep.rem_sleep is None
+    assert sleep.observed_fields == ["deep_sleep", "light_sleep", "awake"]
+
+
+@pytest.mark.parametrize("recorded_zero", [0, "0"])
+def test_parse_band_sleep_distinguishes_missing_stage_from_recorded_zero(recorded_zero):
+    start = datetime(2026, 8, 28, 18, tzinfo=timezone.utc)
+    end = start + timedelta(hours=8)
+    summary = base64.b64encode(json.dumps({
+        "tz": 8 * 60 * 60,
+        "slp": {"st": int(start.timestamp()), "ed": int(end.timestamp()),
+                "dp": recorded_zero, "wk": recorded_zero},
+    }).encode()).decode()
+
+    sleeps, _ = ZeppParser().parse_band({"data": {"items": [{
+        "date_time": "2026-08-29", "summary": summary,
+    }]}})
+    sleep = sleeps[date(2026, 8, 29)]
+
+    assert sleep.deep_sleep == sleep.light_sleep == sleep.awake == 0
+    assert sleep.observed_fields == ["deep_sleep", "awake"]
 
 
 def test_parse_band_sleep_recovers_rem_from_stage_modes():

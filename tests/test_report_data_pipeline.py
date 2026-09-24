@@ -9,6 +9,8 @@ from vitalis.intelligence.morning_briefing import MorningBriefingEngine
 from vitalis.intelligence.service import IntelligenceCommand
 from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
 from vitalis.models import ActivityRecord, DailyMetric, MetricSample, NormalizedDaily, SleepRecord, Workout
+from vitalis.services import daily_push
+from vitalis.services.push_service import _render_morning, _render_report_html
 from vitalis.services.zepp_sync_coordinator import stable_chunk_key
 from vitalis.storage import HealthRepository, session_scope
 from vitalis.storage.database import get_engine
@@ -18,12 +20,12 @@ from vitalis.time import local_day_utc_bounds
 TARGET = date(2026, 8, 28)
 
 
-def synthetic_pipeline_example(*, morning=False, explicit_strength=True):
+def synthetic_pipeline_example(*, morning=False, explicit_strength=True, history_complete=True):
     """Generate examples from synthetic storage, not handwritten conclusions."""
     engine = get_engine()
     if engine.dialect.name != "sqlite" or engine.url.database not in (None, "", ":memory:"):
         raise RuntimeError("Synthetic report examples require an in-memory database")
-    user = f"synthetic-report-pipeline-{morning}-{explicit_strength}"
+    user = f"synthetic-report-pipeline-{morning}-{explicit_strength}-{history_complete}"
     day_start, day_end = local_day_utc_bounds(TARGET)
     analysis_time = day_start + timedelta(hours=9, minutes=30) if morning else day_end + timedelta(minutes=10)
     with session_scope() as db:
@@ -70,6 +72,15 @@ def synthetic_pipeline_example(*, morning=False, explicit_strength=True):
                 vendor_reported_sets=(4 if explicit_strength else 24) if family == "strength" else None,
                 observed_fields=["calories"] + (["distance_km"] if distance is not None else []),
             ))
+        if morning and not history_complete:
+            yesterday = TARGET - timedelta(days=1)
+            start, _ = local_day_utc_bounds(yesterday)
+            affected |= repo.save_workout(Workout(
+                user_id=user, workout_id="synthetic-yesterday", type="strength",
+                training_family="strength", sport_mode_label="力量训练",
+                started_at=start + timedelta(hours=18), duration=38, load=40,
+                calories=190, vendor_source="strength", observed_fields=["calories"],
+            ))
         repo.rebuild_training_days(user, affected)
         if not morning:
             repo.save_workout_detail(user, "synthetic-strength", {
@@ -108,12 +119,13 @@ def synthetic_pipeline_example(*, morning=False, explicit_strength=True):
         )
         finished = (analysis_time - timedelta(minutes=1)).replace(tzinfo=None)
         attempt.created_at = finished - timedelta(minutes=1)
-        attempt.status = "succeeded"
+        attempt.status = "succeeded" if history_complete else "partial"
         attempt.finished_at = finished
         for chunk in repo.sync_chunks(attempt.id):
-            chunk.status = "succeeded"
-            chunk.fetch_status = "success"
-            chunk.parse_status = "success" if chunk.partition in {"run", "strength"} else "empty"
+            unavailable = not history_complete and chunk.partition == SPORTS[-1]
+            chunk.status = "unavailable" if unavailable else "succeeded"
+            chunk.fetch_status = "unavailable" if unavailable else "success"
+            chunk.parse_status = "not_run" if unavailable else "success" if chunk.partition in {"run", "strength"} else "empty"
             chunk.write_status = "success" if chunk.parse_status == "success" else "not_run"
             chunk.finished_at = finished
 
@@ -163,5 +175,41 @@ def test_morning_pipeline_does_not_require_a_workout_today():
     assert analyzed.daily.report_context["target_day_complete"] is False
     report = MorningBriefingEngine().build(analyzed.daily)
     assert report.action_plan.primary_session is not None
-    assert report.sections[2].facts
+    assert next(section for section in report.sections if section.key == "today_plan").facts
     assert "feedback_prompt" not in report.model_dump()
+
+
+def test_unverified_history_keeps_observed_yesterday_facts_in_real_morning_html(monkeypatch, tmp_path):
+    analyzed = synthetic_pipeline_example(morning=True, history_complete=False)
+    daily = analyzed.daily
+    assert daily.report_context["training_history"]["prior_7d_verified"] is False
+    assert daily.report_context["previous_day_activity"]["date"] == (TARGET - timedelta(days=1)).isoformat()
+    received = []
+
+    class CapturePush:
+        def __init__(self, pushplus_token):
+            assert pushplus_token == "synthetic-token"
+
+        def push_daily_profile(self, user_id, payload, period):
+            assert user_id == daily.user_id and period == "morning"
+            briefing = MorningBriefingEngine().build_payload(payload, payload.get("delivery_metadata"))
+            title, lines = _render_morning(briefing)
+            received.append((title, _render_report_html(lines), briefing))
+            return {"_pushplus_handler": "ok"}
+
+    monkeypatch.setattr(daily_push, "local_today", lambda: TARGET)
+    monkeypatch.setattr(daily_push, "PushService", CapturePush)
+    result = daily_push.deliver_daily_report(
+        daily.user_id, "synthetic-token", daily.model_dump(mode="json"),
+        period="morning", target_date=TARGET, state_dir=tmp_path, test_delivery=True,
+    )
+
+    assert result["status"] == "test_sent" and result["mode"] == "facts_only"
+    title, html, briefing = received[0]
+    assert title.startswith("Vitalis 晨报")
+    assert "昨天的活动" in html and "步数 8,200 步" in html
+    assert "设备估算热量（统计范围待确认） 700 千卡" in html
+    assert "昨天已记录的训练" in html and "力量训练" in html
+    assert "今天的安排" not in html and "action_plan" not in repr(briefing)
+    assert html.count("部分运动记录来源还未查全") == 1
+    assert not list(tmp_path.glob("*.sent"))

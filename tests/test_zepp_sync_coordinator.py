@@ -392,6 +392,108 @@ def test_coordinator_marks_full_page_no_progress_partial_without_retrying():
     assert connector.calls == 1
 
 
+def test_coordinator_marks_malformed_sport_history_envelope_incomplete():
+    start_ts = int(WINDOW.start.timestamp())
+    end_ts = int(WINDOW.end.timestamp())
+    chunk = {
+        "cursor": end_ts,
+        "window_start": WINDOW.start,
+        "window_end": WINDOW.end,
+        "stream": "workouts",
+        "stages": {
+            "operation": "fetch_sport_history",
+            "params": {
+                "sport": "run",
+                "start_track_id": start_ts,
+                "stop_track_id": end_ts,
+                "need_sub_data": 1,
+            },
+        },
+    }
+
+    class Connector:
+        def fetch_sport_history(self, *args):
+            return {"code": 1, "message": "success", "data": {"next": -1}}
+
+    result = ZeppSyncCoordinator()._fetch_chunk(
+        chunk, SyncControl(), Connector()
+    )
+
+    assert result.record is not None
+    assert result.raw_records == 0
+    assert result.next_cursor is None
+    assert result.incomplete is True
+    assert result.record.incomplete is True
+    assert result.record.raw.payload["data"] == {"next": -1}
+
+
+def test_coordinator_stalled_workout_cursor_is_partial_and_keeps_rows():
+    user_id = "coord-workout-stalled"
+    _clean(user_id)
+    start_ts = int(WINDOW.start.timestamp())
+    end_ts = int(WINDOW.end.timestamp())
+    workout_id = str(start_ts + 60)
+    spec = {
+        "stable_key": stable_chunk_key(
+            "workouts", "run", WINDOW.start, WINDOW.end, end_ts
+        ),
+        "stream": "workouts",
+        "partition": "run",
+        "ordinal": 0,
+        "window_start": WINDOW.start,
+        "window_end": WINDOW.end,
+        "cursor": end_ts,
+        "allow_unavailable": True,
+        "stages": {
+            "operation": "fetch_sport_history",
+            "params": {
+                "sport": "run",
+                "start_track_id": start_ts,
+                "stop_track_id": end_ts,
+                "need_sub_data": 1,
+            },
+        },
+    }
+
+    class Connector:
+        def fetch_sport_history(self, _sport, _start, stop, _need_sub_data):
+            return {
+                "data": {
+                    "summary": [{
+                        "trackid": int(workout_id),
+                        "end_time": int(workout_id) + 60,
+                        "type": 1,
+                    }],
+                    "next": stop,
+                }
+            }
+
+    with session_scope() as db:
+        attempt = HealthRepository(db).create_or_reuse_sync_attempt(
+            user_id,
+            window_start=WINDOW.start,
+            window_end=WINDOW.end,
+            manifest=[spec],
+        )
+    coordinator = ZeppSyncCoordinator(
+        connector=Connector(), wall_clock=lambda: NOW, random_fn=lambda: 0.0
+    )
+
+    report = coordinator.run_attempt(attempt.id)
+    state = coordinator.status(attempt.id)
+
+    assert report.success is False
+    assert state["attempt"]["status"] == "partial"
+    row = state["chunks"][0]
+    assert row["status"] == "succeeded"
+    assert row["fetch_status"] == "partial"
+    assert row["error_kind"] == "partial_coverage"
+    assert row["records_written"] > 0
+    with session_scope() as db:
+        saved = HealthRepository(db).workout(user_id, workout_id)
+    assert saved is not None
+
+
 def test_manifest_uses_inclusive_three_day_local_odi_windows_across_dst():
     zone = "America/New_York"
     window = FetchWindow.local_dates(date(2026, 3, 7), date(2026, 3, 9), zone)

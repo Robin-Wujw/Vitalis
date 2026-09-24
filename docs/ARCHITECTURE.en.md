@@ -559,13 +559,14 @@ delivery markers, so retries and overlapping invocations do not duplicate a succ
 PushPlus delivery. The evening report is not blocked by the morning sleep gate.
 
 The morning renderer is a deterministic presentation-selection layer over the complete
-DailyProfile. With `MorningBriefing schema_version=4.0`, it emits sleep and body-state observations,
-available same-day running/strength context, one conclusion, concrete primary/optional actions,
-short reasons, at most one actionable event, and only consequential cautions. The absence of a
-workout so far today is not a missing item; only insufficient decision signals produce
-`INSUFFICIENT_DATA`. Morning prescriptions do not mix in historical `observed_sets`. Per-device streams,
-raw trend windows, empty signal groups, unknown safety inputs, passed checks, planning gates, and generic
-limitations stay in the structured profile instead of being copied into the daily push.
+DailyProfile. With `MorningBriefing schema_version=4.0`, it separates last-night sleep and body
+readings, yesterday's recorded activity and workouts, and today's activity through the analysis
+cutoff. Each number retains its date, unit and necessary source. If prior-seven-day sport sources
+remain unverified, the factual report still shows observed data but generates no training dose
+for today; no workout yet today is not a missing item. Only insufficient decision signals produce
+`INSUFFICIENT_DATA`, and morning prescriptions never incorporate historical `observed_sets`.
+Unproven rest days, cross-device sums, inferred exercises and generic training templates are
+excluded from the daily push; actual safety gates remain in the structured decision.
 
 The evening renderer is a separate deterministic view. When present, it reports each actual
 workout today in `started_at` order, including running metrics and explicit or ordered observed

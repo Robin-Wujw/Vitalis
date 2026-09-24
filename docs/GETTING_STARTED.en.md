@@ -164,13 +164,15 @@ The Hermes Morning job runs hourly from 09:30 through 21:30 `Asia/Shanghai`, syn
 two days for the explicit `VITALIS_USER`, and analyzes only the current local day. It sends
 nothing while today's sleep status is unavailable or `wake_time` is absent. The next hourly
 run synchronizes and checks again; once sleep is complete, private state markers skip a
-Morning delivery already recorded for that date. The Morning report shows returned sleep,
-body-state, and available same-day running/strength context; the absence of a workout so far
-today is not a missing item. It never substitutes yesterday's profile.
+Morning delivery already recorded for that date. The Morning report separates last-night
+sleep and body readings, yesterday's recorded activity and workouts, and today's activity
+through the analysis cutoff. No workout yet today is not a missing item; yesterday's record
+is never presented as today's workout.
 
-When sleep is complete but training history for the previous seven days is unverified, the
-Morning report is facts-only: it shows only sleep and body state, explicitly discloses the
-history gap, and contains no exercise, intensity, or weight prescription. Incomplete sleep,
+When sleep is complete but training history for the previous seven days remains unverified,
+the Morning report still shows sleep/body readings and date-labeled activity and observed
+workouts. One plain sentence identifies the unqueried sport sources; no prescription for
+today's exercises, intensity, or weights is generated. Incomplete sleep,
 expired dates, and invalid credentials still block delivery. A successful facts-only delivery
 also writes the daily Morning deduplication marker, so subsequent hourly retries do not send
 it again; test mode leaves the scheduled marker unchanged.

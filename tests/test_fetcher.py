@@ -380,7 +380,56 @@ def test_successful_empty_workout_endpoints_keep_fetch_evidence():
     records = DataFetcher(Connector()).fetch_workout_records(FetchWindow.days_back(1))
 
     assert records
+    assert records.incomplete is False
+    assert records.partial is False
     assert all(record.raw.payload["data"]["summary"] == [] for record in records)
+
+
+@pytest.mark.parametrize("next_value", [1, "not-a-cursor"])
+def test_workout_positive_stalled_or_invalid_cursor_is_incomplete(next_value):
+    class Connector:
+        def fetch_sport_history(self, _sport, start, stop, _need_sub_data):
+            return {
+                "data": {
+                    "summary": [{"trackid": start + 1, "type": 1}],
+                    "next": stop if next_value == 1 else next_value,
+                }
+            }
+
+    records = DataFetcher(Connector()).fetch_workout_records(FetchWindow.days_back(1))
+
+    assert records.incomplete is True
+    assert records.partial is True
+    assert records
+    assert all(record.incomplete for record in records)
+    assert all(record.raw.payload["data"]["summary"] for record in records)
+    assert all("cursor" in (record.incomplete_reason or "") for record in records)
+
+
+def test_malformed_http_200_workout_envelope_is_not_successful_empty():
+    class Connector:
+        def fetch_sport_history(self, *args, **kwargs):
+            return {"code": 1, "message": "success", "data": {"next": -1}}
+
+    records = DataFetcher(Connector()).fetch_workout_records(FetchWindow.days_back(1))
+
+    assert records
+    assert records.incomplete is True
+    assert records.partial is True
+    assert all(record.incomplete for record in records)
+    assert all("envelope" in (record.incomplete_reason or "") for record in records)
+
+
+def test_malformed_workout_row_keeps_observations_but_cannot_prove_emptiness():
+    class Connector:
+        def fetch_sport_history(self, *args, **kwargs):
+            return {"data": {"summary": [{"trackid": 1, "type": 1}, None], "next": -1}}
+
+    records = DataFetcher(Connector()).fetch_workout_records(FetchWindow.days_back(1))
+
+    assert records.incomplete is True
+    assert all(record.incomplete for record in records)
+    assert all(record.raw.payload["data"]["summary"][0]["trackid"] == 1 for record in records)
 
 
 def test_local_date_window_uses_configured_timezone_bounds():

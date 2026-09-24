@@ -1,5 +1,6 @@
 """Explicit intelligence commands, read-only queries, and user actions."""
 
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 import logging
 from uuid import uuid4
@@ -423,6 +424,21 @@ class IntelligenceCommand:
         target = raw.day
         baselines = BaselineEngine().build(raw.series, target)
         activity = ActivityAnalyzer().analyze(raw, baselines)
+        previous_day = target - timedelta(days=1)
+        previous_raw = replace(
+            raw, day=previous_day, report_context={"target_day_complete": True},
+            sample_window_summaries={},
+        )
+        previous_raw.facts = ProfileLoader._facts_for_day(previous_raw)
+        previous_activity = ActivityAnalyzer().analyze(previous_raw, {})
+        report_context = dict(raw.report_context)
+        if previous_activity.status.value == "AVAILABLE":
+            report_context["previous_day_activity"] = {
+                "user_id": raw.user_id,
+                "date": previous_day.isoformat(),
+                "as_of": raw.as_of.isoformat(),
+                "activity": previous_activity.model_dump(mode="json"),
+            }
         sleep, sleep_state = SleepAnalyzer().analyze(raw, baselines)
         hrv = HrvAnalyzer().analyze(raw, baselines)
         overnight_vitals = OvernightVitalsAnalyzer().analyze(raw, baselines, sleep)
@@ -445,7 +461,7 @@ class IntelligenceCommand:
             user_id=raw.user_id,
             date=target,
             data_quality=raw.data_quality,
-            report_context=raw.report_context,
+            report_context=report_context,
             facts=raw.facts,
             baselines=baselines,
             features=ProfileFeatures(

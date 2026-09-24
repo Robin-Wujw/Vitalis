@@ -417,6 +417,7 @@ class SleepFeatures(BaseModel):
     bedtime: str | None = None
     wake_time: str | None = None
     deep_minutes: int | None = None
+    light_minutes: int | None = None
     rem_minutes: int | None = None
     awake_minutes: int | None = None
     vendor_sleep_score: int | None = None

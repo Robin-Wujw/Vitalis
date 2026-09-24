@@ -2,20 +2,26 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import date, datetime, timedelta
 from typing import Any
+
+from vitalis.time import local_day
 
 from .contracts import DailyProfile, MorningBriefing, ReportSection
 from .report_formatting import (
     baseline_text,
     clock_text,
-    list_facts,
+    date_text,
+    energy_label,
     metric_label,
     minutes_text,
     number,
     payload_of,
     range_text,
     repetitions_text,
+    timestamp_text,
     unique,
+    value_with_unit,
 )
 
 _ACTION_CHANGING_EVENTS = {
@@ -74,15 +80,16 @@ class MorningBriefingEngine:
         sections = [
             {"key": "sleep", "title": "昨晚睡眠", "facts": self._sleep_facts(sleep),
              "interpretation": [], "limitations": []},
-            {"key": "recovery", "title": "今早恢复信号", "facts": self._recovery_facts(hrv, vitals),
+            {"key": "recovery", "title": "今早恢复信号", "facts": self._recovery_facts(hrv, vitals, features.get("recovery") or {}),
              "interpretation": [], "limitations": []},
+            *self._observed_sections(payload),
         ]
         observations = [fact for section in sections for fact in section["facts"]]
         report_context = self._facts_only_context(payload.get("report_context"), metadata)
-        history_notice = "训练历史覆盖尚未核验，本次仅发送睡眠和身体状态事实。"
-        cautions = [history_notice]
+        history_notice = "部分运动记录来源还未查全；已记录的训练照常展示，今天暂不生成训练安排。"
+        cautions = []
         if metadata.get("sync_degraded"):
-            cautions.insert(0, "本次同步未完整完成，结论仅使用已经保存的数据。")
+            cautions.append("本次同步未完整完成，仅使用已保存的数据。")
         summary = [history_notice]
         return {
             "schema_version": "4.0",
@@ -91,7 +98,7 @@ class MorningBriefingEngine:
             "date": payload.get("date"),
             "generated_at": payload.get("generated_at"),
             "decision_action": "INSUFFICIENT_DATA",
-            "action_label": "事实版晨报：训练历史覆盖尚未核验",
+            "action_label": "已记录数据回顾；暂不生成训练安排",
             "report_context": report_context,
             "summary": summary,
             "sections": sections,
@@ -119,6 +126,134 @@ class MorningBriefingEngine:
         safe["delivery_metadata"] = safe_metadata
         return safe
 
+    @staticmethod
+    def _on_day(value: Any, day: date) -> bool:
+        try:
+            if isinstance(value, date) and not isinstance(value, datetime):
+                return value == day
+            text = str(value)
+            if len(text) == 10:
+                return date.fromisoformat(text) == day
+            return local_day(datetime.fromisoformat(text.replace("Z", "+00:00"))) == day
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _source_label(value: dict[str, Any]) -> str:
+        provenance = value.get("provenance") or {}
+        if provenance.get("source") == "zepp":
+            return "Zepp 设备记录" if provenance.get("source_scope") == "device" else "Zepp 汇总"
+        return "设备记录" if provenance.get("source_scope") == "device" else "已保存记录"
+
+    def _activity_facts(self, activity: dict[str, Any], day: date) -> list[str]:
+        facts = []
+        for key, label in (("steps", "步数"), ("distance_km", "活动距离"),
+                           ("active_minutes", "活动时长")):
+            metric = activity.get(key) or {}
+            if not isinstance(metric, dict) or not self._on_day(metric.get("observed_at"), day):
+                continue
+            value = value_with_unit(metric.get("value"), metric.get("unit"), 0 if key == "steps" else 1)
+            if value is not None:
+                facts.append(f"{label} {value}（{self._source_label(metric)}）")
+        for energy in activity.get("energy") or []:
+            if energy.get("role") == "workout" or not self._on_day(energy.get("observed_at"), day):
+                continue
+            value = value_with_unit(energy.get("value"), energy.get("unit"))
+            if value is not None:
+                facts.append(f"{energy_label(energy.get('role'))} {value}（{self._source_label(energy)}）")
+        labels = {
+            "stress": "平均压力评分", "stress_min": "最低压力评分", "stress_max": "最高压力评分",
+            "stress_relaxed_pct": "放松区间", "stress_normal_pct": "正常区间",
+            "stress_medium_pct": "中等压力区间", "stress_high_pct": "高压力区间",
+        }
+        stress = []
+        for item in activity.get("stress_summary") or []:
+            metric = item.get("metric")
+            expected_unit = "%" if str(metric).endswith("_pct") else "score"
+            if metric not in labels or item.get("unit") != expected_unit or not self._on_day(item.get("observed_at"), day):
+                continue
+            shown = number(item.get("value"))
+            if shown is not None:
+                stress.append(f"{labels[metric]} {shown}{'%' if expected_unit == '%' else ''}")
+        if stress:
+            facts.append("设备压力日记录：" + "；".join(stress))
+        for key, label, unit in (("heart_rate", "心率", "次/分钟"), ("stress", "压力", "设备评分")):
+            window = activity.get(key) or {}
+            count = window.get("sample_count")
+            if not isinstance(count, int) or count <= 0:
+                continue
+            parts = [f"{number(count, 0)} 条采样"]
+            if window.get("observed_minutes") is not None:
+                parts.append(f"分布在 {number(window['observed_minutes'], 0)} 个有记录的分钟")
+            if window.get("average") is not None:
+                parts.append(f"记录均值 {number(window['average'])} {unit}")
+            facts.append(f"{label}：" + "；".join(parts))
+        return facts
+
+    @staticmethod
+    def _previous_activity(payload: dict[str, Any], day: date) -> dict[str, Any]:
+        context = payload.get("report_context") or {}
+        candidate = context.get("previous_day_activity") or {}
+        if (not isinstance(candidate, dict)
+                or candidate.get("user_id") != payload.get("user_id")
+                or candidate.get("date") != (day - timedelta(days=1)).isoformat()):
+            return {}
+        try:
+            cutoff = datetime.fromisoformat(str(candidate.get("as_of")).replace("Z", "+00:00"))
+            if cutoff.tzinfo is None or local_day(cutoff) < day:
+                return {}
+        except ValueError:
+            return {}
+        activity = candidate.get("activity")
+        return activity if isinstance(activity, dict) and activity.get("status") == "AVAILABLE" else {}
+
+    def _observed_sections(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        try:
+            day = date.fromisoformat(date_text(payload.get("date")))
+        except ValueError:
+            return []
+        context = payload.get("report_context") or {}
+        features = payload.get("features") or {}
+        sections = []
+        yesterday = day - timedelta(days=1)
+        previous_activity = self._previous_activity(payload, day)
+        if previous_activity:
+            facts = self._activity_facts(previous_activity, yesterday)
+            if facts:
+                sections.append({"key": "yesterday_activity", "title": "昨天的活动", "facts": facts,
+                                 "interpretation": [], "limitations": []})
+        workouts = []
+        training = features.get("training") or {}
+        for item in training.get("recent_workouts") or []:
+            if not isinstance(item, dict) or date_text(item.get("date")) != yesterday.isoformat():
+                continue
+            label = item.get("sport_mode_label") or item.get("type_label") or "训练"
+            parts = []
+            if item.get("started_at"):
+                parts.append(f"开始 {timestamp_text(item['started_at'], context.get('timezone'), short=True)}")
+            duration = item.get("duration_minutes")
+            if isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration > 0:
+                parts.append(f"时长 {number(duration, 0)} 分钟")
+            if item.get("training_family") != "strength" and item.get("distance_km") is not None:
+                parts.append(f"距离 {number(item['distance_km'], 2)} 公里")
+            if item.get("calories_kcal") is not None:
+                parts.append(f"本次训练估算热量 {number(item['calories_kcal'])} 千卡")
+            if item.get("heart_rate_avg_bpm") is not None:
+                parts.append(f"平均心率 {number(item['heart_rate_avg_bpm'], 0)} 次/分钟")
+            if item.get("vendor_reported_sets") is not None:
+                parts.append(f"设备记录组数 {number(item['vendor_reported_sets'], 0)} 组")
+            workouts.append(f"已记录{label}" + ("：" + "；".join(parts) if parts else ""))
+        if workouts:
+            sections.append({"key": "observed_training", "title": "昨天已记录的训练", "facts": workouts,
+                             "interpretation": [], "limitations": []})
+        today_activity = features.get("activity") or {}
+        if today_activity.get("status") == "AVAILABLE":
+            facts = self._activity_facts(today_activity, day)
+            if facts:
+                sections.append({"key": "today_activity", "title": "今天截至分析时的活动", "facts": facts,
+                                 "interpretation": [], "limitations": []})
+        return sections
+
     def _sections(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         features = payload.get("features") or {}
         sleep = features.get("sleep") or {}
@@ -128,10 +263,11 @@ class MorningBriefingEngine:
         return [
             {"key": "sleep", "title": "昨晚睡眠", "facts": self._sleep_facts(sleep),
              "interpretation": self._sleep_interpretation(sleep), "limitations": self._limitations(sleep)},
-            {"key": "recovery", "title": "今早恢复信号", "facts": self._recovery_facts(hrv, vitals),
+            {"key": "recovery", "title": "今早恢复信号", "facts": self._recovery_facts(hrv, vitals, features.get("recovery") or {}),
              "interpretation": self._recovery_interpretation(features, hrv, vitals),
              "limitations": unique(self._limitations(hrv) + self._limitations(vitals)
                                    + self._limitations(vitals.get("oxygen") or {}))},
+            *self._observed_sections(payload),
             {"key": "today_plan", "title": "今天的安排", "facts": self._plan_facts(decision),
              "interpretation": self._plan_interpretation(payload),
              "limitations": self._plan_limitations(payload)},
@@ -143,55 +279,100 @@ class MorningBriefingEngine:
         if duration:
             facts.append(f"睡眠时长 {duration}")
         bedtime, wake = clock_text(sleep.get("bedtime")), clock_text(sleep.get("wake_time"))
-        if bedtime and wake:
-            facts.append(f"入睡 {bedtime}，醒来 {wake}")
-        for key, label in (("deep_minutes", "深睡"), ("rem_minutes", "快速眼动睡眠"), ("awake_minutes", "清醒")):
+        if bedtime:
+            facts.append(f"入睡 {bedtime}")
+        if wake:
+            facts.append(f"醒来 {wake}")
+        for key, label in (("deep_minutes", "深睡"), ("light_minutes", "浅睡"),
+                           ("rem_minutes", "快速眼动睡眠"), ("awake_minutes", "夜间清醒")):
             value = minutes_text(sleep.get(key))
-            if value:
-                facts.append(f"{label} {value}")
+            if value is not None:
+                facts.append(f"设备记录{label} {value}")
         if sleep.get("wake_count") is not None:
             facts.append(f"夜间醒来 {sleep['wake_count']} 次")
         if sleep.get("vendor_sleep_score") is not None:
             facts.append(f"设备睡眠评分 {number(sleep['vendor_sleep_score'], 0)}/100")
+        if sleep.get("duration_deviation"):
+            facts.append(f"睡眠时长与个人参照：{baseline_text(sleep['duration_deviation'])}。")
+        if sleep.get("regularity_minutes") is not None:
+            facts.append(f"近期入睡时刻离散度 {number(sleep['regularity_minutes'])} 分钟")
         return facts or ["昨晚没有可用的睡眠时长、时间或连续性记录"]
 
     def _sleep_interpretation(self, sleep: dict[str, Any]) -> list[str]:
-        output = []
-        if sleep.get("duration_minutes") is not None:
-            output.append(f"睡眠时长：{baseline_text(sleep.get('duration_deviation'))}。")
-        if sleep.get("regularity_minutes") is not None:
-            output.append(f"近期入睡时刻的波动约 {number(sleep['regularity_minutes'])} 分钟。")
         wake_deviation = sleep.get("wake_count_deviation")
-        if wake_deviation:
-            output.append(f"醒来次数{baseline_text(wake_deviation, noun='个人通常水平')}。")
-        return output or ["睡眠事实已保留，但缺少可用个人参照，不能判断优劣。"]
+        return ([f"醒来次数{baseline_text(wake_deviation, noun='个人通常水平')}。"]
+                if wake_deviation else [])
 
-    def _recovery_facts(self, hrv: dict[str, Any], vitals: dict[str, Any]) -> list[str]:
+    def _recovery_facts(
+        self, hrv: dict[str, Any], vitals: dict[str, Any], recovery: dict[str, Any]
+    ) -> list[str]:
         output = []
         value = hrv.get("value_ms")
         preferred = hrv.get("preferred_metric")
-        if isinstance(value, (int, float)):
-            output.append(f"{metric_label(preferred, overnight=preferred == 'hrv_rmssd')} {number(value)} 毫秒")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            source = hrv.get("preferred_device_label")
+            if source == "Zepp 厂商汇总":
+                source = "Zepp 汇总"
+            suffix = f"（{source}）" if source else ""
+            output.append(f"{metric_label(preferred)} {number(value)} 毫秒{suffix}")
+            if hrv.get("deviation"):
+                output.append(f"{metric_label(preferred)}：{baseline_text(hrv['deviation'])}。")
+            if hrv.get("recent_7d_median_ms") is not None and hrv.get("recent_7d_days"):
+                output.append(f"近 7 日同源 {metric_label(preferred)}：中位数 {number(hrv['recent_7d_median_ms'])} 毫秒（有效 {number(hrv['recent_7d_days'], 0)} 天）")
+            if hrv.get("previous_7d_median_ms") is not None and hrv.get("previous_7d_days"):
+                output.append(f"此前 7 日同源 {metric_label(preferred)}：中位数 {number(hrv['previous_7d_median_ms'])} 毫秒（有效 {number(hrv['previous_7d_days'], 0)} 天）")
         else:
-            output.append("没有可用于本次判断的 HRV 读数")
-        if isinstance(hrv.get("rhr_bpm"), (int, float)):
-            output.append(f"{metric_label(hrv.get('rhr_metric') or 'resting_hr')} {number(hrv['rhr_bpm'])} 次/分钟")
-        else:
-            output.append("静息心率没有可用夜间读数")
-        if isinstance(vitals.get("respiratory_rate"), (int, float)):
+            output.append("睡眠 HRV 未取得可用读数")
+        if isinstance(hrv.get("rhr_bpm"), (int, float)) and not isinstance(hrv.get("rhr_bpm"), bool):
+            label = "夜间心率中位数" if hrv.get("rhr_metric") == "nocturnal_heart_rate" else metric_label(hrv.get("rhr_metric") or "resting_hr")
+            output.append(f"{label} {number(hrv['rhr_bpm'])} 次/分钟")
+            if hrv.get("rhr_deviation"):
+                output.append(f"{label}：{baseline_text(hrv['rhr_deviation'])}。")
+        night_hr = hrv.get("nocturnal_heart_rate") or {}
+        if night_hr.get("status") == "AVAILABLE":
+            if night_hr.get("median_bpm") is not None and hrv.get("rhr_metric") != "nocturnal_heart_rate":
+                output.append(f"夜间心率中位数 {number(night_hr['median_bpm'])} 次/分钟")
+            if night_hr.get("low_5m_bpm") is not None:
+                output.append(f"夜间最低五分钟心率中位数 {number(night_hr['low_5m_bpm'])} 次/分钟")
+            if night_hr.get("sample_count"):
+                coverage = night_hr.get("coverage_ratio")
+                scope = f"；记录覆盖约 {number(coverage * 100, 0)}%" if isinstance(coverage, (int, float)) and coverage > 0 else ""
+                output.append(f"夜间心率采样 {number(night_hr['sample_count'], 0)} 条{scope}")
+        if isinstance(vitals.get("respiratory_rate"), (int, float)) and not isinstance(vitals.get("respiratory_rate"), bool):
             output.append(f"夜间呼吸频率 {number(vitals['respiratory_rate'])} 次/分钟")
+        if isinstance(vitals.get("skin_temperature_delta_c"), (int, float)) and not isinstance(vitals.get("skin_temperature_delta_c"), bool):
+            output.append(f"夜间皮肤温度相对设备基线 {float(vitals['skin_temperature_delta_c']):+.1f} °C")
         oxygen = vitals.get("oxygen") or {}
-        if isinstance(oxygen.get("median_percent"), (int, float)):
-            output.append(f"夜间血氧中位数 {number(oxygen['median_percent'])}%")
+        if isinstance(oxygen.get("median_percent"), (int, float)) and not isinstance(oxygen.get("median_percent"), bool):
+            coverage = []
+            if oxygen.get("sample_count"):
+                coverage.append(f"{number(oxygen['sample_count'], 0)} 条读数")
+            if oxygen.get("measured_minutes") is not None:
+                coverage.append(f"{number(oxygen['measured_minutes'], 0)} 分钟有记录")
+            if oxygen.get("coverage_ratio") is not None:
+                coverage.append(f"约 {number(oxygen['coverage_ratio'] * 100, 0)}% 睡眠时段")
+            suffix = f"（{'；'.join(coverage)}）" if coverage else ""
+            output.append(f"夜间血氧中位数 {number(oxygen['median_percent'])}%{suffix}")
+            if oxygen.get("status") == "AVAILABLE" and oxygen.get("lower_10th_percent") is not None:
+                output.append(f"夜间血氧较低的十分位 {number(oxygen['lower_10th_percent'])}%")
+        if oxygen.get("status") == "AVAILABLE" and oxygen.get("odi_events_per_hour") is not None:
+            output.append(f"设备记录夜间血氧下降频率 {number(oxygen['odi_events_per_hour'])} 次/小时")
+        for key, label in (("vendor_readiness", "准备度"), ("vendor_charge", "能量")):
+            score = recovery.get(key)
+            if isinstance(score, (int, float)) and not isinstance(score, bool) and 0 <= score <= 100:
+                output.append(f"设备{label}评分 {number(score, 0)}/100（厂商参考值）")
+        components = recovery.get("vendor_readiness_components") or {}
+        if not isinstance(components, dict):
+            components = {}
+        for label in ("身体", "心理"):
+            score = components.get(label)
+            if isinstance(score, (int, float)) and not isinstance(score, bool) and 0 <= score <= 100:
+                output.append(f"设备准备度（{label}）{number(score, 0)}/100（厂商参考值）")
         return output
 
     def _recovery_interpretation(self, features: dict[str, Any], hrv: dict[str, Any], vitals: dict[str, Any]) -> list[str]:
         recovery = features.get("recovery") or {}
         output = []
-        if hrv.get("value_ms") is not None:
-            output.append(f"{metric_label(hrv.get('preferred_metric'))}：{baseline_text(hrv.get('deviation'))}。")
-        if hrv.get("rhr_bpm") is not None:
-            output.append(f"{metric_label(hrv.get('rhr_metric') or 'resting_hr')}：{baseline_text(hrv.get('rhr_deviation'))}。")
         positive = recovery.get("positive_signal_labels") or []
         negative = recovery.get("negative_signal_labels") or []
         if positive:

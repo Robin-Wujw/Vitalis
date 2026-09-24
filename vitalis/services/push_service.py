@@ -96,7 +96,7 @@ class PushService:
 
     @staticmethod
     def _log_handler(msg: PushMessage) -> None:
-        log.info("[PUSH] user=%s title=%s\n%s", msg.user_id, msg.title, msg.body)
+        log.info("[PUSH] report rendered; template=%s", msg.template)
 
     def _webhook_handler(self, msg: PushMessage) -> None:
         if not self.webhook_url:
@@ -187,7 +187,7 @@ def _render_morning(briefing: dict) -> tuple[str, list[str]]:
     metadata = (briefing.get("report_context") or {}).get("delivery_metadata") or {}
     facts_only = bool(metadata.get("facts_only"))
     if facts_only:
-        title = f"Vitalis 晨报 · {date} · 事实版"
+        title = f"Vitalis 晨报 · {date}"
     else:
         plan = briefing.get("action_plan") or {}
         primary = plan.get("primary_session") or {}
@@ -198,7 +198,9 @@ def _render_morning(briefing: dict) -> tuple[str, list[str]]:
     retrospective = bool(metadata.get("retrospective"))
     sections = [
         section for section in briefing.get("sections", [])
-        if (not facts_only or section.get("key") in {"sleep", "recovery"})
+        if (not facts_only or section.get("key") in {
+            "sleep", "recovery", "yesterday_activity", "observed_training", "today_activity",
+        })
         and (not retrospective or section.get("key") != "today_plan")
     ]
     for section in sections:

@@ -172,11 +172,14 @@ class ZeppConnector(HealthConnector):
         self, user_id: str, *, days: int = 730, window: FetchWindow | None = None,
         trigger: str = "manual", trigger_ref: str | None = None,
         decode_dense_files: bool = False, detail_backfill: bool = False,
-        workout_only: bool = False,
+        workout_only: bool = False, detail_only: bool = False,
+        detail_refresh_before: str | None = None,
     ):
         """Create/reuse a durable attempt without doing network work."""
-        if (detail_backfill or workout_only) and trigger != "manual":
+        if (detail_backfill or workout_only or detail_only) and trigger != "manual":
             raise ValueError("historical workout options require a manual sync")
+        if detail_refresh_before and not detail_only:
+            raise ValueError("detail_refresh_before requires detail_only")
         from vitalis.services.zepp_sync_coordinator import ZeppSyncCoordinator
 
         coordinator = ZeppSyncCoordinator(
@@ -195,6 +198,8 @@ class ZeppConnector(HealthConnector):
                 "decode_dense_files": decode_dense_files,
                 **({"detail_backfill": True} if detail_backfill else {}),
                 **({"workout_only": True} if workout_only else {}),
+                **({"detail_only": True} if detail_only else {}),
+                **({"detail_refresh_before": detail_refresh_before} if detail_refresh_before else {}),
             },
         )
 

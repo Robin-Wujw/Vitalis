@@ -44,7 +44,8 @@ def test_manual_detail_backfill_api_passes_explicit_flag(client, monkeypatch):
     assert response.json()["status"] == "queued"
     assert calls[-1] == (
         "queued", {"days": 8, "trigger": "manual", "decode_dense_files": False,
-                   "detail_backfill": True, "workout_only": False},
+                   "detail_backfill": True, "workout_only": False,
+                   "detail_only": False, "detail_refresh_before": None},
     )
 
     response = client.post(
@@ -64,6 +65,40 @@ def test_manual_detail_backfill_api_passes_explicit_flag(client, monkeypatch):
     )
     assert response.status_code == 200
     assert calls[-1][1]["workout_only"] is True
+    response = client.post(
+        "/api/v1/health/sync?days=730&enqueue_only=true&detail_only=true",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert calls[-1][1]["detail_only"] is True
+    assert calls[-1][1]["detail_refresh_before"] is None
+
+
+def test_detail_only_api_requires_enqueue_and_reports_empty_backlog(client, monkeypatch):
+    from vitalis.api.routes import health
+
+    class Connector:
+        mock = False
+
+        def load_token(self, repo, user_id):
+            return object()
+
+        def create_attempt(self, user_id, **kwargs):
+            assert kwargs["detail_only"] is True
+            return None
+
+    monkeypatch.setattr(health, "get_connector", lambda source: Connector())
+    headers = {"X-User-Id": "manual-detail-empty"}
+    refused = client.post("/api/v1/health/sync?detail_only=true", headers=headers)
+    assert refused.status_code == 400
+    response = client.post(
+        "/api/v1/health/sync?days=730&detail_only=true&enqueue_only=true",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "no_pending_details"
+    assert response.json()["attempt_id"] is None
+    assert response.json()["source_coverage_unchanged"] is True
 
 
 def test_nonmanual_detail_backfill_is_rejected_before_scheduling():
@@ -89,7 +124,9 @@ def test_connector_persists_workout_only_as_manual_attempt_option(monkeypatch):
 
     def create_attempt(self, user_id, **kwargs):
         captured.append(kwargs)
-        return SimpleNamespace(id="manual-workouts", status="queued")
+        return None if kwargs["options"].get("detail_only") else SimpleNamespace(
+            id="manual-workouts", status="queued"
+        )
 
     monkeypatch.setattr(zepp_sync_coordinator.ZeppSyncCoordinator, "create_attempt", create_attempt)
     connector = ZeppConnector(mock=False)
@@ -99,6 +136,15 @@ def test_connector_persists_workout_only_as_manual_attempt_option(monkeypatch):
     assert captured[0]["trigger"] == "manual"
     assert captured[0]["options"] == {
         "decode_dense_files": False, "detail_backfill": True, "workout_only": True,
+    }
+    assert connector.create_attempt(
+        "owner", days=730, detail_only=True,
+        detail_refresh_before="2026-09-24T14:00:00Z",
+    ) is None
+    assert captured[1]["options"] == {
+        "decode_dense_files": False,
+        "detail_only": True,
+        "detail_refresh_before": "2026-09-24T14:00:00Z",
     }
 
 
@@ -130,8 +176,24 @@ def test_sync_cli_only_sets_backfill_param_when_requested(monkeypatch, capsys):
     assert module.main() == 0
     monkeypatch.setattr(sys, "argv", ["sync.py", "--days", "730", "--workout-only"])
     assert module.main() == 0
+    monkeypatch.setattr(sys, "argv", ["sync.py", "--days", "730", "--details-only"])
+    assert module.main() == 0
+    monkeypatch.setattr(sys, "argv", [
+        "sync.py", "--days", "730", "--details-only",
+        "--refresh-before", "2026-09-24T14:00:00Z",
+    ])
+    assert module.main() == 0
     assert calls == [
         {"days": 8}, {"days": 8, "detail_backfill": "true"},
         {"days": 730, "workout_only": "true"},
+        {"days": 730, "detail_only": "true", "enqueue_only": "true"},
+        {"days": 730, "detail_only": "true", "enqueue_only": "true",
+         "detail_refresh_before": "2026-09-24T14:00:00Z"},
     ]
+    monkeypatch.setattr(sys, "argv", ["sync.py", "--details-only", "--workout-only"])
+    with pytest.raises(SystemExit):
+        module.main()
+    monkeypatch.setattr(sys, "argv", ["sync.py", "--refresh-before", "2026-09-24T14:00:00Z"])
+    with pytest.raises(SystemExit):
+        module.main()
     assert "queued" in capsys.readouterr().out

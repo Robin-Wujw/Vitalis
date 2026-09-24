@@ -80,11 +80,21 @@ def health_sync(
     decode_dense_files: bool = Query(False, description="显式解码最多一个秒级心率归档"),
     detail_backfill: bool = Query(False, description="仅手动补抓同步窗口内的历史训练明细，每次最多四份"),
     workout_only: bool = Query(False, description="仅手动同步全运动历史与有界训练明细，不请求其他健康流"),
+    detail_only: bool = Query(False, description="仅手动补抓已保存训练的缺失或旧版明细"),
+    detail_refresh_before: str | None = Query(None, description="仅明细模式中显式重取该 UTC 时刻之前的已缓存明细"),
     enqueue_only: bool = Query(False, description="只创建持久同步任务，由 worker 执行"),
     user_id: str = Depends(require_user_id),
 ) -> dict:
     """Check the token in a short session, then run the coordinator outside it."""
+    if detail_only and not enqueue_only:
+        raise HTTPException(status_code=400, detail="detail_only requires enqueue_only=true")
+    if detail_refresh_before and not detail_only:
+        raise HTTPException(status_code=400, detail="detail_refresh_before requires detail_only")
+    if detail_only and (workout_only or detail_backfill or decode_dense_files):
+        raise HTTPException(status_code=400, detail="detail_only cannot combine with other sync modes")
     connector: ZeppConnector = get_connector("zepp")  # type: ignore[assignment]
+    if detail_only and getattr(connector, "mock", False):
+        raise HTTPException(status_code=400, detail="detail_only requires a real Zepp connector")
     try:
         with session_scope() as db:
             auth = connector.load_token(HealthRepository(db), user_id)
@@ -98,7 +108,17 @@ def health_sync(
                 decode_dense_files=decode_dense_files,
                 detail_backfill=detail_backfill,
                 workout_only=workout_only,
+                detail_only=detail_only,
+                detail_refresh_before=detail_refresh_before,
             )
+            if attempt is None:
+                return {
+                    "user_id": user_id,
+                    "status": "no_pending_details",
+                    "success": True,
+                    "attempt_id": None,
+                    "source_coverage_unchanged": True,
+                }
             return {
                 "user_id": user_id,
                 "status": "queued",

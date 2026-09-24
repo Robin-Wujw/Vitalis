@@ -351,6 +351,44 @@ def test_training_history_coverage_reaches_old_proof_after_more_than_64_attempts
     assert result["budget_exhausted"] is False
 
 
+def test_many_detail_only_attempts_do_not_hide_older_workout_proof():
+    user_id = "coverage-detail-only-budget"
+    proof_id = _attempt(user_id)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        proof = repo.sync_attempt(proof_id)
+        assert proof is not None
+        proof.finished_at = (NOW - timedelta(hours=2)).replace(tzinfo=None)
+        for chunk in repo.sync_chunks(proof_id):
+            chunk.finished_at = proof.finished_at
+        for index in range(260):
+            attempt = repo.create_or_reuse_sync_attempt(
+                user_id, plan_version=PLAN_VERSION,
+                options={"detail_only": True, "batch": index},
+                window_start=WINDOW.start, window_end=WINDOW.end,
+                manifest=[{
+                    "stable_key": f"detail-only-{index}",
+                    "stream": "workout_detail", "partition": f"zepp:{index}",
+                    "ordinal": 0, "window_start": WINDOW.start,
+                    "window_end": WINDOW.end,
+                }],
+            )
+            attempt.status = "succeeded"
+            attempt.finished_at = (NOW - timedelta(minutes=1)).replace(tzinfo=None)
+            detail_chunk, = repo.sync_chunks(attempt.id)
+            detail_chunk.status = "succeeded"
+            detail_chunk.finished_at = attempt.finished_at
+            db.flush()
+
+    with session_scope() as db:
+        result = HealthRepository(db).training_history_coverage(
+            user_id, date(2026, 8, 1), date(2026, 8, 2), NOW,
+        )
+    assert result["status"] == "COMPLETE"
+    assert result["verified_days"] == ["2026-08-01", "2026-08-02"]
+    assert result["budget_exhausted"] is False
+
+
 def test_successful_empty_workout_queries_prove_coverage_but_unavailable_does_not():
     user_id = "coverage-confirmed-empty"
     attempt_id = _attempt(user_id)

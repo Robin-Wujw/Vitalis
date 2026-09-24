@@ -81,7 +81,7 @@ credential and both users' historical records remain unchanged.
 | GET | `/health/metrics/{metric}?from=&to=&resolution=` | Read timestamped measurements; raw/hour/day points retain source, scope, device, and unit |
 | GET | `/health/daily-metrics?metric=&from=&to=` | Read sparse daily metrics with source provenance |
 | GET | `/health/dense-files/second_heart_rate?from=&to=` | Read high-frequency file coverage without file IDs |
-| POST | `/health/sync?days=&decode_dense_files=false&detail_backfill=false&workout_only=false` | Sync health data; dense archives are index-only by default. Manual `detail_backfill=true` refreshes older workout details; manual `workout_only=true` fetches only the account-wide workout feed plus at most four details per attempt |
+| POST | `/health/sync?days=&decode_dense_files=false&detail_backfill=false&workout_only=false&detail_only=false` | Sync health data; dense archives are index-only by default. Manual `workout_only=true` fetches only the account-wide workout feed plus at most four details. Manual `detail_backfill=true` refreshes old details during regular sync. `detail_only=true&enqueue_only=true` queues only up to four stored workout details, does not prove workout-history coverage, and returns `no_pending_details` when none remain |
 
 `GET /health/metrics/stress?resolution=raw` returns the vendor's timestamped
 `all_day_stress.data` observations with source, scope, device, unit, and explicit gaps.

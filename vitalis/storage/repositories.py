@@ -7,7 +7,7 @@ import hashlib
 import json
 from uuid import uuid4
 
-from sqlalchemy import Integer, case, cast, delete, func, or_, select, text, tuple_, update
+from sqlalchemy import Integer, case, cast, delete, exists, func, or_, select, text, tuple_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -862,6 +862,8 @@ class HealthRepository:
             orm.Workout.started_at >= _naive_utc(start),
             orm.Workout.started_at < _naive_utc(end),
             orm.Workout.vendor_source.is_not(None),
+            orm.Workout.vendor_source != "",
+            orm.Workout.workout_id != "",
         ]
         excluded = set(exclude_workout_ids or set())
         if excluded:
@@ -1560,6 +1562,10 @@ class HealthRepository:
                 orm.SyncAttempt.window_start < period_end_utc,
                 orm.SyncAttempt.window_end > period_start_utc,
                 orm.SyncAttempt.finished_at <= as_of_naive,
+                exists().where(
+                    orm.SyncChunk.attempt_id == orm.SyncAttempt.id,
+                    orm.SyncChunk.stream == "workouts",
+                ),
             ]
             if attempt_cursor is not None:
                 finished_at, created_at, attempt_id = attempt_cursor

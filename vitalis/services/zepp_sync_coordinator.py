@@ -351,6 +351,15 @@ class ZeppSyncCoordinator:
             for index, sport in enumerate(SPORTS)
         ]
 
+    @classmethod
+    def _detail_spec(cls, window: FetchWindow, workout: Any, ordinal: int) -> dict[str, Any]:
+        return cls._spec(
+            "workout_detail", f"zepp:{workout.workout_id}", window,
+            health_stream="workout_detail", ordinal=ordinal,
+            operation="fetch_workout_detail",
+            params={"workout_id": workout.workout_id, "source": workout.vendor_source},
+        )
+
     def _manifest(
         self,
         window: FetchWindow,
@@ -483,21 +492,55 @@ class ZeppSyncCoordinator:
         timezone_name: str | None = None,
         trigger_ref: str | None = None,
         deadline_at: datetime | None = None,
-    ) -> orm.SyncAttempt:
+    ) -> orm.SyncAttempt | None:
         options = dict(options or {})
-        if not isinstance(options.get("workout_only", False), bool):
-            raise ZeppAuthError("workout_only 必须是布尔值", kind="invalid_request")
-        if options.get("workout_only") is True and trigger != "manual":
-            raise ZeppAuthError("workout_only 只能用于手动同步", kind="invalid_request")
-        if options.get("workout_only") is True and options.get("decode_dense_files") is True:
-            raise ZeppAuthError(
-                "workout_only 不能同时解码密集心率归档", kind="invalid_request"
-            )
+        for name in ("workout_only", "detail_only"):
+            if not isinstance(options.get(name, False), bool):
+                raise ZeppAuthError(f"{name} 必须是布尔值", kind="invalid_request")
+        workout_only = options.get("workout_only") is True
+        detail_only = options.get("detail_only") is True
+        if (workout_only or detail_only) and trigger != "manual":
+            raise ZeppAuthError("仅运动/明细同步只能用于手动同步", kind="invalid_request")
+        if workout_only and detail_only:
+            raise ZeppAuthError("workout_only 与 detail_only 不能同时使用", kind="invalid_request")
+        if (workout_only or detail_only) and options.get("decode_dense_files") is True:
+            raise ZeppAuthError("仅运动/明细同步不能同时解码密集心率归档", kind="invalid_request")
+        if detail_only and options.get("detail_backfill") is True:
+            raise ZeppAuthError("detail_only 与 detail_backfill 不能同时使用", kind="invalid_request")
+        cutoff_value = options.get("detail_refresh_before")
+        if cutoff_value is not None and not detail_only:
+            raise ZeppAuthError("detail_refresh_before 只能用于明细同步", kind="invalid_request")
+        refresh_before = None
+        if cutoff_value is not None:
+            if not isinstance(cutoff_value, str):
+                raise ZeppAuthError("detail_refresh_before 必须是 UTC 时间", kind="invalid_request")
+            try:
+                refresh_before = datetime.fromisoformat(cutoff_value.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ZeppAuthError("detail_refresh_before 时间格式无效", kind="invalid_request") from exc
+            if refresh_before.tzinfo is None:
+                raise ZeppAuthError("detail_refresh_before 必须带时区", kind="invalid_request")
+            refresh_before = refresh_before.astimezone(timezone.utc)
+            if refresh_before > self.wall_clock():
+                raise ZeppAuthError("detail_refresh_before 不能晚于当前时间", kind="invalid_request")
+            options["detail_refresh_before"] = refresh_before.isoformat().replace("+00:00", "Z")
         window = self._window(window, days)
         timezone_name = timezone_name or self._configured_timezone()
-        manifest = self._manifest(window, options, timezone_name)
+        manifest = None if detail_only else self._manifest(window, options, timezone_name)
         with self._session() as db:
             repo = HealthRepository(db)
+            if detail_only:
+                candidates = repo.pending_workout_details(
+                    user_id, window.start, window.end, limit=MAX_DETAIL_CHUNKS,
+                    source="zepp", refresh_after=refresh_before,
+                )
+                manifest = [
+                    self._detail_spec(window, workout, index)
+                    for index, workout in enumerate(candidates)
+                    if workout.workout_id and workout.vendor_source
+                ]
+                if not manifest:
+                    return None
             return repo.create_or_reuse_sync_attempt(
                 user_id,
                 source="zepp",
@@ -924,17 +967,8 @@ class ZeppSyncCoordinator:
             part = f"zepp:{workout.workout_id}"
             if part in known:
                 continue
-            params = {
-                "workout_id": workout.workout_id,
-                "source": workout.vendor_source,
-            }
-            specs.append(self._spec(
-                "workout_detail", part,
-                detail_window,
-                health_stream="workout_detail",
-                ordinal=100000 + len(existing) + len(specs),
-                operation="fetch_workout_detail",
-                params=params,
+            specs.append(self._detail_spec(
+                detail_window, workout, 100000 + len(existing) + len(specs)
             ))
             known.add(part)
         return specs
@@ -1028,6 +1062,15 @@ class ZeppSyncCoordinator:
             with self._session() as db:
                 repo = HealthRepository(db)
                 report = manager._persist_record(result.record, repo, user)
+                if (
+                    chunk["stream"] == "workout_detail"
+                    and attempt.get("options", {}).get("detail_only") is True
+                    and report.status == "success"
+                    and report.records_written == 0
+                ):
+                    report.status = "failed"
+                    report.error_kind = "unrecognized_payload"
+                    report.message = "训练明细响应没有形成可保存的记录"
                 incomplete = result.incomplete or result.record.incomplete
                 incomplete_reason = (
                     result.incomplete_reason

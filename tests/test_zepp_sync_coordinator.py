@@ -12,7 +12,7 @@ from vitalis.connectors.zepp.fetcher import (
     FetchedRecord,
     RawRecord,
 )
-from vitalis.models import User
+from vitalis.models import User, Workout, WORKOUT_DETAIL_SCHEMA_VERSION
 from vitalis.services.zepp_sync_coordinator import (
     SyncControl,
     ZeppSyncCoordinator,
@@ -141,6 +141,168 @@ def test_workout_only_rejects_scheduled_or_non_boolean_options():
         )
     with session_scope() as db:
         assert HealthRepository(db).sync_attempts("coord-workout-only-invalid") == []
+
+
+def test_detail_only_returns_none_without_pending_workouts():
+    user_id = "coord-detail-only-empty"
+    _clean(user_id)
+    coordinator = ZeppSyncCoordinator()
+    assert coordinator.create_attempt(
+        user_id, window=WINDOW, options={"detail_only": True},
+    ) is None
+    with session_scope() as db:
+        assert HealthRepository(db).sync_attempts(user_id) == []
+
+
+def test_detail_only_rejects_incompatible_modes_and_invalid_cutoff():
+    user_id = "coord-detail-only-invalid"
+    _clean(user_id)
+    coordinator = ZeppSyncCoordinator(wall_clock=lambda: NOW)
+    invalid = [
+        ({"detail_only": "true"}, "必须是布尔值"),
+        ({"detail_only": True, "workout_only": True}, "不能同时使用"),
+        ({"detail_only": True, "detail_backfill": True}, "不能同时使用"),
+        ({"detail_only": True, "decode_dense_files": True}, "不能同时解码"),
+        ({"detail_refresh_before": NOW.isoformat()}, "只能用于明细同步"),
+        ({"detail_only": True, "detail_refresh_before": "not-a-date"}, "时间格式无效"),
+        ({"detail_only": True, "detail_refresh_before": "2026-08-01T12:00:00"}, "必须带时区"),
+        ({"detail_only": True, "detail_refresh_before": "2026-08-31T00:00:00Z"}, "不能晚于"),
+    ]
+    for options, message in invalid:
+        with pytest.raises(ZeppAuthError, match=message):
+            coordinator.create_attempt(user_id, window=WINDOW, options=options)
+    with pytest.raises(ZeppAuthError, match="只能用于手动同步"):
+        coordinator.create_attempt(
+            user_id, window=WINDOW, trigger="scheduled", options={"detail_only": True},
+        )
+    with session_scope() as db:
+        assert HealthRepository(db).sync_attempts(user_id) == []
+
+
+def test_repeated_detail_only_attempts_drain_backlog_without_history_fetch():
+    user_id = "coord-detail-only-progress"
+    _clean(user_id)
+    window = FetchWindow.local_dates(date(2026, 8, 1), date(2026, 8, 12))
+    workout_ids = [
+        str(int((window.start + timedelta(days=index + 1, hours=1)).timestamp()))
+        for index in range(6)
+    ]
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        for index, workout_id in enumerate(workout_ids):
+            repo.save_workout(Workout(
+                user_id=user_id, workout_id=workout_id,
+                started_at=window.start + timedelta(days=index + 1, hours=1),
+                duration=30, training_family="strength", vendor_source="cloud",
+            ))
+            if index < 2:
+                repo.save_workout_detail(
+                    user_id, workout_id, {"schema_version": "4.0"},
+                    fetched_at=NOW - timedelta(days=30),
+                )
+
+    class Connector:
+        def __init__(self):
+            self.details = []
+
+        def fetch_sport_history(self, *args):
+            pytest.fail("detail-only must not request workout history")
+
+        def fetch_sport_detail(self, workout_id, source):
+            assert source == "cloud"
+            self.details.append(workout_id)
+            return {"data": {"trackid": int(workout_id), "strengthSets": "[]"}}
+
+    connector = Connector()
+    coordinator = ZeppSyncCoordinator(connector=connector, wall_clock=lambda: NOW)
+    first = coordinator.create_attempt(user_id, window=window, options={"detail_only": True})
+    assert first is not None and first.plan_version == "zepp-sync-v6"
+    assert first.chunk_count == 4
+    assert coordinator.run_attempt(first.id).success
+    with session_scope() as db:
+        remaining = HealthRepository(db).pending_workout_details(
+            user_id, window.start, window.end, limit=10,
+        )
+    assert len(remaining) == 2
+    assert {row["stream"] for row in coordinator.status(first.id)["chunks"]} == {"workout_detail"}
+
+    second = coordinator.create_attempt(user_id, window=window, options={"detail_only": True})
+    assert second is not None and second.id != first.id
+    assert second.chunk_count == 2
+    assert coordinator.run_attempt(second.id).success
+    assert len(connector.details) == len(set(connector.details)) == 6
+    assert coordinator.create_attempt(user_id, window=window, options={"detail_only": True}) is None
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        coverage = repo.training_history_coverage(
+            user_id, date(2026, 8, 1), date(2026, 8, 2), NOW,
+        )
+    assert coverage["status"] == "UNKNOWN"
+    assert coverage["verified_days"] == []
+
+
+def test_detail_only_fixed_refresh_cutoff_normalizes_and_converges():
+    user_id = "coord-detail-only-cutoff"
+    _clean(user_id)
+    workout_id = str(int((WINDOW.start + timedelta(hours=1)).timestamp()))
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        repo.save_workout(Workout(
+            user_id=user_id, workout_id=workout_id, started_at=WINDOW.start + timedelta(hours=1),
+            duration=30, training_family="strength", vendor_source="cloud",
+        ))
+        repo.save_workout_detail(
+            user_id, workout_id, {"schema_version": WORKOUT_DETAIL_SCHEMA_VERSION},
+            fetched_at=NOW - timedelta(days=20),
+        )
+
+    class Connector:
+        def fetch_sport_detail(self, workout_id, source):
+            return {"data": {"trackid": int(workout_id)}}
+
+    coordinator = ZeppSyncCoordinator(connector=Connector(), wall_clock=lambda: NOW)
+    options = {"detail_only": True, "detail_refresh_before": "2026-08-21T08:00:00+08:00"}
+    first = coordinator.create_attempt(user_id, window=WINDOW, options=options)
+    assert first is not None
+    assert first.options["detail_refresh_before"] == "2026-08-21T00:00:00Z"
+    assert coordinator.run_attempt(first.id).success
+    assert coordinator.create_attempt(user_id, window=WINDOW, options=options) is None
+
+
+@pytest.mark.parametrize("failure", ["not_available", "empty_payload"])
+def test_detail_only_failed_detail_remains_pending_without_coverage_proof(failure):
+    user_id = f"coord-detail-only-failed-{failure}"
+    _clean(user_id)
+    workout_id = str(int((WINDOW.start + timedelta(hours=1)).timestamp()))
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        repo.save_workout(Workout(
+            user_id=user_id, workout_id=workout_id, started_at=WINDOW.start + timedelta(hours=1),
+            duration=30, training_family="strength", vendor_source="cloud",
+        ))
+
+    class Connector:
+        def fetch_sport_detail(self, *args):
+            if failure == "not_available":
+                raise ZeppAuthError("detail unavailable", kind="not_available")
+            return {"data": {}}
+
+    coordinator = ZeppSyncCoordinator(connector=Connector(), wall_clock=lambda: NOW)
+    attempt = coordinator.create_attempt(user_id, window=WINDOW, options={"detail_only": True})
+    assert attempt is not None
+    report = coordinator.run_attempt(attempt.id)
+    assert report.success is False
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        assert repo.pending_workout_details(user_id, WINDOW.start, WINDOW.end, limit=4)
+        coverage = repo.training_history_coverage(
+            user_id, date(2026, 8, 1), date(2026, 8, 1), NOW,
+        )
+    assert coverage["status"] == "UNKNOWN"
+    assert coordinator.create_attempt(user_id, window=WINDOW, options={"detail_only": True}) is not None
 
 
 def test_repeated_workout_only_attempts_drain_historical_detail_backlog():

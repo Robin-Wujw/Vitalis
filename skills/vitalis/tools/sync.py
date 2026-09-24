@@ -22,12 +22,27 @@ def main() -> int:
         "--workout-only", action="store_true",
         help="仅同步全运动历史并有界补抓窗口内旧训练明细",
     )
+    parser.add_argument(
+        "--details-only", action="store_true",
+        help="仅将已保存训练的缺失或旧版明细入队，每次最多四份",
+    )
+    parser.add_argument(
+        "--refresh-before", help="仅明细模式中显式重取该 UTC ISO 时刻之前的已缓存明细",
+    )
     args = parser.parse_args()
+    if args.details_only and (args.workout_only or args.detail_backfill):
+        parser.error("--details-only 不能和其他手动补采模式同时使用")
+    if args.refresh_before and not args.details_only:
+        parser.error("--refresh-before 仅支持 --details-only")
     params = {"days": args.days}
     if args.detail_backfill:
         params["detail_backfill"] = "true"
     if args.workout_only:
         params["workout_only"] = "true"
+    if args.details_only:
+        params.update(detail_only="true", enqueue_only="true")
+    if args.refresh_before:
+        params["detail_refresh_before"] = args.refresh_before
     response = httpx.post(
         f"{API}/api/v1/health/sync",
         params=params,

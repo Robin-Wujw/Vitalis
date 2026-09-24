@@ -85,7 +85,8 @@ def test_morning_displays_sync_limitation_and_recovery_disagreement():
     payload["features"]["hrv"].update({"corroboration_status": "conflicting", "corroboration_affects_decision": True})
     message = _sent(lambda service: service.push_daily_profile("test-user", payload, period="morning"))
     text = _visible_text(message.body)
-    assert "本次同步未完整完成" in text
+    assert "部分数据尚未完成更新" in text
+    assert text.count("本报告使用已保存") == 1
     assert "HRV 证据存在分歧" in text
     assert "单个 HRV 读数" in text
     assert "Amazfit" not in text
@@ -114,7 +115,8 @@ def test_morning_renders_all_hard_safety_conditions():
     plan["optional_session"]["stop_conditions"] = ["动作失控时停止。"]
     message = _sent(lambda service: service.push_daily_profile("test-user", payload, period="morning"))
     text = _visible_text(message.body)
-    assert "安全限制" in text
+    assert "停止条件" in text
+    assert "安全限制" not in text
     assert "疼痛时停止" in text and "症状加重时寻求评估" in text and "动作失控时停止" in text
 
 
@@ -240,6 +242,101 @@ def test_monthly_push_uses_same_report_sections_and_noncausal_association():
     for heading in ("两期二十八日覆盖", "持续恢复变化", "训练结构、活动与能量", "合格的个人关联", "阶段建议"):
         assert heading in text
     assert "不表示因果" in text
+
+
+def test_reports_group_data_notes_without_repeating_summary_or_generic_limits():
+    daily = _daily_payload()
+    daily["features"]["sleep"]["limitation_labels"] = ["睡眠分期有缺项，已记录时长仍可查看。"]
+    morning = _sent(lambda service: service.push_daily_profile("test-user", daily, period="morning"))
+    evening = _sent(lambda service: service.push_daily_profile("test-user", daily, period="evening"))
+    monthly = _sent(lambda service: service.push_monthly_profile("test-user", synthetic_period_fixture("monthly")))
+    weekly = _sent(lambda service: service.push_weekly_profile("test-user", synthetic_period_fixture("weekly")))
+
+    for message in (morning, evening, monthly, weekly):
+        text = _visible_text(message.body)
+        assert "限制：" not in text
+        assert "必要限制" not in text
+    assert "数据说明" in _visible_text(morning.body)
+    assert "睡眠分期有缺项" in _visible_text(morning.body)
+    assert _visible_text(morning.body).count("出现疼痛时停止") == 1
+    assert _visible_text(evening.body).count("户外跑：") == 1
+    assert _visible_text(monthly.body).count("睡眠时长较前一期增加 5.7%") == 1
+
+
+def test_facts_only_morning_mentions_unknown_history_once():
+    daily = _daily_payload()
+    daily["delivery_metadata"] = {"facts_only": True}
+    text = _visible_text(_sent(lambda service: service.push_daily_profile("test-user", daily, period="morning")).body)
+
+    assert text.count("训练历史覆盖尚未核验") == 1
+    assert "今天的安排" not in text
+
+
+def test_evening_uses_supplied_energy_unit_and_only_observed_heart_rate_zones():
+    daily = _daily_payload()
+    daily["features"]["activity"]["energy"][0]["unit"] = "kJ"
+    daily["features"]["training"]["running"]["recent_sessions"][0]["heart_rate_zones"] = [
+        {"zone": 3, "label": "中等强度", "lower_bpm": 130, "upper_bpm": 150, "share_percent": 18},
+    ]
+    daily["features"]["training"]["recent_workouts"].append({
+        "date": daily["date"], "type_label": "力量训练", "sport_mode_label": "力量训练",
+        "training_family": "strength", "duration_minutes": 52, "distance_km": 0,
+        "calories_kcal": 220, "heart_rate_avg_bpm": 110,
+    })
+    text = _visible_text(_sent(lambda service: service.push_daily_profile("test-user", daily, period="evening")).body)
+
+    assert "510 kJ" in text and "510 千卡" not in text
+    assert "中等强度（130–150 次/分钟） 18%" in text
+    assert "低强度 0%" not in text
+    assert "力量训练：0.00 公里" not in text
+    assert text.count("52 分钟") == 1
+    assert "本次训练估算热量 220 千卡" in text
+
+
+def test_evening_preserves_two_identical_workouts_as_two_observations():
+    daily = _daily_payload()
+    workout = daily["features"]["training"]["recent_workouts"][0]
+    daily["features"]["training"]["recent_workouts"] = [deepcopy(workout), deepcopy(workout)]
+    text = _visible_text(_sent(lambda service: service.push_daily_profile("test-user", daily, period="evening")).body)
+
+    assert text.count("户外跑：") == 2
+
+
+def test_evening_matched_strength_keeps_heart_rate_missing_from_specialist():
+    daily = _daily_payload()
+    daily["features"]["training"]["recent_workouts"].append({
+        "date": daily["date"], "type_label": "力量训练", "training_family": "strength",
+        "duration_minutes": 52, "heart_rate_avg_bpm": 110,
+    })
+    text = _visible_text(_sent(lambda service: service.push_daily_profile("test-user", daily, period="evening")).body)
+
+    assert text.count("52 分钟") == 1
+    assert "力量训练：平均心率 110 次/分钟" in text
+
+
+def test_evening_matches_distinct_specialist_sessions_without_repeating_doses():
+    daily = _daily_payload()
+    first = daily["features"]["training"]["recent_workouts"][0]
+    second = {**first, "duration_minutes": 30, "distance_km": 4.2, "calories_kcal": None}
+    daily["features"]["training"]["recent_workouts"] = [first, second]
+    run = daily["features"]["training"]["running"]["recent_sessions"][0]
+    daily["features"]["training"]["running"]["recent_sessions"] = [run, {**run, "duration_minutes": 30, "distance_km": 4.2}]
+    text = _visible_text(_sent(lambda service: service.push_daily_profile("test-user", daily, period="evening")).body)
+
+    assert text.count("总耗时 45 分钟") == 1
+    assert text.count("总耗时 30 分钟") == 1
+    assert text.count("距离 7.10 公里") == 1
+    assert text.count("距离 4.20 公里") == 1
+    assert "户外跑：30 分钟" not in text
+
+
+def test_morning_does_not_repeat_a_caution_as_a_stop_condition():
+    daily = _daily_payload()
+    daily["events"] = [{"type": "RECOVERY_SUPPRESSED", "lifecycle": "ACTIVE", "summary": "出现疼痛时停止。"}]
+    text = _visible_text(_sent(lambda service: service.push_daily_profile("test-user", daily, period="morning")).body)
+
+    assert text.count("出现疼痛时停止") == 1
+    assert "停止条件" in text
 
 
 def test_four_complete_fixture_entrypoints_build_the_same_sections():

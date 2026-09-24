@@ -12,7 +12,7 @@
 3. `为什么`：最多四条，只使用 `facts` 与 `gates` 中已持久化的触发事实和门控结果；
    `inferences` 与 `action.driver_labels` 仅用于对应中文标签。不得计算新指标、补全缺失观测
    或把支持性信号写成触发原因。
-4. `数据限制`：说明 `snapshot.data_quality` 的中文状态、缺失必需信号和 `limitations`。当
+4. `数据说明`：说明 `snapshot.data_quality` 的中文状态、缺失必需信号和 `limitations`，不逐条冠以“限制”。当
    `action.action` 为 `INSUFFICIENT_DATA` 时，到此为止，不得给出训练建议。
 5. `依据`：仅在返回的 `evidence_refs` 与当前计划相关时引用；不得引入外部网页、医学结论
    或未返回的证据。

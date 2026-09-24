@@ -54,7 +54,7 @@ class MorningBriefingEngine:
             "action_label": (payload.get("decision") or {}).get("action_label", "暂不生成训练建议"),
             "action_plan": (payload.get("decision") or {}).get("action_plan") or {},
             "report_context": report_context,
-            "summary": self._summary(payload, sections),
+            "summary": [],
             "sections": sections,
             "observations": [{"text": item} for item in observations],
             "key_reasons": [{"text": item} for item in reasons],
@@ -130,7 +130,8 @@ class MorningBriefingEngine:
              "interpretation": self._sleep_interpretation(sleep), "limitations": self._limitations(sleep)},
             {"key": "recovery", "title": "今早恢复信号", "facts": self._recovery_facts(hrv, vitals),
              "interpretation": self._recovery_interpretation(features, hrv, vitals),
-             "limitations": self._limitations(hrv) + self._limitations(vitals)},
+             "limitations": unique(self._limitations(hrv) + self._limitations(vitals)
+                                   + self._limitations(vitals.get("oxygen") or {}))},
             {"key": "today_plan", "title": "今天的安排", "facts": self._plan_facts(decision),
              "interpretation": self._plan_interpretation(payload),
              "limitations": self._plan_limitations(payload)},
@@ -151,7 +152,7 @@ class MorningBriefingEngine:
         if sleep.get("wake_count") is not None:
             facts.append(f"夜间醒来 {sleep['wake_count']} 次")
         if sleep.get("vendor_sleep_score") is not None:
-            facts.append(f"睡眠评分 {number(sleep['vendor_sleep_score'], 0)}")
+            facts.append(f"设备睡眠评分 {number(sleep['vendor_sleep_score'], 0)}/100")
         return facts or ["昨晚没有可用的睡眠时长、时间或连续性记录"]
 
     def _sleep_interpretation(self, sleep: dict[str, Any]) -> list[str]:
@@ -274,19 +275,10 @@ class MorningBriefingEngine:
 
     def _plan_limitations(self, payload: dict[str, Any]) -> list[str]:
         quality = payload.get("data_quality") or {}
-        output = list(quality.get("missing_required_signal_labels") or [])
-        plan = (payload.get("decision") or {}).get("action_plan") or {}
-        if plan.get("safety_status") != "LIMITED":
-            for key in ("primary_session", "optional_session"):
-                output.extend((plan.get(key) or {}).get("stop_conditions") or [])
-        return unique(output)
-
-    def _summary(self, payload: dict[str, Any], sections: list[dict[str, Any]]) -> list[str]:
-        decision = payload.get("decision") or {}
-        sleep = sections[0]["interpretation"][:1]
-        recovery = sections[1]["interpretation"][:1]
-        action = decision.get("action_label") or "暂不生成训练建议"
-        return unique(sleep + recovery + [f"今天的安排：{action}。"])[:3]
+        return unique([
+            f"{label}尚无可用记录，本次安排不依据该信号。"
+            for label in quality.get("missing_required_signal_labels") or []
+        ])
 
     def _reasons(self, payload: dict[str, Any]) -> list[str]:
         decision = payload.get("decision") or {}
@@ -318,9 +310,7 @@ class MorningBriefingEngine:
     @staticmethod
     def safety_lines(briefing: dict[str, Any]) -> list[str]:
         plan = briefing.get("action_plan") or {}
-        if plan.get("safety_status") != "LIMITED":
-            return []
-        output = [plan.get("safety_status_label", "")]
+        output = [plan.get("safety_status_label", "")] if plan.get("safety_status") == "LIMITED" else []
         for session_key in ("primary_session", "optional_session"):
             output.extend((plan.get(session_key) or {}).get("stop_conditions", []))
         return unique(output)

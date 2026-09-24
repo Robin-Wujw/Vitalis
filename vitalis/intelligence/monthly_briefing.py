@@ -1,10 +1,11 @@
 """Build the complete rolling 28-day report from a MonthlyProfile."""
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
 from .contracts import ReportBriefing
-from .report_formatting import as_of_line, coverage_text, date_text, energy_label, metric_label, number, payload_of, percent, running_class_label, unique
+from .report_formatting import as_of_line, coverage_text, date_text, energy_label, metric_label, number, payload_of, percent, running_class_label, unique, value_with_unit
 
 
 _ACTIVITY_UNIT_LABELS = {
@@ -33,6 +34,11 @@ def _activity_metric_value(metric: dict[str, Any], value: Any) -> str | None:
     return f"{shown} {unit}" if unit else shown
 
 
+def _day_count(label: str, value: Any) -> str:
+    shown = number(value, 0)
+    return f"{label} {shown}/28 天" if shown is not None else f"{label}天数未记录"
+
+
 class MonthlyBriefingEngine:
     """Projection only; it does not schedule delivery or recalculate associations."""
 
@@ -42,8 +48,8 @@ class MonthlyBriefingEngine:
         inferences = payload.get("inferences") or {}
         sections = [
             self._coverage(payload),
-            self._sleep_recovery(facts, inferences),
-            self._training_activity(facts, inferences),
+            self._sleep_recovery(facts),
+            self._training_activity(facts),
             self._associations(payload),
             self._actions(payload),
         ]
@@ -57,7 +63,7 @@ class MonthlyBriefingEngine:
             generated_at=payload.get("generated_at"),
             report_context=dict(payload.get("report_context") or {}),
             data_quality=payload.get("data_quality") or {},
-            summary=self._summary(payload, sections),
+            summary=self._summary(payload),
             sections=sections,
         ).model_dump(mode="json")
 
@@ -68,10 +74,10 @@ class MonthlyBriefingEngine:
         training = (payload.get("facts") or {}).get("training") or {}
         facts = [coverage_text(training.get("coverage_status"), training.get("record_days"), training.get("unknown_days"), 28)]
         quality = payload.get("data_quality") or {}
-        if any(quality.get(key) is not None for key in ("sleep_days", "hrv_days", "activity_days", "training_record_days")):
+        if any(quality.get(key) is not None for key in ("sleep_days", "hrv_days", "activity_days")):
             facts.append("当前窗口有效天数：" + "；".join(
-                f"{label} {quality.get(key, 0)}/28"
-                for key, label in (("sleep_days", "睡眠"), ("hrv_days", "HRV"), ("activity_days", "活动"), ("training_record_days", "训练记录"))
+                f"{label} {quality[key]}/28"
+                for key, label in (("sleep_days", "睡眠"), ("hrv_days", "HRV"), ("activity_days", "活动"))
                 if quality.get(key) is not None
             ) + "。")
         as_of = as_of_line(payload.get("report_context") or {})
@@ -82,47 +88,74 @@ class MonthlyBriefingEngine:
         limitations = list(quality.get("limitations") or [])
         return {"key": "coverage", "title": "两期二十八日覆盖", "facts": facts, "interpretation": ["只有两期覆盖和有效日数足够时，长期变化才具有可比性。"], "limitations": limitations}
 
-    def _sleep_recovery(self, facts: dict[str, Any], inferences: dict[str, Any]) -> dict[str, Any]:
+    def _sleep_recovery(self, facts: dict[str, Any]) -> dict[str, Any]:
         sleep = facts.get("sleep") or {}
         recovery = facts.get("recovery") or {}
         lines = []
         if sleep.get("available_days") is not None:
-            text = f"睡眠有效 {number(sleep['available_days'], 0)} 天"
+            current_days = sleep["available_days"]
+            previous_days = sleep.get("previous_available_days")
+            text = f"睡眠：本期有效 {number(current_days, 0)}/28 天"
             if sleep.get("average_minutes") is not None:
-                text += f"，平均 {number(sleep['average_minutes'], 0)} 分钟"
+                text += f"，平均 {number(sleep['average_minutes'], 0)} 分钟/晚"
+            if previous_days is not None:
+                text += f"；前期有效 {number(previous_days, 0)}/28 天"
+            elif sleep.get("previous_average_minutes") is not None:
+                text += "；前期有效天数未记录"
             if sleep.get("previous_average_minutes") is not None:
-                text += f"；前一期 {number(sleep['previous_average_minutes'], 0)} 分钟"
-            if sleep.get("change_percent") is not None:
-                text += f"，变化 {percent(sleep['change_percent'])}"
+                text += f"，平均 {number(sleep['previous_average_minutes'], 0)} 分钟/晚"
+            if (sleep.get("change_percent") is not None
+                    and sleep.get("average_minutes") is not None
+                    and sleep.get("previous_average_minutes") is not None
+                    and current_days >= 14 and previous_days is not None and previous_days >= 14):
+                text += f"；两期均值变化 {percent(sleep['change_percent'])}"
             if sleep.get("bedtime_regularity_minutes") is not None:
                 text += f"；入睡时间离散度 {number(sleep['bedtime_regularity_minutes'])} 分钟"
             lines.append(text + "。")
         streams = recovery.get("streams") or []
+        counts = Counter(stream.get("metric") for stream in streams)
+        indices: Counter[str] = Counter()
         for stream in streams:
-            label = stream.get("metric_label") or metric_label(stream.get("metric"))
-            text = f"{label}（{stream.get('available_days', 0)} 天）中位数 {number(stream.get('median')) if stream.get('median') is not None else '没有可用值'}"
+            metric = stream.get("metric")
+            indices[metric] += 1
+            label = stream.get("metric_label") or metric_label(metric)
+            if counts[metric] > 1:
+                source = "设备记录" if stream.get("source_scope") == "device" else "汇总记录"
+                label += f"（{source} {indices[metric]}）"
+            current_days = stream.get("available_days")
+            previous_days = stream.get("previous_available_days")
+            current_count = f"{number(current_days, 0)}/28" if current_days is not None else "未记录"
+            text = f"{label}：本期有效 {current_count} 天，中位数 {value_with_unit(stream.get('median'), stream.get('unit')) or '未记录'}"
+            if previous_days is not None:
+                text += f"；前期有效 {number(previous_days, 0)}/28 天"
+            elif stream.get("previous_median") is not None:
+                text += "；前期有效天数未记录"
             if stream.get("previous_median") is not None:
-                text += f"；前一期 {number(stream['previous_median'])}"
-            if stream.get("change_percent") is not None:
-                text += f"；变化 {percent(stream['change_percent'])}"
+                text += f"，中位数 {value_with_unit(stream['previous_median'], stream.get('unit'))}"
+            if (stream.get("change_percent") is not None
+                    and stream.get("median") is not None and stream.get("previous_median") is not None
+                    and current_days is not None and previous_days is not None
+                    and current_days >= 14 and previous_days >= 14):
+                text += f"；两期中位数变化 {percent(stream['change_percent'])}"
             lines.append(text + "。")
         if not lines:
             lines.append("本周期没有足够的睡眠或同源恢复流可用于长期比较。")
-        interpretation = list(inferences.get("key_changes") or [])
-        if not interpretation:
-            interpretation = ["睡眠、HRV 和静息心率没有足够的两期一致变化，暂不据此改变阶段训练方向。"]
-        return {"key": "sleep_recovery", "title": "持续恢复变化", "facts": lines, "interpretation": interpretation[:8], "limitations": []}
+        return {"key": "sleep_recovery", "title": "持续恢复变化", "facts": lines, "interpretation": [], "limitations": []}
 
-    def _training_activity(self, facts: dict[str, Any], inferences: dict[str, Any]) -> dict[str, Any]:
+    def _training_activity(self, facts: dict[str, Any]) -> dict[str, Any]:
         training = facts.get("training") or {}
         activity = facts.get("activity") or {}
         feedback = facts.get("feedback") or {}
         lines = []
-        for key, label, unit in (("workout_count", "训练场次", "次"), ("duration_minutes", "训练时长", "分钟"), ("vendor_load", "设备训练负荷", ""), ("aerobic_minutes", "有氧时长", "分钟"), ("strength_sessions", "力量场次", "次")):
+        partial = training.get("totals_are_partial")
+        if partial is None:
+            partial = training.get("coverage_status") != "COMPLETE" or training.get("unknown_days") != 0
+        for key, label, unit in (("workout_count", "训练场次", "次"), ("duration_minutes", "训练时长", "分钟"), ("vendor_load", "设备训练负荷指数", ""), ("aerobic_minutes", "有氧时长", "分钟"), ("strength_sessions", "力量场次", "次")):
             if training.get(key) is not None:
-                lines.append(f"{label} {number(training[key])} {unit}。" if unit else f"{label} {number(training[key])}。")
+                name = f"已记录{label}" if partial else label
+                lines.append(f"{name} {number(training[key])} {unit}。" if unit else f"{name} {number(training[key])}。")
         if training.get("running_sessions") is not None:
-            run = f"跑步 {number(training['running_sessions'], 0)} 次"
+            run = f"{'已记录' if partial else ''}跑步 {number(training['running_sessions'], 0)} 次"
             if training.get("running_distance_km") is not None:
                 run += f"、{number(training['running_distance_km'], 2)} 公里"
             if training.get("running_duration_minutes") is not None:
@@ -138,41 +171,61 @@ class MonthlyBriefingEngine:
         if training.get("strength_sets") is not None:
             strength.append(f"明确组数 {number(training['strength_sets'], 0)} 组")
         if strength:
-            lines.append("力量：" + "；".join(strength) + "。")
+            lines.append(("已记录力量：" if partial else "力量：") + "；".join(strength) + "。")
         if training.get("vendor_reported_sets") is not None:
-            lines.append(f"设备记录组数合计 {number(training['vendor_reported_sets'], 0)} 组，来自 {number(training.get('vendor_sets_sessions', 0), 0)} 场有组数记录的力量训练；不等同于已取得逐组动作明细。")
+            lines.append(f"设备已记录组数小计 {number(training['vendor_reported_sets'], 0)} 组，来自 {number(training.get('vendor_sets_sessions', 0), 0)} 场有组数记录的力量训练；不等同于逐组动作明细。")
         if training.get("workout_calories_kcal") is not None:
-            lines.append(f"训练热量 {number(training['workout_calories_kcal'])} 千卡，来自 {number(training.get('workout_calories_sessions', 0), 0)} 场有热量记录。")
-        if activity.get("total_steps") is not None or activity.get("active_minutes") is not None:
-            text = []
-            if activity.get("total_steps") is not None:
-                text.append(f"累计步数 {number(activity['total_steps'], 0)}")
-            if activity.get("average_steps") is not None:
-                text.append(f"日均 {number(activity['average_steps'], 0)}")
-            if activity.get("active_minutes") is not None:
-                text.append(f"活动分钟 {number(activity['active_minutes'], 0)}")
-            lines.append("日常活动：" + "；".join(text) + "。")
+            lines.append(f"已记录训练热量小计 {number(training['workout_calories_kcal'])} 千卡，来自 {number(training.get('workout_calories_sessions', 0), 0)} 场有热量记录。")
+        metrics = activity.get("metrics") or []
+        if activity.get("total_steps") is not None and not any(
+            item.get("metric") == "steps" and item.get("total") is not None for item in metrics
+        ):
+            days = activity.get("available_days")
+            scope = f"{number(days, 0)} 个有记录日" if days is not None else "有记录日"
+            lines.append(f"日常步数：{scope}小计 {number(activity['total_steps'], 0)} 步。")
+        if activity.get("average_steps") is not None and not any(
+            item.get("metric") == "steps" and item.get("average") is not None for item in metrics
+        ):
+            lines.append(f"有记录日平均步数 {number(activity['average_steps'], 0)} 步/日。")
+        if activity.get("active_minutes") is not None and not any(
+            item.get("metric") == "active_minutes" and item.get("total") is not None for item in metrics
+        ):
+            lines.append(f"已记录活动时长小计 {number(activity['active_minutes'], 0)} 分钟（有效天数未单独统计）。")
         limitations = []
-        for metric in activity.get("metrics") or []:
+        counts = Counter((item.get("metric"), item.get("role")) for item in metrics)
+        indices: Counter[tuple[str | None, str | None]] = Counter()
+        for metric in metrics:
+            key = (metric.get("metric"), metric.get("role"))
+            indices[key] += 1
             name = _activity_metric_label(metric)
+            if counts[key] > 1:
+                scope = (metric.get("provenance") or {}).get("source_scope")
+                name += f"（{'设备记录' if scope == 'device' else '汇总记录'} {indices[key]}）"
             prefix = "设备估算口径未确认；" if metric.get("role") == "unspecified" else ""
-            text = f"{name}{prefix}本期有效日 {metric.get('available_days', 0)}、完整日 {metric.get('complete_days', 0)}；前期有效日 {metric.get('previous_available_days', 0)}、完整日 {metric.get('previous_complete_days', 0)}"
+            text = (f"{name}：{prefix}{_day_count('本期有记录', metric.get('available_days'))}、{_day_count('完整', metric.get('complete_days'))}；"
+                    f"{_day_count('前期有记录', metric.get('previous_available_days'))}、{_day_count('完整', metric.get('previous_complete_days'))}")
             total = _activity_metric_value(metric, metric.get("total"))
             average = _activity_metric_value(metric, metric.get("average"))
+            partial_metric = (
+                metric.get("totals_are_partial") is not False
+                or metric.get("complete_days") != 28
+                or metric.get("available_days") != 28
+            )
             if total is not None:
-                text += f"；合计 {total}"
+                text += f"；{'已记录小计' if partial_metric else '合计'} {total}"
             if average is not None:
-                text += f"；日均 {average}"
-            if metric.get("change_percent") is not None:
-                text += f"；均值变化 {percent(metric['change_percent'])}"
+                text += f"；有记录日均 {average}"
+            if (metric.get("change_percent") is not None
+                    and metric.get("average") is not None and metric.get("previous_average") is not None
+                    and isinstance(metric.get("complete_days"), int)
+                    and isinstance(metric.get("previous_complete_days"), int)
+                    and metric["complete_days"] >= 14 and metric["previous_complete_days"] >= 14):
+                text += f"；完整日均值变化 {percent(metric['change_percent'])}"
             lines.append(text + "。")
             limitations.extend(metric.get("limitations") or [])
         if feedback.get("response_count", 0):
             lines.append(f"已记录主观反馈 {number(feedback['response_count'], 0)} 条；这些反馈用于解释周期体验，不是自动问卷结果。")
-        changes = list(inferences.get("key_changes") or [])
-        if not changes:
-            changes = ["训练结构和活动没有足够的两期可比变化，暂不据此增加下一阶段总量。"]
-        return {"key": "training_activity", "title": "训练结构、活动与能量", "facts": lines or ["本周期没有足够的训练、活动或能量事实。"], "interpretation": changes[:6], "limitations": unique(list(training.get("limitations") or []) + list(inferences.get("limitations") or []) + limitations)}
+        return {"key": "training_activity", "title": "训练结构、活动与能量", "facts": lines or ["本周期没有可用的训练、活动或能量事实。"], "interpretation": [], "limitations": unique(list(training.get("limitations") or []) + limitations)}
 
     def _associations(self, payload: dict[str, Any]) -> dict[str, Any]:
         associations = (payload.get("inferences") or {}).get("personal_associations") or []
@@ -181,7 +234,9 @@ class MonthlyBriefingEngine:
         for item in associations:
             summary = item.get("summary")
             if summary:
-                facts.append(summary + "（仅表示个人关联，不表示因果。）")
+                days = item.get("paired_days")
+                detail = f"配对 {number(days, 0)} 天；" if days is not None else ""
+                facts.append(f"{summary}（{detail}仅表示个人关联，不表示因果。）")
             else:
                 facts.append(f"{item.get('predictor_metric_label', '指标')} 与 {item.get('outcome_metric_label', '结果')}：配对 {item.get('paired_days', 0)} 天，{item.get('direction_label', '方向未确定')}。")
             limitations.extend(item.get("limitations") or [])
@@ -202,5 +257,5 @@ class MonthlyBriefingEngine:
         return {"key": "actions", "title": "阶段建议", "facts": facts, "interpretation": interpretations, "limitations": list(inferences.get("limitations") or [])}
 
     @staticmethod
-    def _summary(payload: dict[str, Any], sections: list[dict[str, Any]]) -> list[str]:
-        return [f"滚动 28 日（{date_text(payload.get('period_start'))} 至 {date_text(payload.get('period_end'))}）的持续变化。", sections[1]["facts"][0], sections[2]["facts"][0]]
+    def _summary(payload: dict[str, Any]) -> list[str]:
+        return [f"滚动 28 日：{date_text(payload.get('period_start'))} 至 {date_text(payload.get('period_end'))}。"]

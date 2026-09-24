@@ -733,6 +733,20 @@
           "title": "Available Days",
           "type": "integer"
         },
+        "previous_available_days": {
+          "anyOf": [
+            {
+              "maximum": 28,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Previous Available Days"
+        },
         "average_minutes": {
           "anyOf": [
             {

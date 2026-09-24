@@ -4,13 +4,13 @@
 
 Use the requested date, or today's date when none is given. Read `tools/morning_briefing.py` first and render only its fields. Do not reconstruct a report from DailyProfile features. All runtime user-visible output must be ordinary Chinese, phrased like a coach explaining what to do today.
 
-First show the returned sleep and body-state entries in `observations`; include returned same-day running or strength context when present. The absence of a workout so far today is not a missing item and must not turn the Morning briefing into `INSUFFICIENT_DATA`. Morning prescriptions must not mix in historical `observed_sets`.
+Render the returned sleep, recovery, and today's plan in `sections` order, retaining each fact's unit; show each `facts` and `interpretation` item once. Do not repeat `observations` or `key_reasons` already present in a section. No workout yet today is not missing data and must not change the report to `INSUFFICIENT_DATA`. Do not mix historical `observed_sets` into morning prescriptions.
 
-A facts-only report (`facts_only`) shows only the returned sleep, body state, and necessary limitations. Do not add exercises, intensity, weights, or reconstruct a prescription from the full daily profile. Render a complete prescription report in this order:
+A facts-only report (`facts_only`) shows only returned sleep and body-state facts, the training-history note once, and necessary safety information. Do not add exercises, intensity, weights, or reconstruct a prescription from the full daily profile. Render a complete report in this order:
 
-1. `今天做什么`: Preserve the duration, intensity, and steps from `action_plan.primary_session`. If `optional_session` exists, explain naturally in Chinese whether it is an optional addition or an either/or choice according to `session_relationship`. Never present an either/or choice as two required sessions on the same day.
-2. `为什么`: Repeat each item in `key_reasons`, up to three. Do not add device names, sleep stages, vendor scores, raw metrics, or internal codes.
-3. `注意`: Show this only when `cautions` is non-empty, repeating each item. Do not generate extra generic reminders.
-4. When `decision_action` is `INSUFFICIENT_DATA`, state only `data_quality`, `key_reasons`, and `cautions` in Chinese. Do not substitute yesterday's data, general training advice, or a compensating arrangement.
+1. `今天做什么`: Show the returned `sections.today_plan` duration, intensity, and steps. Use `action_plan.primary_session`, `optional_session`, and `session_relationship` only to check whether sessions are alternatives or additions; do not repeat the same dose.
+2. `为什么`: Use explanations already in the relevant sections; add only distinct returned `key_reasons`, up to three. Do not add unreturned measurements or internal codes.
+3. `需要留意`: Deduplicate the `limitations` in `sections` and the `cautions`, describing each missing or partial datum beside its number. Show actual stop conditions separately as `停止条件`, not as generic limitations.
+4. When `decision_action` is `INSUFFICIENT_DATA`, show only returned sleep/body facts, `data_quality`, `key_reasons`, and `cautions` in Chinese. Do not substitute yesterday's data, general training advice, or a compensating arrangement.
 
-When the user explicitly asks “why” or “what is the evidence,” call `tools/explain.py`, then present the existing evidence and limitations in Chinese. Do not recalculate or select metrics. Open Health remains a descriptive shadow insight and does not participate in the morning briefing decision.
+Call `tools/explain.py` only when the user asks why; present persisted evidence and data notes without recomputing or choosing measurements. Open Health remains a descriptive shadow insight, not a morning decision input.

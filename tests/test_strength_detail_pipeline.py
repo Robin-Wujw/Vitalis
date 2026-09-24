@@ -252,6 +252,7 @@ def test_explicitly_incomplete_training_history_blocks_prescription_only():
     assert decision.action_plan.primary_session is None
     assert decision.rule_ids == ["DECISION.TRAINING_HISTORY_COVERAGE_INSUFFICIENT"]
     assert decision.evidence.gates[0].expected_condition == "prior_7d_verified=True"
+    assert decision.evidence.gates[0].label == "此前 7 天训练历史尚未核实，暂不生成训练安排"
     assert any("此前 7 天训练记录" in item for item in decision.limitations)
 
 

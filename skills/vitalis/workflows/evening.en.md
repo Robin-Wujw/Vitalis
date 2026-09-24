@@ -2,17 +2,13 @@
 
 [简体中文](evening.md)
 
-All runtime user-visible output must be Chinese. If `open_health_insights.training_load` is returned, repeat only that day's TRIMP and the descriptive ATL/CTL/TSB values. Describe TSB only as a training-load difference, not as recovery or status. For a refusal or missing input, briefly state the returned missing input in Chinese.
+All runtime user-visible output must be Chinese. Call `tools/evening_briefing.py` first and render only its `ReportBriefing 1.0`. Its `sections` share the HTML report projection; do not reconstruct from raw `features` or repeat the morning narrative:
 
-Do not repeat the morning narrative. Begin with what actually happened today:
-
-1. From `recent_workouts`, use `sport_mode_label` to show every workout that day, `started_at`, its duration, vendor load, and `recognition_confidence_label`. Do not show only the broad `type`. Describe real workout details in start-time order; state plainly when there was no formal workout and do not treat that as an anomaly.
-2. When returned by `features.training.running` or `features.training.strength`, show the available discipline-specific running metrics, strength sets, and confirmed exercises. Give confirmed records precedence, then show `observed_sets` one set at a time in `order`. Preserve the `source` literals `strength_sets` / `lap_62`, `vendor_exercise_code`, `weight_value`, `weight_unit`, and `limitations`; repeat the returned `exercise_name` with its source limitations, mark only unknown codes as unnamed, preserve nulls and unknown units, and do not invent `kg`, exercise names, or weights. Negative sentinels remain null.
-3. Show today's load, 7-day duration, 7-day load, and `load_state_label`; when 7-day totals are affected by coverage, state `history_coverage` and `totals_are_partial`.
-4. Use Chinese status labels, `positive_signal_labels`, `negative_signal_labels`, and the action label to describe recovery status and whether to continue activity tonight.
-5. Present recent context with each available trend's `metric_label`, `direction_label`, and `confidence_label`, plus unresolved events' `summary`, severity label, and lifecycle label.
-6. Do not reschedule today's training in the evening. You may review returned discipline-specific analysis, but must not calculate or add actions.
-7. Explain the judgment with Chinese evidence labels and always put data limitations in the final section.
-8. Do not proactively ask for RPE, physical fatigue, mental state, or muscle soreness; only when the user provides feedback explicitly, record it verbatim with `tools/feedback.py add`; never infer a rating for the user.
-
-The current model has no recovery forecasting capability. Do not predict tomorrow's recovery.
+1. `training`: Show returned workouts, discipline-specific details, and confirmed or observed strength sets in order. Retain actual repetitions, weights, and units; say when a value or name is unrecorded instead of inventing it.
+2. Show each workout's summary and specialist measurements once. No recorded formal workout is not proof of a rest day and does not warrant compensatory training.
+3. `activity`: Keep steps, activity, and each device energy scope separate, with its actual unit. Do not add energy entries or call unknown-scope energy total expenditure.
+4. `intraday`: Device stress scores, heart-rate samples, and first/last observation times describe recorded intervals only. Explain incomplete coverage near the metric; unobserved intervals are not zero.
+5. `recovery`: Distinguish last night's recovery readings from today's training load; do not call pre-training readings post-exercise recovery.
+6. Repeat only returned `facts`, `interpretation`, and actual safety information; do not reschedule today's workout, calculate new values, or forecast tomorrow's recovery.
+7. Render `limitations` once as data notes in the related sections rather than prefixing every item with “限制：” or collecting them at the end. Put missing/partial scopes beside the corresponding number.
+8. Do not proactively request RPE, physical fatigue, mental state, or muscle soreness. Only when the user explicitly provides feedback, record it verbatim using `tools/feedback.py add`; do not infer a score.

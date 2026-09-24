@@ -17,7 +17,7 @@ from vitalis.intelligence.evening_briefing import EveningBriefingEngine
 from vitalis.intelligence.morning_briefing import MorningBriefingEngine
 from vitalis.intelligence.monthly_briefing import MonthlyBriefingEngine
 from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
-from vitalis.intelligence.report_formatting import as_of_line
+from vitalis.intelligence.report_formatting import as_of_line, unique
 
 log = logging.getLogger("vitalis.push")
 PUSHPLUS_URL = "https://www.pushplus.plus/send"
@@ -153,6 +153,35 @@ def _render_report_html(lines: list[str]) -> str:
     return '<div style="max-width:680px;margin:0 auto;padding:14px 14px 22px;box-sizing:border-box;border:1px solid #dbe4e8;border-radius:8px;background:#ffffff;color:#1f2937;font-family:Arial,sans-serif;font-size:15px;line-height:1.65;letter-spacing:0;word-break:break-word">' + fragment + "</div>"
 
 
+def _report_summary(payload: dict) -> list[str]:
+    sections = payload.get("sections") or []
+    details = [
+        item for section in sections
+        for key in ("facts", "interpretation")
+        for item in section.get(key) or []
+    ]
+    return unique([
+        item for item in payload.get("summary") or []
+        if not any(detail and (item == detail or item.endswith(detail)) for detail in details)
+    ])
+
+
+def _section_lines(section: dict) -> list[str]:
+    lines = ["", f"## {section.get('title', '分析')}", ""]
+    facts = section.get("facts") or []
+    interpretation = [item for item in section.get("interpretation") or [] if item not in facts]
+    lines.extend(f"- {item}" for item in facts)
+    lines.extend(f"- {item}" for item in interpretation)
+    notes = unique([
+        item for item in section.get("limitations") or []
+        if item not in facts and item not in interpretation
+    ])
+    if notes:
+        lines.extend(["", "### 数据说明", ""])
+        lines.extend(f"- {item}" for item in notes)
+    return lines
+
+
 def _render_morning(briefing: dict) -> tuple[str, list[str]]:
     date = briefing.get("date", "日期未提供")
     metadata = (briefing.get("report_context") or {}).get("delivery_metadata") or {}
@@ -164,43 +193,48 @@ def _render_morning(briefing: dict) -> tuple[str, list[str]]:
         primary = plan.get("primary_session") or {}
         title_label = primary.get("title") or briefing.get("action_label", "今日安排")
         title = f"Vitalis 晨报 · {date} · {title_label}"
-    lines = _timing_lines(briefing) + [f"# 晨报 · {date}", "", *briefing.get("summary", [])]
+    summary = _report_summary(briefing)
+    lines = _timing_lines(briefing) + [f"# 晨报 · {date}", "", *summary]
     retrospective = bool(metadata.get("retrospective"))
-    for section in briefing.get("sections", []):
-        if facts_only and section.get("key") not in {"sleep", "recovery"}:
-            continue
-        if retrospective and section.get("key") == "today_plan":
-            continue
-        lines.extend(["", f"## {section.get('title', '分析')}", ""])
-        lines.extend(f"- {item}" for item in section.get("facts", []))
-        lines.extend(f"- {item}" for item in section.get("interpretation", []))
-        lines.extend(f"- 限制：{item}" for item in section.get("limitations", []))
-    if briefing.get("cautions"):
-        lines.extend(["", "## 必要限制", ""])
-        lines.extend(f"- {item}" for item in briefing["cautions"])
-    if not facts_only:
-        safety = MorningBriefingEngine.safety_lines(briefing)
-        if safety:
-            lines.extend(["", "## 安全限制", ""])
-            lines.extend(f"- {item}" for item in safety)
+    sections = [
+        section for section in briefing.get("sections", [])
+        if (not facts_only or section.get("key") in {"sleep", "recovery"})
+        and (not retrospective or section.get("key") != "today_plan")
+    ]
+    for section in sections:
+        lines.extend(_section_lines(section))
+    safety = MorningBriefingEngine.safety_lines(briefing) if not facts_only else []
+    displayed = set(summary) | {
+        item for section in sections
+        for key in ("facts", "interpretation", "limitations")
+        for item in section.get(key) or []
+    }
+    cautions = unique([
+        item for item in briefing.get("cautions") or []
+        if item not in displayed and item not in safety
+        and not (metadata.get("sync_degraded") and item.startswith("本次同步"))
+    ])
+    if cautions:
+        lines.extend(["", "## 需要留意", ""])
+        lines.extend(f"- {item}" for item in cautions)
+    if safety:
+        lines.extend(["", "## 停止条件", ""])
+        lines.extend(f"- {item}" for item in safety)
     return title, lines
 
 
 def _render_report_briefing(payload: dict, label: str) -> tuple[str, list[str]]:
-    period = "月报" if label == "月报" else "周报"
     end = payload.get("period_end", payload.get("date", "日期未提供"))
     context = payload.get("report_context") or {}
     metadata = context.get("delivery_metadata") or {}
     suffix = "补发" if metadata.get("retrospective") else ""
     title = f"Vitalis {label}{suffix} · {end}"
-    lines = _timing_lines(payload) + [f"# {label} · {end}", "", *payload.get("summary", [])]
+    summary = _report_summary(payload)
+    lines = _timing_lines(payload) + [f"# {label} · {end}", "", *summary]
     if metadata.get("retrospective"):
         lines.extend(["", "> 本报告仅回顾指定日期范围的已记录事实，不提供当前、今晚或明天的处方。"])
     for section in payload.get("sections", []):
-        lines.extend(["", f"## {section.get('title', '分析')}", ""])
-        lines.extend(f"- {item}" for item in section.get("facts", []))
-        lines.extend(f"- {item}" for item in section.get("interpretation", []))
-        lines.extend(f"- 限制：{item}" for item in section.get("limitations", []))
+        lines.extend(_section_lines(section))
     return title, lines
 
 

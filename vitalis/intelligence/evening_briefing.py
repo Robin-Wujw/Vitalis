@@ -15,6 +15,7 @@ from .report_formatting import (
     repetitions_text,
     timestamp_text,
     unique,
+    value_with_unit,
 )
 
 
@@ -32,7 +33,7 @@ class EveningBriefingEngine:
         training = features.get("training") or {}
         sections = self._sections(payload, report_date)
         quality = payload.get("data_quality") or {}
-        summary = self._summary(sections, report_date)
+        summary = []
         return ReportBriefing(
             period="evening",
             analysis_run_id=payload.get("analysis_run_id", ""),
@@ -66,7 +67,7 @@ class EveningBriefingEngine:
             if date_text(item.get("date")) == date_text(report_date)
         ]
         return [
-            self._training_section(workouts, running, strength),
+            self._training_section(workouts, running, strength, (payload.get("report_context") or {}).get("timezone")),
             self._activity_section(payload),
             self._intraday_section(features, payload.get("report_context") or {}),
             self._recovery_section(features, training),
@@ -76,20 +77,61 @@ class EveningBriefingEngine:
     def _section(value: dict[str, Any]) -> dict[str, Any]:
         return {key: value.get(key, []) for key in ("key", "title", "facts", "interpretation", "limitations")}
 
-    def _training_section(self, workouts: list[dict], running: list[dict], strength: list[dict]) -> dict[str, Any]:
+    @staticmethod
+    def _matching_session(
+        workout: dict, generics: list[dict], specialists: list[dict], *, running: bool = False,
+    ) -> dict | None:
+        if not any(workout is item for item in generics):
+            return None
+
+        def matches(generic: dict, specialist: dict) -> bool:
+            duration = generic.get("duration_minutes")
+            if duration is None or duration != specialist.get("duration_minutes"):
+                return False
+            if running:
+                distance = number(generic.get("distance_km"), 2)
+                return distance is not None and distance == number(specialist.get("distance_km"), 2)
+            return True
+
+        candidates = [item for item in specialists if matches(workout, item)]
+        if len(candidates) != 1:
+            return None
+        return candidates[0] if sum(matches(item, candidates[0]) for item in generics) == 1 else None
+
+    def _training_section(
+        self, workouts: list[dict], running: list[dict], strength: list[dict], timezone_name: str | None = None,
+    ) -> dict[str, Any]:
         facts = []
+        run_workouts = [
+            item for item in workouts
+            if "跑" in str(item.get("sport_mode_label") or item.get("type_label") or "")
+            or "run" in str(item.get("sport_mode") or "").lower()
+        ]
+        strength_workouts = [item for item in workouts if item.get("training_family") == "strength"]
         for workout in workouts:
-            label = workout.get("type_label") or workout.get("sport_mode_label") or "训练"
+            label = workout.get("sport_mode_label") or workout.get("type_label") or "训练"
+            specialist = (
+                self._matching_session(workout, strength_workouts, strength)
+                or self._matching_session(workout, run_workouts, running, running=True)
+            )
+            same_duration = specialist is not None and workout.get("duration_minutes") == specialist.get("duration_minutes")
+            same_distance = (specialist is not None and number(workout.get("distance_km"), 2) is not None
+                             and number(workout.get("distance_km"), 2) == number(specialist.get("distance_km"), 2))
+            same_heart_rate = (specialist is not None and number(workout.get("heart_rate_avg_bpm"), 0) is not None
+                               and number(workout.get("heart_rate_avg_bpm"), 0) == number(specialist.get("average_heart_rate_bpm"), 0))
             bits = []
-            if workout.get("duration_minutes") is not None:
+            if workout.get("started_at"):
+                bits.append(f"开始 {timestamp_text(workout['started_at'], timezone_name, short=True)}")
+            if not same_duration and workout.get("duration_minutes") is not None:
                 bits.append(f"{number(workout['duration_minutes'], 0)} 分钟")
-            if workout.get("distance_km") is not None:
+            if workout.get("training_family") != "strength" and not same_distance and workout.get("distance_km") is not None:
                 bits.append(f"{number(workout['distance_km'], 2)} 公里")
             if workout.get("calories_kcal") is not None:
                 bits.append(f"本次训练估算热量 {number(workout['calories_kcal'])} 千卡")
-            if workout.get("heart_rate_avg_bpm") is not None:
+            if not same_heart_rate and workout.get("heart_rate_avg_bpm") is not None:
                 bits.append(f"平均心率 {number(workout['heart_rate_avg_bpm'], 0)} 次/分钟")
-            facts.append(f"{label}：" + "；".join(bits or ["已记录，但缺少可显示的专项数值"]) + "。")
+            if bits or specialist is None:
+                facts.append(f"{label}：" + "；".join(bits or ["已记录，但缺少可显示的专项数值"]) + "。")
         for session in running:
             confidence = session.get("confidence")
             classification = (
@@ -169,7 +211,7 @@ class EveningBriefingEngine:
             limitations.append("心率估计工作段不能替代明确组数，当前不据此评价肌群分配或重量进阶。")
         return {
             "key": "training", "title": "逐场训练", "facts": facts,
-            "interpretation": self._training_interpretation(workouts, running, strength),
+            "interpretation": [],
             "limitations": limitations,
         }
 
@@ -250,19 +292,16 @@ class EveningBriefingEngine:
     def _zones(zones: list[dict] | None) -> str | None:
         if not zones:
             return None
-        shares = {int(item.get("zone", 0)): float(item.get("share_percent", 0)) for item in zones}
-        return f"低强度 {shares.get(1, 0) + shares.get(2, 0):.1f}%；中等强度 {shares.get(3, 0):.1f}%；阈值附近及以上 {shares.get(4, 0) + shares.get(5, 0):.1f}%"
-
-    @staticmethod
-    def _training_interpretation(workouts: list[dict], running: list[dict], strength: list[dict]) -> list[str]:
-        if not workouts and not running and not strength:
-            return ["没有正式训练记录，不能从空记录推断休息或需要增加训练。"]
-        output = []
-        if running:
-            output.append(f"当天有 {len(running)} 场跑步专项记录，课型和剂量按可用专项明细展示。")
-        if strength:
-            output.append(f"当天有 {len(strength)} 场力量记录；若动作明细缺失，只解释可验证的时长和汇总信号。")
-        return output
+        parts = []
+        for item in zones:
+            share = number(item.get("share_percent"))
+            if share is None:
+                continue
+            label = item.get("label") or f"心率区间 {item.get('zone', '?')}"
+            lower, upper = item.get("lower_bpm"), item.get("upper_bpm")
+            bounds = f"（{lower}–{upper} 次/分钟）" if lower is not None and upper is not None else ""
+            parts.append(f"{label}{bounds} {share}%")
+        return "；".join(parts) or None
 
     def _activity_section(self, payload: dict[str, Any]) -> dict[str, Any]:
         activity = (payload.get("features") or {}).get("activity") or {}
@@ -278,10 +317,11 @@ class EveningBriefingEngine:
                     interpretation.append(f"本日{label}{relation}自己的近期同口径水平。")
         energies = activity.get("energy") or []
         for item in energies:
-            value = item.get("value")
-            if value is None or item.get("role") == "workout":
+            if item.get("role") == "workout":
                 continue
-            facts.append(f"{energy_label(item.get('role'))} {number(value)} 千卡。")
+            shown = value_with_unit(item.get("value"), item.get("unit"))
+            if shown is not None:
+                facts.append(f"{energy_label(item.get('role'))} {shown}。")
         if not facts:
             facts.append("当天没有可用的步数、距离、活动时长或热量观测。")
         labels = {
@@ -316,7 +356,7 @@ class EveningBriefingEngine:
         activity = features.get("activity") or {}
         facts, limitations = [], []
         stress_labels = {
-            "stress": "平均压力", "stress_min": "最低压力", "stress_max": "最高压力",
+            "stress": "平均压力评分", "stress_min": "最低压力评分", "stress_max": "最高压力评分",
             "stress_relaxed_pct": "放松区间", "stress_normal_pct": "正常区间",
             "stress_medium_pct": "中等压力区间", "stress_high_pct": "高压力区间",
         }
@@ -385,11 +425,11 @@ class EveningBriefingEngine:
         if training.get("today_duration_minutes") is not None:
             burden.append(f"训练时长 {number(training['today_duration_minutes'], 0)} 分钟")
         if training.get("today_load") is not None:
-            burden.append(f"训练负荷 {number(training['today_load'])}")
+            burden.append(f"设备训练负荷指数 {number(training['today_load'])}")
         if burden:
             facts.append("当天已记录" + "、".join(burden) + "。")
         if training.get("load_7d") is not None:
-            load = f"近 7 日设备训练负荷 {number(training['load_7d'])}"
+            load = f"近 7 日设备训练负荷指数 {number(training['load_7d'])}"
             if training.get("load_7d_reference") is not None:
                 load += f"；此前 3 周的周均参照 {number(training['load_7d_reference'])}"
             if training.get("load_7d_change_percent") is not None:
@@ -399,7 +439,3 @@ class EveningBriefingEngine:
             interpretation.append("HRV 流之间存在分歧，有限解读以综合状态和其他有效信号为准。")
         limitations = ["恢复背景不等于运动结束后的恢复实测，训练负荷变化也不直接代表训练效果。"] if burden else []
         return {"key": "recovery", "title": "恢复背景与当天训练", "facts": facts or ["恢复背景数据不可用。"], "interpretation": interpretation, "limitations": limitations}
-
-    @staticmethod
-    def _summary(sections: list[dict[str, Any]], report_date: Any) -> list[str]:
-        return [f"{date_text(report_date)} 的已记录事实：{sections[0]['facts'][0]}", sections[1]["facts"][0], (sections[3]["interpretation"] or ["恢复背景信息不足，暂不作综合判断。"]) [0]]

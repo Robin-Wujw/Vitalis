@@ -263,7 +263,7 @@ class DecisionEngine:
             )
             coverage_gate = DecisionGateEvidence(
                 code="DECISION.TRAINING_HISTORY_COVERAGE_INSUFFICIENT",
-                label="此前训练记录不足，暂不处方",
+                label="此前 7 天训练历史尚未核实，暂不生成训练安排",
                 triggered=True,
                 observed_value=False,
                 expected_condition="prior_7d_verified=True",

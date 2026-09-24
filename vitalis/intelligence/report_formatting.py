@@ -34,6 +34,18 @@ def percent(value: Any) -> str | None:
     return f"{text}%" if text is not None else None
 
 
+def value_with_unit(value: Any, unit: str | None, digits: int = 1) -> str | None:
+    shown = number(value, digits)
+    if shown is None:
+        return None
+    labels = {
+        "ms": "毫秒", "bpm": "次/分钟", "brpm": "次/分钟",
+        "kcal": "千卡", "steps": "步", "min": "分钟", "km": "公里",
+    }
+    name = labels.get(unit, unit) if unit else "单位未记录"
+    return f"{shown} {name}"
+
+
 def date_text(value: Any) -> str:
     if isinstance(value, (date, datetime)):
         return value.isoformat()[:10]
@@ -125,14 +137,19 @@ def metric_label(metric: str | None, *, overnight: bool = False) -> str:
 
 def coverage_text(status: Any, record_days: Any, unknown_days: Any, period_days: int) -> str:
     labels = {
-        "COMPLETE": "周期记录已核实",
-        "PARTIAL": "周期记录部分核实",
-        "UNKNOWN": "周期记录覆盖尚未核实",
+        "COMPLETE": "训练历史已核实",
+        "PARTIAL": "训练历史部分核实",
+        "UNKNOWN": "训练历史覆盖尚未核实",
     }
-    label = labels.get(str(status), "周期记录覆盖尚未核实")
-    record = number(record_days, 0) or "0"
-    unknown = number(unknown_days, 0) or "0"
-    return f"{label}；已核实 {record}/{period_days} 天，尚未核实 {unknown} 天。"
+    label = labels.get(str(status), "训练历史覆盖尚未核实")
+    record = number(record_days, 0)
+    unknown = number(unknown_days, 0)
+    parts = [label]
+    if record is not None:
+        parts.append(f"已核实 {record}/{period_days} 天")
+    if unknown is not None:
+        parts.append(f"尚未核实 {unknown} 天")
+    return "；".join(parts) + "。"
 
 
 def timestamp_text(value: Any, zone: str | None = None, *, short: bool = False) -> str:

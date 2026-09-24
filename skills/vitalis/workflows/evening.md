@@ -2,22 +2,13 @@
 
 [English](evening.en.md)
 
-若 `open_health_insights.training_load` 有返回，只复述当日 TRIMP 与描述性 ATL/CTL/TSB；TSB
-只能称为训练负荷差值，不称为恢复或状态。拒绝或缺输入时简洁说明返回的缺失输入。
+全程使用中文，先调用 `tools/evening_briefing.py`，只渲染返回的 `ReportBriefing 1.0`；其 `sections` 与 HTML 报告同源，不从原始 `features` 重组，不重复晨间叙述：
 
-全程使用中文，不重复晨间叙述，先说明今天实际发生的内容：
-
-1. 从 `recent_workouts` 使用 `sport_mode_label` 展示当天每次运动、`started_at`、时长、厂商负荷
-   和 `recognition_confidence_label`；不得只展示宽泛 `type`。按开始时间说明真实训练明细；没有正式训练时如实说明，不把它当作异常。
-2. 如果 `features.training.running` 或 `features.training.strength` 返回专项明细，展示其中已有的跑步指标、力量训练组和动作确认；确认记录优先，之后按 `order` 逐组展示 `observed_sets`。保留 `source` 的 `strength_sets` / `lap_62` literal、`vendor_exercise_code`、`weight_value`、`weight_unit` 和 `limitations`；复述返回的 `exercise_name` 并保留来源限制，未知 code 才显示名称未确认；不得补写 `kg`、动作名称或重量，负 sentinel 保持 null。
-3. 展示今日负荷、7 日时长、7 日负荷和 `load_state_label`；7 日汇总若受覆盖影响，按 `history_coverage` 和 `totals_are_partial` 明示。
-4. 使用中文状态、`positive_signal_labels`、`negative_signal_labels` 和动作标签说明
-   恢复状态及今晚是否继续活动。
-5. 使用可用趋势的 `metric_label`、`direction_label`、`confidence_label`，以及未解决
-   事件的 `summary`、严重程度和生命周期标签展示近期背景。
-6. 晚间不重新安排当天训练；可回顾已返回的专项分析，但不得自行计算或增加动作。
-7. 使用中文依据说明判断，把数据限制固定为最后一节。
-8. 不主动追问 RPE、身体疲劳、精神状态或肌肉酸痛；只有用户主动提供反馈时，才用
-   `tools/feedback.py add` 原样记录，不得替用户推测评分。
-
-当前模型没有恢复预测能力，不得预测明日恢复。
+1. `training`：按返回顺序展示逐场训练事实、专项明细和已确认或已观测的力量动作；保留动作顺序、次数、重量及实际单位，未知时直说未记录，不补写数值或名称。
+2. 同一场训练的总览与专项数字只出现一次；没有正式训练记录不等于休息日，也不据此安排补练。
+3. `activity`：分别展示步数、活动与不同口径的设备热量，保留原单位；热量来源不明时不把它称为总消耗或相加。
+4. `intraday`：压力评分、心率读数与首末采样时间仅描述已记录时段；若查询未覆盖全天，说明对应数据范围，不把无记录区间当成零。
+5. `recovery`：说明昨夜恢复事实和当天训练负荷各自的时间范围，不把训练前的数值称为训练后恢复结果。
+6. 仅复述返回的 `facts`、`interpretation` 和真实安全信息，不重新安排当天训练，也不自行计算或预测明日恢复。
+7. `limitations` 作为相关章节的数据说明展示一次，不逐条加“限制：”，也不统一堆在报告末尾；缺失与部分合计紧跟对应数字。
+8. 不主动追问 RPE、身体疲劳、精神状态或肌肉酸痛；只有用户主动提供反馈时，才用 `tools/feedback.py add` 原样记录，不得替用户推测评分。

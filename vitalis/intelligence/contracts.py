@@ -1262,6 +1262,7 @@ class MonthlyDataQuality(BaseModel):
 
 class MonthlySleepFacts(BaseModel):
     available_days: int = Field(ge=0, le=28)
+    previous_available_days: int | None = Field(default=None, ge=0, le=28)
     average_minutes: float | None = None
     median_minutes: float | None = None
     previous_average_minutes: float | None = None

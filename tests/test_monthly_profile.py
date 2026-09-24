@@ -2,7 +2,7 @@ from datetime import date, timedelta
 
 from vitalis.intelligence.monthly import MonthlyProfileEngine
 from vitalis.intelligence.period_activity import period_training_details
-from vitalis.intelligence.profile import RawDailyProfile
+from vitalis.intelligence.profile import RawDailyProfile, SeriesPoint
 
 
 TARGET = date(2026, 8, 28)
@@ -135,3 +135,52 @@ def test_monthly_training_details_keep_running_and_strength_evidence():
     assert training.strength_sets == 2
     assert training.workout_calories_kcal == 500
     assert training.workout_calories_sessions == 2
+
+
+def test_monthly_sleep_change_requires_valid_days_in_both_windows():
+    raw = RawDailyProfile(user_id="monthly-sleep-days", day=TARGET)
+    for offset in range(14):
+        raw.sleep_by_day[TARGET - timedelta(days=offset)] = {"sleep_duration": 440}
+    for offset in range(13):
+        raw.sleep_by_day[TARGET - timedelta(days=28 + offset)] = {"sleep_duration": 400}
+
+    first = MonthlyProfileEngine().build("month-sparse", raw, [], [], [])
+    assert first.facts.sleep.available_days == 14
+    assert first.facts.sleep.previous_available_days == 13
+    assert first.facts.sleep.previous_average_minutes == 400
+    assert first.facts.sleep.change_percent is None
+
+    raw.sleep_by_day[TARGET - timedelta(days=41)] = {"sleep_duration": 400}
+    second = MonthlyProfileEngine().build("month-comparable", raw, [], [], [])
+    assert second.facts.sleep.previous_available_days == 14
+    assert second.facts.sleep.change_percent == 10
+
+
+def test_monthly_recovery_change_requires_valid_days_in_both_windows():
+    raw = RawDailyProfile(user_id="monthly-hrv-days", day=TARGET)
+    current = [
+        SeriesPoint("sleep_hrv", 66, "ms", day, day, "zepp", "device", "watch")
+        for offset in range(14)
+        for day in [TARGET - timedelta(days=offset)]
+    ]
+    previous = [
+        SeriesPoint("sleep_hrv", 60, "ms", day, day, "zepp", "device", "watch")
+        for offset in range(13)
+        for day in [TARGET - timedelta(days=28 + offset)]
+    ]
+    raw.series["sleep_hrv"] = current + previous
+
+    first = MonthlyProfileEngine().build("hrv-sparse", raw, [], [], [])
+    stream = first.facts.recovery.streams[0]
+    assert stream.available_days == 14
+    assert stream.previous_available_days == 13
+    assert stream.previous_median == 60
+    assert stream.change_percent is None
+
+    day = TARGET - timedelta(days=41)
+    raw.series["sleep_hrv"].append(
+        SeriesPoint("sleep_hrv", 60, "ms", day, day, "zepp", "device", "watch")
+    )
+    second = MonthlyProfileEngine().build("hrv-comparable", raw, [], [], [])
+    assert second.facts.recovery.streams[0].previous_available_days == 14
+    assert second.facts.recovery.streams[0].change_percent == 10

@@ -128,10 +128,14 @@ def _sleep_facts(raw, period_start, previous_start) -> MonthlySleepFacts:
     )
     return MonthlySleepFacts(
         available_days=len(current),
+        previous_available_days=len(previous),
         average_minutes=_rounded(current_average),
         median_minutes=_rounded(float(median(current))) if current else None,
         previous_average_minutes=_rounded(previous_average),
-        change_percent=_rounded(_percent_change(current_average, previous_average)),
+        change_percent=(
+            _rounded(_percent_change(current_average, previous_average))
+            if len(current) >= 14 and len(previous) >= 14 else None
+        ),
         bedtime_regularity_minutes=_rounded(float(regularity)) if regularity is not None else None,
     )
 
@@ -165,7 +169,10 @@ def _recovery_facts(raw, period_start, previous_start) -> MonthlyRecoveryFacts:
                 previous_available_days=len(previous),
                 median=round(current_median, 3),
                 previous_median=(round(previous_median, 3) if previous_median is not None else None),
-                change_percent=_rounded(_percent_change(current_median, previous_median)),
+                change_percent=(
+                    _rounded(_percent_change(current_median, previous_median))
+                    if len(current) >= 14 and len(previous) >= 14 else None
+                ),
             ))
     return MonthlyRecoveryFacts(streams=output)
 

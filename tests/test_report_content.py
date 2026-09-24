@@ -270,7 +270,7 @@ def synthetic_period_fixture(period, scenario="complete"):
         "report_context": {"as_of": "2026-09-05T22:00:00+00:00", "heterogeneous_sources": heterogeneous},
         "data_quality": quality,
         "facts": {
-            "sleep": {"available_days": available, "average_minutes": current_sleep, "previous_average_minutes": previous_sleep, "change_percent": 5.7 if previous_comparable else None, "bedtime_regularity_minutes": None if missing else 19},
+            "sleep": {"available_days": available, "previous_available_days": days if previous_comparable else 0, "average_minutes": current_sleep, "previous_average_minutes": previous_sleep, "change_percent": 5.7 if previous_comparable else None, "bedtime_regularity_minutes": None if missing else 19},
             "recovery": {"hrv_available_days": available, "hrv_metric": "sleep_hrv", "hrv_metric_label": "睡眠 HRV", "hrv_median_ms": current_hrv, "hrv_previous_median_ms": previous_hrv if previous_comparable else None, "hrv_change_percent": 6.2 if previous_comparable else None, "rhr_available_days": available, "rhr_median_bpm": current_rhr, "rhr_previous_median_bpm": previous_rhr if previous_comparable else None, "rhr_change_percent": 3.9 if previous_comparable else None, "streams": recovery_streams},
             "training": current_training,
             "activity": {"available_days": available, "total_steps": current_steps, "average_steps": current_steps / available if current_steps and available else None, "previous_average_steps": previous_steps / days if previous_steps else None, "steps_change_percent": 9.0 if previous_comparable else None, "active_minutes": None if missing else 330 if period == "weekly" else 1320, "metrics": activity_metrics},
@@ -472,7 +472,7 @@ def test_period_activity_metrics_render_human_units_without_raw_metric_names(per
     ]
     engine = WeeklyBriefingEngine() if period == "weekly" else MonthlyBriefingEngine()
     text = str(engine.build(payload).model_dump())
-    total_prefix = "本期" if period == "weekly" else "合计"
+    total_prefix = "本期" if period == "weekly" else "已记录小计"
     assert f"{total_prefix} 58,000 步" in text and "日均 8,285.7 步" in text
     assert f"{total_prefix} 42.5 公里" in text and "日均 6.1 公里" in text
     assert f"{total_prefix} 330 分钟" in text and "日均 47.1 分钟" in text
@@ -512,3 +512,96 @@ def test_period_energy_does_not_infer_kcal_from_metric_name(period, unit, shown)
     assert f"123 {shown}" in energy_line
     assert f"41 {shown}" in energy_line
     assert "千卡" not in energy_line
+
+
+def test_monthly_facts_show_denominators_units_and_recorded_subtotals():
+    payload = synthetic_period_fixture("monthly", "partial")
+    sleep = payload["facts"]["sleep"]
+    sleep.update({"previous_available_days": 3, "previous_average_minutes": 400, "change_percent": 7})
+    stream = payload["facts"]["recovery"]["streams"][0]
+    stream.update({"previous_available_days": 3, "previous_median": 60, "change_percent": 15})
+    report = MonthlyBriefingEngine().build(payload)
+    recovery = next(section for section in report.sections if section.key == "sleep_recovery")
+    training = next(section for section in report.sections if section.key == "training_activity")
+    sleep_line = recovery.facts[0]
+    hrv_line = recovery.facts[1]
+
+    assert "本期有效 18/28 天" in sleep_line
+    assert "前期有效 3/28 天" in sleep_line
+    assert "两期均值变化" not in sleep_line
+    assert "本期有效 18/28 天，中位数 69 毫秒" in hrv_line
+    assert "前期有效 3/28 天，中位数 60 毫秒" in hrv_line
+    assert "两期中位数变化" not in hrv_line
+    assert any("已记录训练场次 20 次" in line for line in training.facts)
+    assert any("已记录小计" in line and "步" in line for line in training.facts)
+    assert sum("步数" in line for line in training.facts) == 1
+
+
+def test_monthly_changes_appear_once_and_multiple_recovery_streams_are_distinct():
+    payload = synthetic_period_fixture("monthly", "complete")
+    stream = payload["facts"]["recovery"]["streams"][0]
+    payload["facts"]["recovery"]["streams"].append({
+        **stream, "source": "other_device", "device_id": "second",
+        "median": 64, "previous_median": 62,
+    })
+    report = MonthlyBriefingEngine().build(payload)
+    lines = [line for section in report.sections for line in section.facts + section.interpretation]
+    recovery = next(section for section in report.sections if section.key == "sleep_recovery")
+
+    assert sum("睡眠时长较前一期增加 5.7%" in line for line in lines) == 1
+    assert "设备记录 1" in recovery.facts[1]
+    assert "设备记录 2" in recovery.facts[2]
+    assert all("毫秒" in line for line in recovery.facts[1:])
+    assert "配对 18 天" in next(section for section in report.sections if section.key == "associations").facts[0]
+
+
+def test_monthly_old_snapshot_without_previous_sleep_count_does_not_claim_change():
+    payload = synthetic_period_fixture("monthly", "complete")
+    payload["facts"]["sleep"].pop("previous_available_days")
+    report = MonthlyBriefingEngine().build(payload)
+    sleep_line = next(section for section in report.sections if section.key == "sleep_recovery").facts[0]
+
+    assert "前期有效天数未记录" in sleep_line
+    assert "两期均值变化" not in sleep_line
+
+
+def test_monthly_shows_zero_prior_coverage_without_inventing_comparisons():
+    payload = synthetic_period_fixture("monthly", "partial")
+    sleep = payload["facts"]["sleep"]
+    sleep.update({"previous_available_days": 0, "previous_average_minutes": None, "change_percent": 12})
+    stream = payload["facts"]["recovery"]["streams"][0]
+    stream.update({"previous_available_days": 0, "previous_median": None, "change_percent": 12})
+    recovery = next(section for section in MonthlyBriefingEngine().build(payload).sections if section.key == "sleep_recovery")
+
+    assert "前期有效 0/28 天" in recovery.facts[0]
+    assert "前期有效 0/28 天" in recovery.facts[1]
+    assert all("变化 12%" not in line for line in recovery.facts)
+
+
+def test_monthly_activity_fallback_keeps_metrics_missing_from_a_partial_list():
+    payload = synthetic_period_fixture("monthly", "complete")
+    activity = payload["facts"]["activity"]
+    activity["metrics"] = [item for item in activity["metrics"] if item["metric"] == "calories"]
+    facts = next(section for section in MonthlyBriefingEngine().build(payload).sections if section.key == "training_activity").facts
+
+    assert any("日常步数" in item and "232,000 步" in item for item in facts)
+    assert any("活动时长小计 1,320 分钟" in item for item in facts)
+    assert any("11,200 千卡" in item for item in facts)
+
+
+def test_monthly_missing_coverage_is_not_rendered_as_zero_or_full_total():
+    payload = synthetic_period_fixture("monthly", "partial")
+    payload["facts"]["training"].pop("totals_are_partial")
+    metric = payload["facts"]["activity"]["metrics"][0]
+    metric.pop("totals_are_partial")
+    for key in ("available_days", "complete_days", "previous_available_days", "previous_complete_days"):
+        metric.pop(key)
+    metric["change_percent"] = 12
+    facts = next(section for section in MonthlyBriefingEngine().build(payload).sections if section.key == "training_activity").facts
+    steps = next(item for item in facts if item.startswith("步数："))
+
+    assert any("已记录训练场次" in item for item in facts)
+    assert "本期有记录天数未记录" in steps
+    assert "前期有记录天数未记录" in steps
+    assert "已记录小计" in steps
+    assert "变化 12%" not in steps

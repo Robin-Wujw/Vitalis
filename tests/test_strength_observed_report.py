@@ -96,8 +96,8 @@ def test_mapped_lap_names_render_while_unknown_codes_stay_unconfirmed():
     ]
     observed_sets.append({
         "source": "lap_62",
-        "order": 6,
-        "vendor_exercise_code": 801,
+        "order": len(ZEPP_STRENGTH_LAP_LABELS) + 1,
+        "vendor_exercise_code": 999999,
         "limitations": ["exercise_name_unverified"],
         "repetitions": 8,
     })
@@ -119,7 +119,7 @@ def test_mapped_lap_names_render_while_unknown_codes_stay_unconfirmed():
     assert any("观测组动作名称未确认" in item for item in session.limitations)
     for name in ZEPP_STRENGTH_LAP_LABELS.values():
         assert name in text
-    assert "动作代码 801（名称未确认）" in text
+    assert "动作代码 999999（名称未确认）" in text
     assert any("已核验编码对照" in item for item in report.sections[0].limitations)
 
 
@@ -183,7 +183,7 @@ def test_evening_digest_groups_consecutive_sets_without_merging_a_b_a():
         {"source": "lap_62", "order": 2, "exercise_name": "卧推", "repetitions": 9},
         {"source": "lap_62", "order": 3, "exercise_name": "划船", "repetitions": 10},
         {"source": "lap_62", "order": 4, "exercise_name": "卧推", "repetitions": 8},
-        {"source": "lap_62", "order": 5, "vendor_exercise_code": 801, "repetitions": 8},
+        {"source": "lap_62", "order": 5, "vendor_exercise_code": 999999, "repetitions": 8},
     ]})]
     session = StrengthAnalyzer()._session(raw, raw.workouts[0], None)
     payload = _payload(session.model_dump(mode="json"))
@@ -193,10 +193,10 @@ def test_evening_digest_groups_consecutive_sets_without_merging_a_b_a():
     detail = "\n".join(report.sections[0].facts)
 
     assert title.startswith("Vitalis 晚报")
-    assert "逐组观测动作：卧推 2 组、划船 1 组、卧推 1 组、动作代码 801（名称未确认） 1 组。" in digest
+    assert "逐组观测动作：卧推 2 组、划船 1 组、卧推 1 组、动作代码 999999（名称未确认） 1 组。" in digest
     assert "第 1 组" not in digest
     assert "第 1 组：卧推；8 次；负重未记录。" in detail
-    assert "第 5 组：动作代码 801（名称未确认）" in detail
+    assert "第 5 组：动作代码 999999（名称未确认）" in detail
     assert session.explicit_exercises == []
 
 

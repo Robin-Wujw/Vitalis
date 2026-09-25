@@ -32,18 +32,38 @@ from .sport_types import resolve_cloud_sport_mode
 MAX_WORKOUT_SECONDS = 12 * 60 * 60
 MAX_WELLNESS_SAMPLES_PER_EVENT = 10_000
 
-# Display-only references for this 62-column lap layout, not a vendor dictionary.
-# The original five match an ordered App screenshot and cloud lap comparison;
-# the later three match user-reported ordered sets to stored cloud lap codes.
+# Display-only lap[28] -> actionType names for codes observed in stored workouts.
+# Zepp 10.8.7 zh_CN sport/config/muscle catalog (SHA256 of full response:
+# 7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb).
+# The App's lap parser and lookup share this namespace; all eight prior labels match.
+# Names do not establish confirmed sets, weight units, muscles, or prescriptions.
 ZEPP_STRENGTH_LAP_LABELS = {
-    64: "引体向上",
-    60: "高位下拉",
-    66: "坐姿划船",
-    109: "上斜哑铃卧推",
-    65: "二头肌弯举",
-    1770: "坐姿杠铃颈前推肩",
+    3: "杠铃深蹲",
+    4: "肱三头肌下压",
+    5: "俯身划船",
+    6: "卧推",
+    13: "肱三头肌屈伸",
     14: "侧平举",
+    30: "哑铃卧推",
+    32: "史密斯机卧推",
+    60: "高位下拉",
+    62: "俯卧撑",
+    63: "肩上推举",
+    64: "引体向上",
+    65: "二头肌弯举",
+    66: "坐姿划船",
+    68: "直臂下拉",
+    107: "壶铃甩摆",
+    108: "组间行走",
+    109: "上斜哑铃卧推",
+    113: "蝴蝶机夹胸",
     114: "蝴蝶机反向飞鸟",
+    124: "史密斯机上斜卧推",
+    1106: "反向卷腹举腿",
+    1754: "徒手推举",
+    1770: "坐姿杠铃劲前推肩",
+    1977: "哈克深蹲",
+    1988: "双杠臂屈伸",
 }
 
 _ALL_DAY_STRESS_FIELDS = (

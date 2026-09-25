@@ -31,7 +31,7 @@ def test_workout_audit_is_user_scoped_read_only_and_does_not_claim_coverage(tmp_
             "schema_version": "5.1",
             "strength_sets": [
                 {"source": "lap_62", "vendor_exercise_code": 64, "exercise_name": "引体向上"},
-                {"source": "lap_62", "vendor_exercise_code": 1988},
+                {"source": "lap_62", "vendor_exercise_code": 999999},
                 {"source": "lap_62", "vendor_exercise_code": 1770},
                 {"source": "strength_sets", "exercise_id": "private"},
             ],
@@ -77,7 +77,7 @@ def test_workout_audit_is_user_scoped_read_only_and_does_not_claim_coverage(tmp_
          "stale_mapped_sets": 0, "stored_name_status": "MISSING"},
         {"code": 1770, "sets": 1, "named_sets": 0, "mapping_known": True,
          "stale_mapped_sets": 1, "stored_name_status": "MISSING"},
-        {"code": 1988, "sets": 1, "named_sets": 0, "mapping_known": False,
+        {"code": 999999, "sets": 1, "named_sets": 0, "mapping_known": False,
          "stale_mapped_sets": 0, "stored_name_status": "MISSING"},
     ]
     assert result["days"][0] == {

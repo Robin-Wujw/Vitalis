@@ -14,14 +14,20 @@ from vitalis.connectors.zepp.parser import ZEPP_STRENGTH_LAP_LABELS
 from vitalis.models import WORKOUT_DETAIL_SCHEMA_VERSION
 
 
+_LEGACY_DISPLAY_NAMES = {1770: "坐姿杠铃颈前推肩"}
+
+
 def _connection(database: Path, *, writable: bool) -> sqlite3.Connection:
     mode = "rw" if writable else "ro"
     return sqlite3.connect(database.resolve().as_uri() + f"?mode={mode}", uri=True, timeout=5)
 
 
-def _changes(db: sqlite3.Connection, user_id: str, allowed_codes: set[int]) -> tuple[list[tuple[int, str, str]], Counter]:
+def _changes(
+    db: sqlite3.Connection, user_id: str, allowed_codes: set[int],
+) -> tuple[list[tuple[int, str, str]], Counter, Counter]:
     changes = []
     counts = Counter()
+    kinds = Counter()
     rows = db.execute(
         "SELECT id, detail FROM workouts WHERE user_id = ? AND source = ? AND detail IS NOT NULL",
         (user_id, "zepp"),
@@ -44,21 +50,33 @@ def _changes(db: sqlite3.Connection, user_id: str, allowed_codes: set[int]) -> t
             if isinstance(code, bool) or not isinstance(code, int) or code not in allowed_codes:
                 continue
             name = item.get("exercise_name")
-            if name is not None and (not isinstance(name, str) or name.strip()):
-                continue
             limitations = item.get("limitations")
-            if not isinstance(limitations, list) or "exercise_name_unverified" not in limitations:
+            if not isinstance(limitations, list):
                 continue
-            item["exercise_name"] = ZEPP_STRENGTH_LAP_LABELS[code]
-            item["limitations"] = [
-                "exercise_name_reference_mapping" if flag == "exercise_name_unverified" else flag
-                for flag in limitations
-            ]
+            if (
+                code in _LEGACY_DISPLAY_NAMES
+                and name == _LEGACY_DISPLAY_NAMES[code]
+                and "exercise_name_reference_mapping" in limitations
+            ):
+                item["exercise_name"] = ZEPP_STRENGTH_LAP_LABELS[code]
+                kinds["corrected_alias"] += 1
+            elif (
+                (name is None or isinstance(name, str) and not name.strip())
+                and "exercise_name_unverified" in limitations
+            ):
+                item["exercise_name"] = ZEPP_STRENGTH_LAP_LABELS[code]
+                item["limitations"] = [
+                    "exercise_name_reference_mapping" if flag == "exercise_name_unverified" else flag
+                    for flag in limitations
+                ]
+                kinds["filled_blank"] += 1
+            else:
+                continue
             counts[code] += 1
             changed = True
         if changed:
             changes.append((workout_row_id, original, json.dumps(detail, ensure_ascii=False)))
-    return changes, counts
+    return changes, counts, kinds
 
 
 def _validate_backup(
@@ -99,14 +117,14 @@ def refresh_strength_labels(
     preview_changes = []
     if apply:
         with closing(_connection(database, writable=False)) as db:
-            preview_changes, _ = _changes(db, user_id, allowed_codes)
+            preview_changes, _, _ = _changes(db, user_id, allowed_codes)
         _validate_backup(database, backup, user_id, preview_changes)
 
     with closing(_connection(database, writable=apply)) as db:
         if apply:
             db.execute("BEGIN IMMEDIATE")
         try:
-            changes, counts = _changes(db, user_id, allowed_codes)
+            changes, counts, kinds = _changes(db, user_id, allowed_codes)
             if apply:
                 if {(row_id, previous) for row_id, previous, _ in changes} != {
                     (row_id, previous) for row_id, previous, _ in preview_changes
@@ -129,6 +147,8 @@ def refresh_strength_labels(
         "source_coverage_unchanged": True,
         "workouts_to_update": len(changes),
         "sets_to_label": sum(counts.values()),
+        "sets_from_blank": kinds["filled_blank"],
+        "sets_corrected_alias": kinds["corrected_alias"],
         "codes": [{"code": code, "sets": count} for code, count in sorted(counts.items())],
     }
 

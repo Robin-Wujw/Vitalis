@@ -14,6 +14,19 @@ from vitalis.storage import HealthRepository, session_scope
 
 START = datetime(2026, 8, 12, 5, tzinfo=timezone.utc)
 
+# Reviewed Zepp 10.8.7 zh_CN action catalog for observed lap IDs; full response
+# SHA256: 7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb.
+OBSERVED_CATALOG_ZH = {
+    3: "杠铃深蹲", 4: "肱三头肌下压", 5: "俯身划船", 6: "卧推",
+    13: "肱三头肌屈伸", 14: "侧平举", 30: "哑铃卧推", 32: "史密斯机卧推",
+    60: "高位下拉", 62: "俯卧撑", 63: "肩上推举", 64: "引体向上",
+    65: "二头肌弯举", 66: "坐姿划船", 68: "直臂下拉", 107: "壶铃甩摆",
+    108: "组间行走", 109: "上斜哑铃卧推", 113: "蝴蝶机夹胸",
+    114: "蝴蝶机反向飞鸟", 124: "史密斯机上斜卧推",
+    1106: "反向卷腹举腿", 1754: "徒手推举",
+    1770: "坐姿杠铃劲前推肩", 1977: "哈克深蹲", 1988: "双杠臂屈伸",
+}
+
 
 def lap_row(reps="9", weight="17.5", code="801", columns=62):
     fields = [""] * 62
@@ -50,7 +63,11 @@ def test_strength_lap_keeps_order_codes_and_unconfirmed_weight_units():
     assert WorkoutDetail.model_validate_json(detail.model_dump_json()).strength_sets == sets
 
 
-@pytest.mark.parametrize("code, expected_name", list(ZEPP_STRENGTH_LAP_LABELS.items()))
+def test_observed_strength_codes_match_reviewed_catalog_snapshot():
+    assert ZEPP_STRENGTH_LAP_LABELS == OBSERVED_CATALOG_ZH
+
+
+@pytest.mark.parametrize("code, expected_name", list(OBSERVED_CATALOG_ZH.items()))
 def test_strength_lap_maps_only_verified_display_codes(code, expected_name):
     observed, = detail_for(lap_row(code=str(code))).strength_sets
     assert observed.vendor_exercise_code == code
@@ -67,7 +84,7 @@ def test_user_confirmed_september_23_session_maps_four_ordered_blocks():
     detail = detail_for(";".join(lap_row(code=str(code)) for code in codes))
     assert [item.vendor_exercise_code for item in detail.strength_sets] == codes
     assert [item.exercise_name for item in detail.strength_sets] == (
-        ["坐姿杠铃颈前推肩"] * 4
+        ["坐姿杠铃劲前推肩"] * 4
         + ["侧平举"] * 4
         + ["引体向上"] * 4
         + ["蝴蝶机反向飞鸟"] * 4
@@ -82,9 +99,9 @@ def test_strength_lap_requires_explicit_strength_family(family):
     assert detail_for(lap_row(), family=family).strength_sets == []
 
 
-def test_observed_but_unverified_vendor_code_keeps_name_missing():
-    observed, = detail_for(lap_row(code="1988")).strength_sets
-    assert observed.vendor_exercise_code == 1988
+def test_unrecognized_vendor_code_keeps_name_missing():
+    observed, = detail_for(lap_row(code="999999")).strength_sets
+    assert observed.vendor_exercise_code == 999999
     assert observed.exercise_name is None
     assert "exercise_name_unverified" in observed.limitations
 
@@ -202,7 +219,7 @@ def test_detail_refresh_reparses_old_observation_with_verified_name():
         saved = HealthRepository(db).workout(user.id, workout_id)
         assert saved is not None
         observed, = saved.detail["strength_sets"]
-    assert observed["exercise_name"] == "坐姿杠铃颈前推肩"
+    assert observed["exercise_name"] == "坐姿杠铃劲前推肩"
     assert observed["vendor_exercise_code"] == 1770
     assert observed["weight_kg"] is None
     assert observed["weight_unit"] is None

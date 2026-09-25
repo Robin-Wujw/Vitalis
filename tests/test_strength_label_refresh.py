@@ -27,7 +27,7 @@ def _database(path):
              "limitations": ["exercise_name_unverified", "weight_unavailable"]},
             {"source": "lap_62", "vendor_exercise_code": 64, "exercise_name": "引体向上",
              "limitations": ["exercise_name_reference_mapping"]},
-            {"source": "lap_62", "vendor_exercise_code": 1988, "exercise_name": None,
+            {"source": "lap_62", "vendor_exercise_code": 999999, "exercise_name": None,
              "limitations": ["exercise_name_unverified"]},
             {"source": "strength_sets", "vendor_exercise_code": 65, "exercise_name": None,
              "limitations": ["exercise_name_unverified"]},
@@ -43,6 +43,14 @@ def _database(path):
         _insert(db, 6, "owner", "zepp", "5.1", [{
             "source": "lap_62", "vendor_exercise_code": 14,
             "exercise_name": 123, "limitations": ["exercise_name_unverified"],
+        }])
+        _insert(db, 7, "owner", "zepp", "5.1", [{
+            "source": "lap_62", "vendor_exercise_code": 1770,
+            "exercise_name": "坐姿杠铃颈前推肩", "limitations": ["exercise_name_reference_mapping", "weight_unit_unverified"],
+        }])
+        _insert(db, 8, "owner", "zepp", "5.1", [{
+            "source": "lap_62", "vendor_exercise_code": 1770,
+            "exercise_name": "坐姿杠铃颈前推肩", "limitations": ["user_confirmed"],
         }])
         db.commit()
 
@@ -63,18 +71,20 @@ def test_refresh_dry_run_is_read_only_and_requires_verified_codes(tmp_path):
 
     assert result == {
         "mode": "dry_run", "source_coverage_unchanged": True,
-        "workouts_to_update": 1, "sets_to_label": 2,
-        "codes": [{"code": 14, "sets": 1}, {"code": 114, "sets": 1}],
+        "workouts_to_update": 2, "sets_to_label": 3,
+        "sets_from_blank": 2, "sets_corrected_alias": 1,
+        "codes": [{"code": 14, "sets": 1}, {"code": 114, "sets": 1}, {"code": 1770, "sets": 1}],
     }
     assert database.read_bytes() == before
+    assert refresh_strength_labels(database, "owner") == result
     with pytest.raises(ValueError, match="verified lap labels"):
-        refresh_strength_labels(database, "owner", codes={1988})
+        refresh_strength_labels(database, "owner", codes={999999})
     with pytest.raises(ValueError, match="backup"):
         refresh_strength_labels(database, "owner", codes={14}, apply=True)
     assert database.read_bytes() == before
 
 
-def test_refresh_only_missing_lap_labels_is_idempotent(tmp_path):
+def test_refresh_verified_lap_labels_is_idempotent(tmp_path):
     database = tmp_path / "workouts.db"
     backup = tmp_path / "before.db"
     _database(database)
@@ -84,8 +94,10 @@ def test_refresh_only_missing_lap_labels_is_idempotent(tmp_path):
     result = refresh_strength_labels(database, "owner", codes={14, 114, 1770}, apply=True, backup=backup)
 
     assert result["mode"] == "applied"
-    assert result["workouts_to_update"] == 1
-    assert result["sets_to_label"] == 2
+    assert result["workouts_to_update"] == 2
+    assert result["sets_to_label"] == 3
+    assert result["sets_from_blank"] == 2
+    assert result["sets_corrected_alias"] == 1
     after = _details(database)
     sets = after[1]["strength_sets"]
     assert sets[0]["exercise_name"] == "侧平举"
@@ -97,7 +109,9 @@ def test_refresh_only_missing_lap_labels_is_idempotent(tmp_path):
     assert sets[1]["limitations"] == ["exercise_name_reference_mapping", "weight_unavailable"]
     assert sets[2:] == before[1]["strength_sets"][2:]
     assert after[1]["fetched_at"] == before[1]["fetched_at"]
-    assert {key: after[key] for key in (2, 3, 4, 5, 6)} == {key: before[key] for key in (2, 3, 4, 5, 6)}
+    assert after[7]["strength_sets"][0]["exercise_name"] == "坐姿杠铃劲前推肩"
+    assert after[7]["strength_sets"][0]["limitations"] == before[7]["strength_sets"][0]["limitations"]
+    assert {key: after[key] for key in (2, 3, 4, 5, 6, 8)} == {key: before[key] for key in (2, 3, 4, 5, 6, 8)}
     assert _details(backup) == before
     again = refresh_strength_labels(database, "owner", codes={14, 114, 1770}, apply=True, backup=backup)
     assert again["sets_to_label"] == 0

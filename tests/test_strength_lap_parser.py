@@ -62,7 +62,7 @@ def test_strength_lap_maps_only_verified_display_codes(code, expected_name):
 
 
 def test_user_confirmed_september_23_session_maps_four_ordered_blocks():
-    # The same session was checked against the app: four sets of each movement.
+    # User-reported movement order matched stored lap codes; these rows are synthetic.
     codes = [1770] * 4 + [14] * 4 + [64] * 4 + [114] * 4
     detail = detail_for(";".join(lap_row(code=str(code)) for code in codes))
     assert [item.vendor_exercise_code for item in detail.strength_sets] == codes

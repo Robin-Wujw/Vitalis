@@ -32,8 +32,9 @@ from .sport_types import resolve_cloud_sport_mode
 MAX_WORKOUT_SECONDS = 12 * 60 * 60
 MAX_WELLNESS_SAMPLES_PER_EVENT = 10_000
 
-# Verified app/cloud comparisons for this exact 62-column strength lap layout.
-# These are display-only reference labels, not a complete Zepp exercise dictionary.
+# Display-only references for this 62-column lap layout, not a vendor dictionary.
+# The original five match an ordered App screenshot and cloud lap comparison;
+# the later three match user-reported ordered sets to stored cloud lap codes.
 ZEPP_STRENGTH_LAP_LABELS = {
     64: "引体向上",
     60: "高位下拉",

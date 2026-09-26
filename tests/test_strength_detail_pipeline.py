@@ -1,7 +1,17 @@
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from vitalis.connectors.zepp.parser import ZeppParser
+import pytest
+
+from vitalis.connectors.zepp.fetcher import FetchedRecord, RawRecord
+from vitalis.connectors.zepp.parser import (
+    MAX_WORKOUT_DETAIL_SAMPLES,
+    WorkoutDetailLimitError,
+    ZeppParser,
+)
+from vitalis.connectors.zepp.sync_manager import SyncManager
+from vitalis.models import User, Workout
+from vitalis.storage import HealthRepository, session_scope
 from vitalis.intelligence.contracts import (
     Availability,
     ConfidenceBand,
@@ -20,6 +30,85 @@ from vitalis.intelligence.strength import StrengthAnalyzer, normalize_exercise
 
 
 TARGET = date(2026, 8, 28)
+
+
+def test_detail_parser_rejects_oversized_compressed_series_before_expansion():
+    with pytest.raises(WorkoutDetailLimitError, match="样本超过安全上限"):
+        ZeppParser.parse_workout_detail({
+            "data": {
+                "trackid": 1_700_000_000,
+                "time": str(MAX_WORKOUT_DETAIL_SAMPLES + 1),
+                "heart_rate": f"{MAX_WORKOUT_DETAIL_SAMPLES + 1},1",
+            }
+        })
+
+
+def test_detail_parser_rejects_delimiter_bomb_before_split():
+    with pytest.raises(WorkoutDetailLimitError, match="压缩字段超过安全上限"):
+        ZeppParser.parse_workout_detail({
+            "data": {
+                "trackid": 1_700_000_000,
+                "time": "0;" * (MAX_WORKOUT_DETAIL_SAMPLES + 1),
+                "heart_rate": "0,0;" * 2,
+            }
+        })
+
+
+def test_detail_parser_rejects_lap_row_bomb_before_split():
+    with pytest.raises(WorkoutDetailLimitError, match="行数超过安全上限"):
+        ZeppParser.parse_workout_detail({
+            "data": {
+                "trackid": 1_700_000_000,
+                "lap": ";" * 2_000,
+            }
+        })
+
+
+def test_detail_parser_rejects_actual_sample_count_after_preflight(monkeypatch):
+    monkeypatch.setattr(ZeppParser, "_check_detail_sample_budget", lambda *args: None)
+    monkeypatch.setattr(
+        ZeppParser,
+        "_workout_heart_rate_samples",
+        lambda *args: [object()] * (MAX_WORKOUT_DETAIL_SAMPLES + 1),
+    )
+    with pytest.raises(WorkoutDetailLimitError, match="样本超过安全上限"):
+        ZeppParser.parse_workout_detail({"data": {"trackid": 1_700_000_000}})
+
+
+def test_oversized_detail_does_not_persist_or_mark_workout_synced():
+    user = User(id="synthetic-detail-over-budget")
+    started = datetime(2026, 8, 28, tzinfo=timezone.utc)
+    workout_id = str(int(started.timestamp()))
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user.id)
+        repo.save_workout(Workout(
+            user_id=user.id,
+            workout_id=workout_id,
+            started_at=started,
+            ended_at=started + timedelta(seconds=MAX_WORKOUT_DETAIL_SAMPLES + 1),
+            duration=334,
+            training_family="strength",
+            vendor_source="cloud",
+        ))
+        record = FetchedRecord(raw=RawRecord(
+            stream="workout_detail",
+            source_key=f"workout_detail:{workout_id}:cloud",
+            start_utc=started,
+            end_utc=started + timedelta(seconds=MAX_WORKOUT_DETAIL_SAMPLES + 1),
+            payload={"data": {"trackid": int(started.timestamp()), "heart_rate": "1,100"}},
+        ))
+        report = SyncManager(SimpleNamespace())._persist_record(record, repo, user)
+        assert report.status == "failed"
+        assert report.error_kind == "resource_limit"
+        assert report.records_written == 0
+        assert report.parse_status == "failed"
+        assert report.write_status == "not_run"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        workout = repo.workout(user.id, workout_id)
+        assert workout is not None and not workout.detail_synced and workout.detail is None
+        assert repo.workout_metric_samples(user.id, workout_id) == []
 
 
 def test_strength_detail_accepts_json_or_list_and_only_uses_kg_weights():

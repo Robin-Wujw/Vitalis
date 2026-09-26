@@ -256,11 +256,13 @@ def _section_lines(section: dict, displayed: set[str] | None = None, period: str
     if key not in {"today_plan", "training"}:
         important = [item for item in interpretation if "HRV" in item and ("分歧" in item or "不一致" in item)]
         interpretation = unique(interpretation[:2] + important)
+    shown_interpretation = []
     if facts:
         lines.append(f"**{facts[0]}**")
         lines.extend(f"- {item}" for item in facts[1:])
     else:
-        lines.extend(f"- {item}" for item in interpretation[:1])
+        shown_interpretation = interpretation[:1]
+        lines.extend(f"- {item}" for item in shown_interpretation)
         interpretation = interpretation[1:]
     lines.extend(f"- {item}" for item in interpretation)
     notes = unique([
@@ -272,7 +274,7 @@ def _section_lines(section: dict, displayed: set[str] | None = None, period: str
         lines.extend(["", "### 数据说明", ""])
         lines.extend(f"- {item}" for item in notes)
     if displayed is not None:
-        displayed.update([*facts, *interpretation, *notes])
+        displayed.update([*facts, *shown_interpretation, *interpretation, *notes])
     return lines
 
 

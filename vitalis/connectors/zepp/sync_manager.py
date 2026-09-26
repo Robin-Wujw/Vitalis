@@ -22,7 +22,7 @@ from vitalis.connectors.zepp.fetcher import (
     PartialFetchError,
     _payload_items,
 )
-from vitalis.connectors.zepp.parser import ZeppParser
+from vitalis.connectors.zepp.parser import WorkoutDetailLimitError, ZeppParser
 from vitalis.models import (
     ActivityRecord,
     DenseDataFile,
@@ -559,9 +559,19 @@ class SyncManager:
             report.parse_status = "not_run"
             report.write_status = "not_run"
             report.error_kind = exc.kind
+        except WorkoutDetailLimitError as exc:
+            report.status = "failed"
+            report.capability = "unavailable"
+            report.fetch_status = "failed"
+            report.message = str(exc)
+            report.parsed_at = datetime.now(timezone.utc)
+            report.parse_status = "failed"
+            report.write_status = "not_run"
+            report.error_kind = "resource_limit"
         except ZeppAuthError as exc:
             report.status = "failed"
             report.capability = "unavailable"
+            report.fetch_status = "failed"
             report.needs_reauth = exc.needs_reauth
             report.message = str(exc)
             report.parsed_at = datetime.now(timezone.utc)
@@ -571,6 +581,7 @@ class SyncManager:
         except Exception as exc:
             report.status = "failed"
             report.capability = "unavailable"
+            report.fetch_status = "failed"
             report.message = str(exc)
             report.parsed_at = datetime.now(timezone.utc)
             report.parse_status = "failed"

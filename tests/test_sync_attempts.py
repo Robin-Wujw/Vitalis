@@ -64,6 +64,86 @@ def test_stable_manifest_insert_is_idempotent():
     assert first.chunk_count == 2
 
 
+def test_detail_only_reuse_does_not_append_a_new_manifest_chunk():
+    init_db()
+    manifest = [
+        {"stable_key": "detail:one", "stream": "workout_detail", "partition": "one"},
+        {"stable_key": "detail:two", "stream": "workout_detail", "partition": "two"},
+    ]
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user("ledger-detail-freeze")
+        first = repo.create_or_reuse_sync_attempt(
+            "ledger-detail-freeze", window_start=NOW - timedelta(days=1), window_end=NOW,
+            options={"detail_only": True, "detail_limit": 1}, manifest=manifest[:1],
+        )
+        first_chunk = repo.sync_chunks(first.id)[0]
+        first_chunk.status = "succeeded"
+        first_chunk.fetch_status = "success"
+        first_chunk.parse_status = "success"
+        first_chunk.write_status = "success"
+        reused = repo.create_or_reuse_sync_attempt(
+            "ledger-detail-freeze", window_start=NOW - timedelta(days=1), window_end=NOW,
+            options={"detail_only": True, "detail_limit": 1}, manifest=manifest[1:],
+        )
+        explicit = repo.create_or_reuse_sync_attempt(
+            "ledger-detail-freeze", window_start=NOW - timedelta(days=1), window_end=NOW,
+            options={"detail_only": True, "detail_limit": 1},
+            manifest=manifest[1:], attempt_id=first.id,
+        )
+        assert reused.id == explicit.id == first.id
+        assert [chunk.stable_key for chunk in repo.sync_chunks(first.id)] == ["detail:one"]
+        next_limit = repo.create_or_reuse_sync_attempt(
+            "ledger-detail-freeze", window_start=NOW - timedelta(days=1), window_end=NOW,
+            options={"detail_only": True, "detail_limit": 2}, manifest=manifest[1:],
+        )
+        assert next_limit.id != first.id
+        assert [chunk.stable_key for chunk in repo.sync_chunks(next_limit.id)] == ["detail:two"]
+
+
+def test_detail_only_integrity_race_cannot_extend_manifest(monkeypatch):
+    init_db()
+    user_id = "ledger-detail-race"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        options = {"detail_only": True, "detail_limit": 1}
+        kwargs = dict(
+            window_start=NOW - timedelta(days=1), window_end=NOW,
+            options=options,
+        )
+        first = repo.create_or_reuse_sync_attempt(
+            user_id, **kwargs,
+            manifest=[{"stable_key": "detail:one", "stream": "workout_detail"}],
+        )
+        original_execute = db.execute
+        missed = False
+
+        class EmptyResult:
+            def scalars(self):
+                return self
+
+            def first(self):
+                return None
+
+        def hide_active_once(statement, *args, **kwargs):
+            nonlocal missed
+            if not missed and "sync_attempts.request_key" in str(statement):
+                missed = True
+                return EmptyResult()
+            return original_execute(statement, *args, **kwargs)
+
+        monkeypatch.setattr(db, "execute", hide_active_once)
+        reused = repo.create_or_reuse_sync_attempt(
+            user_id, **kwargs,
+            manifest=[{"stable_key": "detail:two", "stream": "workout_detail"}],
+        )
+        assert missed is True
+        assert reused.id == first.id
+        assert len(repo.sync_attempts(user_id)) == 1
+        assert [chunk.stable_key for chunk in repo.sync_chunks(first.id)] == ["detail:one"]
+
+
 def test_identical_attempt_is_reused_and_different_request_is_queued():
     init_db()
     with session_scope() as db:

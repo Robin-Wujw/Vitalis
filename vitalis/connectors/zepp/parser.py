@@ -27,10 +27,18 @@ from vitalis.models import (
     StrengthSetObservation,
     WorkoutType,
 )
-from .sport_types import resolve_cloud_sport_mode
+from .sport_types import resolve_cloud_sport_mode, resolve_sport_mode
 
 MAX_WORKOUT_SECONDS = 12 * 60 * 60
 MAX_WELLNESS_SAMPLES_PER_EVENT = 10_000
+MAX_WORKOUT_DETAIL_SAMPLES = 20_000
+MAX_WORKOUT_DETAIL_LAP_ROWS = 2_000
+MAX_WORKOUT_DETAIL_PAUSE_ROWS = 10_000
+MAX_WORKOUT_DETAIL_STRENGTH_ROWS = 2_000
+
+
+class WorkoutDetailLimitError(ValueError):
+    """The detail payload exceeds bounded parsing limits."""
 
 # Display-only lap[28] -> actionType names for codes observed in stored workouts.
 # Zepp 10.8.7 zh_CN sport/config/muscle catalog (SHA256 of full response:
@@ -276,9 +284,13 @@ class ZeppParser:
                     numeric_type = int(type_id.strip())
                 except ValueError:
                     pass
-            # This is an aggregate endpoint, so only the record's numeric type is
-            # authoritative. Missing IDs never inherit the URL or a textual hint.
-            mode = resolve_cloud_sport_mode(numeric_type)
+            # The new /run endpoint uses the cloud namespace. Replayed legacy
+            # per-sport chunks retain the public Zepp enum for non-run paths.
+            mode = (
+                resolve_cloud_sport_mode(numeric_type)
+                if sport_hint in {"", "run"}
+                else resolve_sport_mode(numeric_type)
+            )
             wtype = WorkoutType(mode.category)
             started = self._parse_start(it)
             avg_hr = self._first_number(
@@ -350,12 +362,14 @@ class ZeppParser:
             return None
         nested = raw.get("data")
         data = nested if isinstance(nested, dict) else raw
+        ZeppParser._check_detail_token_budget(data)
         start = ZeppParser._parse_datetime_value(data.get("trackid"))
         if start is None:
             return None
         start = ZeppParser._utc(start)
         workout_id = str(data.get("trackid") or "")
         end = ZeppParser._workout_end(data, start, summary_end)
+        ZeppParser._check_detail_sample_budget(data, start, end)
 
         samples = ZeppParser._workout_heart_rate_samples(
             workout_id, start, end, data.get("heart_rate")
@@ -384,6 +398,8 @@ class ZeppParser:
         samples.extend(ZeppParser._run_posture_samples(
             workout_id, start, data.get("runPosture")
         ))
+        if len(samples) > MAX_WORKOUT_DETAIL_SAMPLES:
+            raise WorkoutDetailLimitError("运动明细样本超过安全上限")
         samples = ZeppParser._deduplicate_workout_samples(samples)
         counts: dict[str, int] = {}
         for sample in samples:
@@ -401,6 +417,43 @@ class ZeppParser:
             strength_sets=strength_sets,
             samples=samples,
         )
+
+    @staticmethod
+    def _check_detail_token_budget(data: dict) -> None:
+        """Reject pathological delimited fields before split() allocates tokens."""
+        for key in ("time", "heart_rate", "speed", "equivPace", "currentDistance",
+                    "time_delta_altitude", "power_meter", "gait", "runPosture"):
+            value = data.get(key)
+            if isinstance(value, str) and value and value.count(";") + 1 > MAX_WORKOUT_DETAIL_SAMPLES:
+                raise WorkoutDetailLimitError("运动明细压缩字段超过安全上限")
+        for key, limit in (("lap", MAX_WORKOUT_DETAIL_LAP_ROWS), ("pause", MAX_WORKOUT_DETAIL_PAUSE_ROWS)):
+            value = data.get(key)
+            if isinstance(value, str) and value and value.count(";") + 1 > limit:
+                raise WorkoutDetailLimitError("运动明细行数超过安全上限")
+        strength_sets = data.get("strengthSets")
+        if isinstance(strength_sets, str):
+            if strength_sets.count("{") > MAX_WORKOUT_DETAIL_STRENGTH_ROWS:
+                raise WorkoutDetailLimitError("力量明细行数超过安全上限")
+        elif isinstance(strength_sets, list) and len(strength_sets) > MAX_WORKOUT_DETAIL_STRENGTH_ROWS:
+            raise WorkoutDetailLimitError("力量明细行数超过安全上限")
+
+    @staticmethod
+    def _check_detail_sample_budget(data: dict, start: datetime, end: datetime) -> None:
+        """Reject oversized compressed series before expanding them into objects."""
+        budget = 0
+        heart_rate = data.get("heart_rate")
+        if isinstance(heart_rate, str) and heart_rate:
+            budget += max(0, int((end - start).total_seconds())) + 1
+        for key, multiplier in (("speed", 1), ("equivPace", 1), ("currentDistance", 1),
+                                ("time_delta_altitude", 1), ("power_meter", 1),
+                                ("gait", 2), ("runPosture", 3)):
+            value = data.get(key)
+            if isinstance(value, str):
+                budget += (value.count(";") + (1 if value else 0)) * multiplier
+            elif isinstance(value, (list, tuple)):
+                budget += len(value) * multiplier
+            if budget > MAX_WORKOUT_DETAIL_SAMPLES:
+                raise WorkoutDetailLimitError("运动明细样本超过安全上限")
 
     @staticmethod
     def _utc(value: datetime) -> datetime:

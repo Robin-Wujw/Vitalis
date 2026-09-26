@@ -82,14 +82,17 @@ def health_sync(
     workout_only: bool = Query(False, description="仅手动同步全运动历史与有界训练明细，不请求其他健康流"),
     detail_only: bool = Query(False, description="仅手动补抓已保存训练的缺失或旧版明细"),
     detail_refresh_before: str | None = Query(None, description="仅明细模式中显式重取该 UTC 时刻之前的已缓存明细"),
+    detail_limit: int | None = Query(None, ge=1, le=4, description="仅明细模式中显式限定每次待办数量，默认四份"),
     enqueue_only: bool = Query(False, description="只创建持久同步任务，由 worker 执行"),
     user_id: str = Depends(require_user_id),
 ) -> dict:
     """Check the token in a short session, then run the coordinator outside it."""
     if detail_only and not enqueue_only:
         raise HTTPException(status_code=400, detail="detail_only requires enqueue_only=true")
-    if detail_refresh_before and not detail_only:
+    if detail_refresh_before is not None and not detail_only:
         raise HTTPException(status_code=400, detail="detail_refresh_before requires detail_only")
+    if detail_limit is not None and not detail_only:
+        raise HTTPException(status_code=400, detail="detail_limit requires detail_only")
     if detail_only and (workout_only or detail_backfill or decode_dense_files):
         raise HTTPException(status_code=400, detail="detail_only cannot combine with other sync modes")
     connector: ZeppConnector = get_connector("zepp")  # type: ignore[assignment]
@@ -110,6 +113,7 @@ def health_sync(
                 workout_only=workout_only,
                 detail_only=detail_only,
                 detail_refresh_before=detail_refresh_before,
+                detail_limit=detail_limit,
             )
             if attempt is None:
                 return {

@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from vitalis.connectors.zepp import ZeppConnector, client as client_module
-from vitalis.connectors.zepp.client import ZeppAPIClient, ZeppAuthError
+from vitalis.connectors.zepp.client import MAX_WORKOUT_DETAIL_BYTES, ZeppAPIClient, ZeppAuthError
 from vitalis.connectors.zepp.fetcher import (
     DAY_MILLISECONDS,
     DataFetcher,
@@ -43,6 +43,82 @@ def test_watch_statistics_rejects_unknown_statistic():
     client = ZeppAPIClient("token", "user-123", "api-mifitcn.zepp.com")
     with pytest.raises(ValueError, match="unsupported watch statistic"):
         client.fetch_watch_statistics("UNKNOWN")
+
+
+def test_sport_detail_rejects_content_length_over_bound():
+    client = ZeppAPIClient("token", "user-123", "api-mifitcn.zepp.com")
+    transport = httpx.MockTransport(lambda request: httpx.Response(
+        200, headers={"content-length": str(MAX_WORKOUT_DETAIL_BYTES + 1)},
+        content=b"{}", request=request,
+    ))
+    client._client = httpx.Client(transport=transport, trust_env=False)
+    with pytest.raises(ZeppAuthError, match="大小上限"):
+        client.fetch_sport_detail("track", "cloud")
+    client.close()
+
+
+def test_sport_detail_rejects_actual_stream_over_bound():
+    client = ZeppAPIClient("token", "user-123", "api-mifitcn.zepp.com")
+    payload = b"x" * (MAX_WORKOUT_DETAIL_BYTES + 1)
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, stream=httpx.ByteStream(payload), request=request))
+    client._client = httpx.Client(transport=transport, trust_env=False)
+    with pytest.raises(ZeppAuthError, match="大小上限"):
+        client.fetch_sport_detail("track", "cloud")
+    client.close()
+
+
+def test_sport_detail_stream_rejects_compressed_bomb_after_expansion_cap():
+    import gzip
+
+    client = ZeppAPIClient("token", "user-123", "api-mifitcn.zepp.com")
+    payload = gzip.compress(b"x" * (MAX_WORKOUT_DETAIL_BYTES + 1))
+    transport = httpx.MockTransport(lambda request: httpx.Response(
+        200, headers={"content-encoding": "gzip"},
+        stream=httpx.ByteStream(payload), request=request,
+    ))
+    client._client = httpx.Client(transport=transport, trust_env=False)
+    with pytest.raises(ZeppAuthError, match="大小上限"):
+        client.fetch_sport_detail("track", "cloud")
+    client.close()
+
+
+def test_sport_detail_rejects_many_tiny_objects_before_json_decoding():
+    client = ZeppAPIClient("token", "user-123", "api-mifitcn.zepp.com")
+    payload = b'{"data":{"trackid":123,"strengthSets":[' + b'{},' * 20_000 + b'{}]}}'
+    client._client = httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, stream=httpx.ByteStream(payload), request=request),
+    ), trust_env=False)
+    with pytest.raises(ZeppAuthError, match="JSON 结构超过安全上限"):
+        client.fetch_sport_detail("123", "cloud")
+    client.close()
+
+
+def test_sport_detail_stream_retries_and_decodes_compressed_json():
+    import gzip
+    import json
+
+    client = ZeppAPIClient("token", "user-123", "api-mifitcn.zepp.com")
+    calls = []
+    compressed = gzip.compress(json.dumps({"data": {"trackid": 123}}).encode())
+
+    def handler(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return httpx.Response(503, request=request)
+        return httpx.Response(200, headers={"content-encoding": "gzip"}, stream=httpx.ByteStream(compressed), request=request)
+
+    client._client = httpx.Client(transport=httpx.MockTransport(handler), trust_env=False)
+    assert client.fetch_sport_detail("123", "cloud") == {"data": {"trackid": 123}}
+    assert len(calls) == 2
+    client.close()
+
+
+def test_other_gets_keep_existing_unbounded_json_path():
+    client = ZeppAPIClient("token", "user-123", "api-mifitcn.zepp.com")
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"ok": True}, request=request))
+    client._client = httpx.Client(transport=transport, trust_env=False)
+    assert client.fetch_devices() == {"ok": True}
+    client.close()
 
 
 class TestFetchWindow:

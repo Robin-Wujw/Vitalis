@@ -7,7 +7,7 @@ import hashlib
 import json
 from uuid import uuid4
 
-from sqlalchemy import Integer, case, cast, delete, exists, func, or_, select, text, tuple_, update
+from sqlalchemy import DateTime, Integer, case, cast, delete, exists, func, or_, select, text, tuple_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -900,12 +900,16 @@ class HealthRepository:
             cutoff_iso = cutoff.replace(tzinfo=timezone.utc).isoformat().replace(
                 "+00:00", "Z"
             )
+            if self.db.get_bind().dialect.name == "sqlite":
+                fetched_before = func.julianday(fetched_at) < func.julianday(cutoff_iso)
+            else:
+                fetched_before = cast(fetched_at, DateTime) < cutoff
             refresh_rows = list(self.db.execute(
                 select(orm.Workout).where(
                     *conditions,
                     orm.Workout.detail_synced.is_(True),
                     schema_version == WORKOUT_DETAIL_SCHEMA_VERSION,
-                    or_(fetched_at.is_(None), fetched_at < cutoff_iso),
+                    or_(fetched_at.is_(None), fetched_before),
                 ).order_by(fetched_at.asc().nulls_first(), *order).limit(remaining)
             ).scalars().all())
             known_ids = {row.id for row in rows}
@@ -1349,7 +1353,7 @@ class HealthRepository:
             if existing is not None:
                 if existing.user_id != user_id or existing.source != source:
                     raise ValueError("同步尝试不属于当前用户或数据源")
-                self._ensure_sync_chunks(existing, manifest)
+                self._ensure_reused_sync_chunks(existing, manifest)
                 return existing
 
         active = self.db.execute(
@@ -1361,7 +1365,7 @@ class HealthRepository:
             ).order_by(orm.SyncAttempt.created_at.desc()).with_for_update()
         ).scalars().first()
         if active is not None:
-            self._ensure_sync_chunks(active, manifest)
+            self._ensure_reused_sync_chunks(active, manifest)
             return active
 
         values = dict(
@@ -1396,7 +1400,7 @@ class HealthRepository:
             ).scalars().first()
             if active is None:
                 raise
-            self._ensure_sync_chunks(active, manifest)
+            self._ensure_reused_sync_chunks(active, manifest)
             return active
         attempt = self.db.get(orm.SyncAttempt, values["id"])
         assert attempt is not None
@@ -1409,6 +1413,14 @@ class HealthRepository:
 
     def create_or_reuse_attempt(self, *args, **kwargs) -> orm.SyncAttempt:
         return self.create_or_reuse_sync_attempt(*args, **kwargs)
+
+    def _ensure_reused_sync_chunks(
+        self, attempt: orm.SyncAttempt, manifest: list[object] | None
+    ) -> None:
+        # Detail-only attempts have a fixed lifetime budget; a later enqueue
+        # must not append the next pending workout after the first chunk commits.
+        if (attempt.options or {}).get("detail_only") is not True:
+            self._ensure_sync_chunks(attempt, manifest)
 
     def _ensure_sync_chunks(
         self, attempt: orm.SyncAttempt, manifest: list[object] | None
@@ -1682,10 +1694,6 @@ class HealthRepository:
                 if saw_verified:
                     saw_partial_evidence = True
                 continue
-            first_fetch_started = min(
-                chunk.started_at or attempt.created_at
-                for chunk in attempt_chunks if chunk.partition in sport_seen
-            )
             window_start = max(attempt.window_start, period_start_utc)
             window_end = min(attempt.window_end, period_end_utc)
             if window_start >= window_end:
@@ -1697,12 +1705,27 @@ class HealthRepository:
                 day_start, day_end = local_day_utc_bounds(day)
                 if day == as_of_local_day and as_of_utc < day_end:
                     continue
-                if window_start <= _naive_utc(day_start) and window_end >= _naive_utc(day_end):
-                    if first_fetch_started < _naive_utc(day_end):
-                        saw_intraday_fetch = True
-                    else:
-                        verified_days.add(day)
-                        confirmed_for_attempt = True
+                day_start_naive = _naive_utc(day_start)
+                day_end_naive = _naive_utc(day_end)
+                covering_chunks = [
+                    chunk for chunk in attempt_chunks
+                    if chunk.partition in sport_seen
+                    and (chunk.window_start or attempt.window_start) <= day_start_naive
+                    and (chunk.window_end or attempt.window_end) >= day_end_naive
+                ]
+                if {
+                    chunk.partition for chunk in covering_chunks
+                } != set(required_sports):
+                    continue
+                first_fetch_started = min(
+                    chunk.started_at or attempt.created_at
+                    for chunk in covering_chunks
+                )
+                if first_fetch_started < day_end_naive:
+                    saw_intraday_fetch = True
+                else:
+                    verified_days.add(day)
+                    confirmed_for_attempt = True
             if confirmed_for_attempt:
                 finished = max(
                     (

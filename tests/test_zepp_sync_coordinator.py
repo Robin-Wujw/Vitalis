@@ -179,6 +179,76 @@ def test_detail_only_rejects_incompatible_modes_and_invalid_cutoff():
         assert HealthRepository(db).sync_attempts(user_id) == []
 
 
+def test_explicit_detail_limit_one_freezes_manifest_and_leaves_backlog():
+    user_id = "coord-detail-limit-one"
+    _clean(user_id)
+    window = FetchWindow.local_dates(date(2026, 8, 1), date(2026, 8, 12))
+    workout_ids = [str(int((window.start + timedelta(days=index + 1, hours=1)).timestamp())) for index in range(3)]
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        for workout_id in workout_ids:
+            repo.save_workout(Workout(
+                user_id=user_id, workout_id=workout_id,
+                started_at=window.start + timedelta(days=1, hours=1),
+                duration=30, training_family="strength", vendor_source="cloud",
+            ))
+
+    class Connector:
+        def __init__(self):
+            self.details = []
+        def fetch_sport_detail(self, workout_id, source):
+            self.details.append(workout_id)
+            return {"data": {"trackid": int(workout_id), "strengthSets": "[]"}}
+
+    connector = Connector()
+    coordinator = ZeppSyncCoordinator(connector=connector, wall_clock=lambda: NOW)
+    first = coordinator.create_attempt(
+        user_id, window=window, options={"detail_only": True, "detail_limit": 1},
+    )
+    assert first is not None
+    assert first.options["detail_limit"] == 1
+    assert first.chunk_count == 1
+    assert coordinator.run_attempt(first.id).success
+    with session_scope() as db:
+        row = HealthRepository(db).sync_attempt(first.id)
+        row.status = "running"
+        row.finished_at = None
+    reused = coordinator.create_attempt(
+        user_id, window=window, options={"detail_only": True, "detail_limit": 1},
+    )
+    assert reused is not None and reused.id == first.id
+    assert reused.chunk_count == 1
+    assert len(connector.details) == 1
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        assert len(repo.pending_workout_details(user_id, window.start, window.end, limit=10)) == 2
+        row = repo.sync_attempt(first.id)
+        row.status = "succeeded"
+        row.finished_at = NOW.replace(tzinfo=None)
+    second = coordinator.create_attempt(
+        user_id, window=window, options={"detail_only": True, "detail_limit": 1},
+    )
+    assert second is not None and second.id != first.id and second.chunk_count == 1
+    assert coordinator.run_attempt(second.id).success
+    assert len(connector.details) == 2
+    with session_scope() as db:
+        assert len(HealthRepository(db).pending_workout_details(user_id, window.start, window.end, limit=10)) == 1
+
+
+def test_detail_limit_validation_is_manual_detail_only():
+    user_id = "coord-detail-limit-validation"
+    coordinator = ZeppSyncCoordinator(wall_clock=lambda: NOW)
+    invalid = [True, 0, 5, "1"]
+    for value in invalid:
+        with pytest.raises(ZeppAuthError, match="detail_limit"):
+            coordinator.create_attempt(user_id, window=WINDOW, options={"detail_limit": value})
+    with pytest.raises(ZeppAuthError, match="detail_limit"):
+        coordinator.create_attempt(user_id, window=WINDOW, options={"detail_limit": 1, "detail_only": False})
+    with pytest.raises(ZeppAuthError):
+        coordinator.create_attempt(user_id, window=WINDOW, trigger="nightly", options={"detail_limit": 1, "detail_only": True})
+
+
 def test_repeated_detail_only_attempts_drain_backlog_without_history_fetch():
     user_id = "coord-detail-only-progress"
     _clean(user_id)

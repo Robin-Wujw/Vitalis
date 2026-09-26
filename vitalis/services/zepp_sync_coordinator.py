@@ -507,6 +507,16 @@ class ZeppSyncCoordinator:
             raise ZeppAuthError("仅运动/明细同步不能同时解码密集心率归档", kind="invalid_request")
         if detail_only and options.get("detail_backfill") is True:
             raise ZeppAuthError("detail_only 与 detail_backfill 不能同时使用", kind="invalid_request")
+        detail_limit = MAX_DETAIL_CHUNKS
+        if "detail_limit" in options:
+            value = options["detail_limit"]
+            if not detail_only or type(value) is not int or not 1 <= value <= MAX_DETAIL_CHUNKS:
+                raise ZeppAuthError("detail_limit 仅支持手动明细同步的 1..4 整数", kind="invalid_request")
+            detail_limit = value
+        # An explicit maximum is semantically identical to the default; keep
+        # it out of the request key so concurrent callers reuse one attempt.
+        if detail_only and detail_limit == MAX_DETAIL_CHUNKS:
+            options.pop("detail_limit", None)
         cutoff_value = options.get("detail_refresh_before")
         if cutoff_value is not None and not detail_only:
             raise ZeppAuthError("detail_refresh_before 只能用于明细同步", kind="invalid_request")
@@ -531,7 +541,7 @@ class ZeppSyncCoordinator:
             repo = HealthRepository(db)
             if detail_only:
                 candidates = repo.pending_workout_details(
-                    user_id, window.start, window.end, limit=MAX_DETAIL_CHUNKS,
+                    user_id, window.start, window.end, limit=detail_limit,
                     source="zepp", refresh_after=refresh_before,
                 )
                 manifest = [
@@ -1081,9 +1091,14 @@ class ZeppSyncCoordinator:
                     report.status = "unverified"
                     report.error_kind = "partial_coverage"
                     report.message = incomplete_reason
+                fetch_status = (
+                    "failed" if report.status == "failed"
+                    else "unavailable" if report.status == "unavailable"
+                    else "partial" if incomplete else "success"
+                )
                 stage_status = {
                     **chunk["stages"],
-                    "fetch_status": "partial" if incomplete else "success",
+                    "fetch_status": fetch_status,
                     "parse_status": report.parse_status or ("success" if report.status == "success" else "failed"),
                     "write_status": report.write_status or ("success" if report.status == "success" else "not_run"),
                     "capability": report.capability,
@@ -1104,10 +1119,7 @@ class ZeppSyncCoordinator:
                     raise StaleSyncLease("chunk lease expired before finalize")
                 repo.save_sync_stream_state(
                     attempt["user_id"], chunk["health_stream"] or chunk["stream"],
-                    fetch_status=(
-                        "unavailable" if final_status == "unavailable"
-                        else "partial" if incomplete else "success"
-                    ),
+                    fetch_status=fetch_status,
                     parse_status=stage_status["parse_status"], write_status=stage_status["write_status"],
                     fetched_at=report.fetched_at or now, parsed_at=report.parsed_at, written_at=report.written_at,
                     raw_records=max(result.raw_records, report.raw_records), records_written=report.records_written,

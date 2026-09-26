@@ -19,6 +19,7 @@ import random
 import re
 import secrets
 import time as time_mod
+import zlib
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Literal
 from urllib.parse import urlparse
@@ -48,6 +49,9 @@ API_USER_EVENTS_DATE = "/users/{user_id}/events/dateString"  # ODI / OSA nightly
 API_FILE_INFO_EVENTS = "/users/me/fileInfo/events"  # Dense measurement file index
 API_FILE_DOWNLOAD_URLS = "/files/{file_type}/users/{user_id}/queryDownUrlList"
 MAX_DENSE_FILE_BYTES = 64 * 1024 * 1024
+MAX_WORKOUT_DETAIL_BYTES = 4 * 1024 * 1024
+MAX_WORKOUT_DETAIL_JSON_OBJECTS = 20_000
+MAX_WORKOUT_DETAIL_JSON_SEPARATORS = 80_000
 
 # 官方客户端请求头（ZeppBridge 实测有效）
 APP_HEADERS = {
@@ -181,15 +185,20 @@ class ZeppAPIClient:
         self._request_seq = 0
 
     # ---- 核心 GET ----
-    def _get(self, path: str, params: dict) -> dict:
+    def _get(
+        self, path: str, params: dict, *, max_response_bytes: int | None = None,
+    ) -> dict:
         params = {**params, "r": self._request_id()}
         for attempt in range(3):
             try:
-                resp = self._client.get(
-                    self.base_url + path,
-                    params=params,
-                    headers=self._headers,
-                )
+                if max_response_bytes is None:
+                    resp = self._client.get(
+                        self.base_url + path,
+                        params=params,
+                        headers=self._headers,
+                    )
+                else:
+                    resp = self._bounded_get(path, params, max_response_bytes)
             except httpx.TimeoutException as exc:
                 if attempt < 2:
                     time_mod.sleep(0.05 * (attempt + 1))
@@ -225,11 +234,72 @@ class ZeppAPIClient:
                     kind="vendor_response",
                 )
             try:
+                if max_response_bytes is not None and (
+                    resp.content.count(b"{") > MAX_WORKOUT_DETAIL_JSON_OBJECTS
+                    or resp.content.count(b",") > MAX_WORKOUT_DETAIL_JSON_SEPARATORS
+                ):
+                    raise ZeppAuthError("运动明细 JSON 结构超过安全上限", kind="vendor_response")
                 return resp.json()
             except ValueError:
                 # band_data 等可能返回非 JSON，按文本返回
                 return {"_raw_text": resp.text}
         raise ZeppAuthError("Zepp 请求重试耗尽", kind="service")
+
+    def _bounded_get(self, path: str, params: dict, max_bytes: int) -> httpx.Response:
+        """Read a detail response with raw-wire and expanded-body limits."""
+        with self._client.stream(
+            "GET", self.base_url + path, params=params,
+            headers={**self._headers, "accept-encoding": "gzip, deflate, identity"},
+        ) as response:
+            if response.status_code != 200:
+                return httpx.Response(response.status_code, content=b"", request=response.request)
+            content_length = response.headers.get("content-length")
+            if content_length is not None:
+                try:
+                    if int(content_length) > max_bytes:
+                        raise ZeppAuthError("运动明细响应超过大小上限", kind="vendor_response")
+                except ValueError:
+                    pass
+            encoding = response.headers.get("content-encoding", "").strip().lower()
+            if encoding in {"", "identity"}:
+                decoder = None
+            elif encoding == "gzip":
+                decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+            elif encoding == "deflate":
+                decoder = zlib.decompressobj(zlib.MAX_WBITS)
+            else:
+                raise ZeppAuthError("运动明细响应压缩格式不受支持", kind="vendor_response")
+
+            body = bytearray()
+            wire_bytes = 0
+            for part in response.iter_raw(chunk_size=64 * 1024):
+                wire_bytes += len(part)
+                if wire_bytes > max_bytes:
+                    raise ZeppAuthError("运动明细响应超过大小上限", kind="vendor_response")
+                if decoder is None:
+                    expanded = part
+                else:
+                    try:
+                        expanded = decoder.decompress(part, max_bytes + 1 - len(body))
+                    except zlib.error as exc:
+                        raise ZeppAuthError("运动明细响应压缩内容无效", kind="vendor_response") from exc
+                    if decoder.unconsumed_tail or decoder.unused_data:
+                        raise ZeppAuthError("运动明细响应超过大小上限", kind="vendor_response")
+                if len(body) + len(expanded) > max_bytes:
+                    raise ZeppAuthError("运动明细响应超过大小上限", kind="vendor_response")
+                body.extend(expanded)
+            if decoder is not None and not decoder.eof:
+                raise ZeppAuthError("运动明细响应压缩内容无效", kind="vendor_response")
+            headers = {
+                key: value for key, value in response.headers.items()
+                if key.lower() not in {"content-encoding", "content-length", "transfer-encoding"}
+            }
+            return httpx.Response(
+                response.status_code,
+                headers=headers,
+                content=bytes(body),
+                request=response.request,
+            )
 
     def _request_id(self) -> str:
         self._request_seq += 1
@@ -298,7 +368,11 @@ class ZeppAPIClient:
         )
 
     def fetch_sport_detail(self, track_id: str, source: str) -> dict:
-        return self._get(API_SPORT_DETAIL, {"trackid": track_id, "source": source})
+        return self._get(
+            API_SPORT_DETAIL,
+            {"trackid": track_id, "source": source},
+            max_response_bytes=MAX_WORKOUT_DETAIL_BYTES,
+        )
 
     def fetch_watch_statistics(self, statistic: str = "SPORT_LOAD", start_day: str = "",
                                end_day: str = "", limit: int = 30, reverse: bool = True) -> dict:

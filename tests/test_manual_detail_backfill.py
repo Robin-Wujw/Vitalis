@@ -45,7 +45,8 @@ def test_manual_detail_backfill_api_passes_explicit_flag(client, monkeypatch):
     assert calls[-1] == (
         "queued", {"days": 8, "trigger": "manual", "decode_dense_files": False,
                    "detail_backfill": True, "workout_only": False,
-                   "detail_only": False, "detail_refresh_before": None},
+                   "detail_only": False, "detail_refresh_before": None,
+                   "detail_limit": None},
     )
 
     response = client.post(
@@ -72,6 +73,22 @@ def test_manual_detail_backfill_api_passes_explicit_flag(client, monkeypatch):
     assert response.status_code == 200
     assert calls[-1][1]["detail_only"] is True
     assert calls[-1][1]["detail_refresh_before"] is None
+    assert calls[-1][1]["detail_limit"] is None
+    response = client.post(
+        "/api/v1/health/sync?days=730&enqueue_only=true&detail_only=true&detail_limit=1",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert calls[-1][1]["detail_limit"] == 1
+    assert client.post("/api/v1/health/sync?detail_limit=1", headers=headers).status_code == 400
+    assert client.post(
+        "/api/v1/health/sync?enqueue_only=true&detail_only=true&detail_limit=0",
+        headers=headers,
+    ).status_code == 422
+    assert client.post(
+        "/api/v1/health/sync?enqueue_only=true&detail_only=true&detail_limit=5",
+        headers=headers,
+    ).status_code == 422
 
 
 def test_detail_only_api_requires_enqueue_and_reports_empty_backlog(client, monkeypatch):
@@ -138,14 +155,17 @@ def test_connector_persists_workout_only_as_manual_attempt_option(monkeypatch):
         "decode_dense_files": False, "detail_backfill": True, "workout_only": True,
     }
     assert connector.create_attempt(
-        "owner", days=730, detail_only=True,
+        "owner", days=730, detail_only=True, detail_limit=1,
         detail_refresh_before="2026-09-24T14:00:00Z",
     ) is None
     assert captured[1]["options"] == {
         "decode_dense_files": False,
         "detail_only": True,
         "detail_refresh_before": "2026-09-24T14:00:00Z",
+        "detail_limit": 1,
     }
+    with pytest.raises(ValueError, match="detail_limit requires detail_only"):
+        connector.create_attempt("owner", detail_limit=1)
 
 
 def test_sync_cli_only_sets_backfill_param_when_requested(monkeypatch, capsys):
@@ -178,22 +198,32 @@ def test_sync_cli_only_sets_backfill_param_when_requested(monkeypatch, capsys):
     assert module.main() == 0
     monkeypatch.setattr(sys, "argv", ["sync.py", "--days", "730", "--details-only"])
     assert module.main() == 0
-    monkeypatch.setattr(sys, "argv", [
-        "sync.py", "--days", "730", "--details-only",
-        "--refresh-before", "2026-09-24T14:00:00Z",
-    ])
+    monkeypatch.setattr(sys, "argv", ["sync.py", "--days", "730", "--details-only", "--detail-limit", "1"])
+    assert module.main() == 0
+    monkeypatch.setattr(sys, "argv", ["sync.py", "--days", "730", "--details-only", "--refresh-before", "2026-09-24T14:00:00Z"])
+    assert module.main() == 0
+    monkeypatch.setattr(sys, "argv", ["sync.py", "--days", "730", "--details-only", "--detail-limit", "1", "--refresh-before", "2026-09-24T14:00:00Z"])
     assert module.main() == 0
     assert calls == [
         {"days": 8}, {"days": 8, "detail_backfill": "true"},
         {"days": 730, "workout_only": "true"},
         {"days": 730, "detail_only": "true", "enqueue_only": "true"},
+        {"days": 730, "detail_only": "true", "enqueue_only": "true", "detail_limit": 1},
         {"days": 730, "detail_only": "true", "enqueue_only": "true",
+         "detail_refresh_before": "2026-09-24T14:00:00Z"},
+        {"days": 730, "detail_only": "true", "enqueue_only": "true", "detail_limit": 1,
          "detail_refresh_before": "2026-09-24T14:00:00Z"},
     ]
     monkeypatch.setattr(sys, "argv", ["sync.py", "--details-only", "--workout-only"])
     with pytest.raises(SystemExit):
         module.main()
     monkeypatch.setattr(sys, "argv", ["sync.py", "--refresh-before", "2026-09-24T14:00:00Z"])
+    with pytest.raises(SystemExit):
+        module.main()
+    monkeypatch.setattr(sys, "argv", ["sync.py", "--detail-limit", "1"])
+    with pytest.raises(SystemExit):
+        module.main()
+    monkeypatch.setattr(sys, "argv", ["sync.py", "--details-only", "--detail-limit", "5"])
     with pytest.raises(SystemExit):
         module.main()
     assert "queued" in capsys.readouterr().out

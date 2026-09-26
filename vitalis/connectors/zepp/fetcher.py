@@ -3,13 +3,14 @@
 支持：
   - 窗口分块（默认 7 天，避免单请求过大）
   - 心率分页（cursor 翻页）
-  - 运动历史游标翻页（13 种运动类型）
+  - 运动历史游标翻页（账号内混合运动记录）
   - 2 年最大窗口（730 天）
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, time as datetime_time, timedelta, timezone
+from math import isfinite
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -300,14 +301,18 @@ def _sport_history_page(payload: Any) -> tuple[list[Any] | None, Any]:
     for key in _SPORT_HISTORY_ITEM_KEYS:
         rows = data.get(key)
         if isinstance(rows, list):
-            if any(
-                not isinstance(item, dict)
-                or isinstance(item.get("trackid") or item.get("trackId"), bool)
-                or not str(item.get("trackid") or item.get("trackId") or "").strip()
-                or ZeppParser._parse_start(item) is None
-                for item in rows
-            ):
-                return None, _SPORT_HISTORY_MISSING
+            for item in rows:
+                if not isinstance(item, dict):
+                    return None, _SPORT_HISTORY_MISSING
+                track_id = item.get("trackid") or item.get("trackId")
+                valid_track_id = (
+                    isinstance(track_id, (str, int, float))
+                    and not isinstance(track_id, bool)
+                    and (not isinstance(track_id, float) or isfinite(track_id))
+                    and bool(str(track_id).strip())
+                )
+                if not valid_track_id or ZeppParser._parse_start(item) is None:
+                    return None, _SPORT_HISTORY_MISSING
             return rows, data.get("next", _SPORT_HISTORY_MISSING)
     return None, _SPORT_HISTORY_MISSING
 

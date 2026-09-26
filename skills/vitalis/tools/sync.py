@@ -29,11 +29,17 @@ def main() -> int:
     parser.add_argument(
         "--refresh-before", help="仅明细模式中显式重取该 UTC ISO 时刻之前的已缓存明细",
     )
+    parser.add_argument(
+        "--detail-limit", type=int, choices=range(1, 5),
+        help="仅明细模式中限定本次入队数量；默认四份",
+    )
     args = parser.parse_args()
     if args.details_only and (args.workout_only or args.detail_backfill):
         parser.error("--details-only 不能和其他手动补采模式同时使用")
-    if args.refresh_before and not args.details_only:
+    if args.refresh_before is not None and not args.details_only:
         parser.error("--refresh-before 仅支持 --details-only")
+    if args.detail_limit is not None and not args.details_only:
+        parser.error("--detail-limit 仅支持 --details-only")
     params = {"days": args.days}
     if args.detail_backfill:
         params["detail_backfill"] = "true"
@@ -41,8 +47,10 @@ def main() -> int:
         params["workout_only"] = "true"
     if args.details_only:
         params.update(detail_only="true", enqueue_only="true")
-    if args.refresh_before:
+    if args.refresh_before is not None:
         params["detail_refresh_before"] = args.refresh_before
+    if args.detail_limit is not None:
+        params["detail_limit"] = args.detail_limit
     response = httpx.post(
         f"{API}/api/v1/health/sync",
         params=params,

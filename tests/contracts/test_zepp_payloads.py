@@ -1,15 +1,17 @@
 """Pure Zepp detail classifications and the storage gate for unknown payloads."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 
+from vitalis.adapters.zepp.client import MockZeppClient
 from vitalis.adapters.zepp.fetcher import FetchedRecord, RawRecord
 from vitalis.adapters.zepp.parser import WorkoutDetailLimitError
 from vitalis.adapters.zepp.parsers import ParseContext, parse_workout_detail
 from vitalis.adapters.zepp.sync_manager import SyncManager
 from vitalis.domain import User
+from vitalis.time import local_day_utc_bounds
 
 
 TRACK_ID = int(datetime(2026, 8, 1, 7, tzinfo=timezone.utc).timestamp())
@@ -35,6 +37,27 @@ def test_trackid_only_and_known_empty_strength_fields_are_explicitly_empty():
         assert result.status == "empty"
         assert result.detail is not None
         assert not result.detail.samples and not result.detail.strength_sets
+
+
+def test_mock_history_has_windowed_stable_ids_and_parseable_empty_detail():
+    client = MockZeppClient(seed=7)
+    start = int(datetime(2026, 8, 28, tzinfo=timezone.utc).timestamp())
+    end = int(datetime(2026, 9, 1, tzinfo=timezone.utc).timestamp())
+    history = client.fetch_sport_history("run", start, end)
+    rows = history["data"]["items"]
+    assert rows and history["data"]["next"] == -1
+    assert history == client.fetch_sport_history("run", start, end)
+    assert all(start <= int(item["trackid"]) < end for item in rows)
+    for item in rows:
+        detail = parse_workout_detail(
+            client.fetch_sport_detail(str(item["trackid"]), item["source"]),
+            ParseContext(training_family="aerobic"),
+        )
+        assert detail.status == "empty" and detail.detail is not None
+    sunday_start, sunday_end = local_day_utc_bounds(date(2026, 8, 30), "Asia/Shanghai")
+    assert client.fetch_sport_history(
+        "run", int(sunday_start.timestamp()), int(sunday_end.timestamp())
+    )["data"]["items"] == []
 
 
 def test_unknown_nonempty_and_malformed_detail_never_appear_empty():

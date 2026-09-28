@@ -50,7 +50,7 @@ class ZeppConnector(HealthConnector):
     def __init__(self, auth: ConnectorAuth | None = None, mock: bool | None = None):
         super().__init__(auth)
         self.mock = settings.zepp_mock if mock is None else mock
-        self._mock_client = MockZeppClient() if self.mock else None
+        self._mock_client = MockZeppClient(timezone_name=settings.timezone) if self.mock else None
         from .parser import ZeppParser
 
         self.parser = ZeppParser()
@@ -488,9 +488,15 @@ class ZeppConnector(HealthConnector):
         client = self._mock_client
         band = client.fetch_band_data(start.isoformat(), end.isoformat(), "detail", 8, 0)
         sleeps, activities = self.parser.parse_band(band)
+        from vitalis.time import local_day_utc_bounds
+
+        start_at, _ = local_day_utc_bounds(start, settings.timezone)
+        _, end_at = local_day_utc_bounds(end, settings.timezone)
         workouts = []
         for sport in SPORTS:
-            payload = client.fetch_sport_history(sport, 0, 9999999999, 1)
+            payload = client.fetch_sport_history(
+                sport, int(start_at.timestamp()), int(end_at.timestamp()), 1
+            )
             workouts.extend(self.parser.parse_sport_history(payload, sport_hint=sport))
         hrv_raw = client.fetch_events("hrv_sdnn", "real_data", 0, 9999999999999, 2000, True)
         hrv = self.parser.parse_hrv_events(hrv_raw)

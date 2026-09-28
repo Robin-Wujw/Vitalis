@@ -116,7 +116,7 @@ def test_daily_profile_after_sync(client):
     assert body["intelligence_version"] == "14.0"
     assert body["decision_policy_version"] == "9.0"
     assert body["evidence_version"] == "2026-09a"
-    assert body["features"]["overnight_vitals"]["status"] == "INSUFFICIENT_DATA"
+    assert body["features"]["overnight_vitals"]["status"] == "AVAILABLE"
     assert body["analysis_run_id"]
     assert body["decision"]["action"] in {
         "TRAIN_HARD", "TRAIN_NORMAL", "TRAIN_LIGHT", "RECOVERY", "REST", "INSUFFICIENT_DATA"

@@ -7,9 +7,11 @@ import pytest
 
 from datetime import date, datetime, timedelta, timezone
 
+from vitalis.adapters.zepp.client import MockZeppClient
 from vitalis.adapters.zepp.parser import ZeppParser
 from vitalis.adapters.zepp.sport_types import ZEPP_SPORT_MODES, resolve_sport_mode
 from vitalis.domain import WorkoutType
+from vitalis.time import local_day_utc_bounds
 
 SLEEP_RAW = {
     "code": 0,
@@ -501,6 +503,13 @@ def test_parse_device_inventory_maps_verified_products_without_private_fields():
     assert "must-not-be-persisted" not in repr(devices)
 
 
+def test_mock_device_inventory_has_explicit_synthetic_identity():
+    devices = ZeppParser().parse_devices(MockZeppClient().fetch_devices())
+    assert len(devices) == 1
+    assert devices[0].device_id == "020000000001"
+    assert devices[0].model == "Mock wearable"
+
+
 def test_parse_band_heart_rate_uses_local_midnight_and_device():
     summary = base64.b64encode(json.dumps({"tz": 8 * 60 * 60}).encode()).decode()
     readings = base64.b64encode(bytes([0, 72, 255, 75])).decode()
@@ -649,6 +658,88 @@ def test_parse_charge_daily_and_timestamped_samples():
     assert {sample.metric for sample in samples} == {
         "hybrid_charge", "physical_charge", "mental_charge",
     }
+
+
+@pytest.mark.parametrize("timezone_name, first, last", [
+    ("America/New_York", date(2026, 3, 8), date(2026, 3, 9)),
+    ("America/New_York", date(2026, 11, 1), date(2026, 11, 2)),
+    ("Asia/Shanghai", date(2026, 8, 28), date(2026, 8, 28)),
+])
+def test_mock_hrv_matches_sample_parser_and_requested_local_days(timezone_name, first, last):
+    client = MockZeppClient(seed=7)
+    payload = client.fetch_hrv(first.isoformat(), last.isoformat(), timezone_name)
+    samples = ZeppParser.parse_hrv_samples(payload, "hrv_sdnn")
+
+    assert len(samples) == (last - first).days + 1
+    assert payload == client.fetch_hrv(first.isoformat(), last.isoformat(), timezone_name)
+    for offset, sample in enumerate(samples):
+        day = first + timedelta(days=offset)
+        start, end = local_day_utc_bounds(day, timezone_name)
+        assert start <= sample.timestamp < end
+        assert sample.metric == "hrv_sdnn" and sample.unit == "ms"
+        assert sample.device_id is None and sample.source_scope == "unknown"
+        assert 1 <= sample.value <= 400
+
+
+@pytest.mark.parametrize("event_type, sub_type, label, metric, unit", [
+    ("DailyHealth", "summary", "daily", "steps", "steps"),
+    ("Charge", "real_data", "charge", "hybrid_charge", "score"),
+    ("readiness", "watch_score", "readiness", "readiness", "score"),
+    ("RespiratoryRate", "real_data", "respiratory_rate", "respiratory_rate", "brpm"),
+    ("HRVRMSSD", "real_data", "hrv_rmssd", "hrv_rmssd", "ms"),
+    ("LactateThreshold", "summary", "lactate_threshold", "lactate_threshold_hr", "bpm"),
+])
+def test_mock_event_shapes_match_current_parsers(event_type, sub_type, label, metric, unit):
+    day = date(2026, 8, 28)
+    start, end = local_day_utc_bounds(day, "Asia/Shanghai")
+    client = MockZeppClient(seed=7)
+    args = (event_type, sub_type, int(start.timestamp() * 1000), int(end.timestamp() * 1000))
+    payload = client.fetch_events(*args)
+    if label == "respiratory_rate" or label == "lactate_threshold":
+        daily, samples = ZeppParser.parse_wellness(
+            payload, f"wellness:{label}:v2:{day}:{day}"
+        )
+    elif label == "hrv_rmssd":
+        daily, samples = ZeppParser.parse_wellness(
+            payload, f"wellness:{label}:v2:{day}:{day}"
+        )
+    else:
+        daily = ZeppParser.parse_daily_metrics(payload)
+        samples = (
+            ZeppParser.parse_charge_samples(payload) if label == "charge"
+            else ZeppParser.parse_readiness_samples(payload) if label == "readiness"
+            else []
+        )
+    matching = [item for item in [*daily, *samples] if item.metric == metric]
+    assert matching and all(item.unit == unit for item in matching)
+    assert payload == client.fetch_events(*args)
+    assert all(item.date == day for item in daily)
+    assert all(start <= item.timestamp < end for item in samples)
+    if label in {"charge", "readiness"}:
+        assert any(item.metric == metric for item in daily)
+        assert any(item.metric == metric for item in samples)
+
+
+@pytest.mark.parametrize("statistic, metric, unit", [
+    ("SPORT_LOAD", "training_load", "load"),
+    ("VO2_MAX", "vo2max", "ml/kg/min"),
+])
+def test_mock_watch_statistics_respect_window_order_and_limit(statistic, metric, unit):
+    client = MockZeppClient(seed=7)
+    forward = client.fetch_watch_statistics(statistic, "2026-03-07", "2026-03-09", 2, False)
+    reverse = client.fetch_watch_statistics(statistic, "2026-03-07", "2026-03-09", 2, True)
+    assert [item["day"] for item in forward["data"]["items"]] == ["2026-03-07", "2026-03-08"]
+    assert [item["day"] for item in reverse["data"]["items"]] == ["2026-03-09", "2026-03-08"]
+    assert reverse == client.fetch_watch_statistics(statistic, "2026-03-07", "2026-03-09", 2, True)
+    metrics = ZeppParser.parse_daily_metrics(reverse)
+    assert len([item for item in metrics if item.metric == metric and item.unit == unit]) == 2
+
+
+def test_mock_unknown_events_are_explicitly_empty_without_changing_legacy_hrv():
+    client = MockZeppClient(seed=7)
+    assert client.fetch_events("FutureEvent", "real_data", 0, 1000)["data"]["items"] == []
+    legacy = client.fetch_events("hrv_sdnn", "real_data", 0, 1000)
+    assert ZeppParser.parse_hrv_events(legacy)
 
 
 def test_parse_sdnn_samples_and_readiness_extensions():

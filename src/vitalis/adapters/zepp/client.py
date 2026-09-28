@@ -686,8 +686,9 @@ def generate_state() -> str:
 class MockZeppClient:
     """确定性 Mock：模拟 apptoken 模式与同构数据，离线可端到端。"""
 
-    def __init__(self, seed: int = 42):
+    def __init__(self, seed: int = 42, timezone_name: str = "Asia/Shanghai"):
         self._rng = random.Random(seed)
+        self._timezone_name = timezone_name
         self.authorize_url_base = "http://mock-zepp.local/authorize"
 
     # OAuth 演示兼容接口（mock 扫码页仍可用）
@@ -734,7 +735,7 @@ class MockZeppClient:
         raise ZeppAuthError("mock 没有高频心率归档", kind="not_available")
 
     def fetch_devices(self) -> dict:
-        return {"data": {"items": [{"model": "Amazfit GTR 4", "serial_number": "MOCK-DEV-1"}]}}
+        return {"items": [{"displayName": "Mock wearable", "macAddress": "02:00:00:00:00:01"}]}
 
     def fetch_band_data(self, from_date: str, to_date: str, query_type: str = "detail",
                         byte_length: int = 8, device_type: int = 0) -> dict:
@@ -773,43 +774,120 @@ class MockZeppClient:
 
     def fetch_sport_history(self, sport: str, start_track_id: int, stop_track_id: int,
                             need_sub_data: int = 1) -> dict:
-        day = date.today()
-        weekday = day.weekday()
+        if stop_track_id <= start_track_id:
+            return {"code": 0, "data": {"items": [], "next": -1}}
+        zone = ZoneInfo(self._timezone_name)
+        first = datetime.fromtimestamp(start_track_id, timezone.utc).astimezone(zone).date()
+        last = datetime.fromtimestamp(stop_track_id - 1, timezone.utc).astimezone(zone).date()
         items = []
-        if weekday in (0, 2, 5):  # 模拟训练日
+        for offset in range((last - first).days + 1):
+            day = first + timedelta(days=offset)
+            if day.weekday() not in (0, 2, 5):
+                continue
+            started = datetime(day.year, day.month, day.day, 7, 30, tzinfo=zone)
+            track_id = int(started.timestamp())
+            if not start_track_id <= track_id < stop_track_id:
+                continue
             items.append({
-                "trackid": f"mock-{sport}-{stop_track_id}",
+                "trackid": str(track_id),
                 "type": 1 if sport == "run" else 6,
-                "start_time": f"{day.isoformat()}T07:30:00",
-                "end_time": f"{day.isoformat()}T08:20:00",
+                "start_time": started.isoformat(),
+                "end_time": (started + timedelta(minutes=50)).isoformat(),
                 "distance": 7000, "calories": 420,
                 "avg_hr": 138, "max_hr": 168,
                 "training_load": 42, "source": "mock",
             })
-        return {"code": 0, "data": {"items": items, "next": -1}}
+        items.sort(key=lambda item: int(item["trackid"]), reverse=True)
+        page = items[:100]
+        return {"code": 0, "data": {
+            "items": page,
+            "next": int(page[-1]["trackid"]) if len(items) > len(page) else -1,
+        }}
 
     def fetch_watch_statistics(self, statistic: str = "SPORT_LOAD", start_day: str = "",
                                end_day: str = "", limit: int = 30, reverse: bool = True) -> dict:
         metric = "load" if statistic == "SPORT_LOAD" else "vo2max"
+        first = date.fromisoformat(start_day) if start_day else date.today() - timedelta(days=29)
+        last = date.fromisoformat(end_day) if end_day else date.today()
+        days = [first + timedelta(days=offset) for offset in range(max(0, (last - first).days + 1))]
+        if reverse:
+            days.reverse()
         return {"code": 0, "data": {"items": [
-            {
-                "day": (date.today() - timedelta(days=i)).isoformat(),
-                metric: (
-                    self._rng.randint(20, 80)
-                    if statistic == "SPORT_LOAD"
-                    else self._rng.randint(40, 55)
-                ),
-            }
-            for i in range(min(limit, 30))
+            {"day": day.isoformat(), metric: (
+                20 + day.toordinal() % 61 if statistic == "SPORT_LOAD"
+                else 40 + day.toordinal() % 16
+            )}
+            for day in days[:max(0, min(limit, 900))]
         ]}}
 
     def fetch_events(self, event_type: str, sub_type: str, from_ms: int, to_ms: int,
                      limit: int = 2000, reverse: bool = True) -> dict:
+        import base64
+        from vitalis.time import local_day_utc_bounds
+
+        if (event_type, sub_type) == ("hrv_sdnn", "real_data"):
+            # The older mock facade still consumes the daily-value representation.
+            items = [
+                {"ts": (date.today() - timedelta(days=i)).isoformat(),
+                 "value": 40 + (date.today() - timedelta(days=i)).toordinal() % 31}
+                for i in range(max(0, min(limit, 14)))
+            ]
+            return {"code": 0, "data": {"items": items}}
+
+        supported = {
+            ("DailyHealth", "summary"), ("Charge", "real_data"),
+            ("readiness", "watch_score"), ("RespiratoryRate", "real_data"),
+            ("HRVRMSSD", "real_data"), ("LactateThreshold", "summary"),
+        }
+        if (event_type, sub_type) not in supported or to_ms <= from_ms or limit <= 0:
+            return {"code": 0, "data": {"items": []}}
+
+        zone = ZoneInfo(self._timezone_name)
+        window_start = datetime.fromtimestamp(from_ms / 1000, timezone.utc)
+        window_end = datetime.fromtimestamp(to_ms / 1000, timezone.utc)
+        first = window_start.astimezone(zone).date()
+        last = (window_end - timedelta(milliseconds=1)).astimezone(zone).date()
         items = []
-        for i in range(min(limit, 14)):
-            ts = date.today() - timedelta(days=i)
-            items.append({"ts": ts.isoformat(), "value": 40 + self._rng.randint(0, 30)})
-        return {"code": 0, "data": {"items": items}}
+        for offset in range((last - first).days + 1):
+            day = first + timedelta(days=offset)
+            day_start, day_end = local_day_utc_bounds(day, self._timezone_name)
+            start, end = max(window_start, day_start), min(window_end, day_end)
+            if start >= end:
+                continue
+            timestamp_ms = int((start + (end - start) / 2).timestamp() * 1000)
+            ordinal = day.toordinal()
+            if event_type == "DailyHealth":
+                steps = 6000 + ordinal % 5000
+                item = {"date": day.isoformat(), "steps": steps,
+                        "calories": 300 + ordinal % 200,
+                        "totalDistance": steps * 0.7}
+            elif event_type == "Charge":
+                item = {"eventType": "Charge", "date": day.isoformat(),
+                        "value": {"startTime": timestamp_ms, "samples": [
+                            {"s": 0, "total": 60 + ordinal % 20,
+                             "physical": 65, "mental": 55}
+                        ]}}
+            elif event_type == "readiness":
+                item = {"eventType": "readiness", "date": day.isoformat(),
+                        "value": {"timestamp": timestamp_ms,
+                                  "rdnsScore": 70 + ordinal % 20, "phyScore": 75}}
+            elif event_type == "RespiratoryRate":
+                item = {"date": day.isoformat(), "value": {
+                    "measurements": base64.b64encode(bytes([14 + ordinal % 5, 16])).decode("ascii")
+                }}
+            elif event_type == "HRVRMSSD":
+                item = {"value": {"startTime": timestamp_ms,
+                                  "samples": [{"s": 0, "hrv": 40 + ordinal % 30}]}}
+            else:
+                item = {"value": {"samples": [{
+                    "dateString": day.isoformat(),
+                    "lactateThresholdHr": 150 + ordinal % 20,
+                    "lactateThresholdPace": 300 + ordinal % 60,
+                }]}}
+            items.append(item)
+        if reverse:
+            items.reverse()
+        return {"code": 0, "data": {"items": items[:limit]}}
 
     def fetch_hrv(
         self,
@@ -817,4 +895,18 @@ class MockZeppClient:
         end_date: str,
         timezone_name: str | None = None,
     ) -> dict:
-        return self.fetch_events("hrv_sdnn", "real_data", 0, 9999999999999, 2000, True)
+        from vitalis.time import local_day_utc_bounds
+
+        items = []
+        day = date.fromisoformat(start_date)
+        last = date.fromisoformat(end_date)
+        while day <= last:
+            start, end = local_day_utc_bounds(day, timezone_name)
+            if start < end:
+                midpoint_ms = int((start + (end - start) / 2).timestamp() * 1000)
+                items.append({"value": {
+                    "startTime": midpoint_ms,
+                    "samples": [{"s": 0, "sdnn": 40 + day.toordinal() % 31}],
+                }})
+            day += timedelta(days=1)
+        return {"code": 0, "data": {"items": items}}

@@ -50,7 +50,7 @@ def test_extension_cookie_search_is_not_limited_by_cookie_path():
 
 def test_extension_cookie_diagnostics_are_local_and_value_free():
     manifest = json.loads((EXTENSION / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == "0.2.9"
+    assert manifest["version"] == "0.3.0"
 
     background = (EXTENSION / "background.js").read_text(encoding="utf-8")
     diagnostics_body = background.split("async function collectCookieDiagnostics()", 1)[1]
@@ -97,6 +97,12 @@ def test_extension_bridges_allowlisted_page_storage_credentials_without_persisti
 
     background = (EXTENSION / "background.js").read_text(encoding="utf-8")
     assert 'request?.type === "zeppPageCredential"' in background
+    pairing = background.split("async function startPairing(base, code)", 1)[1].split(
+        "async function refreshCredential()", 1
+    )[0]
+    assert pairing.index('chrome.storage.local.remove("browserLinkToken")') < pairing.index(
+        "chrome.storage.local.set({"
+    )
     assert "isAllowedPageSender(_sender)" in background
     assert 'url.protocol === "https:"' in background
     assert "isSafeCredentialMessage(request.credential)" in background

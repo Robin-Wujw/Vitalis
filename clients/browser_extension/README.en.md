@@ -19,7 +19,9 @@ preflights are accepted only for allowlisted origins; host access does not bypas
 authentication or authorize the extension origin on the server.
 
 The popup saves both pairing fields as they are pasted, so closing and reopening it
-while copying the second value does not discard the first one.
+while copying the second value does not discard the first one. Starting a new pairing
+code flow clears any locally retained browser-link token, so a new database pairing
+cannot be sent to an old database's link-update endpoint.
 
 Cookie discovery uses only the known Zepp login-cookie names on permitted Zepp/Huami
 domains and is independent of the cookie's URL path.

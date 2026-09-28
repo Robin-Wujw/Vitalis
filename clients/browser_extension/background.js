@@ -64,6 +64,8 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 });
 
 async function startPairing(base, code) {
+  // A new one-time code replaces any link retained from another Vitalis database.
+  await chrome.storage.local.remove("browserLinkToken");
   await chrome.storage.local.set({
     vitalisBase: base,
     pairingCode: code,

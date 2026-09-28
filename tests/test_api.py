@@ -5,6 +5,7 @@ import hashlib
 from datetime import date, datetime, timedelta, timezone
 import importlib
 
+import httpx
 import pytest
 from sqlalchemy import delete, update
 from starlette.requests import Request
@@ -667,6 +668,34 @@ async def test_app_lifespan_checks_database_without_starting_scheduler(monkeypat
     async with candidate.router.lifespan_context(candidate):
         assert calls == ["checked"]
     assert calls == ["checked"]
+
+
+async def test_pairing_preflight_allows_only_configured_private_network_origin(monkeypatch):
+    from vitalis.entrypoints.api.app import create_app
+
+    extension_origin = "chrome-extension://abcdefghijklmnopabcdefghijklmnop"
+    monkeypatch.setattr(
+        settings, "pairing_allowed_origins",
+        (*settings.pairing_allowed_origins, extension_origin),
+    )
+    transport = httpx.ASGITransport(app=create_app())
+    headers = {
+        "Origin": extension_origin,
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type",
+        "Access-Control-Request-Private-Network": "true",
+    }
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http:
+        allowed = await http.options("/api/connect/zepp/pair/example/credentials", headers=headers)
+        denied = await http.options(
+            "/api/connect/zepp/pair/example/credentials",
+            headers={**headers, "Origin": "https://untrusted.example"},
+        )
+    assert allowed.status_code == 200
+    assert allowed.headers["access-control-allow-origin"] == extension_origin
+    assert allowed.headers["access-control-allow-private-network"] == "true"
+    assert denied.status_code == 400
+    assert "access-control-allow-origin" not in denied.headers
 
 
 def test_public_base_url_prefers_https_configuration(monkeypatch):

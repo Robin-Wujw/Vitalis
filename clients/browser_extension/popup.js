@@ -52,9 +52,14 @@ document.querySelector("#pair").addEventListener("submit", async (event) => {
     const code = codeInput.value.trim();
     if (!/^[A-Za-z0-9_-]{24,}$/.test(code)) throw new Error("配对码格式不正确");
 
-    const originPattern = `${new URL(base).origin}/*`;
-    const granted = await chrome.permissions.request({ origins: [originPattern] });
-    if (!granted) throw new Error("需要允许扩展访问你的 Vitalis 地址");
+    const baseUrl = new URL(base);
+    const localOrigin = baseUrl.protocol === "http:" &&
+      ["localhost", "127.0.0.1"].includes(baseUrl.hostname);
+    if (!localOrigin) {
+      const originPattern = `${baseUrl.origin}/*`;
+      const granted = await chrome.permissions.request({ origins: [originPattern] });
+      if (!granted) throw new Error("需要允许扩展访问你的 Vitalis 地址");
+    }
 
     await chrome.storage.local.set({ vitalisBase: base, pairingCode: code });
     const result = await chrome.runtime.sendMessage({

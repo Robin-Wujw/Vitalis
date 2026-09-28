@@ -11,10 +11,13 @@ def test_extension_registers_background_cookie_refresh():
     manifest = json.loads((EXTENSION / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["background"]["service_worker"] == "background.js"
     assert {"alarms", "cookies", "storage"}.issubset(manifest["permissions"])
+    assert "http://localhost/*" in manifest["host_permissions"]
+    assert "http://127.0.0.1/*" in manifest["host_permissions"]
 
     background = (EXTENSION / "background.js").read_text(encoding="utf-8")
     assert "chrome.cookies.onChanged.addListener" in background
     assert "chrome.alarms.onAlarm.addListener" in background
+    assert "Browser cookie permission failures must not abort" in background
     assert "/api/connect/zepp/link/credentials" in background
     assert "Authorization" in background
 
@@ -29,6 +32,7 @@ def test_extension_collects_no_account_credentials():
 def test_extension_persists_pairing_drafts_between_popup_opens():
     popup_script = (EXTENSION / "popup.js").read_text(encoding="utf-8")
     assert 'persistDraft(baseInput, "vitalisBase"' in popup_script
+    assert 'localOrigin' in popup_script
     assert 'persistDraft(codeInput, "pairingCode"' in popup_script
     assert 'input.addEventListener("input"' in popup_script
     assert "if (!baseDirty)" in popup_script
@@ -46,7 +50,7 @@ def test_extension_cookie_search_is_not_limited_by_cookie_path():
 
 def test_extension_cookie_diagnostics_are_local_and_value_free():
     manifest = json.loads((EXTENSION / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == "0.2.7"
+    assert manifest["version"] == "0.2.9"
 
     background = (EXTENSION / "background.js").read_text(encoding="utf-8")
     diagnostics_body = background.split("async function collectCookieDiagnostics()", 1)[1]

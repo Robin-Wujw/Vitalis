@@ -71,12 +71,25 @@ async function startPairing(base, code) {
     pairingState: "checking",
     pairingMessage: "正在检查 Zepp 登录状态"
   });
-  const cookie = await findLoginCookie();
+  let cookie = null;
+  try {
+    cookie = await findLoginCookie();
+  } catch (_error) {
+    // Browser cookie permission failures must not abort the pairing flow.
+  }
   if (cookie) return submitCredential(cookie.value);
 
-  await collectCookieDiagnostics();
+  try {
+    await collectCookieDiagnostics();
+  } catch (_error) {
+    // Diagnostics are local-only and optional; keep waiting for page storage.
+  }
   await setPairingStatus("waiting_login", "请在新页面完成 Zepp 官方登录，登录后会自动连接");
-  await chrome.tabs.create({ url: LOGIN_URL });
+  try {
+    await chrome.tabs.create({ url: LOGIN_URL });
+  } catch (_error) {
+    // The user can open the official login page manually.
+  }
   return { status: "waiting_login" };
 }
 

@@ -10,7 +10,7 @@
 4. 在扩展中输入 Vitalis 地址和配对码，然后选择 **登录并连接**。
 5. 在官方页面完成登录。扩展会自动继续配对。
 
-当 Vitalis 地址不是 localhost 时，必须使用浏览器信任的 HTTPS。扩展会刻意拒绝公网明文 HTTP 来源。服务端必须在 `VITALIS_PAIRING_ALLOWED_ORIGINS` 中配置扩展详情页显示的 `chrome-extension://<扩展 ID>` 来源，并重启 API；只授权扩展访问 Vitalis 主机不等于服务端信任该扩展来源。
+当 Vitalis 地址不是 localhost 时，必须使用浏览器信任的 HTTPS。扩展对 `http://localhost/*` 和 `http://127.0.0.1/*` 使用固定本机 host 权限，不再请求动态本机权限；公网地址仍需 HTTPS 和动态站点授权。服务端必须在 `VITALIS_PAIRING_ALLOWED_ORIGINS` 中配置扩展详情页显示的 `chrome-extension://<扩展 ID>` 来源，并重启 API；Chrome 访问本机 API 时的 Private Network Access 预检也只对该白名单来源放行。只授权扩展访问 Vitalis 主机不等于服务端信任该扩展来源。
 
 弹出窗口会按粘贴时的原样保存两个配对字段，因此在复制第二个值期间关闭并重新打开窗口不会丢失第一个值。
 
@@ -22,4 +22,4 @@ Cookie 发现仅使用获准 Zepp/Huami 域名上的已知 Zepp 登录 Cookie �
 
 配对会打开 Zepp 自有的 `universalLogin` 路由，并将 Watchface 应用作为其官方回调。因此，在页面存储桥接脚本运行前，已有的账户中心会话可以完成应用交接，而无需再次提示输入密码。
 
-扩展仅会读取 Zepp/Huami Cookie。对 Vitalis 来源的访问权限会在运行时请求，并且仅授予用户输入的确切来源。扩展会在 Cookie 发生变化时以及每 30 分钟检查一次会话，通过可撤销的浏览器链接更新 Vitalis，并在需要重新登录时进行报告。
+扩展仅会读取 Zepp/Huami Cookie。对非本机 Vitalis 来源的访问权限会在运行时请求，并且仅授予用户输入的确切来源；本机回环地址的固定 host 权限仍需服务端 Origin 白名单配合。扩展会在 Cookie 发生变化时以及每 30 分钟检查一次会话，通过可撤销的浏览器链接更新 Vitalis，并在需要重新登录时进行报告。

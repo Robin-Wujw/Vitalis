@@ -1,12 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Vitalis Zepp Login",
-  "version": "0.2.7",
+  "version": "0.2.9",
   "description": "把当前浏览器中的 Zepp 官方登录会话安全配对到你的 Vitalis 云端。",
   "permissions": ["alarms", "cookies", "storage"],
   "host_permissions": [
     "https://*.zepp.com/*",
-    "https://*.huami.com/*"
+    "https://*.huami.com/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
   ],
   "optional_host_permissions": [
     "http://*/*",

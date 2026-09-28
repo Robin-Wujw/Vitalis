@@ -11,10 +11,12 @@ This Manifest V3 extension is the user-side half of Vitalis cloud pairing.
 5. Complete sign-in on the official page. The extension resumes pairing automatically.
 
 The Vitalis address must use browser-trusted HTTPS when it is not localhost. The
-extension intentionally rejects public plaintext HTTP origins. Configure the exact
+extension has built-in host access for `http://localhost/*` and `http://127.0.0.1/*`;
+non-local HTTPS origins still request browser permission at runtime. Configure the exact
 `chrome-extension://<extension ID>` origin shown by the browser in the server's
-`VITALIS_PAIRING_ALLOWED_ORIGINS` setting, then restart the API. Granting the extension
-host access does not authorize its origin on the server.
+`VITALIS_PAIRING_ALLOWED_ORIGINS` setting, then restart the API. Private Network Access
+preflights are accepted only for allowlisted origins; host access does not bypass API
+authentication or authorize the extension origin on the server.
 
 The popup saves both pairing fields as they are pasted, so closing and reopening it
 while copying the second value does not discard the first one.

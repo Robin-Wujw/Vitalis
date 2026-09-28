@@ -4,7 +4,7 @@
 
 ## 连接和身份
 
-真实账号的首选路径是由具有 `manage` 权限的本地用户创建一次性配对码，浏览器扩展只在 Zepp 官方页面读取 `userid`、`apptoken` 和区域，再通过配对码提交；服务端会核对请求 `Origin`，扩展来源须在 `VITALIS_PAIRING_ALLOWED_ORIGINS` 中明确配置；密码和验证码不送往 Vitalis。浏览器会话可用时扩展可更新应用令牌；退出登录或会话过期可能需要重新登录。Zepp 供应商身份只归属一个本地用户，冲突不得通过静默合并健康记录解决。配对页面的 HTTPS/访问控制边界见[安全说明](../SECURITY.md)，扩展的独有安装方式见[扩展 README](../clients/browser_extension/README.md)。
+真实账号的首选路径是由具有 `manage` 权限的本地用户创建一次性配对码，浏览器扩展只在 Zepp 官方页面读取 `userid`、`apptoken` 和区域，再通过配对码提交；服务端会核对请求 `Origin`，扩展来源须在 `VITALIS_PAIRING_ALLOWED_ORIGINS` 中明确配置；Chrome 扩展访问本机 API 的私有网络预检仅对已列入白名单的来源放行，不能把允许私有网络当作免鉴权。密码和验证码不送往 Vitalis。浏览器会话可用时扩展可更新应用令牌；退出登录或会话过期可能需要重新登录。Zepp 供应商身份只归属一个本地用户，冲突不得通过静默合并健康记录解决。配对页面的 HTTPS/访问控制边界见[安全说明](../SECURITY.md)，扩展的独有安装方式见[扩展 README](../clients/browser_extension/README.md)。
 
 模拟 OAuth state 也有短 TTL，回调消费使用数据库条件删除并返回绑定用户，重复或过期回调不会再次成功。凭据更新会推进 `SourceAccount.fence_epoch`，取消旧的在途同步并拒绝旧 worker 的终端投影；撤销会同时撤销当前配对码和浏览器/设备链接，保留历史健康事实。重新配对仍须通过新的当前用户配对码。
 

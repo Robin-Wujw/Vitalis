@@ -77,6 +77,7 @@ def create_app() -> FastAPI:
         allow_credentials=False,
         allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-User-Id"],
+        allow_private_network=True,
         expose_headers=["X-Request-ID", "Retry-After"],
     )
     app.include_router(api)

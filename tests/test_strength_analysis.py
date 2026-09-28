@@ -6,10 +6,12 @@ from vitalis.intelligence.contracts import (
     SubjectiveFeedback,
 )
 from vitalis.intelligence.profile import RawDailyProfile, SeriesPoint
-from vitalis.intelligence.service import IntelligenceAction
+from vitalis.application.intelligence_service import IntelligenceAction
+from vitalis.bootstrap import get_intelligence_action
 from vitalis.intelligence.strength import StrengthAnalyzer, normalize_exercise
-from vitalis.models import Workout, WorkoutMetricSample, WorkoutType
-from vitalis.storage import HealthRepository, session_scope
+from vitalis.domain import Workout, WorkoutMetricSample, WorkoutType
+from vitalis.adapters.persistence import HealthRepository, session_scope
+from vitalis.adapters.persistence.models import StrengthCorrectionRevision, User as UserRow
 
 
 TARGET = date(2026, 8, 29)
@@ -67,17 +69,17 @@ def test_user_can_replace_confirmed_strength_exercises():
             duration=50,
         ))
 
-    records = IntelligenceAction().confirm_strength_workout(
+    records = get_intelligence_action().confirm_strength_workout(
         user_id,
         workout_id,
         StrengthWorkoutConfirmationInput(
             session_focus="PUSH",
             exercises=[
                 StrengthExerciseInput(
-                    exercise_name="卧推", sets=4, repetitions="8", weight_kg=60
+                    exercise_name="卧推", sets=4, repetitions=8, weight_kg=60
                 ),
                 StrengthExerciseInput(
-                    exercise_name="肩推", sets=3, repetitions="10", rir=2
+                    exercise_name="肩推", sets=3, repetitions=10, rir=2
                 ),
             ],
         ),
@@ -93,6 +95,46 @@ def test_user_can_replace_confirmed_strength_exercises():
             user_id, [workout_id]
         )[workout_id]
     assert [item.exercise_name for item in stored] == ["卧推", "肩推"]
+    assert [item.repetitions for item in records] == [8, 10]
+    assert [item.repetitions for item in stored] == [8, 10]
+    with session_scope() as db:
+        before_replay_revision = db.get(
+            UserRow,
+            user_id,
+        ).analysis_input_revision
+    replay = get_intelligence_action().confirm_strength_workout(
+        user_id,
+        workout_id,
+        StrengthWorkoutConfirmationInput(
+            session_focus="PUSH",
+            exercises=[
+                StrengthExerciseInput(exercise_name="卧推", sets=4, repetitions=8, weight_kg=60),
+                StrengthExerciseInput(exercise_name="肩推", sets=3, repetitions=10, rir=2),
+            ],
+        ),
+    )
+    assert [item.exercise_name for item in replay] == ["卧推", "肩推"]
+    with session_scope() as db:
+        after_replay_revision = db.get(
+            UserRow,
+            user_id,
+        ).analysis_input_revision
+    assert after_replay_revision == before_replay_revision
+
+    withdrawn = get_intelligence_action().confirm_strength_workout(
+        user_id,
+        workout_id,
+        StrengthWorkoutConfirmationInput(session_focus="PUSH", exercises=[]),
+    )
+    assert withdrawn == []
+    with session_scope() as db:
+        assert HealthRepository(db).strength_exercises_for_workouts(
+            user_id, [workout_id]
+        ).get(workout_id, []) == []
+        revisions = db.query(StrengthCorrectionRevision).filter_by(
+            user_id=user_id, workout_id=workout_id
+        ).order_by(StrengthCorrectionRevision.revision).all()
+        assert [row.status for row in revisions] == ["confirmed", "withdrawn"]
 
 
 def test_strength_analysis_detects_push_pull_legs_and_next_focus():

@@ -1,19 +1,20 @@
 from datetime import date, datetime, time, timedelta, timezone
 from unittest.mock import patch
 
-from vitalis.connectors.zepp.client import SPORTS
-from vitalis.connectors.zepp.fetcher import FetchWindow
+from vitalis.adapters.zepp.client import SPORTS
+from vitalis.adapters.zepp.fetcher import FetchWindow
 from vitalis.intelligence.evening_briefing import EveningBriefingEngine
 from vitalis.intelligence.monthly_briefing import MonthlyBriefingEngine
 from vitalis.intelligence.morning_briefing import MorningBriefingEngine
-from vitalis.intelligence.service import IntelligenceCommand
+from vitalis.application.intelligence_service import IntelligenceCommand
+from vitalis.bootstrap import get_intelligence_command
 from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
-from vitalis.models import ActivityRecord, DailyMetric, MetricSample, NormalizedDaily, SleepRecord, Workout
-from vitalis.services import daily_push
-from vitalis.services.push_service import _render_morning, _render_report_html
-from vitalis.services.zepp_sync_coordinator import PLAN_VERSION, stable_chunk_key
-from vitalis.storage import HealthRepository, session_scope
-from vitalis.storage.database import get_engine
+from vitalis.domain import ActivityRecord, DailyMetric, MetricSample, NormalizedDaily, SleepRecord, Workout
+from vitalis.adapters import daily_push
+from vitalis.adapters.notifications import _render_morning, _render_report_html
+from vitalis.adapters.zepp.sync_coordinator import PLAN_VERSION, stable_chunk_key
+from vitalis.adapters.persistence import HealthRepository, session_scope
+from vitalis.adapters.persistence.database import get_engine
 from vitalis.time import local_day_utc_bounds
 
 
@@ -135,8 +136,8 @@ def synthetic_pipeline_example(*, morning=False, explicit_strength=True, history
         def now(cls, tz=None):
             return cls.fromtimestamp(analysis_time.timestamp(), tz=tz)
 
-    with patch("vitalis.intelligence.service.datetime", ExampleClock), patch("vitalis.intelligence.contracts.datetime", ExampleClock):
-        return IntelligenceCommand().analyze(user, TARGET)
+    with patch("vitalis.bootstrap.datetime", ExampleClock), patch("vitalis.intelligence.contracts.datetime", ExampleClock):
+        return get_intelligence_command().analyze(user, TARGET)
 
 
 def test_stored_observations_reach_analysis_and_all_four_reports():

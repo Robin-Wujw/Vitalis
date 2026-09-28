@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 from vitalis.intelligence.contracts import ConfidenceBand
 from vitalis.intelligence.profile import RawDailyProfile, SeriesPoint
 from vitalis.intelligence.running import RunningAnalyzer
-from vitalis.models import WorkoutMetricSample
+from vitalis.domain import WorkoutMetricSample
 
 
 TARGET = date(2026, 8, 29)

@@ -5,12 +5,12 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import httpx
 import pytest
 
-from vitalis.connectors.zepp.client import ZeppAPIClient, ZeppAuthError
-from vitalis.connectors.zepp.dense_hr import (
+from vitalis.adapters.zepp.client import ZeppAPIClient, ZeppAuthError
+from vitalis.adapters.zepp.dense_hr import (
     DenseHeartRateDecodeError,
     decode_sec_hr_archive,
 )
-from vitalis.models import DenseDataFile
+from vitalis.domain import DenseDataFile
 
 
 def _varint(value: int) -> bytes:

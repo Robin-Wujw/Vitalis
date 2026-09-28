@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from vitalis.storage import HealthRepository, init_db, session_scope
+from vitalis.adapters.persistence import HealthRepository, init_db, session_scope
 
 
 NOW = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
@@ -15,7 +15,7 @@ def _attempt(repo, user_id, *, manifest=None, trigger="manual"):
         window_start=NOW - timedelta(days=1),
         window_end=NOW,
         timezone_name="Asia/Shanghai",
-        options={"decode_dense_files": False},
+        options={"decode_dense_files": False, "mock_source": True},
         manifest=manifest,
     )
 
@@ -43,6 +43,118 @@ def test_interrupted_pairing_claim_can_be_recovered_after_processing_lease():
         assert HealthRepository(db).claim_pairing_session(
             pairing_id, processing_lease_seconds=120
         )
+
+
+def test_pairing_claim_locks_source_owner_before_pairing_row(monkeypatch):
+    init_db()
+    pairing_id = "pairing-lock-order"
+    user_id = "pairing-lock-order-owner"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.create_pairing_session(
+            pairing_id, user_id, datetime.now(timezone.utc) + timedelta(minutes=5)
+        )
+
+    original_claim = HealthRepository.claim_source_account
+    observed = []
+
+    def claim_before_pairing_write(self, owner_id, source="zepp"):
+        observed.append((owner_id, self.pairing_session(pairing_id).status))
+        return original_claim(self, owner_id, source)
+
+    monkeypatch.setattr(HealthRepository, "claim_source_account", claim_before_pairing_write)
+    with session_scope() as db:
+        assert HealthRepository(db).claim_pairing_session(pairing_id)
+    assert observed == [(user_id, "waiting")]
+
+
+def test_pairing_stale_claim_cannot_finish_or_fail_new_claim():
+    init_db()
+    pairing_id = "pairing-stale-claim"
+    user_id = "pairing-stale-owner"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.create_pairing_session(
+            pairing_id, user_id, datetime.now(timezone.utc) + timedelta(minutes=5),
+        )
+        first = repo.claim_pairing_session(pairing_id)
+        assert first
+    with session_scope() as db:
+        HealthRepository(db).pairing_session(pairing_id).processing_started_at = (
+            datetime.utcnow() - timedelta(seconds=121)
+        )
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        second = repo.claim_pairing_session(pairing_id)
+        assert second and second != first
+        assert not repo.finish_pairing_session(pairing_id, first)
+        assert not repo.fail_pairing_session(pairing_id, first, "stale failure")
+        assert not repo.lock_pairing_claim(pairing_id, user_id, first)
+        assert repo.lock_pairing_claim(pairing_id, user_id, second)
+        assert repo.finish_pairing_session(pairing_id, second)
+    with session_scope() as db:
+        row = HealthRepository(db).pairing_session(pairing_id)
+        assert row.status == "connected"
+        assert row.processing_epoch == 2
+
+
+def test_pairing_limit_is_atomic_and_resets_after_window():
+    init_db()
+    pairing_id = "pairing-rate-window"
+    user_id = "pairing-rate-owner"
+    now = datetime.now(timezone.utc)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.create_pairing_session(pairing_id, user_id, now + timedelta(minutes=5))
+        for offset in range(2):
+            token = repo.claim_pairing_session(
+                pairing_id, rate_limit_attempts=2, rate_window_seconds=30,
+                now=now + timedelta(seconds=offset),
+            )
+            assert token
+            assert repo.fail_pairing_session(pairing_id, token, "invalid cookie")
+        assert repo.claim_pairing_session(
+            pairing_id, rate_limit_attempts=2, rate_window_seconds=30,
+            now=now + timedelta(seconds=2),
+        ) is None
+        assert repo.pairing_retry_after(
+            pairing_id, 2, 30, now=now + timedelta(seconds=2),
+        ) == 28
+        next_token = repo.claim_pairing_session(
+            pairing_id, rate_limit_attempts=2, rate_window_seconds=30,
+            now=now + timedelta(seconds=31),
+        )
+        assert next_token
+        assert repo.pairing_session(pairing_id).rate_window_attempts == 1
+
+
+def test_oauth_state_expires_and_consumes_atomically():
+    init_db()
+    user_id = "oauth-atomic-owner"
+    state = "oauth-atomic-state"
+    now = datetime(2026, 9, 1, 12, tzinfo=timezone.utc)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.save_oauth_state(
+            state, user_id, expires_at=now + timedelta(minutes=5)
+        )
+        assert repo.oauth_state_exists(state, now=now)
+        assert repo.consume_oauth_state(
+            state, now=now + timedelta(minutes=6)
+        ) is None
+
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.save_oauth_state(
+            state, user_id, expires_at=now + timedelta(minutes=5)
+        )
+        assert repo.consume_oauth_state(state, now=now) == user_id
+        # A second callback observes the already-deleted row and cannot win.
+        assert repo.consume_oauth_state(state, now=now) is None
 
 
 def test_stable_manifest_insert_is_idempotent():
@@ -75,7 +187,7 @@ def test_detail_only_reuse_does_not_append_a_new_manifest_chunk():
         repo.delete_for_user("ledger-detail-freeze")
         first = repo.create_or_reuse_sync_attempt(
             "ledger-detail-freeze", window_start=NOW - timedelta(days=1), window_end=NOW,
-            options={"detail_only": True, "detail_limit": 1}, manifest=manifest[:1],
+            options={"detail_only": True, "detail_limit": 1, "mock_source": True}, manifest=manifest[:1],
         )
         first_chunk = repo.sync_chunks(first.id)[0]
         first_chunk.status = "succeeded"
@@ -84,18 +196,18 @@ def test_detail_only_reuse_does_not_append_a_new_manifest_chunk():
         first_chunk.write_status = "success"
         reused = repo.create_or_reuse_sync_attempt(
             "ledger-detail-freeze", window_start=NOW - timedelta(days=1), window_end=NOW,
-            options={"detail_only": True, "detail_limit": 1}, manifest=manifest[1:],
+            options={"detail_only": True, "detail_limit": 1, "mock_source": True}, manifest=manifest[1:],
         )
         explicit = repo.create_or_reuse_sync_attempt(
             "ledger-detail-freeze", window_start=NOW - timedelta(days=1), window_end=NOW,
-            options={"detail_only": True, "detail_limit": 1},
+            options={"detail_only": True, "detail_limit": 1, "mock_source": True},
             manifest=manifest[1:], attempt_id=first.id,
         )
         assert reused.id == explicit.id == first.id
         assert [chunk.stable_key for chunk in repo.sync_chunks(first.id)] == ["detail:one"]
         next_limit = repo.create_or_reuse_sync_attempt(
             "ledger-detail-freeze", window_start=NOW - timedelta(days=1), window_end=NOW,
-            options={"detail_only": True, "detail_limit": 2}, manifest=manifest[1:],
+            options={"detail_only": True, "detail_limit": 2, "mock_source": True}, manifest=manifest[1:],
         )
         assert next_limit.id != first.id
         assert [chunk.stable_key for chunk in repo.sync_chunks(next_limit.id)] == ["detail:two"]
@@ -107,7 +219,7 @@ def test_detail_only_integrity_race_cannot_extend_manifest(monkeypatch):
     with session_scope() as db:
         repo = HealthRepository(db)
         repo.delete_for_user(user_id)
-        options = {"detail_only": True, "detail_limit": 1}
+        options = {"detail_only": True, "detail_limit": 1, "mock_source": True}
         kwargs = dict(
             window_start=NOW - timedelta(days=1), window_end=NOW,
             options=options,
@@ -213,16 +325,21 @@ def test_stale_token_finalize_is_rejected_and_retry_is_counted():
         chunk = repo.sync_chunks(attempt.id)[0]
         assert repo.claim_chunk(chunk.id, "chunk-token", now=NOW)
         assert repo.finalize_chunk(
-            chunk.id, "stale-token", 1, "succeeded", raw_records=1, records_written=1
+            chunk.id, "stale-token", 1, "succeeded", now=NOW,
+            raw_records=1, records_written=1,
         ) is False
         retry_at = NOW + timedelta(minutes=5)
         assert repo.finalize_chunk(
-            chunk.id, "chunk-token", 1, "retry_wait", next_retry_at=retry_at,
+            chunk.id, "chunk-token", 1, "retry_wait", now=NOW, next_retry_at=retry_at,
             error_kind="network", error="temporary",
         )
         assert chunk.attempt_count == 1
         assert chunk.next_retry_at == retry_at.replace(tzinfo=None)
         assert repo.claim_chunk(chunk.id, "chunk-token-2", now=NOW) is False
+        assert repo.renew_sync_attempt_lease(
+            attempt.id, "attempt-token", 1, now=NOW + timedelta(seconds=30),
+            lease_seconds=600,
+        )
         assert repo.claim_chunk(chunk.id, "chunk-token-2", now=retry_at)
         assert chunk.attempt_count == 2
 
@@ -246,10 +363,12 @@ def test_specific_finalize_helpers_cover_success_and_failure():
         chunk = repo.sync_chunks(failure.id)[0]
         assert repo.claim_chunk(chunk.id, "failure-chunk-token", now=NOW)
         assert repo.finalize_sync_chunk_failure(
-            chunk.id, "failure-chunk-token", 1, error_kind="network", error="offline"
+            chunk.id, "failure-chunk-token", 1, now=NOW,
+            error_kind="network", error="offline",
         )
         assert repo.finalize_sync_attempt_failure(
-            failure.id, "failure-attempt-token", 1, error_kind="network", error="offline"
+            failure.id, "failure-attempt-token", 1, now=NOW,
+            error_kind="network", error="offline",
         )
         assert failure.status == "failed"
 
@@ -266,9 +385,10 @@ def test_cancel_aggregate_projection_isolation_and_delete_for_user():
         chunk = repo.sync_chunks(first.id)[0]
         assert repo.claim_chunk(chunk.id, "c-token", now=NOW)
         assert repo.finalize_chunk(
-            chunk.id, "c-token", 1, "unavailable", error_kind="not_available"
+            chunk.id, "c-token", 1, "unavailable", now=NOW,
+            error_kind="not_available",
         )
-        assert repo.finalize_attempt(first.id, "a-token", 1, "succeeded")
+        assert repo.finalize_attempt(first.id, "a-token", 1, "succeeded", now=NOW)
         aggregate = repo.aggregate_sync_attempt(first.id)
         assert aggregate.unavailable_chunks == 1
         assert aggregate.completed_count == 1

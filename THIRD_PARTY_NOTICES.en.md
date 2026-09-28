@@ -7,7 +7,7 @@
 ## ZeppBridge integration provenance
 
 Some Zepp cloud endpoint, payload-normalization, and region-probing conventions in
-`vitalis/connectors/zepp/` were developed with reference to ZeppBridge.
+`src/vitalis/adapters/zepp/` were developed with reference to ZeppBridge.
 
 - Upstream repository: <https://github.com/lingcang728/ZeppBridge>
 - Reviewed release: `v2.1.0` (2026-09-02); the precise historical source revision for
@@ -19,7 +19,7 @@ Some Zepp cloud endpoint, payload-normalization, and region-probing conventions 
   response-cap handling (`592b685b652e`), and readiness missing sentinel handling
   (`37e0b52b1425`).
 - Vitalis modules with explicit ZeppBridge references: `auth_parser.py`, `client.py`,
-  `fetcher.py`, `parser.py`, `sync_manager.py`, and `api/routes/connect.py`.
+  `fetcher.py`, `parser.py`, `sync_manager.py`, and `entrypoints/api/routes/connect.py`.
 - Vitalis-specific changes: Python/FastAPI/SQLAlchemy architecture, typed normalized
   contracts, source/scope/device provenance, bounded chunk orchestration, leases,
   retries, diagnostics, and deterministic analysis boundaries.
@@ -36,7 +36,7 @@ Portions of the Open Health Insights shadow algorithms are ported or adapted fro
 
 - Upstream repository: <https://github.com/OpenStrap/analytics>
 - Upstream revision: `45d72ed989c004008b919b366cd5ceda7061b7df`
-- Vitalis modules: `vitalis/intelligence/open_health/ewma.py`, `readiness.py`, `anomaly.py`, `sleep.py`, and `load.py`.
+- Vitalis modules: `src/vitalis/intelligence/open_health/ewma.py`, `readiness.py`, `anomaly.py`, `sleep.py`, and `load.py`.
 - Upstream-derived scope: winsorized EWMA conventions, nightly lnRMSSD readiness structure, robust median/MAD anomaly conventions, Banister TRIMP, and ATL/CTL/TSB exponential-load conventions.
 - Vitalis-specific changes: typed `OpenHealthInsights 1.0` envelopes, source/device isolation, user-confirmed profile gates, coverage/refusal policy, hard-reject and stale handling, SWC readiness bands, 99.9% anomaly threshold and persistence policy, sleep timing/regularity policy, workout pause/gap handling, upstream-coverage lower bounds, non-diagnostic wording, and `shadow_only` isolation from Decision Policy 7.0.
 

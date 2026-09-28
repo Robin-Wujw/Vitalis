@@ -14,3 +14,5 @@ dist/
 build/
 *.egg-info/
 data/
+!src/vitalis/adapters/zepp/data/
+!src/vitalis/adapters/zepp/data/strength_exercises.json

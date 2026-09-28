@@ -1,10 +1,12 @@
 from contextlib import closing
+from importlib import resources
 import json
 import shutil
 import sqlite3
 
 import pytest
 
+from vitalis.adapters.zepp import catalog
 from vitalis.strength_label_refresh import refresh_strength_labels
 
 
@@ -82,6 +84,27 @@ def test_refresh_dry_run_is_read_only_and_requires_verified_codes(tmp_path):
     with pytest.raises(ValueError, match="backup"):
         refresh_strength_labels(database, "owner", codes={14}, apply=True)
     assert database.read_bytes() == before
+
+
+def test_refresh_rejects_provisional_code_and_leaves_it_unlabeled(tmp_path, monkeypatch):
+    text = resources.files("vitalis.adapters.zepp").joinpath(
+        "data", "strength_exercises.json",
+    ).read_text(encoding="utf-8")
+    payload = json.loads(text)
+    provisional = next(entry for entry in payload["entries"] if entry["vendor_code"] == 14)
+    provisional.update(verification="provisional", provenance={})
+    monkeypatch.setattr(
+        catalog, "load_catalog",
+        lambda: catalog.parse_catalog(json.dumps(payload, ensure_ascii=False)),
+    )
+    database = tmp_path / "workouts.db"
+    _database(database)
+    with pytest.raises(ValueError, match="verified lap labels"):
+        refresh_strength_labels(database, "owner", codes={14})
+    assert refresh_strength_labels(database, "owner")["codes"] == [
+        {"code": 114, "sets": 1}, {"code": 1770, "sets": 1},
+    ]
+    assert _details(database)[1]["strength_sets"][0]["exercise_name"] is None
 
 
 def test_refresh_verified_lap_labels_is_idempotent(tmp_path):

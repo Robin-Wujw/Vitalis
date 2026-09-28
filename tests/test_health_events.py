@@ -7,7 +7,7 @@ from vitalis.intelligence.events import HealthEventEngine
 from vitalis.intelligence.lifecycle import EventLifecycleEngine
 from vitalis.intelligence.profile import RawDailyProfile, SeriesPoint
 from vitalis.intelligence.trend import TrendEngine
-from vitalis.storage import HealthRepository, session_scope
+from vitalis.adapters.persistence import HealthRepository, session_scope
 
 
 TARGET = date(2026, 8, 28)

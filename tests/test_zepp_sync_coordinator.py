@@ -1,27 +1,28 @@
 """Durable Zepp coordinator tests; all connectors are local fakes."""
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from vitalis.config import settings
-from vitalis.connectors.zepp.client import SPORTS, ZeppAuthError
-from vitalis.connectors.zepp.fetcher import (
+from vitalis.adapters.zepp.client import SPORTS, ZeppAuthError
+from vitalis.adapters.zepp.fetcher import (
     DAY_MILLISECONDS,
     FetchWindow,
     FetchedRecord,
     RawRecord,
 )
-from vitalis.models import User, Workout, WORKOUT_DETAIL_SCHEMA_VERSION
-from vitalis.services.zepp_sync_coordinator import (
+from vitalis.domain import User, Workout, WORKOUT_DETAIL_SCHEMA_VERSION
+from vitalis.adapters.zepp.sync_coordinator import (
     SyncControl,
     ZeppSyncCoordinator,
     _ChunkResult,
     stable_chunk_key,
 )
-from vitalis.storage import HealthRepository, init_db, session_scope
-from vitalis.storage.database import SessionLocal
-from vitalis.storage import models as orm
+from vitalis.adapters.persistence import HealthRepository, init_db, session_scope
+from vitalis.adapters.persistence.database import SessionLocal
+from vitalis.adapters.persistence import models as orm
 
 
 NOW = datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
@@ -44,7 +45,7 @@ class HeartConnector:
 class WorkoutConnector:
     def fetch_sport_history(self, sport, start, stop, need_sub_data):
         return {"data": {"items": [{
-            "trackid": "w-1", "type": 1,
+            "trackid": 1785567600, "type": 1,
             "start_time": "2026-08-01T07:00:00Z",
             "end_time": "2026-08-01T08:00:00Z",
             "source": "run", "distance": 1000,
@@ -591,7 +592,8 @@ def test_dynamic_workout_detail_is_bounded_and_report_hides_leases():
     }
     with session_scope() as db:
         attempt = HealthRepository(db).create_or_reuse_sync_attempt(
-            "coord-detail", window_start=start, window_end=end, manifest=[spec],
+            "coord-detail", window_start=start, window_end=end,
+            options={"mock_source": True}, manifest=[spec],
         )
     report = coordinator.run_attempt(attempt.id)
     state = coordinator.status(attempt.id)
@@ -865,6 +867,82 @@ def test_coordinator_marks_malformed_sport_history_envelope_incomplete():
     assert result.record.raw.payload["data"] == {"next": -1}
 
 
+def test_resumed_hrv_chunk_uses_persisted_timezone_not_process_default(monkeypatch):
+    import vitalis.time as time_module
+
+    monkeypatch.setattr(time_module, "local_timezone", lambda *_args: ZoneInfo("UTC"))
+    start = datetime(2026, 8, 28, tzinfo=timezone.utc)
+    end = start + timedelta(days=1)
+    captured = {}
+    chunk = {
+        "cursor": None,
+        "window_start": start,
+        "window_end": end,
+        "stream": "hrv",
+        "stages": {
+            "operation": "fetch_hrv",
+            "params": {"start_date": "2026-08-28", "end_date": "2026-08-28"},
+        },
+    }
+
+    class Connector:
+        def fetch_hrv(self, start_date, end_date, timezone_name=None):
+            captured.update(
+                start_date=start_date,
+                end_date=end_date,
+                timezone_name=timezone_name,
+            )
+            return {"items": []}
+
+    result = ZeppSyncCoordinator()._fetch_chunk(
+        chunk, SyncControl(), Connector(), "Asia/Shanghai"
+    )
+
+    assert result.record is not None
+    assert captured == {
+        "start_date": "2026-08-28",
+        "end_date": "2026-08-28",
+        "timezone_name": "Asia/Shanghai",
+    }
+
+
+def test_coordinator_nonempty_workout_page_without_cursor_is_partial():
+    start_ts = int(WINDOW.start.timestamp())
+    end_ts = int(WINDOW.end.timestamp())
+    chunk = {
+        "cursor": end_ts,
+        "window_start": WINDOW.start,
+        "window_end": WINDOW.end,
+        "stream": "workouts",
+        "stages": {
+            "operation": "fetch_sport_history",
+            "params": {
+                "sport": "run",
+                "start_track_id": start_ts,
+                "stop_track_id": end_ts,
+                "need_sub_data": 1,
+            },
+        },
+    }
+
+    class Connector:
+        def fetch_sport_history(self, *_args):
+            return {"data": {"summary": [{
+                "trackid": start_ts + 60,
+                "end_time": start_ts + 120,
+                "type": 1,
+            }]}}
+
+    result = ZeppSyncCoordinator()._fetch_chunk(
+        chunk, SyncControl(), Connector()
+    )
+
+    assert result.record is not None
+    assert result.next_cursor is None
+    assert result.incomplete is True
+    assert "omitted" in (result.incomplete_reason or "")
+
+
 def test_coordinator_stalled_workout_cursor_is_partial_and_keeps_rows():
     user_id = "coord-workout-stalled"
     _clean(user_id)
@@ -911,6 +989,7 @@ def test_coordinator_stalled_workout_cursor_is_partial_and_keeps_rows():
             user_id,
             window_start=WINDOW.start,
             window_end=WINDOW.end,
+            options={"mock_source": True},
             manifest=[spec],
         )
     coordinator = ZeppSyncCoordinator(
@@ -1013,14 +1092,24 @@ def test_manifest_uses_inclusive_three_day_local_odi_windows_across_dst():
     assert point["window_end"] == window.end
 
 
-def test_legacy_odi_iso_params_are_converted_to_local_inclusive_dates():
-    coordinator = ZeppSyncCoordinator()
-    assert coordinator._legacy_local_date(
-        "2026-08-01T16:00:00Z", "Asia/Shanghai"
-    ) == "2026-08-02"
-    assert coordinator._legacy_local_date(
-        "2026-08-02T16:00:00Z", "Asia/Shanghai", exclusive_end=True
-    ) == "2026-08-02"
+def test_obsolete_stored_odi_parameters_are_rejected_without_old_runtime():
+    start = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    chunk = {
+        "cursor": None,
+        "window_start": start,
+        "window_end": start + timedelta(days=1),
+        "stream": "wellness",
+        "stages": {
+            "operation": "fetch_user_events_date_string",
+            "params": {
+                "event_type": "blood_oxygen", "sub_type": "odi",
+                "from_iso": "2026-08-01T16:00:00Z",
+                "to_iso": "2026-08-02T16:00:00Z",
+            },
+        },
+    }
+    with pytest.raises(ZeppAuthError, match="不受支持"):
+        ZeppSyncCoordinator()._fetch_chunk(chunk, SyncControl(), object())
 
 
 def test_manifest_defaults_to_application_timezone():
@@ -1063,78 +1152,23 @@ def test_coordinator_wellness_chunk_handles_non_capped_payload():
 
 
 @pytest.mark.parametrize("period", ("morning", "evening"))
-@pytest.mark.parametrize(
-    ("configured_user", "token", "recipient"),
-    [
-        ("coord-push-owner", "private-token", "coord-push-owner"),
-        ("coord-push-unbound", "private-token", None),
-        (None, "private-token", None),
-        ("coord-push-owner", None, None),
-    ],
-)
-def test_scheduled_push_requires_explicit_recipient_binding(
-    monkeypatch, tmp_path, period, configured_user, token, recipient
-):
-    from vitalis.intelligence.service import IntelligenceCommand
-    from vitalis.services import daily_push
-
-    if configured_user is None:
-        monkeypatch.delenv("VITALIS_PUSH_USER", raising=False)
-    else:
-        monkeypatch.setenv("VITALIS_PUSH_USER", configured_user)
-    if token is None:
-        monkeypatch.delenv("PUSHPLUS_TOKEN", raising=False)
-    else:
-        monkeypatch.setenv("PUSHPLUS_TOKEN", token)
-
-    report_day = date(2026, 8, 29)
-    monkeypatch.setattr(daily_push, "local_today", lambda: report_day)
-    monkeypatch.setattr(
-        daily_push, "local_day_utc_bounds",
-        lambda _day: (NOW, datetime(2100, 1, 1, tzinfo=timezone.utc)),
-    )
-    marker_for = daily_push._delivery_marker
-    monkeypatch.setattr(
-        daily_push, "_delivery_marker",
-        lambda _state_dir, user, day, report_period: marker_for(
-            tmp_path, user, day, report_period
-        ),
-    )
-    analyzed = []
-    sent = []
-
-    def analyze(_self, user_id):
-        analyzed.append(user_id)
-        return SimpleNamespace(daily={
-            "date": report_day.isoformat(),
-            "data_quality": {"status": "SUFFICIENT"},
-            "report_context": {"training_history": {
-                "status": "COMPLETE", "prior_7d_verified": True,
-            }},
-            "features": {"sleep": {"status": "AVAILABLE", "wake_time": "08:00:00"}},
-        })
-
-    class RecordingPushService:
-        def __init__(self, pushplus_token):
-            assert pushplus_token == "private-token"
-
-        def push_daily_profile(self, user_id, _daily, period):
-            sent.append((user_id, period))
-            return {"_pushplus_handler": "ok"}
-
-    monkeypatch.setattr(IntelligenceCommand, "analyze", analyze)
-    monkeypatch.setattr(daily_push, "PushService", RecordingPushService)
-
-    for user_id in ("coord-push-owner", "coord-push-other"):
+def test_scheduled_sync_enqueues_analysis_without_inline_delivery(period):
+    user_ids = (f"coord-scheduled-{period}-owner", f"coord-scheduled-{period}-other")
+    for user_id in user_ids:
         _clean(user_id)
         coordinator, attempt = _one_chunk_attempt(
             user_id, HeartConnector(), trigger=period
         )
         assert coordinator.run_attempt(attempt.id).success
+        coordinator._apply_terminal_side_effect(attempt.id, "succeeded")
 
-    assert analyzed == ["coord-push-owner", "coord-push-other"]
-    assert sent == ([(recipient, period)] if recipient else [])
-    markers = list(tmp_path.glob("*.sent"))
-    assert markers == (
-        [marker_for(tmp_path, recipient, report_day, period)] if recipient else []
-    )
+    with session_scope() as db:
+        jobs = db.query(orm.AnalysisJob).filter(
+            orm.AnalysisJob.user_id.in_(user_ids),
+        ).all()
+        assert len(jobs) == 2
+        assert {job.delivery_period for job in jobs} == {period}
+        assert {job.status for job in jobs} == {"queued"}
+        assert db.query(orm.NotificationDelivery).filter(
+            orm.NotificationDelivery.user_id.in_(user_ids),
+        ).count() == 0

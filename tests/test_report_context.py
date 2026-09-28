@@ -3,8 +3,8 @@ from datetime import date, datetime, timedelta, timezone
 from vitalis.intelligence.analyzers import TrainingAnalyzer
 from vitalis.intelligence.contracts import DailyProfile
 from vitalis.intelligence.profile import ProfileLoader, RawDailyProfile
-from vitalis.models import DailyMetric, MetricSample
-from vitalis.storage import HealthRepository, session_scope
+from vitalis.domain import DailyMetric, MetricSample
+from vitalis.adapters.persistence import HealthRepository, session_scope
 
 
 def test_daily_contract_version_defaults_match_validation_literals():

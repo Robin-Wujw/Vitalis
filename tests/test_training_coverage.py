@@ -1,10 +1,10 @@
 from datetime import date, datetime, timedelta, timezone
 
-from vitalis.connectors.zepp.client import LEGACY_SPORTS, SPORTS
-from vitalis.models import MetricSample, Workout, WORKOUT_DETAIL_SCHEMA_VERSION
-from vitalis.connectors.zepp.fetcher import FetchWindow
-from vitalis.services.zepp_sync_coordinator import PLAN_VERSION, stable_chunk_key
-from vitalis.storage import HealthRepository, session_scope
+from vitalis.adapters.zepp.client import LEGACY_SPORTS, SPORTS
+from vitalis.domain import MetricSample, Workout, WORKOUT_DETAIL_SCHEMA_VERSION
+from vitalis.adapters.zepp.fetcher import FetchWindow
+from vitalis.adapters.zepp.sync_coordinator import PLAN_VERSION, stable_chunk_key
+from vitalis.adapters.persistence import HealthRepository, session_scope
 
 
 NOW = datetime(2026, 8, 30, 12, tzinfo=timezone.utc)

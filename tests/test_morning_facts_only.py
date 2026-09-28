@@ -3,13 +3,12 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from vitalis.intelligence.contracts import MorningBriefing
-
-from vitalis.intelligence.morning_briefing import MorningBriefingEngine
-from vitalis.services import daily_push
-from vitalis.services.push_service import PushService
 from tests.test_report_content import synthetic_daily_fixture
-
+from vitalis.adapters import daily_push
+from vitalis.adapters.notifications import PushService
+from vitalis.application import delivery_policy
+from vitalis.intelligence.contracts import MorningBriefing
+from vitalis.intelligence.morning_briefing import MorningBriefingEngine
 
 TARGET_DATE = date(2026, 8, 29)
 
@@ -258,7 +257,7 @@ def test_missing_history_uses_explicit_facts_only_reason():
     daily = _daily()
     daily["report_context"].pop("training_history")
     daily["features"]["training"].pop("history_coverage", None)
-    assert daily_push._morning_facts_only_reason(daily) == "training_history_missing"
+    assert delivery_policy.morning_facts_only_reason(daily) == "training_history_missing"
 
 
 def test_facts_only_renders_dated_activity_and_observed_training_without_a_plan():

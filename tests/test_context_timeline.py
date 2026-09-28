@@ -2,9 +2,10 @@ import json
 from datetime import date, datetime, timedelta, timezone
 
 from vitalis.intelligence.contracts import SubjectiveFeedbackInput
-from vitalis.intelligence.service import IntelligenceAction, IntelligenceCommand, IntelligenceQuery
-from vitalis.models import Workout, WorkoutType
-from vitalis.storage import HealthRepository, session_scope
+from vitalis.application.intelligence_service import IntelligenceAction, IntelligenceCommand, IntelligenceQuery
+from vitalis.bootstrap import get_intelligence_action, get_intelligence_command, get_intelligence_query
+from vitalis.domain import Workout, WorkoutType
+from vitalis.adapters.persistence import HealthRepository, session_scope
 
 
 TARGET = date(2026, 8, 28)
@@ -16,9 +17,9 @@ def test_agent_context_is_layered_bounded_and_contains_no_full_profiles():
         repo = HealthRepository(db)
         repo.delete_for_user(user_id)
         repo.upsert_user(user_id)
-    IntelligenceCommand().analyze(user_id, TARGET)
+    get_intelligence_command().analyze(user_id, TARGET)
 
-    context = IntelligenceQuery().context(user_id, TARGET)
+    context = get_intelligence_query().context(user_id, TARGET)
     payload = context.model_dump(mode="json")
     encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
@@ -54,11 +55,11 @@ def test_timeline_projects_typed_summaries_without_raw_samples():
             duration=40,
             load=60,
         ))
-    first = IntelligenceCommand().analyze(user_id, TARGET)
-    IntelligenceAction().complete_recommendation(
+    first = get_intelligence_command().analyze(user_id, TARGET)
+    get_intelligence_action().complete_recommendation(
         user_id, first.recommendation.id, workout_id
     )
-    IntelligenceAction().log_feedback(
+    get_intelligence_action().log_feedback(
         user_id,
         SubjectiveFeedbackInput(
             date=TARGET,
@@ -68,9 +69,9 @@ def test_timeline_projects_typed_summaries_without_raw_samples():
             session_rpe=6,
         ),
     )
-    IntelligenceCommand().analyze(user_id, TARGET)
+    get_intelligence_command().analyze(user_id, TARGET)
 
-    timeline = IntelligenceQuery().timeline(
+    timeline = get_intelligence_query().timeline(
         user_id, TARGET - timedelta(days=6), TARGET
     )
     payload = timeline.model_dump(mode="json")
@@ -86,7 +87,7 @@ def test_timeline_projects_typed_summaries_without_raw_samples():
     assert "workout_samples" not in encoded
     assert "response_days" not in encoded
 
-    later = IntelligenceQuery().timeline(
+    later = get_intelligence_query().timeline(
         user_id, TARGET - timedelta(days=6), TARGET + timedelta(days=1)
     )
     assert any(item.type == "training_response" for item in later.items)

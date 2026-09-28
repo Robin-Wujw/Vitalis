@@ -1,39 +1,57 @@
 [project]
 name = "vitalis"
-version = "0.1.0"
-description = "Vitalis Health Agent - 可扩展的个人健康数据平台（第一阶段：Zepp 连接器 + 统一 Schema + FastAPI + Hermes Skill）"
-requires-python = ">=3.11"
+dynamic = ["version"]
+description = "Wearable health data and deterministic training analysis"
+requires-python = ">=3.11,<3.14"
 dependencies = [
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.30",
-    "pydantic>=2.7",
-    "sqlalchemy>=2.0",
-    "psycopg[binary]>=3.1",
-    "httpx>=0.27",
-    "apscheduler>=3.10",
-    "qrcode[pil]>=7.4",
-    "python-dotenv>=1.0",
-    "cryptography>=43.0",
-    "markdown>=3.7",
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.30,<1",
+    "pydantic>=2.7,<3",
+    "sqlalchemy>=2.0,<2.1",
+    "psycopg[binary]>=3.1,<4",
+    "httpx>=0.27,<1",
+    "apscheduler>=3.10,<4",
+    "qrcode[pil]>=7.4,<9",
+    "python-dotenv>=1.0,<2",
+    "cryptography>=43.0,<51",
+    "markdown>=3.7,<4",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.23",
-    "httpx2>=2.12",
+    "pytest>=8.0,<10",
+    "pytest-asyncio>=0.23,<2",
+    "hatchling>=1.27,<2",
+    "ruff>=0.13,<1",
 ]
 
 [project.scripts]
-vitalis = "vitalis.main:main"
-vitalis-worker = "vitalis.worker:main"
+vitalis = "vitalis.entrypoints.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.version]
+path = "src/vitalis/__init__.py"
+
 [tool.hatch.build.targets.wheel]
-packages = ["vitalis"]
+packages = ["src/vitalis"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"clients/browser_extension" = "vitalis/static/browser_extension"
+"THIRD_PARTY_NOTICES.md" = "vitalis/THIRD_PARTY_NOTICES.md"
+"THIRD_PARTY_NOTICES.en.md" = "vitalis/THIRD_PARTY_NOTICES.en.md"
+
+[tool.hatch.build.targets.sdist]
+only-include = [
+    "src/vitalis",
+    "clients/browser_extension",
+    "pyproject.toml",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md",
+    "THIRD_PARTY_NOTICES.en.md",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,291 @@
+{
+  "catalog_revision": "zepp-observed-lap-62-v1",
+  "entries": [
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 3,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "杠铃深蹲"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[3]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 4,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "肱三头肌下压"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[4]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 5,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "俯身划船"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[5]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 6,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "卧推"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[6]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 13,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "肱三头肌屈伸"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[13]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 14,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "侧平举"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[14]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 30,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "哑铃卧推"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[30]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 32,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "史密斯机卧推"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[32]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 60,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "高位下拉"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[60]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 62,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "俯卧撑"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[62]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 63,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "肩上推举"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[63]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 64,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "引体向上"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[64]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 65,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "二头肌弯举"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[65]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 66,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "坐姿划船"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[66]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 68,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "直臂下拉"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[68]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 107,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "壶铃甩摆"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[107]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 108,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "组间行走"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[108]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 109,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "上斜哑铃卧推"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[109]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 113,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "蝴蝶机夹胸"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[113]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 114,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "蝴蝶机反向飞鸟"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[114]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 124,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "史密斯机上斜卧推"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[124]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 1106,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "反向卷腹举腿"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[1106]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 1754,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "徒手推举"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[1754]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 1770,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "坐姿杠铃劲前推肩"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[1770]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 1977,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "哈克深蹲"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[1977]"
+      }
+    },
+    {
+      "namespace": "zepp.strength.lap_62", "vendor_code": 1988,
+      "canonical_exercise_id": null, "labels": {"zh-CN": "双杠臂屈伸"}, "verification": "verified",
+      "provenance": {
+        "app_version": "10.8.7-play",
+        "artifact_digest": "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949",
+        "catalog_response_digest": "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb",
+        "extraction_reference": "docs/zepp.md#取得的事实与限制: base.apk lap[28] strengthTrainType -> /sport/config/muscle actionType/actionName",
+        "observation_reference": "60517a4:vitalis/connectors/zepp/parser.py:ZEPP_STRENGTH_LAP_LABELS[1988]"
+      }
+    }
+  ]
+}

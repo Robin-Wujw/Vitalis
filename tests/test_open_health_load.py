@@ -15,8 +15,8 @@ from vitalis.intelligence.open_health.load import (
     compute_training_load,
     compute_workout_trimp,
 )
-from vitalis.models import Workout, WorkoutMetricSample, WorkoutType
-from vitalis.storage import HealthRepository, session_scope
+from vitalis.domain import Workout, WorkoutMetricSample, WorkoutType
+from vitalis.adapters.persistence import HealthRepository, session_scope
 
 
 UTC = timezone.utc

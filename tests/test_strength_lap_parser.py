@@ -1,31 +1,28 @@
 """Synthetic coverage for the bounded strength-only lap layout."""
 
 from datetime import datetime, timedelta, timezone
+import json
 from types import SimpleNamespace
 
 import pytest
 
-from vitalis.connectors.zepp.fetcher import FetchedRecord, RawRecord
-from vitalis.connectors.zepp.parser import ZEPP_STRENGTH_LAP_LABELS, ZeppParser
-from vitalis.connectors.zepp.sync_manager import SyncManager
-from vitalis.models import User, Workout, WorkoutDetail, WORKOUT_DETAIL_SCHEMA_VERSION
-from vitalis.storage import HealthRepository, session_scope
+from vitalis.application.jobs import drain_analysis_jobs
+from vitalis.adapters.zepp import catalog
+from vitalis.adapters.zepp.catalog import LAP_62_NAMESPACE, resolve_exercise
+from vitalis.adapters.zepp.fetcher import FetchedRecord, RawRecord
+from vitalis.adapters.zepp.parser import ZEPP_STRENGTH_LAP_LABELS, ZeppParser
+from vitalis.adapters.zepp.sync_manager import SyncManager
+from vitalis.domain import User, Workout, WorkoutDetail, WORKOUT_DETAIL_SCHEMA_VERSION
+from vitalis.adapters.persistence import HealthRepository, session_scope
 
 
 START = datetime(2026, 8, 12, 5, tzinfo=timezone.utc)
 
-# Reviewed Zepp 10.8.7 zh_CN action catalog for observed lap IDs; full response
-# SHA256: 7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb.
-OBSERVED_CATALOG_ZH = {
-    3: "杠铃深蹲", 4: "肱三头肌下压", 5: "俯身划船", 6: "卧推",
-    13: "肱三头肌屈伸", 14: "侧平举", 30: "哑铃卧推", 32: "史密斯机卧推",
-    60: "高位下拉", 62: "俯卧撑", 63: "肩上推举", 64: "引体向上",
-    65: "二头肌弯举", 66: "坐姿划船", 68: "直臂下拉", 107: "壶铃甩摆",
-    108: "组间行走", 109: "上斜哑铃卧推", 113: "蝴蝶机夹胸",
-    114: "蝴蝶机反向飞鸟", 124: "史密斯机上斜卧推",
-    1106: "反向卷腹举腿", 1754: "徒手推举",
-    1770: "坐姿杠铃劲前推肩", 1977: "哈克深蹲", 1988: "双杠臂屈伸",
-}
+# Codes observed in saved lap_62 sets, independent of the JSON-backed labels.
+OBSERVED_CODES = (
+    3, 4, 5, 6, 13, 14, 30, 32, 60, 62, 63, 64, 65, 66, 68,
+    107, 108, 109, 113, 114, 124, 1106, 1754, 1770, 1977, 1988,
+)
 
 
 def lap_row(reps="9", weight="17.5", code="801", columns=62):
@@ -63,15 +60,15 @@ def test_strength_lap_keeps_order_codes_and_unconfirmed_weight_units():
     assert WorkoutDetail.model_validate_json(detail.model_dump_json()).strength_sets == sets
 
 
-def test_observed_strength_codes_match_reviewed_catalog_snapshot():
-    assert ZEPP_STRENGTH_LAP_LABELS == OBSERVED_CATALOG_ZH
+def test_observed_strength_codes_match_catalog_scope():
+    assert set(ZEPP_STRENGTH_LAP_LABELS) == set(OBSERVED_CODES)
 
 
-@pytest.mark.parametrize("code, expected_name", list(OBSERVED_CATALOG_ZH.items()))
-def test_strength_lap_maps_only_verified_display_codes(code, expected_name):
+@pytest.mark.parametrize("code", OBSERVED_CODES)
+def test_strength_lap_maps_only_verified_display_codes(code):
     observed, = detail_for(lap_row(code=str(code))).strength_sets
     assert observed.vendor_exercise_code == code
-    assert observed.exercise_name == expected_name
+    assert observed.exercise_name == resolve_exercise(LAP_62_NAMESPACE, code).label_zh
     assert observed.exercise_id is None
     assert observed.source == "lap_62"
     assert "exercise_name_reference_mapping" in observed.limitations
@@ -104,6 +101,24 @@ def test_unrecognized_vendor_code_keeps_name_missing():
     assert observed.vendor_exercise_code == 999999
     assert observed.exercise_name is None
     assert "exercise_name_unverified" in observed.limitations
+
+
+def test_provisional_catalog_entry_never_supplies_lap_display_name(monkeypatch):
+    provisional = {
+        "catalog_revision": "synthetic-provisional",
+        "entries": [{
+            "namespace": LAP_62_NAMESPACE, "vendor_code": 64,
+            "canonical_exercise_id": None, "labels": {"zh-CN": "unverified"},
+            "verification": "provisional", "provenance": {},
+        }],
+    }
+    monkeypatch.setattr(catalog, "load_catalog", lambda: catalog.parse_catalog(json.dumps(provisional)))
+    observed, = detail_for(lap_row(code="64")).strength_sets
+    assert observed.vendor_exercise_code == 64
+    assert observed.exercise_name is None
+    assert observed.exercise_id is None
+    assert "exercise_name_unverified" in observed.limitations
+    assert "exercise_name_reference_mapping" not in observed.limitations
 
 
 @pytest.mark.parametrize("columns", [3, 61, 63])
@@ -256,15 +271,24 @@ def test_sync_uses_stored_family_and_persists_ordered_observations(family, expec
             assert detail.strength_sets[0].weight_kg is None
     if expected_count:
         headers = {"X-User-Id": user.id}
-        analysis = client.post("/api/v1/intelligence/analyze", params={"day": START.date().isoformat()}, headers=headers)
-        assert analysis.status_code == 201
-        daily = analysis.json()["daily"]
+        queued = client.post(
+            "/api/analysis-runs", json={"day": START.date().isoformat()},
+            headers={**headers, "Idempotency-Key": f"lap-analysis-{user.id}"},
+        )
+        assert queued.status_code == 202
+        assert drain_analysis_jobs(max_jobs=1) == 1
+        job = client.get(f"/api/jobs/{queued.json()['job_id']}", headers=headers)
+        assert job.json()["status"] == "succeeded"
+        report = client.get("/api/reports/daily", params={"day": START.date().isoformat()}, headers=headers)
+        assert report.status_code == 200
+        daily = report.json()
+        assert daily["analysis_run_id"] == job.json()["analysis_run_id"]
         session = daily["features"]["training"]["strength"]["recent_sessions"][0]
         assert session["observed_sets"][0]["vendor_exercise_code"] == 801
         assert session["explicit_exercises"] == []
         assert session["total_sets"] is None
         assert session["focus"] == "UNKNOWN"
-        briefing = client.get("/api/v1/intelligence/evening-briefing", params={"day": START.date().isoformat()}, headers=headers)
+        briefing = client.get("/api/reports/evening", params={"day": START.date().isoformat()}, headers=headers)
         assert briefing.status_code == 200
         section = next(item for item in briefing.json()["sections"] if item["key"] == "training")
         assert any("第 1 组：动作代码 801" in item for item in section["facts"])

@@ -1,11 +1,11 @@
 from datetime import date
 from types import SimpleNamespace
 
-from vitalis.connectors.zepp.parser import ZEPP_STRENGTH_LAP_LABELS
+from vitalis.adapters.zepp.parser import ZEPP_STRENGTH_LAP_LABELS
 from vitalis.intelligence.contracts import StrengthExerciseInput, TrainingPreferences
 from vitalis.intelligence.evening_briefing import EveningBriefingEngine
 from vitalis.intelligence.strength import StrengthAnalyzer, normalize_exercise
-from vitalis.services.push_service import _render_evening, _render_report_html
+from vitalis.adapters.notifications import _render_evening, _render_report_html
 from vitalis.intelligence.decision import DecisionEngine
 from vitalis.intelligence.profile import RawDailyProfile
 
@@ -128,7 +128,7 @@ def test_confirmed_exercises_win_over_observed_rows_but_observations_remain_in_s
         "synthetic-confirmed",
         "confirmed-workout",
         1,
-        StrengthExerciseInput(exercise_name="卧推", sets=4, repetitions="8 次", weight_kg=60),
+        StrengthExerciseInput(exercise_name="卧推", sets=4, repetitions=8, weight_kg=60),
         "PUSH",
     )
     raw = RawDailyProfile(user_id="synthetic-confirmed", day=TARGET)

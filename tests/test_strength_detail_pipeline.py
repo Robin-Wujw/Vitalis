@@ -3,15 +3,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from vitalis.connectors.zepp.fetcher import FetchedRecord, RawRecord
-from vitalis.connectors.zepp.parser import (
+from vitalis.adapters.zepp.fetcher import FetchedRecord, RawRecord
+from vitalis.adapters.zepp.parser import (
     MAX_WORKOUT_DETAIL_SAMPLES,
     WorkoutDetailLimitError,
     ZeppParser,
 )
-from vitalis.connectors.zepp.sync_manager import SyncManager
-from vitalis.models import User, Workout
-from vitalis.storage import HealthRepository, session_scope
+from vitalis.adapters.zepp.sync_manager import SyncManager
+from vitalis.domain import User, Workout
+from vitalis.adapters.persistence import HealthRepository, session_scope
 from vitalis.intelligence.contracts import (
     Availability,
     ConfidenceBand,
@@ -148,9 +148,9 @@ def test_vendor_strength_sets_merge_identical_doses_and_preserve_variations():
     )
 
     assert [(item.repetitions, item.weight_kg, item.sets) for item in records] == [
-        ("8", 60, 2),
-        ("10", 60, 1),
-        ("8", 62.5, 1),
+        (8, 60, 2),
+        (10, 60, 1),
+        (8, 62.5, 1),
     ]
 
 
@@ -178,7 +178,7 @@ def test_confirmed_exercises_are_the_only_source_when_present():
 def test_unresolved_split_reuses_recognizable_recent_actions():
     exercise = normalize_exercise(
         "u", "prior", 1, StrengthExerciseInput(
-            exercise_name="卧推", sets=4, repetitions="8 次", weight_kg=60
+            exercise_name="卧推", sets=4, repetitions=8, weight_kg=60
         ), "PUSH"
     )
     recent = StrengthSessionAnalysis(
@@ -255,9 +255,9 @@ def test_parser_to_analyzer_to_planner_preserves_four_variable_dose_sets():
     steps = [step for step in planned.steps if step.name == "卧推"]
 
     assert [(step.repetitions, step.load_kg, step.sets) for step in steps] == [
-        ("8", 60, 2),
-        ("10", 60, 1),
-        ("8", 62.5, 1),
+        ("8 次", 60, 2),
+        ("10 次", 60, 1),
+        ("8 次", 62.5, 1),
     ]
 
 
@@ -348,7 +348,7 @@ def test_explicitly_incomplete_training_history_blocks_prescription_only():
 def test_low_intensity_history_reuse_does_not_suggest_progression():
     exercise = normalize_exercise(
         "u", "prior", 1,
-        StrengthExerciseInput(exercise_name="卧推", sets=4, repetitions="8", rir=4),
+        StrengthExerciseInput(exercise_name="卧推", sets=4, repetitions=8, rir=4),
         "PUSH",
     )
     prior = SimpleNamespace(focus_label="推类", explicit_exercises=[exercise])

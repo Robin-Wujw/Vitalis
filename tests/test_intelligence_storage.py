@@ -8,11 +8,13 @@ from vitalis.intelligence.contracts import (
     EventSeverity,
     HealthEvent,
     SubjectiveFeedbackInput,
+    UserProfilePatch,
 )
-from vitalis.intelligence.service import IntelligenceAction, IntelligenceCommand, IntelligenceQuery
-from vitalis.models import Workout, WorkoutType
-from vitalis.storage import HealthRepository, session_scope
-from vitalis.storage.models import AnalysisRun as OrmAnalysisRun
+from vitalis.application.intelligence_service import IntelligenceAction, IntelligenceCommand, IntelligenceQuery
+from vitalis.bootstrap import get_intelligence_action, get_intelligence_command, get_intelligence_query
+from vitalis.domain import Workout, WorkoutType
+from vitalis.adapters.persistence import HealthRepository, session_scope
+from vitalis.adapters.persistence.models import AnalysisRun as OrmAnalysisRun
 
 
 TARGET = date(2026, 8, 28)
@@ -31,7 +33,7 @@ def test_feedback_is_validated_stored_and_user_scoped():
             duration=30,
         ))
 
-    action = IntelligenceAction()
+    action = get_intelligence_action()
     feedback = action.log_feedback(
         user_id,
         SubjectiveFeedbackInput(
@@ -47,8 +49,8 @@ def test_feedback_is_validated_stored_and_user_scoped():
     )
 
     assert feedback.notes == "正常完成"
-    assert IntelligenceQuery().feedback(user_id, TARGET, TARGET)[0].session_rpe == 7
-    assert IntelligenceQuery().feedback("another-user", TARGET, TARGET) == []
+    assert get_intelligence_query().feedback(user_id, TARGET, TARGET)[0].session_rpe == 7
+    assert get_intelligence_query().feedback("another-user", TARGET, TARGET) == []
 
 
 def test_feedback_rejects_foreign_workout_reference():
@@ -65,7 +67,7 @@ def test_feedback_rejects_foreign_workout_reference():
         ))
 
     with pytest.raises(ValueError, match="不属于当前用户"):
-        IntelligenceAction().log_feedback(
+        get_intelligence_action().log_feedback(
             "feedback-other",
             SubjectiveFeedbackInput(
                 date=TARGET,
@@ -124,6 +126,69 @@ def test_legacy_snapshot_is_filtered_before_model_validation():
         assert repo.latest_analysis_snapshot_on_or_before(user_id, "daily", TARGET) is None
 
 
+def test_profile_revision_invalidates_saved_intelligence_until_rerun():
+    user_id = "profile-freshness-user"
+    other_user = "profile-freshness-other"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        for owner in (user_id, other_user):
+            repo.delete_for_user(owner)
+            repo.upsert_user(owner)
+
+    first = get_intelligence_command().analyze(user_id, TARGET)
+    other = get_intelligence_command().analyze(other_user, TARGET)
+    query = get_intelligence_query()
+    assert query.daily(user_id, TARGET).analysis_run_id == first.run.id
+    assert query.weekly(user_id, TARGET).analysis_run_id == first.run.id
+    assert query.monthly(user_id, TARGET).analysis_run_id == first.run.id
+    assert query.training_responses(user_id, TARGET).analysis_run_id == first.run.id
+    assert query.personal_model(user_id, TARGET).analysis_run_id == first.run.id
+    assert query.personal_associations(user_id, TARGET).analysis_run_id == first.run.id
+    assert query.daily(other_user, TARGET).analysis_run_id == other.run.id
+    assert query.timeline(
+        user_id, TARGET - timedelta(days=1), TARGET
+    ).period_end == TARGET
+
+    updated = get_intelligence_action().patch_profile(
+        user_id,
+        UserProfilePatch(expected_revision=0, confirmed_hrmax_bpm=190),
+    )
+    assert updated.revision == 1
+    assert query.daily(user_id, TARGET) is None
+    assert query.weekly(user_id, TARGET) is None
+    assert query.monthly(user_id, TARGET) is None
+    assert query.training_responses(user_id, TARGET) is None
+    assert query.personal_model(user_id, TARGET) is None
+    assert query.personal_associations(user_id, TARGET) is None
+    assert query.daily(other_user, TARGET).analysis_run_id == other.run.id
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        assert repo.latest_analysis_snapshot_on_or_before(
+            user_id, "monthly", TARGET + timedelta(days=1)
+        ) is None
+        assert repo.latest_analysis_snapshot_on_or_before(
+            other_user, "monthly", TARGET + timedelta(days=1)
+        ).analysis_run_id == other.run.id
+    assert not any(
+        item.type == "monthly_summary"
+        for item in query.timeline(user_id, TARGET - timedelta(days=1), TARGET).items
+    )
+
+    second = get_intelligence_command().analyze(user_id, TARGET)
+    assert second.run.profile_revision_used == 1
+    assert query.daily(user_id, TARGET).analysis_run_id == second.run.id
+    assert query.weekly(user_id, TARGET).analysis_run_id == second.run.id
+    assert query.monthly(user_id, TARGET).analysis_run_id == second.run.id
+    assert query.training_responses(user_id, TARGET).analysis_run_id == second.run.id
+    assert query.personal_model(user_id, TARGET).analysis_run_id == second.run.id
+    assert query.personal_associations(user_id, TARGET).analysis_run_id == second.run.id
+
+    with session_scope() as db:
+        rows = HealthRepository(db).analysis_snapshots(user_id, "daily", TARGET, TARGET)
+        assert len(rows) == 2
+        assert {row.analysis_run_id for row in rows} == {first.run.id, second.run.id}
+
+
 def test_command_persists_one_run_and_all_intelligence_snapshots():
     user_id = "pipeline-snapshot-user"
     with session_scope() as db:
@@ -137,7 +202,7 @@ def test_command_persists_one_run_and_all_intelligence_snapshots():
             duration=30,
         ))
 
-    IntelligenceAction().log_feedback(
+    get_intelligence_action().log_feedback(
         user_id,
         SubjectiveFeedbackInput(
             date=TARGET,
@@ -163,7 +228,7 @@ def test_command_persists_one_run_and_all_intelligence_snapshots():
     )
     with session_scope() as db:
         HealthRepository(db).save_health_event(user_id, stored_event)
-    result = IntelligenceCommand().analyze(user_id, TARGET)
+    result = get_intelligence_command().analyze(user_id, TARGET)
     daily = result.daily
     weekly = result.weekly
     monthly = result.monthly
@@ -215,7 +280,7 @@ def test_queries_are_read_only_and_return_latest_immutable_run():
         repo.delete_for_user(user_id)
         repo.upsert_user(user_id)
 
-    query = IntelligenceQuery()
+    query = get_intelligence_query()
     assert query.daily(user_id, TARGET) is None
     assert query.weekly(user_id, TARGET) is None
     assert query.monthly(user_id, TARGET) is None
@@ -223,8 +288,8 @@ def test_queries_are_read_only_and_return_latest_immutable_run():
     with session_scope() as db:
         assert db.query(OrmAnalysisRun).filter_by(user_id=user_id).count() == 0
 
-    first = IntelligenceCommand().analyze(user_id, TARGET)
-    second = IntelligenceCommand().analyze(user_id, TARGET)
+    first = get_intelligence_command().analyze(user_id, TARGET)
+    second = get_intelligence_command().analyze(user_id, TARGET)
 
     assert first.run.id != second.run.id
     assert query.daily(user_id, TARGET).analysis_run_id == second.run.id
@@ -250,11 +315,11 @@ def test_recommendation_completion_and_feedback_form_an_explicit_identity_chain(
             duration=45,
         ))
 
-    result = IntelligenceCommand().analyze(user_id, TARGET)
-    linked = IntelligenceAction().complete_recommendation(
+    result = get_intelligence_command().analyze(user_id, TARGET)
+    linked = get_intelligence_action().complete_recommendation(
         user_id, result.recommendation.id, workout_id
     )
-    feedback = IntelligenceAction().log_feedback(
+    feedback = get_intelligence_action().log_feedback(
         user_id,
         SubjectiveFeedbackInput(
             date=TARGET,
@@ -286,15 +351,15 @@ def test_recommendation_cannot_link_foreign_or_already_claimed_workout():
             type=WorkoutType.RUNNING,
             duration=30,
         ))
-    first = IntelligenceCommand().analyze(owner, TARGET)
-    second = IntelligenceCommand().analyze(owner, TARGET)
+    first = get_intelligence_command().analyze(owner, TARGET)
+    second = get_intelligence_command().analyze(owner, TARGET)
 
     with pytest.raises(ValueError, match="训练建议不存在"):
-        IntelligenceAction().complete_recommendation(
+        get_intelligence_action().complete_recommendation(
             other, first.recommendation.id, workout_id
         )
-    IntelligenceAction().complete_recommendation(owner, first.recommendation.id, workout_id)
+    get_intelligence_action().complete_recommendation(owner, first.recommendation.id, workout_id)
     with pytest.raises(ValueError, match="已关联其他训练建议"):
-        IntelligenceAction().complete_recommendation(
+        get_intelligence_action().complete_recommendation(
             owner, second.recommendation.id, workout_id
         )

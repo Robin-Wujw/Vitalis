@@ -1,32 +1,31 @@
-from threading import Event
+from threading import Event, Timer
 
-from vitalis import worker
+from vitalis.entrypoints import worker
+from vitalis.scheduler import jobs
 
 
-def test_worker_initializes_storage_and_repeats_dispatch(monkeypatch):
+def test_worker_owns_scheduler_lifecycle(monkeypatch):
     stopped = Event()
+    stopped.set()
     calls = []
 
-    monkeypatch.setattr(worker, "init_db", lambda: calls.append("init"))
-    monkeypatch.setattr(worker.settings, "sync_dispatcher_interval_seconds", 1)
+    class FakeScheduler:
+        def shutdown(self, *, wait):
+            calls.append(("shutdown", wait))
 
-    def dispatch():
-        calls.append("dispatch")
-        stopped.set()
-
-    monkeypatch.setattr(worker, "dispatcher_job", dispatch)
+    monkeypatch.setattr(worker, "check_schema", lambda: calls.append("init"))
+    monkeypatch.setattr(
+        worker, "start_scheduler", lambda: calls.append("start") or FakeScheduler()
+    )
 
     worker.run(stopped)
 
-    assert calls == ["init", "dispatch"]
+    assert calls == ["init", "start", ("shutdown", False)]
 
 
-def test_worker_continues_after_dispatch_failure(monkeypatch):
+def test_worker_retries_failed_dispatch_on_interval(monkeypatch):
     stopped = Event()
     calls = []
-
-    monkeypatch.setattr(worker, "init_db", lambda: None)
-    monkeypatch.setattr(worker.settings, "sync_dispatcher_interval_seconds", 1)
 
     def dispatch():
         calls.append("dispatch")
@@ -34,8 +33,16 @@ def test_worker_continues_after_dispatch_failure(monkeypatch):
             raise RuntimeError("transient failure")
         stopped.set()
 
-    monkeypatch.setattr(worker, "dispatcher_job", dispatch)
+    monkeypatch.setattr(worker, "check_schema", lambda: None)
+    monkeypatch.setattr(worker, "start_scheduler", jobs.start_scheduler)
+    monkeypatch.setattr(jobs, "dispatcher_job", dispatch)
+    monkeypatch.setattr(jobs.settings, "sync_dispatcher_interval_seconds", 1)
 
-    worker.run(stopped)
+    timeout = Timer(5, stopped.set)
+    timeout.start()
+    try:
+        worker.run(stopped)
+    finally:
+        timeout.cancel()
 
     assert calls == ["dispatch", "dispatch"]

@@ -6,7 +6,7 @@ from vitalis.intelligence.evening_briefing import EveningBriefingEngine
 from vitalis.intelligence.morning_briefing import MorningBriefingEngine
 from vitalis.intelligence.monthly_briefing import MonthlyBriefingEngine
 from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
-from vitalis.services.push_service import PushService, _render_report_html
+from vitalis.adapters.notifications import PushService, _render_report_html
 
 
 TARGET_DATE = date(2026, 9, 5)

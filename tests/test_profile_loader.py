@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from vitalis.intelligence.contracts import QualityStatus
 from vitalis.intelligence.profile import ProfileLoader
-from vitalis.models import (
+from vitalis.domain import (
     DailyMetric,
     DenseDataFile,
     Device,
@@ -11,7 +11,7 @@ from vitalis.models import (
     SleepRecord,
     User,
 )
-from vitalis.storage import HealthRepository, session_scope
+from vitalis.adapters.persistence import HealthRepository, session_scope
 
 
 def test_profile_loader_reports_missing_signals_without_fabricating_facts():

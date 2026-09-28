@@ -2,25 +2,34 @@ from datetime import date
 
 import pytest
 
-from vitalis.intelligence.service import IntelligenceCommand
-from vitalis.storage import HealthRepository, session_scope
-from vitalis.storage.models import AnalysisRun
+from vitalis.application.jobs import drain_analysis_jobs
+from vitalis.application.intelligence_service import IntelligenceCommand
+from vitalis.bootstrap import get_intelligence_command
+from vitalis.adapters.persistence import HealthRepository, session_scope
+from vitalis.adapters.persistence.models import AnalysisRun
 
 
 @pytest.mark.parametrize("period", ["morning", "evening", "weekly", "monthly"])
 def test_complete_report_queries_are_user_scoped_read_only_projections(client, monkeypatch, period):
     user = f"report-read-{period}"
     target = date(2026, 8, 28)
+    kind = period if period in {"morning", "evening"} else f"{period}-briefing"
     with session_scope() as db:
         repo = HealthRepository(db)
         repo.delete_for_user(user)
         repo.upsert_user(user)
-    analyzed = client.post(
-        "/api/v1/intelligence/analyze", params={"day": target.isoformat()},
-        headers={"X-User-Id": user},
+    headers = {"X-User-Id": user, "Idempotency-Key": f"report-read-{period}-request"}
+    queued = client.post(
+        "/api/analysis-runs", json={"day": target.isoformat()}, headers=headers,
     )
-    assert analyzed.status_code == 201
-    run_id = analyzed.json()["run"]["id"]
+    assert queued.status_code == 202
+    job_id = queued.json()["job_id"]
+    assert client.get(f"/api/reports/{period}?day={target}", headers=headers).status_code == 404
+    assert drain_analysis_jobs(max_jobs=1) == 1
+    job = client.get(f"/api/jobs/{job_id}", headers=headers)
+    assert job.status_code == 200
+    assert job.json()["status"] == "succeeded"
+    run_id = job.json()["analysis_run_id"]
     with session_scope() as db:
         before = db.query(AnalysisRun).filter_by(user_id=user).count()
     monkeypatch.setattr(
@@ -28,7 +37,7 @@ def test_complete_report_queries_are_user_scoped_read_only_projections(client, m
         lambda *args, **kwargs: pytest.fail("reading a report must not analyze or synchronize"),
     )
     response = client.get(
-        f"/api/v1/intelligence/{period}-briefing", params={"day": target.isoformat()},
+        f"/api/reports/{kind}", params={"day": target.isoformat()},
         headers={"X-User-Id": user},
     )
     assert response.status_code == 200
@@ -41,15 +50,22 @@ def test_complete_report_queries_are_user_scoped_read_only_projections(client, m
     if period != "morning":
         assert report["period"] == period
         assert report["period_end"] == target.isoformat()
+    legacy_read = client.get(
+        f"/api/intelligence/{period}-briefing", params={"day": target.isoformat()},
+        headers={"X-User-Id": user},
+    )
+    assert legacy_read.status_code == 404
     with session_scope() as db:
         assert db.query(AnalysisRun).filter_by(user_id=user).count() == before
     other = client.get(
-        f"/api/v1/intelligence/{period}-briefing", params={"day": target.isoformat()},
+        f"/api/reports/{kind}", params={"day": target.isoformat()},
         headers={"X-User-Id": "report-read-other-user"},
     )
     assert other.status_code == 404
 
 
 @pytest.mark.parametrize("period", ["evening", "weekly", "monthly"])
-def test_new_report_queries_require_explicit_identity(client, period):
-    assert client.get(f"/api/v1/intelligence/{period}-briefing").status_code == 422
+def test_new_report_queries_require_bearer_identity(client, period):
+    kind = f"{period}-briefing" if period in {"weekly", "monthly"} else period
+    assert client.get(f"/api/reports/{kind}").status_code == 401
+    assert client.get(f"/api/intelligence/{period}-briefing").status_code == 404

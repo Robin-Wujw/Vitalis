@@ -2,13 +2,14 @@ from copy import deepcopy
 from html.parser import HTMLParser
 import logging
 
+import httpx
 import pytest
 
 from vitalis.intelligence.evening_briefing import EveningBriefingEngine
 from vitalis.intelligence.morning_briefing import MorningBriefingEngine
 from vitalis.intelligence.monthly_briefing import MonthlyBriefingEngine
 from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
-from vitalis.services.push_service import PUSHPLUS_URL, PushMessage, PushService, _render_evening
+from vitalis.adapters.notifications import PUSHPLUS_URL, PushMessage, PushService, _render_evening
 from tests.test_report_content import synthetic_daily_fixture, synthetic_period_fixture
 
 
@@ -36,7 +37,7 @@ def _daily_payload():
         "duration_minutes": 52,
         "total_sets": 9,
         "estimated_work_bouts": 9,
-        "explicit_exercises": [{"exercise_name": "卧推", "sets": 4, "repetitions": "6–8 次", "weight_kg": 60, "rpe": 8, "rir": 2, "rest_seconds": 120}],
+        "explicit_exercises": [{"exercise_name": "卧推", "sets": 4, "repetitions": 8, "weight_kg": 60, "rpe": 8, "rir": 2, "rest_seconds": 120}],
     }]
     payload["features"]["training"]["running"]["recent_sessions"][0]["confidence"] = "HIGH"
     plan = payload["decision"]["action_plan"]
@@ -487,11 +488,73 @@ def test_pushplus_delivery_keeps_token_in_json_body(monkeypatch):
             requests.append((url, kwargs))
             return Response()
 
-    monkeypatch.setattr("vitalis.services.push_service.httpx.Client", Client)
+    monkeypatch.setattr("vitalis.adapters.notifications.httpx.Client", Client)
     result = PushService(pushplus_token="private-token").push(PushMessage(title="晨间日报", body="数据完整", user_id="user"))
     assert result["_pushplus_handler"] == "ok"
     assert requests[0][0] == PUSHPLUS_URL
     assert requests[0][1]["json"]["token"] == "private-token"
+
+
+@pytest.mark.parametrize(
+    ("status_code", "outcome"),
+    [(400, "failed"), (500, "uncertain")],
+)
+def test_webhook_http_status_classifies_remote_outcome(monkeypatch, status_code, outcome):
+    webhook_url = "https://example.test/vitalis-hook"
+
+    class Client:
+        def __init__(self, **kwargs):
+            assert kwargs == {"timeout": 10.0, "trust_env": False}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def post(self, url, **kwargs):
+            return httpx.Response(
+                status_code,
+                request=httpx.Request("POST", url),
+            )
+
+    monkeypatch.setattr("vitalis.adapters.notifications.httpx.Client", Client)
+    result = PushService(webhook_url=webhook_url, pushplus_token="").push(
+        PushMessage(title="晨间日报", body="数据完整", user_id="user")
+    )
+
+    assert result["_webhook_handler"] == "error: delivery failed"
+    assert result["_delivery_outcome"] == outcome
+
+
+@pytest.mark.parametrize(
+    ("status_code", "outcome"),
+    [(400, "failed"), (500, "uncertain")],
+)
+def test_pushplus_http_status_classifies_remote_outcome(monkeypatch, status_code, outcome):
+    class Client:
+        def __init__(self, **kwargs):
+            assert kwargs == {"timeout": 10.0, "trust_env": False}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def post(self, url, **kwargs):
+            return httpx.Response(
+                status_code,
+                request=httpx.Request("POST", url),
+            )
+
+    monkeypatch.setattr("vitalis.adapters.notifications.httpx.Client", Client)
+    result = PushService(pushplus_token="private-token").push(
+        PushMessage(title="晨间日报", body="数据完整", user_id="user")
+    )
+
+    assert result["_pushplus_handler"] == "error: delivery failed"
+    assert result["_delivery_outcome"] == outcome
 
 
 def test_pushplus_application_error_is_failed_delivery_without_sensitive_response(monkeypatch):
@@ -515,11 +578,27 @@ def test_pushplus_application_error_is_failed_delivery_without_sensitive_respons
         def post(self, url, **kwargs):
             return Response()
 
-    monkeypatch.setattr("vitalis.services.push_service.httpx.Client", Client)
+    monkeypatch.setattr("vitalis.adapters.notifications.httpx.Client", Client)
     result = PushService(pushplus_token="private-token").push(PushMessage(title="晨间日报", body="数据完整", user_id="user"))
-    assert result["_pushplus_handler"] == "error: PushPlus rejected delivery with code 500"
+    assert result["_pushplus_handler"] == "error: delivery failed"
     assert "sensitive upstream response" not in result["_pushplus_handler"]
     assert "private-token" not in result["_pushplus_handler"]
+
+
+def test_push_handler_error_does_not_echo_untrusted_exception(caplog):
+    from vitalis.adapters.notifications import NotificationSendError
+
+    service = PushService(pushplus_token="")
+
+    def fail(_message):
+        raise NotificationSendError("synthetic-token-private-health", ambiguous=True)
+
+    service.add_handler(fail)
+    result = service.push(PushMessage(title="synthetic", body="", user_id="owner"))
+    assert result["fail"] == "error: delivery failed"
+    assert result["_delivery_outcome"] == "uncertain"
+    assert "synthetic-token-private-health" not in caplog.text
+    assert "synthetic-token-private-health" not in str(result)
 
 
 def test_pushplus_transport_error_is_failed_delivery_without_token(monkeypatch):
@@ -536,7 +615,7 @@ def test_pushplus_transport_error_is_failed_delivery_without_token(monkeypatch):
         def post(self, url, **kwargs):
             raise OSError("network unavailable")
 
-    monkeypatch.setattr("vitalis.services.push_service.httpx.Client", Client)
+    monkeypatch.setattr("vitalis.adapters.notifications.httpx.Client", Client)
     result = PushService(pushplus_token="private-token").push(PushMessage(title="晨间日报", body="数据完整", user_id="user"))
-    assert result["_pushplus_handler"] == "error: network unavailable"
+    assert result["_pushplus_handler"] == "error: delivery failed"
     assert "private-token" not in result["_pushplus_handler"]

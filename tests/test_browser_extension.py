@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 
-EXTENSION = Path(__file__).parents[1] / "browser_extension"
+EXTENSION = Path(__file__).parents[1] / "clients" / "browser_extension"
 
 
 def test_extension_registers_background_cookie_refresh():
@@ -15,7 +15,7 @@ def test_extension_registers_background_cookie_refresh():
     background = (EXTENSION / "background.js").read_text(encoding="utf-8")
     assert "chrome.cookies.onChanged.addListener" in background
     assert "chrome.alarms.onAlarm.addListener" in background
-    assert "/api/v1/connect/zepp/link/credentials" in background
+    assert "/api/connect/zepp/link/credentials" in background
     assert "Authorization" in background
 
 
@@ -107,6 +107,17 @@ def test_extension_bridges_allowlisted_page_storage_credentials_without_persisti
     assert "value.documentCookieNames" in popup_script
 
 
+def test_pairing_errors_read_safe_message_and_popup_renders_text_only():
+    background = (EXTENSION / "background.js").read_text(encoding="utf-8")
+    popup = (EXTENSION / "popup.js").read_text(encoding="utf-8")
+    assert "apiErrorMessage(result," in background
+    assert 'typeof result?.message === "string"' in background
+    assert "result.detail" not in background
+    assert 'typeof result.message === "string"' in popup
+    assert "message.textContent = pairingMessage || \"\"" in popup
+    assert "message.innerHTML" not in popup
+
+
 def test_extension_uses_official_watchface_login_handoff():
     background = (EXTENSION / "background.js").read_text(encoding="utf-8")
     popup_script = (EXTENSION / "popup.js").read_text(encoding="utf-8")
@@ -126,5 +137,5 @@ def test_missing_cookie_validates_saved_cloud_credential_before_reauth():
     assert "reportDisconnected(" not in refresh
     validator = background.split("async function validateSavedCredential()", 1)[1]
     validator = validator.split("async function submitCredential", 1)[0]
-    assert "/api/v1/connect/zepp/link/validate" in validator
+    assert "/api/connect/zepp/link/validate" in validator
     assert 'response.status === 400' in validator

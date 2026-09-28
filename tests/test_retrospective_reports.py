@@ -2,8 +2,8 @@ from datetime import date
 
 import pytest
 
-from vitalis.services import daily_push
-from vitalis.services.push_service import _render_evening
+from vitalis.adapters import daily_push
+from vitalis.adapters.notifications import _render_evening
 
 
 @pytest.fixture(autouse=True)
@@ -26,33 +26,17 @@ def _profile():
     }
 
 
-def test_explicit_evening_replay_fetches_target_day_and_omits_expired_decision(monkeypatch, tmp_path):
-    requests, sent = [], []
+def test_explicit_evening_replay_analyzes_target_day_and_omits_expired_decision(monkeypatch, tmp_path):
+    syncs, analyses, sent = [], [], []
     profile = _profile()
 
-    class Response:
-        def __init__(self, value):
-            self.value = value
+    def sync_health(user, days):
+        syncs.append((user, days))
+        return {"status": "synced", "success": True}
 
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return self.value
-
-    class Client:
-        def __init__(self, **kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            pass
-
-        def post(self, path, params):
-            requests.append((path, params))
-            return Response({"status": "synced", "success": True} if path.endswith("sync") else {"daily": profile})
+    def analyze(user, day):
+        analyses.append((user, day))
+        return profile
 
     class Service:
         def __init__(self, **kwargs):
@@ -62,14 +46,15 @@ def test_explicit_evening_replay_fetches_target_day_and_omits_expired_decision(m
             sent.append(payload)
             return {"_pushplus_handler": "ok"}
 
-    monkeypatch.setattr(daily_push.httpx, "Client", Client)
+    monkeypatch.setattr(daily_push, "_sync_health", sync_health)
+    monkeypatch.setattr(daily_push, "_analyze", analyze)
     monkeypatch.setattr(daily_push, "PushService", Service)
     result = daily_push.run_daily_push(
         "user", "token", period="evening", target_date=date(2026, 8, 28),
         sync_days=1, test_delivery=True, retrospective=True, state_dir=tmp_path,
     )
-    assert requests[0][1]["days"] == 2
-    assert requests[1][1]["day"] == "2026-08-28"
+    assert syncs == [("user", 2)]
+    assert analyses == [("user", date(2026, 8, 28))]
     assert result["status"] == "test_sent"
     assert result["retrospective"] is True
     assert result["scheduled_delivery_unchanged"] is True
@@ -86,8 +71,9 @@ def test_explicit_evening_replay_fetches_target_day_and_omits_expired_decision(m
     ("evening", True, date(2026, 8, 30)),
     ("evening", True, date(2026, 8, 22)),
 ])
-def test_replay_rejects_unsafe_modes_before_network(monkeypatch, tmp_path, period, test, target):
-    monkeypatch.setattr(daily_push.httpx, "Client", lambda **kwargs: pytest.fail("network must not start"))
+def test_replay_rejects_unsafe_modes_before_service_work(monkeypatch, tmp_path, period, test, target):
+    monkeypatch.setattr(daily_push, "_sync_health", lambda *_args: pytest.fail("sync must not start"))
+    monkeypatch.setattr(daily_push, "_analyze", lambda *_args: pytest.fail("analysis must not start"))
     with pytest.raises(ValueError):
         daily_push.run_daily_push(
             "user", "token", period=period, target_date=target,

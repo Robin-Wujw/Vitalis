@@ -770,7 +770,7 @@ def test_strength_plan_reuses_confirmed_exercise_dose_and_effort():
         (4, "push", "PUSH", StrengthExerciseInput(
             exercise_name="卧推",
             sets=4,
-            repetitions="8 次",
+            repetitions=8,
             weight_kg=60,
             rir=3,
             rest_seconds=150,

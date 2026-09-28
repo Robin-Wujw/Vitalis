@@ -2,8 +2,11 @@
 
 from datetime import date, datetime, timedelta, timezone
 
+import pytest
+
 from vitalis.intelligence.profile import ProfileLoader
-from vitalis.models import (
+from vitalis.domain import (
+    AuthToken,
     DailyMetric,
     DenseDataFile,
     MetricSample,
@@ -11,8 +14,8 @@ from vitalis.models import (
     WorkoutMetricSample,
     WorkoutType,
 )
-from vitalis.storage import HealthRepository, session_scope
-from vitalis.storage import models as storage_models
+from vitalis.adapters.persistence import HealthRepository, session_scope
+from vitalis.adapters.persistence import models as storage_models
 
 
 def test_metric_series_and_daily_metrics(client):
@@ -29,7 +32,7 @@ def test_metric_series_and_daily_metrics(client):
         ])
 
     series = client.get(
-        "/api/v1/health/metrics/heart_rate?from=2026-08-25T00:00:00Z&to=2026-08-26T00:00:00Z&resolution=1h",
+        "/api/health/metrics/heart_rate?from=2026-08-25T00:00:00Z&to=2026-08-26T00:00:00Z&resolution=1h",
         headers={"X-User-Id": user_id},
     )
     assert series.status_code == 200
@@ -39,11 +42,62 @@ def test_metric_series_and_daily_metrics(client):
     assert point["max"] == 80
 
     daily = client.get(
-        "/api/v1/health/daily-metrics?from=2026-08-25&to=2026-08-25&metric=readiness",
+        "/api/health/daily-metrics?from=2026-08-25&to=2026-08-25&metric=readiness",
         headers={"X-User-Id": user_id},
     )
     assert daily.status_code == 200
     assert daily.json()["metrics"][0]["value"] == 84
+
+
+def test_metric_query_is_half_open_and_preserves_same_time_identity(client):
+    user_id = "half-open-metrics-user"
+    start = datetime(2026, 8, 25, 8, 0, tzinfo=timezone.utc)
+    end = start + timedelta(hours=1)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        repo.save_metric_samples([
+            MetricSample(
+                user_id=user_id,
+                metric="heart_rate",
+                timestamp=start,
+                value=60,
+                unit="bpm",
+                source_record_id="sample-start",
+                sample_ordinal=0,
+            ),
+            MetricSample(
+                user_id=user_id,
+                metric="heart_rate",
+                timestamp=end - timedelta(microseconds=1),
+                value=61,
+                unit="bpm",
+                source_record_id="sample-before-end",
+                sample_ordinal=0,
+            ),
+            MetricSample(
+                user_id=user_id,
+                metric="heart_rate",
+                timestamp=end,
+                value=62,
+                unit="bpm",
+                source_record_id="sample-at-end",
+                sample_ordinal=0,
+            ),
+        ])
+
+    response = client.get(
+        "/api/health/metrics/heart_rate"
+        "?from=2026-08-25T08:00:00Z&to=2026-08-25T09:00:00Z&resolution=raw",
+        headers={"X-User-Id": user_id},
+    )
+
+    assert response.status_code == 200
+    assert [point["sample_id"] for point in response.json()["points"]] == [
+        "sample-start", "sample-before-end",
+    ]
+    assert all(point["sample_ordinal"] == 0 for point in response.json()["points"])
+    assert response.json()["truncated"] is False
 
 
 def test_metric_writes_deduplicate_same_batch(client):
@@ -65,14 +119,14 @@ def test_metric_writes_deduplicate_same_batch(client):
     assert written_daily == 1
 
     series = client.get(
-        "/api/v1/health/metrics/hrv_rmssd?from=2026-08-25T00:00:00Z&to=2026-08-26T00:00:00Z",
+        "/api/health/metrics/hrv_rmssd?from=2026-08-25T00:00:00Z&to=2026-08-26T00:00:00Z",
         headers={"X-User-Id": user_id},
     )
     assert series.status_code == 200
     assert [point["value"] for point in series.json()["points"]] == [59]
 
     daily = client.get(
-        "/api/v1/health/daily-metrics?from=2026-08-25&to=2026-08-25&metric=hrv_readiness",
+        "/api/health/daily-metrics?from=2026-08-25&to=2026-08-25&metric=hrv_readiness",
         headers={"X-User-Id": user_id},
     )
     assert daily.status_code == 200
@@ -108,7 +162,7 @@ def test_data_health_exposes_fetch_parse_write_and_sample_time(client):
         )
 
     response = client.get(
-        "/api/v1/health/data-health",
+        "/api/data-status",
         headers={"X-User-Id": user_id},
     )
 
@@ -163,12 +217,12 @@ def test_stress_timeline_is_exposed_and_drives_stream_freshness(client):
         )
 
     series = client.get(
-        "/api/v1/health/metrics/stress"
+        "/api/health/metrics/stress"
         "?from=2026-09-03T00:00:00Z&to=2026-09-04T00:00:00Z&resolution=raw",
         headers={"X-User-Id": user_id},
     )
     health = client.get(
-        "/api/v1/health/data-health",
+        "/api/data-status",
         headers={"X-User-Id": user_id},
     )
 
@@ -217,7 +271,7 @@ def test_stress_stream_freshness_falls_back_to_daily_summary(client):
         )
 
     health = client.get(
-        "/api/v1/health/data-health",
+        "/api/data-status",
         headers={"X-User-Id": user_id},
     )
 
@@ -247,7 +301,7 @@ def test_metric_writes_preserve_two_devices_at_same_timestamp(client):
 
     assert written == 2
     series = client.get(
-        "/api/v1/health/metrics/hrv_rmssd"
+        "/api/health/metrics/hrv_rmssd"
         "?from=2026-08-25T00:00:00Z&to=2026-08-26T00:00:00Z&resolution=raw",
         headers={"X-User-Id": user_id},
     )
@@ -275,14 +329,14 @@ def test_workout_list_and_detail(client):
         assert repo.save_workout_detail(user_id, "run-1", {"samples": [{"heart_rate": 145}]})
 
     listing = client.get(
-        "/api/v1/health/workouts?from=2026-08-01&to=2026-08-31",
+        "/api/workouts?from=2026-08-01&to=2026-08-31",
         headers={"X-User-Id": user_id},
     )
     assert listing.status_code == 200
     assert listing.json()["workouts"][0]["detail_available"] is True
 
     detail = client.get(
-        "/api/v1/health/workouts/run-1?source=zepp",
+        "/api/workouts/run-1?source=zepp",
         headers={"X-User-Id": user_id},
     )
     assert detail.status_code == 200
@@ -321,13 +375,14 @@ def test_dense_file_coverage_withholds_file_ids_and_reports_indexed_state(client
         assert written == 2
 
     response = client.get(
-        "/api/v1/health/dense-files/second_heart_rate"
+        "/api/health/dense-files/second_heart_rate"
         "?from=2026-08-25&to=2026-08-25",
         headers={"X-User-Id": user_id},
     )
     assert response.status_code == 200
     payload = response.json()
     assert payload["payload_decoded"] is False
+    assert payload["truncated"] is False
     assert len(payload["files"]) == 2
     assert payload["files"][0]["parse_status"] == "indexed"
     assert payload["files"][0]["sample_count"] == 0
@@ -369,7 +424,7 @@ def test_normalized_workout_metric_samples_are_isolated_and_returned_in_order(cl
         )
 
     detail = client.get(
-        f"/api/v1/health/workouts/{workout_id}?source=zepp",
+        f"/api/workouts/{workout_id}?source=zepp",
         headers={"X-User-Id": "sample-user"},
     )
     assert detail.status_code == 200
@@ -381,7 +436,7 @@ def test_normalized_workout_metric_samples_are_isolated_and_returned_in_order(cl
     assert {sample["source_scope"] for sample in payload["samples"]} == {"workout_detail"}
 
     other = client.get(
-        f"/api/v1/health/workouts/{workout_id}?source=zepp",
+        f"/api/workouts/{workout_id}?source=zepp",
         headers={"X-User-Id": "other-sample-user"},
     )
     assert other.status_code == 200
@@ -494,7 +549,7 @@ def test_metric_and_daily_metric_identities_include_source_scope_and_device(clie
         ]) == 4
 
     metric_response = client.get(
-        "/api/v1/health/metrics/heart_rate"
+        "/api/health/metrics/heart_rate"
         "?from=2026-08-25T00:00:00Z&to=2026-08-26T00:00:00Z&resolution=raw",
         headers={"X-User-Id": user_id},
     )
@@ -509,14 +564,14 @@ def test_metric_and_daily_metric_identities_include_source_scope_and_device(clie
     }
 
     hourly_response = client.get(
-        "/api/v1/health/metrics/heart_rate"
+        "/api/health/metrics/heart_rate"
         "?from=2026-08-25T00:00:00Z&to=2026-08-26T00:00:00Z&resolution=1h",
         headers={"X-User-Id": user_id},
     )
     assert len(hourly_response.json()["points"]) == 3
 
     daily_response = client.get(
-        "/api/v1/health/daily-metrics"
+        "/api/health/daily-metrics"
         "?from=2026-08-25&to=2026-08-25&metric=readiness",
         headers={"X-User-Id": user_id},
     )
@@ -559,7 +614,7 @@ def test_metric_daily_resolution_uses_configured_local_day(client):
         ])
 
     response = client.get(
-        "/api/v1/health/metrics/heart_rate"
+        "/api/health/metrics/heart_rate"
         "?from=2026-08-25T00:00:00Z&to=2026-08-26T00:00:00Z&resolution=1d",
         headers={"X-User-Id": user_id},
     )
@@ -568,6 +623,53 @@ def test_metric_daily_resolution_uses_configured_local_day(client):
         ("2026-08-25", 60),
         ("2026-08-26", 70),
     ]
+
+
+@pytest.mark.parametrize("case_id, zone, moments, dates, counts", [
+    (
+        "spring", "America/New_York",
+        ("2026-03-08T05:00:00Z", "2026-03-09T03:59:00Z", "2026-03-09T04:00:00Z"),
+        ("2026-03-08", "2026-03-09"), (2, 1),
+    ),
+    (
+        "fall", "America/New_York",
+        ("2026-11-01T04:00:00Z", "2026-11-02T04:59:00Z", "2026-11-02T05:00:00Z"),
+        ("2026-11-01", "2026-11-02"), (2, 1),
+    ),
+    (
+        "offset", "Asia/Kathmandu",
+        ("2026-08-25T18:14:00Z", "2026-08-25T18:15:00Z"),
+        ("2026-08-25", "2026-08-26"), (1, 1),
+    ),
+])
+def test_streamed_daily_metric_uses_local_day_boundaries(
+    client, monkeypatch, case_id, zone, moments, dates, counts,
+):
+    from vitalis.config import settings
+
+    user_id = f"streamed-local-day-{case_id}"
+    monkeypatch.setattr(settings, "timezone", zone)
+    times = [datetime.fromisoformat(item.replace("Z", "+00:00")) for item in moments]
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        repo.save_metric_samples([
+            MetricSample(
+                user_id=user_id, metric="heart_rate", timestamp=observed,
+                value=60 + index, unit="bpm", source_record_id=f"{case_id}-{index}",
+            )
+            for index, observed in enumerate(times)
+        ])
+
+    start = moments[0]
+    end = (times[-1] + timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    response = client.get(
+        f"/api/health/metrics/heart_rate?from={start}&to={end}&resolution=1d",
+        headers={"X-User-Id": user_id},
+    )
+    assert response.status_code == 200
+    assert tuple(item["timestamp"] for item in response.json()["points"]) == dates
+    assert tuple(item["count"] for item in response.json()["points"]) == counts
 
 
 def test_metric_aggregation_is_not_truncated_at_raw_row_limit(client):
@@ -591,13 +693,141 @@ def test_metric_aggregation_is_not_truncated_at_raw_row_limit(client):
         ])
 
     response = client.get(
-        "/api/v1/health/metrics/heart_rate"
+        "/api/health/metrics/heart_rate"
         "?from=2026-08-25T00:00:00Z&to=2026-08-26T00:00:00Z&resolution=1d",
         headers={"X-User-Id": user_id},
     )
 
     assert response.status_code == 200
     assert sum(item["count"] for item in response.json()["points"]) == 50_001
+
+
+def test_raw_metric_budget_is_explicit_and_does_not_change_aggregation(client, monkeypatch):
+    from vitalis.application.health_query import HealthQuery
+
+    user_id = "raw-budget-user"
+    start = datetime(2026, 8, 25, 8, tzinfo=timezone.utc)
+    monkeypatch.setattr(HealthQuery, "RAW_METRIC_LIMIT", 2)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        repo.save_metric_samples([
+            MetricSample(
+                user_id=user_id, metric="heart_rate", timestamp=start + timedelta(minutes=index),
+                value=60 + index, unit="bpm", source_record_id=f"raw-{index}",
+            )
+            for index in range(3)
+        ])
+
+    raw = client.get(
+        "/api/health/metrics/heart_rate"
+        "?from=2026-08-25T08:00:00Z&to=2026-08-25T09:00:00Z&resolution=raw",
+        headers={"X-User-Id": user_id},
+    )
+    assert raw.status_code == 200
+    assert [item["sample_id"] for item in raw.json()["points"]] == ["raw-0", "raw-1"]
+    assert raw.json()["truncated"] is True
+
+    hourly = client.get(
+        "/api/health/metrics/heart_rate"
+        "?from=2026-08-25T08:00:00Z&to=2026-08-25T09:00:00Z&resolution=1h",
+        headers={"X-User-Id": user_id},
+    )
+    assert hourly.status_code == 200
+    assert hourly.json()["points"][0]["count"] == 3
+    assert hourly.json()["truncated"] is False
+
+
+def test_metric_aggregation_does_not_materialize_unbounded_reader_rows(client, monkeypatch):
+    from vitalis.adapters.persistence.health_reader import SqlHealthReader
+
+    user_id = "streaming-metric-user"
+    start = datetime(2026, 8, 25, 8, tzinfo=timezone.utc)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        repo.save_metric_samples([
+            MetricSample(
+                user_id=user_id, metric="heart_rate", timestamp=start + timedelta(minutes=index),
+                value=60 + index, unit="bpm",
+            )
+            for index in range(3)
+        ])
+
+    original = SqlHealthReader.metric_samples
+
+    def bounded_only(self, *args, limit=None):
+        assert limit is not None, "aggregation must not materialize all source rows"
+        return original(self, *args, limit=limit)
+
+    monkeypatch.setattr(SqlHealthReader, "metric_samples", bounded_only)
+    response = client.get(
+        "/api/health/metrics/heart_rate"
+        "?from=2026-08-25T08:00:00Z&to=2026-08-25T09:00:00Z&resolution=1h",
+        headers={"X-User-Id": user_id},
+    )
+    assert response.status_code == 200
+    assert response.json()["points"][0]["count"] == 3
+
+
+def test_metric_aggregate_group_budget_rejects_instead_of_truncating(client, monkeypatch):
+    from vitalis.application.health_query import HealthQuery
+
+    user_id = "aggregate-group-budget-user"
+    start = datetime(2026, 8, 25, 8, tzinfo=timezone.utc)
+    monkeypatch.setattr(HealthQuery, "MAX_AGGREGATE_GROUPS", 1)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        repo.save_metric_samples([
+            MetricSample(user_id=user_id, metric="heart_rate", timestamp=start,
+                         value=60, unit="bpm", device_id="DEVICE-A"),
+            MetricSample(user_id=user_id, metric="heart_rate", timestamp=start,
+                         value=70, unit="bpm", device_id="DEVICE-B"),
+        ])
+    response = client.get(
+        "/api/health/metrics/heart_rate"
+        "?from=2026-08-25T08:00:00Z&to=2026-08-25T09:00:00Z&resolution=1h",
+        headers={"X-User-Id": user_id},
+    )
+    assert response.status_code == 413
+    assert "points" not in response.json()
+
+
+def test_metric_query_normalizes_mixed_timezone_inputs(client):
+    user_id = "mixed-timezone-metric-user"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+    response = client.get(
+        "/api/health/metrics/heart_rate"
+        "?from=2026-08-25T08:00:00&to=2026-08-25T09:00:00Z&resolution=raw",
+        headers={"X-User-Id": user_id},
+    )
+    assert response.status_code == 200
+    assert response.json()["from"] == "2026-08-25T08:00:00Z"
+
+
+def test_dense_file_budget_reports_truncation(client):
+    user_id = "dense-file-budget-user"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        repo.save_dense_data_files([
+            DenseDataFile(
+                user_id=user_id, stream="second_heart_rate", file_id=f"private-file-{index}",
+                file_type="SEC_HR", date=date(2026, 8, 25),
+                start_utc=datetime(2026, 8, 25, 8 + index, tzinfo=timezone.utc),
+            )
+            for index in range(3)
+        ])
+    response = client.get(
+        "/api/health/dense-files/second_heart_rate?from=2026-08-25&to=2026-08-25&limit=2",
+        headers={"X-User-Id": user_id},
+    )
+    assert response.status_code == 200
+    assert len(response.json()["files"]) == 2
+    assert response.json()["truncated"] is True
 
 
 def test_sync_stream_freshness_is_filtered_by_source():
@@ -660,7 +890,7 @@ def test_workout_list_uses_configured_local_day_boundaries(client):
             ))
 
     response = client.get(
-        "/api/v1/health/workouts?from=2026-08-25&to=2026-08-25",
+        "/api/workouts?from=2026-08-25&to=2026-08-25",
         headers={"X-User-Id": user_id},
     )
     assert response.status_code == 200
@@ -722,12 +952,42 @@ def test_workout_detail_samples_are_isolated_by_source(client):
     assert samples == {("zepp", 100), ("garmin", 120)}
 
     zepp_response = client.get(
-        f"/api/v1/health/workouts/{workout_id}?source=zepp",
+        f"/api/workouts/{workout_id}?source=zepp",
         headers={"X-User-Id": user_id},
     )
     garmin_response = client.get(
-        f"/api/v1/health/workouts/{workout_id}?source=garmin",
+        f"/api/workouts/{workout_id}?source=garmin",
         headers={"X-User-Id": user_id},
     )
     assert zepp_response.json()["detail"]["samples"][0]["value"] == 100
     assert garmin_response.json()["detail"]["samples"][0]["value"] == 120
+
+
+def test_token_status_reads_metadata_without_decrypting_secret(client, monkeypatch):
+    user_id = "metadata-only-token-user"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        repo.save_token(AuthToken(
+            user_id=user_id,
+            source="zepp",
+            access_token="encrypted-test-secret",
+            source_user_id="vendor-metadata-only",
+            region_host="api-mifitcn.zepp.com",
+        ))
+
+    from vitalis.adapters import credentials
+
+    def fail_decrypt(_value):
+        raise AssertionError("token-status must not decrypt vendor credentials")
+
+    monkeypatch.setattr(credentials, "decrypt_token", fail_decrypt)
+    response = client.get(
+        "/api/health/token-status",
+        headers={"X-User-Id": user_id},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["authorized"] is True
+    assert response.json()["vendor_user_id"] == "vendor-metadata-only"
+    assert response.json()["region_host"] == "api-mifitcn.zepp.com"

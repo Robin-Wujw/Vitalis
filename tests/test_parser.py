@@ -7,9 +7,9 @@ import pytest
 
 from datetime import date, datetime, timedelta, timezone
 
-from vitalis.connectors.zepp.parser import ZeppParser
-from vitalis.connectors.zepp.sport_types import ZEPP_SPORT_MODES, resolve_sport_mode
-from vitalis.models import WorkoutType
+from vitalis.adapters.zepp.parser import ZeppParser
+from vitalis.adapters.zepp.sport_types import ZEPP_SPORT_MODES, resolve_sport_mode
+from vitalis.domain import WorkoutType
 
 SLEEP_RAW = {
     "code": 0,
@@ -287,12 +287,12 @@ def test_sport_history_normalizes_vendor_negative_sentinels():
         }
     })
 
-    assert rows[0].heart_rate_avg == 0
-    assert rows[0].heart_rate_max == 0
-    assert rows[0].load == 0
-    assert rows[0].calories == 0
+    assert rows[0].heart_rate_avg is None
+    assert rows[0].heart_rate_max is None
+    assert rows[0].load is None
+    assert rows[0].calories is None
     assert rows[0].distance_km is None
-    assert "distance_km" not in rows[0].observed_fields
+    assert not rows[0].observed_fields
 
 
 def test_decode_workout_detail_to_typed_metric_samples():
@@ -563,7 +563,8 @@ def test_parse_band_sleep_distinguishes_missing_stage_from_recorded_zero(recorde
     }]}})
     sleep = sleeps[date(2026, 8, 29)]
 
-    assert sleep.deep_sleep == sleep.light_sleep == sleep.awake == 0
+    assert sleep.deep_sleep == sleep.awake == 0
+    assert sleep.light_sleep is None
     assert sleep.observed_fields == ["deep_sleep", "awake"]
 
 
@@ -794,7 +795,7 @@ def test_parse_all_day_stress_ignores_malformed_timeline():
 
 
 def test_parse_all_day_stress_caps_nested_timeline(monkeypatch):
-    from vitalis.connectors.zepp import parser as parser_module
+    from vitalis.adapters.zepp import parser as parser_module
 
     monkeypatch.setattr(parser_module, "MAX_WELLNESS_SAMPLES_PER_EVENT", 2)
     start = 1_777_334_400_000

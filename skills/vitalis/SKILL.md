@@ -3,71 +3,21 @@ name: vitalis
 description: Use Vitalis Health Intelligence APIs for deterministic Chinese health analysis, training response, personal patterns, timelines, and explicit feedback actions.
 ---
 
-# Vitalis 健康智能
+# Vitalis 健康助手
 
-[English](SKILL.en.md)
+通过本 Skill 目录中的 [独立 HTTP 客户端](scripts/vitalis_api.py) 读取 Vitalis 已有结果。只用 Python 3.11+ 标准库；把整个 Skill 目录复制到任意位置即可运行，命令中的脚本路径相对本文件所在目录，不依赖仓库、工作目录或旧版 `tools/`。接口范围见本目录的 [API 操作清单](references/api.md)。
 
-Vitalis 是健康智能 API 之上的渲染器和编排器。Python 引擎负责归一化、质量评估、基线、特征、趋势、事件生命周期、决策、建议、月度分析、个人关联、训练响应、个人模型和快照。绝不能在模型中复现这些计算。
+## 私密配置与调用
 
-## 必需流程
+- 在私有运行环境设置 `VITALIS_API_BASE_URL`（服务源地址，无路径、用户名、查询或片段；非本机 HTTP 必须改用 HTTPS）和 `VITALIS_ACCESS_TOKEN`（具备相应 `read`、`analyze`、`sync` 或 `feedback` 权限）。令牌只从环境读取，绝不放到命令行、日志、对话或版本库；不通过 `X-User-Id` 选择身份。
+- 使用 `python <Skill目录>/scripts/vitalis_api.py <命令> ...`；工具输出 JSON。错误 JSON 中的 `status=error` 是失败，HTTP 401/403 是鉴权/权限问题，连接或协议错误不是无数据。不要把工具输出中的私人记录转发到不可信场所。
+- 读取：`status` 查覆盖；`report daily|morning|evening|weekly|monthly|weekly-briefing|monthly-briefing [--day YYYY-MM-DD]` 查已生成报告；`workouts [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--limit N]` 查训练，详情附 `--id ID --source SOURCE`；`job ID` 查任务。更窄的已有事实与解释可用固定白名单 `query profile|trends|events|explain|context|training-responses|personal-model|personal-associations|timeline|training-preferences|feedback`（按需指定 `--day` 或 `--start` / `--end`）；不能传入任意 URL。读取不会启动分析或同步。
+- 仅在用户明确要求重新分析时执行 `analyze --day YYYY-MM-DD --key-file <私密持久路径>`；仅在用户明确要求同步时执行 `sync --days N --key-file <私密持久路径>`。首次调用前客户端在该路径持久化 Idempotency-Key；同一任务、同一参数重试时复用**同一文件**，新任务使用新文件，不能把文件放在 Skill 或仓库中。请求超时或结果不明确时先查已知任务 ID；无 ID 时可用同一文件人工重试。客户端不会自动重试任何写请求。
+- 仅在用户明确要求记录其本人提供的主观信息时，将一份 JSON 对象通过**标准输入**传给 `feedback --key-file <私密持久路径>`（令牌和备注均不经命令行参数）；例如 `{"notes":"今天较疲劳"}`。同一反馈的不确定重试复用同一键文件；省略键文件时不得自动重发。关联训练必须同时提供 `workout_id` 与 `workout_source`；RPE 还须关联已完成训练。其他明确写入使用固定白名单 `action profile-patch|preferences-put|preferences-patch|strength-confirm|recommendation-complete|event-acknowledge`；需要目标时指定 `--id`，力量确认还要 `--source`，其余输入经 stdin 传 JSON。用户资料修正携带当前 revision；遇到冲突重新读取，不覆盖其他更新。无幂等保证的写入在响应不明时不能盲目重发。
+- 分析与同步只返回任务受理信息；用 `job ID` 查看状态，只有成功并已生成结果时再读报告。报告 `status=snapshot_missing` 只表示指定日期的快照不存在；不要改查别的日期、自动启动分析/同步或编造结果。其他 HTTP 404（如任务不存在）与 401/403、网络故障必须分别说明。
 
-1. 将请求分类为读取（Read）、分析（Analyze）或操作（Act）。
-2. 只调用与请求完全对应的工具。读取工具绝不生成分析。仅当用户请求重新分析或完成明确要求的同步后，才使用 `tools/analyze.py`；仅在需要广泛的分层上下文时使用 `tools/context.py`。日常事实问答先选择最窄的已有快照工具。
-3. 从 `workflows/` 中只选择一个工作流。所有工具通过本 Skill 所在目录下的 `tools/` 路径执行，使用当前 Vitalis Python 环境；不要依赖 Hermes 的工作目录，不要把健康数据、用户 ID 或令牌写入日志或命令行参数。用户 ID 从私有环境配置读取。
-4. 如果用户明确提供性别、已确认的最大心率或睡眠目标，则携带当前资料 revision 调用 `tools/profile.py patch`；否则，在需要资料状态时调用 `tools/profile.py get`。
-5. 只渲染响应中已经存在的事实、推断、行动、比较、驱动因素、限制和建议。Open Health 字段只是描述性的影子洞察；渲染 `open_health_insights` 以及有类型定义的周期/上下文摘要时，不得重新计算，也不得用它们改变 `decision`。晚间、每周和每月报告工具返回 `ReportBriefing 1.0`，必须直接使用其与 HTML renderer 共用的 `sections`，不得从 raw profile 自由拼接。
+## 回答边界
 
-所有面向用户的内容都必须使用中文。优先渲染 `*_label`、`*_labels`、锻炼的 `sport_mode_label`、识别标签以及结构化的 `decision.action_plan`。内部枚举代码仅用于程序控制，绝不能出现在回答中；尤其不得输出 `SUFFICIENT`、`NEAR_BASELINE`、`INSUFFICIENT_DATA`、`HEALTH_FIRST_CONCURRENT`、`NONE`、`running_due`、`strength_due` 或规则 ID。若响应同时提供中文标签，只使用中文标签；没有标签时用忠实的中文描述，不得展示原始 code。
-
-## 硬性边界
-
-- 不得创建、平均、转换、评分、设定阈值或推导健康测量趋势。
-- 不得通过合并较短周期的档案来计算 WeeklyProfile 或 MonthlyProfile。
-- 不得计算、排序或重新解释相关系数。
-- 不得根据 DailyProfile 或原始字段计算训练响应、恢复时间、个人模式或时间线关系。
-- 不得更改 `decision.action`、`decision.confidence`、强度、时长、驱动因素、限制或规则 ID。
-- 不得虚构锻炼、练习动作、组数、次数、心率区间或进阶安排。训练内容必须来自 `decision.action_plan`。
-- 保留 `primary_session`、`optional_session` 和 `session_relationship_label`。绝不能把替代选项说成附加项目，也不得合并规划器已分开的训练。
-- 不得把厂商 readiness、Charge、睡眠评分或睡眠阶段视为 Vitalis 事实。普通事实回答不得直接展示 `sleep_score`、`readiness`、`charge` 或睡眠阶段原始字段，也不得在中文标签后用括号附这些英文原词；只有 API 返回的中文限制或描述性影子摘要，且明确标注为参考信息时，才能用中文按原样说明，例如“厂商准备度仅作参考”“身体电量仅作参考”。
-- 活动字段的 `None` 保持缺失；旧 `ActivityRecord` 默认零没有观测证据时不是真实测量。泛称热量的 `role=unspecified` 不得解释为总能耗，不得合并重复入口或 workout 热量；没有摄入记录时不判断热量赤字。不同 source/scope/device/unit 不得混合。
-- 如果行动为 `INSUFFICIENT_DATA`，指出缺失信号后停止。不得根据一般建议或前几日数据推断训练决策。
-- 如果只读工具返回 `status=snapshot_missing`，用中文说明所请求日期没有已生成的分析快照。不得回退到其他日期、调用 `tools/analyze.py`、调用 `tools/sync.py`，也不得提供推断出的健康结论。其他 HTTP 错误与连接故障不是缺失快照，必须如实说明。
-- 不得诊断疾病。持续偏离只能描述为观察结果；紧急症状或医疗问题需要寻求专业照护。
-- 不得在未说明的情况下合并本地用户或设备数据流。
-- 不得引用 `evidence_refs` 中不存在的证据。
-
-## 工作流路由
-
-- 指定日期的个人事实（如睡眠、活动、实际训练和已有指标）：调用 `tools/daily.py` 并传入明确的 `--date`，然后使用 `workflows/on_demand.md`。没有指定日期时使用工具默认的本地今天；“昨晚睡眠”按醒来所在的本地日期查询。仅复述响应中实际存在的值、单位、观测范围与限制；缺失值不当作零。请求未覆盖的数据要明确说不可得。
-- 一周或近 28 天的具体分析字段：分别调用 `tools/weekly.py` 或 `tools/monthly.py`，然后使用 `workflows/on_demand.md`。如果询问的是完整周报/月报，则改用对应的 `*_briefing.py` 和报告工作流；不要从每日快照自行汇总。
-- 晨间状态或今日训练：调用 `tools/morning_briefing.py`，然后使用 `workflows/morning.md`。仅当用户询问晨报背后的依据时才使用 `tools/explain.py`。
-- 晚间总结或今晚重点：调用 `tools/evening_briefing.py`，然后使用 `workflows/evening.md`。
-- 每周回顾：调用 `tools/weekly_briefing.py`，然后使用 `workflows/weekly.md`。
-- 每月回顾或最近 28 天周期：调用 `tools/monthly_briefing.py`，然后使用 `workflows/monthly.md`。
-- 趋势或近期变化：调用 `tools/trends.py` 或 `tools/events.py`，然后使用 `workflows/on_demand.md`。
-- “为什么这样建议？”或“解释今天的计划”：调用 `tools/explain.py`，然后使用 `workflows/daily_explanation.md`。这是固定的只读工作流。
-- 广泛健康上下文：调用 `tools/context.py`，然后使用最匹配的工作流。上下文只包含精简的最新 Open Health 摘要；按原样使用返回的 `insights_stale` 以及拒绝/缺失输入字段。
-- 新的确定性分析：调用 `tools/analyze.py`；后续读取可以选择返回的 Daily、Weekly、响应或个人结果。
-- 训练响应：调用 `tools/training_responses.py`，然后使用 `workflows/on_demand.md`。
-- 个人模式：调用 `tools/personal_model.py`，然后使用 `workflows/on_demand.md`。
-- 跨指标个人关联：调用 `tools/personal_associations.py`，然后使用 `workflows/on_demand.md`。
-- 近期事件序列：调用 `tools/timeline.py`，然后使用 `workflows/on_demand.md`。
-- 只有在用户同时指出建议和已完成锻炼后，才能将建议标记为已完成：调用 `tools/complete_recommendation.py`。
-- 记录用户主动提供的 RPE、疲劳、精神状态、酸痛或备注：调用 `tools/feedback.py add`。
-- 列出反馈：调用 `tools/feedback.py list`。
-- 使用 `tools/training_preferences.py` 读取或替换跑步/力量目标、轮换、跑步机/天气后备方案、可用时间、经验、器材和疼痛/伤病状态；明确进行完整替换时使用 `set`，只更新明确提供的字段时使用 `patch`。凡关联锻炼时都必须提供 `workout_source`。
-- 只有依据用户陈述，才能调用 `tools/strength_exercises.py` 确认力量训练的具体动作；绝不能根据心率推导动作。
-- 返回 `observed_sets` 时，确认记录优先并逐组复述已有字段；保留 `source` 的 `strength_sets` / `lap_62` literal、`order`、`vendor_exercise_code`、`weight_value`、`weight_unit` 和 `limitations`。优先复述返回的 `exercise_name` 并保留来源限制；未知 code 不臆造动作名称；无单位不补 `kg`，负 sentinel 保持 `None`，也不认定自重。晨报处方不得混入历史观测组。
-- 只有在用户要求后才确认事件：调用 `tools/acknowledge_event.py`。
-- 只有在用户要求后才同步源数据：调用 `tools/sync.py`。
-- 只有在用户要求后才配置自动 PushPlus 推送：为可感知睡眠并重试的晨间推送调度 `tools/daily_push.py --period morning`，为晚间回顾调度 `tools/daily_push.py --period evening`。该功能需要私密的 `VITALIS_USER` 和 `PUSHPLUS_TOKEN` 环境变量，并让模型不接触令牌处理和报告组装。使用 `--test` 执行真实的手动推送；该模式不得读取或写入定时报告的每日去重标记。
-
-线协议契约记录在 `schemas/` 中。证据范围和解释限制汇总在 `knowledge/evidence.md` 中。
-
-## 配置
-
-| 环境变量 | 默认值 | 用途 |
-| --- | --- | --- |
-| `VITALIS_API` | `http://localhost:8000` | Vitalis API 源地址 |
-| `VITALIS_USER` | 必填 | 私密配置中的单一本地 Vitalis 用户 ID；工具拒绝覆盖为其他 `--user` |
-| `PUSHPLUS_TOKEN` | 仅每日推送 | 私密的 PushPlus 推送 token |
+- 所有面向用户的回答使用中文。只复述 API 返回的事实、来源、单位、观测时间、限制与原有建议；缺失不是零，陈旧或未完成不是当前结论。不要自行计算趋势、恢复、相关、训练处方或由较短周期拼接周/月结果。
+- 优先使用 `*_label`、`*_labels` 和报告的 `sections`，不要直接呈现内部枚举或规则 ID。`INSUFFICIENT_DATA` 或仅事实版只说明已有事实与缺口，不提供推断训练决策。保持 `decision.action_plan` 中的主训练、可选训练、二者关系和停止条件，不能虚构动作、组数、心率或负重。被问及“为什么”时用只读 `query explain` 的已保存触发事实与门控，只引用结果实际返回的 `evidence_refs`，不把支持信号说成触发原因。
+- 厂商睡眠评分、readiness、Charge 等只能按 API 明示的参考限制描述，不当作 Vitalis 判定；不同用户、设备、来源或单位的记录不得合并。未观测时段不是零，未知训练日不是休息日；未指明范围的热量不能当作总能耗或相加，没有摄入记录就不推断热量赤字。周报是滚动 7 日、月报是滚动 28 日而非自然月；部分合计不能写成完整总量，关联不代表因果。不得诊断疾病；紧急症状建议寻求专业医疗协助。

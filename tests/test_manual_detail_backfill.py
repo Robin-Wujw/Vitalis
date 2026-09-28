@@ -1,121 +1,149 @@
 """Historical detail refresh must be an explicit manual sync option."""
 
+from datetime import datetime, timedelta, timezone
+import hashlib
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import SimpleNamespace
-import sys
 
 import pytest
 
-from vitalis.connectors.zepp import ZeppConnector
-from vitalis.models import User
+from vitalis.adapters.zepp import ZeppConnector
+from vitalis.domain import AuthToken, User, Workout
+from vitalis.adapters.persistence import HealthRepository, session_scope
 
 
-def test_manual_detail_backfill_api_passes_explicit_flag(client, monkeypatch):
-    from vitalis.api.routes import health
+def _api_ref(key: str) -> str:
+    return "api:" + hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def test_manual_detail_backfill_api_passes_explicit_flags_to_queued_attempt(client, monkeypatch):
+    from vitalis.entrypoints.api.routes import current
+    from vitalis.adapters.zepp.sync_coordinator import ZeppSyncJobAdapter
+    from vitalis.application.sync_jobs import SyncJobService
 
     calls = []
 
     class Connector:
-        mock = False
-
-        def load_token(self, repo, user_id):
-            return object()
+        mock = True
 
         def create_attempt(self, user_id, **kwargs):
-            calls.append(("queued", kwargs))
-            return SimpleNamespace(id="backfill-attempt", status="queued")
+            calls.append((user_id, kwargs))
+            return SimpleNamespace(id=f"backfill-attempt-{len(calls)}", status="queued")
 
-        def sync_with_report(self, user, **kwargs):
-            calls.append(("sync", kwargs))
-            return SimpleNamespace(
-                success=True, needs_reauth=False,
-                progress={"status": "succeeded", "attempt_id": "backfill-attempt"},
-                streams=[], records_written=0, message="",
-            )
-
-    monkeypatch.setattr(health, "get_connector", lambda source: Connector())
+    monkeypatch.setattr(
+        current,
+        "get_sync_job_service",
+        lambda: SyncJobService(
+            ZeppSyncJobAdapter(lambda _source: Connector())
+        ),
+    )
     headers = {"X-User-Id": "manual-backfill-test"}
+
+    def submit(body):
+        key = f"manual-backfill-request-{len(calls) + 1}"
+        response = client.post(
+            "/api/sync-jobs", json=body,
+            headers={**headers, "Idempotency-Key": key},
+        )
+        assert response.status_code == 202, response.text
+        assert response.json() == {
+            "job_id": f"backfill-attempt-{len(calls)}", "status": "queued",
+            "status_url": f"/api/jobs/backfill-attempt-{len(calls)}",
+        }
+        assert calls[-1][0] == "manual-backfill-test"
+        assert calls[-1][1]["trigger_ref"] == _api_ref(key)
+        return calls[-1][1]
+
+    assert submit({"days": 8, "detail_backfill": True}) == {
+        "days": 8, "trigger": "manual", "trigger_ref": _api_ref("manual-backfill-request-1"),
+        "decode_dense_files": False, "detail_backfill": True,
+        "workout_only": False, "detail_only": False,
+        "detail_refresh_before": None, "detail_limit": None,
+    }
+    assert submit({"days": 8})["detail_backfill"] is False
+    assert submit({"days": 730, "workout_only": True})["workout_only"] is True
+    assert submit({"days": 730, "detail_only": True})["detail_only"] is True
+    options = submit({"days": 730, "detail_only": True, "detail_limit": 1,
+                      "detail_refresh_before": "2026-09-24T14:00:00Z"})
+    assert options["detail_limit"] == 1
+    assert options["detail_refresh_before"] == "2026-09-24T14:00:00Z"
+    assert len(calls) == 5
+
+
+@pytest.mark.parametrize("body,expected", [
+    ({"detail_limit": 1}, 400),
+    ({"detail_refresh_before": "2026-09-24T14:00:00Z"}, 400),
+    ({"detail_only": True, "detail_limit": 0}, 422),
+    ({"detail_only": True, "detail_limit": 5}, 422),
+    ({"detail_only": True, "workout_only": True}, 400),
+    ({"detail_only": True, "detail_backfill": True}, 400),
+    ({"detail_only": True, "decode_dense_files": True}, 400),
+])
+def test_sync_job_rejects_incompatible_manual_options(client, body, expected):
+    headers = {"X-User-Id": "manual-detail-invalid", "Idempotency-Key": "manual-detail-invalid-request"}
+    response = client.post("/api/sync-jobs", json=body, headers=headers)
+    assert response.status_code == expected, response.text
+
+
+def test_detail_only_api_reports_empty_backlog_without_creating_job(client):
+    user_id = "manual-detail-empty"
+    headers = {"X-User-Id": user_id, "Idempotency-Key": "manual-detail-empty-request"}
+    response = client.post("/api/sync-jobs", json={"days": 730, "detail_only": True}, headers=headers)
+    assert response.status_code == 409
+    assert response.json()["code"] == "conflict"
+    assert response.json()["retryable"] is False
+    with session_scope() as db:
+        assert HealthRepository(db).sync_attempts(user_id) == []
+
+
+def test_detail_only_api_freezes_requested_workout_backlog(client, monkeypatch):
+    from vitalis.entrypoints.api.routes import current
+
+    user_id = "manual-detail-workout"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user_id)
+        db.flush()
+        repo.save_token(AuthToken(
+            user_id=user_id, source="zepp", source_user_id="vendor-manual-detail-workout",
+            access_token="test-token",
+        ))
+        for index in range(2):
+            repo.save_workout(Workout(
+                user_id=user_id, workout_id=f"detail-{index}",
+                started_at=datetime.now(timezone.utc) - timedelta(days=2),
+                duration=30, training_family="strength", vendor_source="cloud",
+            ))
+    from vitalis.adapters.zepp.sync_coordinator import ZeppSyncJobAdapter
+    from vitalis.application.sync_jobs import SyncJobService
+
+    monkeypatch.setattr(
+        current,
+        "get_sync_job_service",
+        lambda: SyncJobService(
+            ZeppSyncJobAdapter(lambda _source: ZeppConnector(mock=False))
+        ),
+    )
+    headers = {"X-User-Id": user_id, "Idempotency-Key": "manual-detail-one-workout"}
     response = client.post(
-        "/api/v1/health/sync?days=8&enqueue_only=true&detail_backfill=true",
+        "/api/sync-jobs", json={"days": 7, "detail_only": True, "detail_limit": 1},
         headers=headers,
     )
-    assert response.status_code == 200
-    assert response.json()["status"] == "queued"
-    assert calls[-1] == (
-        "queued", {"days": 8, "trigger": "manual", "decode_dense_files": False,
-                   "detail_backfill": True, "workout_only": False,
-                   "detail_only": False, "detail_refresh_before": None,
-                   "detail_limit": None},
-    )
-
-    response = client.post(
-        "/api/v1/health/sync?days=8&detail_backfill=true", headers=headers,
-    )
-    assert response.status_code == 200
-    assert response.json()["status"] == "synced"
-    assert calls[-1][0] == "sync"
-    assert calls[-1][1]["detail_backfill"] is True
-    response = client.post("/api/v1/health/sync?days=8&enqueue_only=true", headers=headers)
-    assert response.status_code == 200
-    assert calls[-1][1]["detail_backfill"] is False
-    assert calls[-1][1]["workout_only"] is False
-    response = client.post(
-        "/api/v1/health/sync?days=730&enqueue_only=true&workout_only=true",
-        headers=headers,
-    )
-    assert response.status_code == 200
-    assert calls[-1][1]["workout_only"] is True
-    response = client.post(
-        "/api/v1/health/sync?days=730&enqueue_only=true&detail_only=true",
-        headers=headers,
-    )
-    assert response.status_code == 200
-    assert calls[-1][1]["detail_only"] is True
-    assert calls[-1][1]["detail_refresh_before"] is None
-    assert calls[-1][1]["detail_limit"] is None
-    response = client.post(
-        "/api/v1/health/sync?days=730&enqueue_only=true&detail_only=true&detail_limit=1",
-        headers=headers,
-    )
-    assert response.status_code == 200
-    assert calls[-1][1]["detail_limit"] == 1
-    assert client.post("/api/v1/health/sync?detail_limit=1", headers=headers).status_code == 400
-    assert client.post(
-        "/api/v1/health/sync?enqueue_only=true&detail_only=true&detail_limit=0",
-        headers=headers,
-    ).status_code == 422
-    assert client.post(
-        "/api/v1/health/sync?enqueue_only=true&detail_only=true&detail_limit=5",
-        headers=headers,
-    ).status_code == 422
-
-
-def test_detail_only_api_requires_enqueue_and_reports_empty_backlog(client, monkeypatch):
-    from vitalis.api.routes import health
-
-    class Connector:
-        mock = False
-
-        def load_token(self, repo, user_id):
-            return object()
-
-        def create_attempt(self, user_id, **kwargs):
-            assert kwargs["detail_only"] is True
-            return None
-
-    monkeypatch.setattr(health, "get_connector", lambda source: Connector())
-    headers = {"X-User-Id": "manual-detail-empty"}
-    refused = client.post("/api/v1/health/sync?detail_only=true", headers=headers)
-    assert refused.status_code == 400
-    response = client.post(
-        "/api/v1/health/sync?days=730&detail_only=true&enqueue_only=true",
-        headers=headers,
-    )
-    assert response.status_code == 200
-    assert response.json()["status"] == "no_pending_details"
-    assert response.json()["attempt_id"] is None
-    assert response.json()["source_coverage_unchanged"] is True
+    assert response.status_code == 202, response.text
+    job_id = response.json()["job_id"]
+    own = client.get(f"/api/jobs/{job_id}", headers=headers)
+    assert own.status_code == 200
+    assert own.json()["attempt"]["status"] == "queued"
+    assert len(own.json()["chunks"]) == 1
+    assert own.json()["chunks"][0]["stream"] == "workout_detail"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        attempt = repo.sync_attempt(job_id, user_id=user_id)
+        assert attempt.options == {"decode_dense_files": False, "detail_only": True, "detail_limit": 1}
+        assert len(repo.pending_workout_details(
+            user_id, attempt.window_start, attempt.window_end, limit=10,
+        )) == 2
 
 
 def test_nonmanual_detail_backfill_is_rejected_before_scheduling():
@@ -135,7 +163,7 @@ def test_nonmanual_detail_backfill_is_rejected_before_scheduling():
 
 
 def test_connector_persists_workout_only_as_manual_attempt_option(monkeypatch):
-    from vitalis.services import zepp_sync_coordinator
+    from vitalis.adapters.zepp import sync_coordinator as zepp_sync_coordinator
 
     captured = []
 
@@ -168,62 +196,52 @@ def test_connector_persists_workout_only_as_manual_attempt_option(monkeypatch):
         connector.create_attempt("owner", detail_limit=1)
 
 
-def test_sync_cli_only_sets_backfill_param_when_requested(monkeypatch, capsys):
-    path = Path(__file__).resolve().parents[1] / "skills" / "vitalis" / "tools" / "sync.py"
+def test_sync_client_passes_manual_options_as_idempotent_job_body(monkeypatch, tmp_path):
+    path = Path(__file__).resolve().parents[1] / "skills" / "vitalis" / "scripts" / "vitalis_api.py"
     spec = spec_from_file_location("vitalis_sync_cli_test", path)
     module = module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
     calls = []
 
-    class Response:
-        def raise_for_status(self):
-            return None
+    def fake_request(method, endpoint, token, **kwargs):
+        calls.append((method, endpoint, token, kwargs))
+        return {"job_id": "queued-job", "status": "queued"}
 
-        def json(self):
-            return {"status": "queued"}
-
-    def fake_post(url, **kwargs):
-        assert kwargs["trust_env"] is False
-        calls.append(kwargs["params"])
-        return Response()
-
-    monkeypatch.setenv("VITALIS_USER", "owner")
-    monkeypatch.setattr(module.httpx, "post", fake_post)
-    monkeypatch.setattr(sys, "argv", ["sync.py", "--days", "8"])
-    assert module.main() == 0
-    monkeypatch.setattr(sys, "argv", ["sync.py", "--days", "8", "--detail-backfill"])
-    assert module.main() == 0
-    monkeypatch.setattr(sys, "argv", ["sync.py", "--days", "730", "--workout-only"])
-    assert module.main() == 0
-    monkeypatch.setattr(sys, "argv", ["sync.py", "--days", "730", "--details-only"])
-    assert module.main() == 0
-    monkeypatch.setattr(sys, "argv", ["sync.py", "--days", "730", "--details-only", "--detail-limit", "1"])
-    assert module.main() == 0
-    monkeypatch.setattr(sys, "argv", ["sync.py", "--days", "730", "--details-only", "--refresh-before", "2026-09-24T14:00:00Z"])
-    assert module.main() == 0
-    monkeypatch.setattr(sys, "argv", ["sync.py", "--days", "730", "--details-only", "--detail-limit", "1", "--refresh-before", "2026-09-24T14:00:00Z"])
-    assert module.main() == 0
-    assert calls == [
-        {"days": 8}, {"days": 8, "detail_backfill": "true"},
-        {"days": 730, "workout_only": "true"},
-        {"days": 730, "detail_only": "true", "enqueue_only": "true"},
-        {"days": 730, "detail_only": "true", "enqueue_only": "true", "detail_limit": 1},
-        {"days": 730, "detail_only": "true", "enqueue_only": "true",
-         "detail_refresh_before": "2026-09-24T14:00:00Z"},
-        {"days": 730, "detail_only": "true", "enqueue_only": "true", "detail_limit": 1,
-         "detail_refresh_before": "2026-09-24T14:00:00Z"},
+    monkeypatch.setenv("VITALIS_API_BASE_URL", "http://127.0.0.1:8000")
+    monkeypatch.setenv("VITALIS_ACCESS_TOKEN", "synthetic-test-token")
+    monkeypatch.setattr(module, "request", fake_request)
+    variants = [
+        ("--days", "8"),
+        ("--days", "8", "--detail-backfill"),
+        ("--days", "730", "--workout-only"),
+        ("--days", "730", "--detail-only"),
+        ("--days", "730", "--detail-only", "--detail-limit", "1"),
+        ("--days", "730", "--detail-only", "--detail-limit", "1",
+         "--detail-refresh-before", "2026-09-24T14:00:00Z"),
     ]
-    monkeypatch.setattr(sys, "argv", ["sync.py", "--details-only", "--workout-only"])
-    with pytest.raises(SystemExit):
-        module.main()
-    monkeypatch.setattr(sys, "argv", ["sync.py", "--refresh-before", "2026-09-24T14:00:00Z"])
-    with pytest.raises(SystemExit):
-        module.main()
-    monkeypatch.setattr(sys, "argv", ["sync.py", "--detail-limit", "1"])
-    with pytest.raises(SystemExit):
-        module.main()
-    monkeypatch.setattr(sys, "argv", ["sync.py", "--details-only", "--detail-limit", "5"])
-    with pytest.raises(SystemExit):
-        module.main()
-    assert "queued" in capsys.readouterr().out
+    for index, flags in enumerate(variants):
+        args = module.parse_args([
+            "sync", "--key-file", str(tmp_path / f"sync-{index}.json"), *flags,
+        ])
+        assert module.run(args) == {"job_id": "queued-job", "status": "queued"}
+    assert len(calls) == len(variants)
+    assert all(method == "POST" and endpoint == "sync-jobs" and token == "synthetic-test-token"
+               and len(kwargs["key"]) >= 16 for method, endpoint, token, kwargs in calls)
+    bodies = [item[3]["body"] for item in calls]
+    assert [body["days"] for body in bodies] == [8, 8, 730, 730, 730, 730]
+    assert [body["detail_backfill"] for body in bodies] == [False, True, False, False, False, False]
+    assert bodies[2]["workout_only"] is True
+    assert all(body["detail_only"] is True for body in bodies[3:])
+    assert bodies[4]["detail_limit"] == 1
+    assert bodies[5]["detail_refresh_before"] == "2026-09-24T14:00:00Z"
+    first_key = calls[0][3]["key"]
+    assert module.run(module.parse_args([
+        "sync", "--key-file", str(tmp_path / "sync-0.json"), "--days", "8",
+    ]))["status"] == "queued"
+    assert calls[-1][3]["key"] == first_key
+    with pytest.raises(module.ClientError):
+        module.parse_args([
+            "sync", "--key-file", str(tmp_path / "invalid.json"),
+            "--detail-limit", "5",
+        ])

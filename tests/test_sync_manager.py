@@ -10,17 +10,18 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pytest
 from sqlalchemy.exc import OperationalError
 
-from vitalis.connectors.zepp.client import ZeppAuthError
-from vitalis.connectors.zepp.fetcher import (
+from vitalis.adapters.zepp import ZeppConnector
+from vitalis.adapters.zepp.client import ZeppAuthError
+from vitalis.adapters.zepp.fetcher import (
     FetchBatch,
     FetchedRecord,
     FetchWindow,
     PartialFetchError,
     RawRecord,
 )
-from vitalis.connectors.zepp.sync_manager import SyncManager
-from vitalis.models import User, Workout, WorkoutType, WORKOUT_DETAIL_SCHEMA_VERSION
-from vitalis.storage import HealthRepository, init_db, session_scope
+from vitalis.adapters.zepp.sync_manager import SyncManager
+from vitalis.domain import User, Workout, WorkoutType, WORKOUT_DETAIL_SCHEMA_VERSION
+from vitalis.adapters.persistence import HealthRepository, init_db, session_scope
 
 
 @pytest.mark.parametrize(
@@ -162,6 +163,42 @@ def mock_fetcher():
     return MockDataFetcher()
 
 
+def test_mock_connector_honors_explicit_fetch_window(setup_db, monkeypatch):
+    connector = ZeppConnector(mock=True)
+    captured = {}
+
+    def fetch(_user, start, end):
+        captured.update(start=start, end=end)
+        return []
+
+    monkeypatch.setattr(connector, "_mock_fetch", fetch)
+    window = FetchWindow.local_dates(date(2025, 1, 3), date(2025, 1, 21))
+    report = connector.sync_with_report(
+        User(id="mock-window-user"), window=window, attempt_id="missing-mock-attempt"
+    )
+
+    assert report.success is True
+    assert captured == {"start": date(2025, 1, 3), "end": date(2025, 1, 21)}
+
+
+def test_mock_connector_honors_requested_days_without_fourteen_day_cap(
+    setup_db, monkeypatch
+):
+    connector = ZeppConnector(mock=True)
+    captured = {}
+
+    def fetch(_user, start, end):
+        captured.update(start=start, end=end)
+        return []
+
+    monkeypatch.setattr(connector, "_mock_fetch", fetch)
+    connector.sync_with_report(
+        User(id="mock-days-user"), days=21, attempt_id="missing-mock-attempt-days"
+    )
+
+    assert (captured["end"] - captured["start"]).days + 1 == 21
+
+
 class TestSyncManager:
     def test_sync_report_success(self, mock_fetcher, setup_db):
         manager = SyncManager(mock_fetcher)
@@ -273,7 +310,7 @@ class TestSyncManager:
                 manager.sync_report(user, days=7, repo=repo, on_progress=cancel_on_first)
 
     def test_sync_timeout_keeps_completed_streams(self, mock_fetcher, setup_db, monkeypatch):
-        from vitalis.connectors.zepp import sync_manager as sync_module
+        from vitalis.adapters.zepp import sync_manager as sync_module
 
         clock = iter([0, 0, 100])
         monkeypatch.setattr(sync_module.time, "monotonic", lambda: next(clock))

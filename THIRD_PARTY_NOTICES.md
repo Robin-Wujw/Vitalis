@@ -6,7 +6,7 @@
 
 ## ZeppBridge 集成来源
 
-`vitalis/connectors/zepp/` 中的部分 Zepp 云端端点、payload 规范化和区域探测约定是在参考 ZeppBridge 的基础上开发的。
+`src/vitalis/adapters/zepp/` 中的部分 Zepp 云端端点、payload 规范化和区域探测约定是在参考 ZeppBridge 的基础上开发的。
 
 - 上游仓库：<https://github.com/lingcang728/ZeppBridge>
 - 已审查版本：`v2.1.0`（2026-09-02）；现有已转化约定所对应的精确历史源码 revision 尚未还原。
@@ -14,7 +14,7 @@
   （2026-09-23）。本次按行为和回归测试借鉴、未整段复制以下上游修复：心率游标单位归一化
   （`c491d2b8b455`）、ODI/OSA 本地日历日期请求（`afb130a09cad`）、SpO2 有界分窗与响应上限处理
   （`592b685b652e`），以及 readiness 缺失值 sentinel 处理（`37e0b52b1425`）。
-- 明确引用 ZeppBridge 的 Vitalis 模块：`auth_parser.py`、`client.py`、`fetcher.py`、`parser.py`、`sync_manager.py` 和 `api/routes/connect.py`。
+- 明确引用 ZeppBridge 的 Vitalis 模块：`auth_parser.py`、`client.py`、`fetcher.py`、`parser.py`、`sync_manager.py` 和 `entrypoints/api/routes/connect.py`。
 - Vitalis 特有变更：Python/FastAPI/SQLAlchemy 架构、类型化规范合同、source/scope/device 来源信息、有界 chunk 编排、lease、retry、诊断和确定性分析边界。
 - 上游许可证：MIT。ZeppBridge 还在其上游声明文件中标明了衍生自 Apache-2.0 的锻炼解码。复制或改编更多上游代码之前，必须记录精确 revision，并保留所有适用的 MIT 和 Apache 声明。
 
@@ -26,7 +26,7 @@ Open Health Insights shadow 算法的部分内容移植或改编自 OpenStrap an
 
 - 上游仓库：<https://github.com/OpenStrap/analytics>
 - 上游 revision：`45d72ed989c004008b919b366cd5ceda7061b7df`
-- Vitalis 模块：`vitalis/intelligence/open_health/ewma.py`、`readiness.py`、`anomaly.py`、`sleep.py` 和 `load.py`。
+- Vitalis 模块：`src/vitalis/intelligence/open_health/ewma.py`、`readiness.py`、`anomaly.py`、`sleep.py` 和 `load.py`。
 - 上游衍生范围：winsorized EWMA 约定、夜间 lnRMSSD readiness 结构、稳健 median/MAD anomaly 约定、Banister TRIMP 和 ATL/CTL/TSB 指数负荷约定。
 - Vitalis 特有变更：类型化 `OpenHealthInsights 1.0` envelope、source/device 隔离、用户确认的 profile gate、coverage/refusal policy、hard-reject 与 stale 处理、SWC readiness band、99.9% anomaly 阈值与 persistence policy、睡眠 timing/regularity policy、锻炼 pause/gap 处理、上游 coverage 下限、非诊断性措辞，以及与 Decision Policy 7.0 隔离的 `shadow_only`。
 

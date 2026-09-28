@@ -2,13 +2,14 @@
 
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
 
-from vitalis.connectors.zepp import ZeppConnector, client as client_module
-from vitalis.connectors.zepp.client import MAX_WORKOUT_DETAIL_BYTES, ZeppAPIClient, ZeppAuthError
-from vitalis.connectors.zepp.fetcher import (
+from vitalis.adapters.zepp import ZeppConnector, client as client_module
+from vitalis.adapters.zepp.client import MAX_WORKOUT_DETAIL_BYTES, ZeppAPIClient, ZeppAuthError
+from vitalis.adapters.zepp.fetcher import (
     DAY_MILLISECONDS,
     DataFetcher,
     FetchWindow,
@@ -17,8 +18,8 @@ from vitalis.connectors.zepp.fetcher import (
     _heart_rate_items,
     _payload_items,
 )
-from vitalis.connectors.zepp.sync_manager import SyncReport
-from vitalis.models import User
+from vitalis.adapters.zepp.sync_manager import SyncReport
+from vitalis.domain import User
 
 
 def test_watch_statistics_uses_requested_statistic_in_path(monkeypatch):
@@ -344,6 +345,49 @@ def test_client_classifies_timeout_separately(monkeypatch):
     assert raised.value.kind == "timeout"
 
 
+def test_client_retries_stay_inside_remaining_budget(monkeypatch):
+    client = ZeppAPIClient("token", "user-123", "api-mifitcn.zepp.com")
+    current = [0.0]
+    calls = []
+
+    def timed_out(*_args, **kwargs):
+        timeout = float(kwargs["timeout"])
+        calls.append(timeout)
+        current[0] += timeout
+        raise httpx.ReadTimeout("slow")
+
+    def sleep(seconds):
+        current[0] += seconds
+
+    monkeypatch.setattr(client._client, "get", timed_out)
+    monkeypatch.setattr(client_module.time_mod, "sleep", sleep)
+    client.set_request_budget(
+        timeout=0.1,
+        remaining_seconds=lambda: 0.25 - current[0],
+    )
+
+    with pytest.raises(ZeppAuthError) as raised:
+        client.fetch_devices()
+
+    assert raised.value.kind == "timeout"
+    assert len(calls) == 2
+    assert sum(calls) + 0.05 <= 0.25
+    assert current[0] <= 0.25
+
+
+def test_client_request_budget_checks_cancellation_before_transport(monkeypatch):
+    client = ZeppAPIClient("token", "user-123", "api-mifitcn.zepp.com")
+    calls = []
+    monkeypatch.setattr(client._client, "get", lambda *args, **kwargs: calls.append(True))
+    client.set_request_budget(cancel_check=lambda: True)
+
+    with pytest.raises(ZeppAuthError) as raised:
+        client.fetch_devices()
+
+    assert raised.value.kind == "cancelled"
+    assert calls == []
+
+
 def test_client_constructor_enforces_region_host_allowlist():
     with pytest.raises(ZeppAuthError) as raised:
         ZeppAPIClient("token", "user-123", "https://127.0.0.1")
@@ -399,6 +443,26 @@ def test_fetch_hrv_uses_configured_local_day_bounds(monkeypatch):
     assert captured["to_ms"] == int(
         datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc).timestamp() * 1000
     ) - 1
+
+
+def test_fetch_hrv_uses_explicit_attempt_timezone_when_process_zone_is_utc(monkeypatch):
+    import vitalis.time as time_module
+
+    monkeypatch.setattr(time_module, "local_timezone", lambda *_args: ZoneInfo("UTC"))
+    client = ZeppAPIClient("token", "user-123", "api-mifitcn.zepp.com")
+    captured = {}
+
+    def fetch_events(_event_type, _sub_type, from_ms, to_ms, _limit, _reverse):
+        captured.update(from_ms=from_ms, to_ms=to_ms)
+        return {"items": []}
+
+    monkeypatch.setattr(client, "fetch_events", fetch_events)
+    client.fetch_hrv("2026-08-28", "2026-08-29", timezone_name="Asia/Shanghai")
+
+    assert captured == {
+        "from_ms": int(datetime(2026, 8, 27, 16, tzinfo=timezone.utc).timestamp() * 1000),
+        "to_ms": int(datetime(2026, 8, 29, 16, tzinfo=timezone.utc).timestamp() * 1000) - 1,
+    }
 
 
 class OptionalFailureConnector:
@@ -489,6 +553,31 @@ def test_account_wide_history_follows_every_page_and_keeps_mixed_activities():
     assert [record.raw.payload["data"]["summary"][0]["type"] for record in records] == [9, 52]
     assert records.successful_chunks == records.expected_chunks == 1
     assert records.incomplete is False
+
+
+def test_nonempty_history_without_cursor_is_incomplete():
+    class Connector:
+        def fetch_sport_history(self, _sport, start, _stop, _need_sub_data):
+            return {"data": {"summary": [{"trackid": start + 60, "type": 1}]}}
+
+    records = DataFetcher(Connector()).fetch_workout_records(FetchWindow.days_back(1))
+
+    assert records
+    assert records.incomplete is True
+    assert records[0].incomplete is True
+    assert "omitted" in (records[0].incomplete_reason or "")
+
+
+def test_empty_history_without_cursor_is_a_successful_empty_page():
+    class Connector:
+        def fetch_sport_history(self, *_args):
+            return {"data": {"summary": []}}
+
+    records = DataFetcher(Connector()).fetch_workout_records(FetchWindow.days_back(1))
+
+    assert records
+    assert records.incomplete is False
+    assert records.successful_chunks == records.expected_chunks == 1
 
 
 @pytest.mark.parametrize("next_value", [1, "not-a-cursor"])

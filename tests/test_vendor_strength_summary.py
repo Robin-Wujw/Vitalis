@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from vitalis.connectors.zepp.parser import ZeppParser
+from vitalis.adapters.zepp.parser import ZeppParser
 from vitalis.intelligence.analyzers import TrainingAnalyzer
 from vitalis.intelligence.evening_briefing import EveningBriefingEngine
 from vitalis.intelligence.period_activity import period_training_details

@@ -15,7 +15,7 @@ from vitalis.intelligence.contracts import (
     ConcurrentWeeklyBalance,
     TrainingDecision,
 )
-from vitalis.intelligence.service import EVIDENCE_REFS
+from vitalis.intelligence.evidence import EVIDENCE_REFS
 
 
 def test_baseline_contract_requires_explicit_availability():

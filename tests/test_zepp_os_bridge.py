@@ -6,7 +6,7 @@ from pathlib import Path
 from PIL import Image
 
 
-APP = Path(__file__).parents[1] / "zepp_os" / "balance2_bridge"
+APP = Path(__file__).parents[1] / "clients" / "zepp_os" / "balance2_bridge"
 
 
 def test_balance2_manifest_targets_supported_api_and_background_heart_rate_only():
@@ -51,7 +51,7 @@ def test_balance2_queue_is_bounded_and_upload_is_https_authenticated():
     assert "if (uploading)" in page
     assert 'https:\\/\\/' in side
     assert "Authorization" in side
-    assert "/api/v1/connect/zepp/device-link/heart-rate" in side
+    assert "/api/bridge/batches" in side
     assert "/heart-rate/v2" not in side
     assert "timeout: 10000" in side
     assert "console." not in side

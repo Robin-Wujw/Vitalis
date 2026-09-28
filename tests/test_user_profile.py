@@ -1,14 +1,16 @@
 from datetime import date
 import json
 
+from vitalis.application.jobs import drain_analysis_jobs
 from vitalis.intelligence.contracts import (
     ConfidenceBand,
     Sex,
     UserProfilePatch,
 )
-from vitalis.intelligence.service import IntelligenceAction, IntelligenceCommand, IntelligenceQuery
-from vitalis.storage import HealthRepository, session_scope
-from vitalis.storage.models import AnalysisRun, UserProfile, UserProfileRevision
+from vitalis.application.intelligence_service import IntelligenceAction, IntelligenceCommand, IntelligenceQuery
+from vitalis.bootstrap import get_intelligence_action, get_intelligence_command, get_intelligence_query
+from vitalis.adapters.persistence import HealthRepository, session_scope
+from vitalis.adapters.persistence.models import AnalysisRun, UserProfile, UserProfileRevision
 
 
 TARGET = date(2026, 8, 28)
@@ -32,7 +34,7 @@ def test_profile_patch_is_revisioned_and_explicit_null_clears():
         repo.delete_for_user(user_id)
         repo.upsert_user(user_id)
 
-    first = IntelligenceAction().patch_profile(
+    first = get_intelligence_action().patch_profile(
         user_id,
         UserProfilePatch(
             expected_revision=0,
@@ -46,7 +48,7 @@ def test_profile_patch_is_revisioned_and_explicit_null_clears():
     assert first.sex.source.value == "USER_CONFIRMED"
     assert first.sex.confidence == ConfidenceBand.HIGH
 
-    cleared = IntelligenceAction().patch_profile(
+    cleared = get_intelligence_action().patch_profile(
         user_id,
         UserProfilePatch(expected_revision=1, sex=None),
     )
@@ -67,13 +69,13 @@ def test_profile_patch_conflict_and_user_isolation():
         for user_id in (owner, other):
             repo.delete_for_user(user_id)
             repo.upsert_user(user_id)
-    IntelligenceAction().patch_profile(
+    get_intelligence_action().patch_profile(
         owner,
         UserProfilePatch(expected_revision=0, confirmed_hrmax_bpm=190),
     )
 
     try:
-        IntelligenceAction().patch_profile(
+        get_intelligence_action().patch_profile(
             owner,
             UserProfilePatch(expected_revision=0, sleep_target_minutes=480),
         )
@@ -81,8 +83,8 @@ def test_profile_patch_conflict_and_user_isolation():
         assert "版本冲突" in str(exc)
     else:
         raise AssertionError("expected revision conflict")
-    assert IntelligenceQuery().profile(other).revision == 0
-    assert IntelligenceQuery().profile(other).confirmed_hrmax_bpm is None
+    assert get_intelligence_query().profile(other).revision == 0
+    assert get_intelligence_query().profile(other).confirmed_hrmax_bpm is None
 
 
 def test_profile_api_context_missing_inputs_and_analysis_revision(client):
@@ -93,16 +95,23 @@ def test_profile_api_context_missing_inputs_and_analysis_revision(client):
         repo.delete_for_user(user_id)
         repo.upsert_user(user_id)
 
-    empty = client.get("/api/v1/intelligence/profile", headers=headers)
+    empty = client.get("/api/intelligence/profile", headers=headers)
     assert empty.status_code == 200
     assert empty.json()["revision"] == 0
     with session_scope() as db:
         assert db.query(UserProfile).filter_by(user_id=user_id).count() == 0
 
-    analyzed = client.post("/api/v1/intelligence/analyze", headers=headers)
-    assert analyzed.status_code == 201
-    assert analyzed.json()["run"]["profile_revision_used"] == 0
-    context = client.get("/api/v1/intelligence/context", headers=headers)
+    analyzed = client.post(
+        "/api/analysis-runs", json={},
+        headers={**headers, "Idempotency-Key": "profile-api-initial-analysis"},
+    )
+    assert analyzed.status_code == 202
+    assert drain_analysis_jobs(max_jobs=1) == 1
+    first_job = client.get(f"/api/jobs/{analyzed.json()['job_id']}", headers=headers).json()
+    assert first_job["status"] == "succeeded"
+    with session_scope() as db:
+        assert db.get(AnalysisRun, first_job["analysis_run_id"]).profile_revision_used == 0
+    context = client.get("/api/intelligence/context", headers=headers)
     assert context.status_code == 200
     body = context.json()
     assert body["schema_version"] == "6.0"
@@ -114,7 +123,7 @@ def test_profile_api_context_missing_inputs_and_analysis_revision(client):
 
     patched = client.request(
         "PATCH",
-        "/api/v1/intelligence/profile",
+        "/api/intelligence/profile",
         headers=headers,
         json={
             "expected_revision": 0,
@@ -127,17 +136,28 @@ def test_profile_api_context_missing_inputs_and_analysis_revision(client):
     assert patched.json()["revision"] == 1
     conflict = client.request(
         "PATCH",
-        "/api/v1/intelligence/profile",
+        "/api/intelligence/profile",
         headers=headers,
         json={"expected_revision": 0, "sex": "FEMALE"},
     )
     assert conflict.status_code == 409
 
-    context = client.get("/api/v1/intelligence/context", headers=headers).json()
-    assert context["missing_inputs"] == []
-    rerun = client.post("/api/v1/intelligence/analyze", headers=headers)
-    assert rerun.status_code == 201
-    assert rerun.json()["run"]["profile_revision_used"] == 1
+    stale_context = client.get("/api/intelligence/context", headers=headers)
+    assert stale_context.status_code == 404
+    rerun = client.post(
+        "/api/analysis-runs", json={},
+        headers={**headers, "Idempotency-Key": "profile-api-after-patch-analysis"},
+    )
+    assert rerun.status_code == 202
+    assert rerun.json()["job_id"] != analyzed.json()["job_id"]
+    assert drain_analysis_jobs(max_jobs=1) == 1
+    second_job = client.get(f"/api/jobs/{rerun.json()['job_id']}", headers=headers).json()
+    assert second_job["status"] == "succeeded"
+    with session_scope() as db:
+        assert db.get(AnalysisRun, second_job["analysis_run_id"]).profile_revision_used == 1
+    context = client.get("/api/intelligence/context", headers=headers)
+    assert context.status_code == 200
+    assert context.json()["missing_inputs"] == []
     with session_scope() as db:
         rows = db.query(AnalysisRun).filter_by(user_id=user_id).order_by(AnalysisRun.started_at).all()
         assert rows[-1].profile_revision_used == 1
@@ -149,7 +169,7 @@ def test_shadow_open_health_failure_does_not_abort_core_analysis(monkeypatch):
         repo = HealthRepository(db)
         repo.delete_for_user(user_id)
         repo.upsert_user(user_id)
-    IntelligenceAction().patch_profile(
+    get_intelligence_action().patch_profile(
         user_id,
         UserProfilePatch(
             expected_revision=0,
@@ -164,7 +184,7 @@ def test_shadow_open_health_failure_does_not_abort_core_analysis(monkeypatch):
     monkeypatch.setattr(
         HealthRepository, "open_health_load_inputs", fail_shadow_loader
     )
-    result = IntelligenceCommand().analyze(user_id, TARGET)
+    result = get_intelligence_command().analyze(user_id, TARGET)
 
     assert result.run.status.value == "SUCCEEDED"
     assert result.daily.open_health_insights is None
@@ -179,12 +199,12 @@ def test_open_health_profile_inputs_do_not_change_decision_state_or_plan():
         repo.delete_for_user(user_id)
         repo.upsert_user(user_id)
 
-    before = IntelligenceCommand().analyze(user_id, TARGET).daily.decision
-    IntelligenceAction().patch_profile(
+    before = get_intelligence_command().analyze(user_id, TARGET).daily.decision
+    get_intelligence_action().patch_profile(
         user_id,
         UserProfilePatch(expected_revision=0, sex="MALE", confirmed_hrmax_bpm=190),
     )
-    after_result = IntelligenceCommand().analyze(user_id, TARGET)
+    after_result = get_intelligence_command().analyze(user_id, TARGET)
     after = after_result.daily.decision
 
     assert before.action == after.action

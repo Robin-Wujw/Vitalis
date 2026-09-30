@@ -1121,6 +1121,14 @@ class ZeppSyncCoordinator:
                     report.status = "unverified"
                     report.error_kind = "partial_coverage"
                     report.message = incomplete_reason
+                optional_detail_limit = (
+                    report.status == "failed"
+                    and report.error_kind == "resource_limit"
+                    and chunk["stream"] == "workout_detail"
+                    and attempt.get("trigger") in {"nightly", "morning", "evening"}
+                )
+                if optional_detail_limit:
+                    report.status = "unavailable"
                 fetch_status = (
                     "failed" if report.status == "failed"
                     else "unavailable" if report.status == "unavailable"
@@ -1142,7 +1150,9 @@ class ZeppSyncCoordinator:
                     final_status = "failed"
                 elif report.status == "unavailable":
                     final_status = "unavailable"
-                if final_status == "unavailable" and not chunk["allow_unavailable"]:
+                if final_status == "unavailable" and not (
+                    chunk["allow_unavailable"] or optional_detail_limit
+                ):
                     final_status = "failed"
                 ok = repo.finalize_chunk(claim.lease.entity_id, claim.lease.token, claim.lease.epoch, final_status, now=now, stages=stage_status, raw_records=max(result.raw_records, report.raw_records), records_written=report.records_written, error_kind=error_kind, error=error)
                 if not ok:

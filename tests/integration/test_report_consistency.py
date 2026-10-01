@@ -90,10 +90,12 @@ def test_reports_share_one_canonical_run_and_facts():
     assert result.monthly.analysis_run_id == result.run.id
     assert result.morning_briefing.analysis_run_id == result.run.id
     assert result.morning_briefing.date == result.daily.date
-    assert result.weekly.period_end == TARGET
+    assert result.weekly.period_start == date(2026, 8, 17)
+    assert result.weekly.period_end == date(2026, 8, 23)
     assert (result.weekly.period_end - result.weekly.period_start).days == 6
-    assert result.monthly.period_end == TARGET
-    assert (result.monthly.period_end - result.monthly.period_start).days == 27
+    assert result.monthly.period_start == date(2026, 7, 1)
+    assert result.monthly.period_end == date(2026, 7, 31)
+    assert (result.monthly.period_end - result.monthly.period_start).days == 30
     assert result.morning_briefing.decision_action == result.daily.decision.action
     assert result.morning_briefing.action_plan == result.daily.decision.action_plan
 
@@ -113,7 +115,7 @@ def test_final_event_projection_rebuilds_period_recovery_recommendations():
         id="synthetic-recovery-event", type="HRV_DROP", type_label="HRV 下降",
         severity=EventSeverity.MODERATE, severity_label="中等",
         metric="hrv_rmssd", metric_label="HRV",
-        start_date=TARGET, end_date=TARGET, duration_days=1,
+        start_date=TARGET - timedelta(days=6), end_date=TARGET - timedelta(days=6), duration_days=1,
         confidence=ConfidenceBand.HIGH, confidence_label="较高", summary="合成事件",
     )
     finalized_daily = result.daily.model_copy(update={"events": [event]})
@@ -123,11 +125,11 @@ def test_final_event_projection_rebuilds_period_recovery_recommendations():
         result.open_health_insights,
     )
     assert weekly.inferences.events == [event]
-    assert monthly.inferences.events == [event]
+    assert monthly.inferences.events == []
     assert "PRIORITIZE_RECOVERY" in {
         item.code for item in weekly.actions.recommendations
     }
-    assert "MONTHLY_PRIORITIZE_RECOVERY" in {
+    assert "MONTHLY_INSUFFICIENT_DATA" in {
         item.code for item in monthly.actions.recommendations
     }
     assert morning.analysis_run_id == result.run.id

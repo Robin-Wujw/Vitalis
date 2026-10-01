@@ -14,7 +14,7 @@
 - Zepp 协议证据：[docs/zepp.md](docs/zepp.md)。
 - 客户端与产品 Skill 的界限：[docs/agents.md](docs/agents.md)。
 - 部署、备份和同步排障：[docs/operations.md](docs/operations.md)。
-- 未完成目标单独查阅 [docs/plans/rebuild.md](docs/plans/rebuild.md)，不得作为已实现行为。
+- 当前改进目标和验收项查阅 [docs/plans/Vitalis_Reports_Docs_Review.md](docs/plans/Vitalis_Reports_Docs_Review.md)，不得把设计目标作为已实现行为。
 
 ## 边界与验证
 

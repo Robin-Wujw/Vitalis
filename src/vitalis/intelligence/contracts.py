@@ -278,7 +278,7 @@ class Deviation(BaseModel):
 class TrendFeature(BaseModel):
     metric: str
     metric_label: str
-    window_days: Literal[7, 28, 90]
+    window_days: Literal[7, 28, 29, 30, 31, 90]
     source: str
     source_scope: str
     device_id: str | None = None
@@ -1251,19 +1251,19 @@ class WeeklyProfile(BaseModel):
 class MonthlyDataQuality(BaseModel):
     status: QualityStatus
     status_label: str
-    sleep_days: int = Field(ge=0, le=28)
-    hrv_days: int = Field(ge=0, le=28)
-    activity_days: int = Field(ge=0, le=28)
-    training_record_days: int = Field(ge=0, le=28)
-    training_days: int | None = Field(default=None, ge=0, le=28)
+    sleep_days: int = Field(ge=0, le=31)
+    hrv_days: int = Field(ge=0, le=31)
+    activity_days: int = Field(ge=0, le=31)
+    training_record_days: int = Field(ge=0, le=31)
+    training_days: int | None = Field(default=None, ge=0, le=31)
     confidence: ConfidenceBand
     confidence_label: str
     limitations: list[str] = Field(default_factory=list)
 
 
 class MonthlySleepFacts(BaseModel):
-    available_days: int = Field(ge=0, le=28)
-    previous_available_days: int | None = Field(default=None, ge=0, le=28)
+    available_days: int = Field(ge=0, le=31)
+    previous_available_days: int | None = Field(default=None, ge=0, le=31)
     average_minutes: float | None = None
     median_minutes: float | None = None
     previous_average_minutes: float | None = None
@@ -1278,8 +1278,8 @@ class MonthlyRecoveryStreamFacts(BaseModel):
     source_scope: str
     device_id: str | None = None
     unit: str
-    available_days: int = Field(ge=0, le=28)
-    previous_available_days: int = Field(ge=0, le=28)
+    available_days: int = Field(ge=0, le=31)
+    previous_available_days: int = Field(ge=0, le=31)
     median: float | None = None
     previous_median: float | None = None
     change_percent: float | None = None
@@ -1290,13 +1290,13 @@ class MonthlyRecoveryFacts(BaseModel):
 
 
 class MonthlyTrainingFacts(PeriodTrainingDetails):
-    record_days: int = Field(ge=0, le=28)
-    unknown_days: int = Field(default=28, ge=0, le=28)
+    record_days: int = Field(ge=0, le=31)
+    unknown_days: int = Field(default=31, ge=0, le=31)
     coverage_status: Literal["COMPLETE", "PARTIAL", "UNKNOWN"] = "UNKNOWN"
     totals_are_partial: bool = True
     workout_count: int | None = Field(default=None, ge=0)
-    training_days: int | None = Field(default=None, ge=0, le=28)
-    rest_days: int | None = Field(default=None, ge=0, le=28)
+    training_days: int | None = Field(default=None, ge=0, le=31)
+    rest_days: int | None = Field(default=None, ge=0, le=31)
     duration_minutes: int | None = Field(default=None, ge=0)
     vendor_load: float | None = Field(default=None, ge=0)
     previous_vendor_load: float | None = Field(default=None, ge=0)
@@ -1308,8 +1308,8 @@ class MonthlyTrainingFacts(PeriodTrainingDetails):
 
 class MonthlyActivityFacts(BaseModel):
     metrics: list[PeriodActivityMetric] = Field(default_factory=list)
-    available_days: int = Field(ge=0, le=28)
-    previous_available_days: int = Field(default=0, ge=0, le=28)
+    available_days: int = Field(ge=0, le=31)
+    previous_available_days: int = Field(default=0, ge=0, le=31)
     total_steps: int | None = Field(default=None, ge=0)
     average_steps: float | None = Field(default=None, ge=0)
     previous_average_steps: float | None = Field(default=None, ge=0)
@@ -1511,9 +1511,15 @@ class ReportBriefing(BaseModel):
 
     @model_validator(mode="after")
     def validate_period(self):
-        days = {"evening": 1, "weekly": 7, "monthly": 28}[self.period]
-        if self.date != self.period_end or (self.period_end - self.period_start).days + 1 != days:
-            raise ValueError("报告日期必须与对应的日、7日或28日窗口一致")
+        if self.date != self.period_end:
+            raise ValueError("报告日期必须与报告周期结束日期一致")
+        days = (self.period_end - self.period_start).days + 1
+        if self.period == "evening" and days != 1:
+            raise ValueError("晚间报告必须覆盖 1 天")
+        if self.period == "weekly" and days != 7:
+            raise ValueError("周报必须覆盖 7 天")
+        if self.period == "monthly" and not 28 <= days <= 31:
+            raise ValueError("月报必须覆盖 28 至 31 天")
         return self
 
 
@@ -1657,7 +1663,7 @@ class ContextRecent(BaseModel):
 class ContextTrend(BaseModel):
     metric: str
     metric_label: str
-    window_days: Literal[7, 28, 90]
+    window_days: Literal[7, 28, 29, 30, 31, 90]
     device_id: str | None = None
     change_percent: float | None = None
     direction: TrendDirection

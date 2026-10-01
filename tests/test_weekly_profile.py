@@ -90,7 +90,9 @@ def _raw_week():
 
 def test_weekly_profile_separates_facts_inferences_and_actions():
     raw = _raw_week()
-    profile = WeeklyProfileEngine().build("weekly-run", raw, TrendEngine().calculate(raw), [])
+    profile = WeeklyProfileEngine().build(
+        "weekly-run", raw, TrendEngine().calculate(raw), [], period_mode="rolling"
+    )
 
     assert profile.period_start == TARGET - timedelta(days=6)
     assert profile.facts.sleep.average_minutes == 450
@@ -131,6 +133,7 @@ def test_weekly_recovery_event_takes_action_priority():
         raw,
         TrendEngine().calculate(raw),
         [event],
+        period_mode="rolling",
     )
 
     recommendation = profile.actions.recommendations[0]
@@ -145,7 +148,7 @@ def test_weekly_recovery_prefers_sleep_hrv_over_all_day_rmssd():
     )
 
     profile = WeeklyProfileEngine().build(
-        "weekly-run", raw, TrendEngine().calculate(raw), []
+        "weekly-run", raw, TrendEngine().calculate(raw), [], period_mode="rolling"
     )
 
     assert profile.facts.recovery.hrv_metric == "sleep_hrv"
@@ -159,7 +162,7 @@ def test_weekly_recovery_prefers_zepp_fused_sleep_hrv_over_device_stream():
     )
 
     profile = WeeklyProfileEngine().build(
-        "weekly-run", raw, TrendEngine().calculate(raw), []
+        "weekly-run", raw, TrendEngine().calculate(raw), [], period_mode="rolling"
     )
 
     assert profile.facts.recovery.hrv_device_id is None
@@ -171,7 +174,7 @@ def test_weekly_recovery_prefers_zepp_fused_sleep_hrv_over_device_stream():
 def test_weekly_empty_training_history_keeps_nullable_totals_missing():
     raw = RawDailyProfile(user_id="empty-week", day=TARGET)
 
-    profile = WeeklyProfileEngine().build("empty-run", raw, [], [])
+    profile = WeeklyProfileEngine().build("empty-run", raw, [], [], period_mode="rolling")
     training = profile.facts.training
 
     assert training.record_days == 0
@@ -204,7 +207,7 @@ def test_weekly_complete_seven_record_days_count_untrained_days_as_rest():
         ],
     }
 
-    profile = WeeklyProfileEngine().build("complete-rest-run", raw, [], [])
+    profile = WeeklyProfileEngine().build("complete-rest-run", raw, [], [], period_mode="rolling")
     training = profile.facts.training
 
     assert training.coverage_status == "COMPLETE"
@@ -235,7 +238,7 @@ def test_weekly_partial_history_never_generates_catch_up_or_maintain_quota():
         ],
     }
 
-    profile = WeeklyProfileEngine().build("partial-run", raw, [], [])
+    profile = WeeklyProfileEngine().build("partial-run", raw, [], [], period_mode="rolling")
     codes = {item.code for item in profile.actions.recommendations}
 
     assert profile.facts.training.record_days == 3
@@ -270,7 +273,7 @@ def test_weekly_slices_29_day_coverage_and_keeps_stored_workouts_as_lower_bound(
         ] + [(TARGET - timedelta(days=7 + offset)).isoformat() for offset in range(2)],
     }
 
-    profile = WeeklyProfileEngine().build("slice-run", raw, [], [])
+    profile = WeeklyProfileEngine().build("slice-run", raw, [], [], period_mode="rolling")
     training = profile.facts.training
 
     assert training.coverage_status == "COMPLETE"
@@ -294,7 +297,7 @@ def test_weekly_comparison_requires_four_days_in_each_period():
         raw.sleep_by_day[day] = {"sleep_duration": 390}
         raw.activity_by_day[day] = {"steps": 6000}
 
-    profile = WeeklyProfileEngine().build("comparison-run", raw, [], [])
+    profile = WeeklyProfileEngine().build("comparison-run", raw, [], [], period_mode="rolling")
 
     assert profile.facts.sleep.previous_available_days == 3
     assert profile.facts.sleep.change_percent is None

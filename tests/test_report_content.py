@@ -348,7 +348,7 @@ def test_partial_fixture_keeps_current_facts_but_blocks_cross_period_comparison(
     briefing = WeeklyBriefingEngine().build(period)
     text = str(briefing.model_dump())
     assert "变化 5.7%" not in text
-    assert "部分核实" in text
+    assert "训练记录已核实 4/7 天，3 天未核实" in text
 
 
 def test_heterogeneous_fixture_does_not_make_invalid_cross_source_comparison():
@@ -395,8 +395,8 @@ def test_weekly_maps_running_classifications_and_consumes_inferences():
 def test_monthly_association_is_explicitly_non_causal():
     result = MonthlyBriefingEngine().build(synthetic_period_fixture("monthly", "complete"))
     text = str(result)
-    assert "个人关联" in text
-    assert "不表示因果" in text
+    assert "个人数据关联" in text
+    assert "不表示因果" not in text
 
 
 def test_html_escapes_untrusted_fact_text():

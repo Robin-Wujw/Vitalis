@@ -205,7 +205,7 @@ def test_command_persists_one_run_and_all_intelligence_snapshots():
     get_intelligence_action().log_feedback(
         user_id,
         SubjectiveFeedbackInput(
-            date=TARGET,
+            date=TARGET - timedelta(days=6),
             workout_source="zepp",
             workout_id="pipeline-feedback-workout",
             session_rpe=8,
@@ -248,7 +248,7 @@ def test_command_persists_one_run_and_all_intelligence_snapshots():
         repo = HealthRepository(db)
         daily_rows = repo.analysis_snapshots(user_id, "daily", TARGET, TARGET)
         weekly_rows = repo.analysis_snapshots(
-            user_id, "weekly", TARGET - timedelta(days=6), TARGET
+            user_id, "weekly", date(2026, 8, 17), date(2026, 8, 23)
         )
         response_rows = repo.analysis_snapshots(
             user_id, "training_responses", TARGET - timedelta(days=89), TARGET
@@ -257,7 +257,7 @@ def test_command_persists_one_run_and_all_intelligence_snapshots():
             user_id, "personal_model", TARGET, TARGET
         )
         monthly_rows = repo.analysis_snapshots(
-            user_id, "monthly", TARGET - timedelta(days=27), TARGET
+            user_id, "monthly", date(2026, 7, 1), date(2026, 7, 31)
         )
         association_rows = repo.analysis_snapshots(
             user_id, "personal_associations", TARGET - timedelta(days=89), TARGET
@@ -265,7 +265,7 @@ def test_command_persists_one_run_and_all_intelligence_snapshots():
     assert len(daily_rows) == 1
     assert daily_rows[0].payload["date"] == daily.date.isoformat()
     assert len(weekly_rows) == 1
-    assert weekly_rows[0].payload["period_end"] == TARGET.isoformat()
+    assert weekly_rows[0].payload["period_end"] == date(2026, 8, 23).isoformat()
     assert len(response_rows) == 1
     assert len(personal_rows) == 1
     assert len(monthly_rows) == 1
@@ -296,8 +296,8 @@ def test_queries_are_read_only_and_return_latest_immutable_run():
     with session_scope() as db:
         repo = HealthRepository(db)
         assert len(repo.analysis_snapshots(user_id, "daily", TARGET, TARGET)) == 2
-        assert len(repo.analysis_snapshots(user_id, "weekly", TARGET, TARGET)) == 2
-        assert len(repo.analysis_snapshots(user_id, "monthly", TARGET, TARGET)) == 2
+        assert len(repo.analysis_snapshots(user_id, "weekly", date(2026, 8, 17), date(2026, 8, 23))) == 2
+        assert len(repo.analysis_snapshots(user_id, "monthly", date(2026, 7, 1), date(2026, 7, 31))) == 2
         assert len(repo.analysis_snapshots(user_id, "personal_associations", TARGET, TARGET)) == 2
 
 

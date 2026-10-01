@@ -31,7 +31,7 @@ def test_monthly_unknown_days_are_not_rest_days_or_quota_deficits():
     raw.training_history_coverage = _coverage(20)
 
     profile = MonthlyProfileEngine().build(
-        "monthly-unknown-run", raw, [], [], []
+        "monthly-unknown-run", raw, [], [], [], period_mode="rolling"
     )
     training = profile.facts.training
     codes = {item.code for item in profile.actions.recommendations}
@@ -121,7 +121,7 @@ def test_monthly_training_details_keep_running_and_strength_evidence():
     ]
 
     profile = MonthlyProfileEngine().build(
-        "monthly-details-run", raw, [], [], []
+        "monthly-details-run", raw, [], [], [], period_mode="rolling"
     )
     training = profile.facts.training
 
@@ -144,14 +144,14 @@ def test_monthly_sleep_change_requires_valid_days_in_both_windows():
     for offset in range(13):
         raw.sleep_by_day[TARGET - timedelta(days=28 + offset)] = {"sleep_duration": 400}
 
-    first = MonthlyProfileEngine().build("month-sparse", raw, [], [], [])
+    first = MonthlyProfileEngine().build("month-sparse", raw, [], [], [], period_mode="rolling")
     assert first.facts.sleep.available_days == 14
     assert first.facts.sleep.previous_available_days == 13
     assert first.facts.sleep.previous_average_minutes == 400
     assert first.facts.sleep.change_percent is None
 
     raw.sleep_by_day[TARGET - timedelta(days=41)] = {"sleep_duration": 400}
-    second = MonthlyProfileEngine().build("month-comparable", raw, [], [], [])
+    second = MonthlyProfileEngine().build("month-comparable", raw, [], [], [], period_mode="rolling")
     assert second.facts.sleep.previous_available_days == 14
     assert second.facts.sleep.change_percent == 10
 
@@ -170,7 +170,7 @@ def test_monthly_recovery_change_requires_valid_days_in_both_windows():
     ]
     raw.series["sleep_hrv"] = current + previous
 
-    first = MonthlyProfileEngine().build("hrv-sparse", raw, [], [], [])
+    first = MonthlyProfileEngine().build("hrv-sparse", raw, [], [], [], period_mode="rolling")
     stream = first.facts.recovery.streams[0]
     assert stream.available_days == 14
     assert stream.previous_available_days == 13
@@ -181,6 +181,6 @@ def test_monthly_recovery_change_requires_valid_days_in_both_windows():
     raw.series["sleep_hrv"].append(
         SeriesPoint("sleep_hrv", 60, "ms", day, day, "zepp", "device", "watch")
     )
-    second = MonthlyProfileEngine().build("hrv-comparable", raw, [], [], [])
+    second = MonthlyProfileEngine().build("hrv-comparable", raw, [], [], [], period_mode="rolling")
     assert second.facts.recovery.streams[0].previous_available_days == 14
     assert second.facts.recovery.streams[0].change_percent == 10

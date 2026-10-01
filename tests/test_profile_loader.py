@@ -223,6 +223,52 @@ def test_profile_loader_groups_utc_samples_by_shanghai_natural_day():
     assert raw.facts["hrv_rmssd"][0].value == 60
 
 
+def test_profile_loader_uses_explicit_timezone_for_windows_and_context():
+    user_id = "intelligence-explicit-timezone"
+    day = date(2026, 8, 28)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+        repo.save_daily(NormalizedDaily(
+            user_id=user_id,
+            date=day,
+            sleep=SleepRecord(user_id=user_id, date=day, sleep_duration=450),
+        ))
+        repo.save_metric_samples([
+            MetricSample(
+                user_id=user_id,
+                metric="hrv_rmssd",
+                timestamp=datetime(2026, 8, 28, 3, 30, tzinfo=timezone.utc),
+                value=50,
+                unit="ms",
+                source_scope="device",
+                device_id="watch",
+            ),
+            MetricSample(
+                user_id=user_id,
+                metric="hrv_rmssd",
+                timestamp=datetime(2026, 8, 28, 4, 30, tzinfo=timezone.utc),
+                value=70,
+                unit="ms",
+                source_scope="device",
+                device_id="watch",
+            ),
+        ])
+        raw = ProfileLoader(repo).load(
+            user_id,
+            day,
+            as_of=datetime(2026, 8, 29, tzinfo=timezone.utc),
+            timezone_name="America/New_York",
+        )
+
+    target_values = [
+        point.value for point in raw.series["hrv_rmssd"] if point.day == day
+    ]
+    assert target_values == [70]
+    assert raw.report_context["timezone"] == "America/New_York"
+
+
 def test_profile_loader_attaches_device_identity_and_dense_hr_coverage():
     user_id = "intelligence-device-context"
     day = date(2026, 8, 28)

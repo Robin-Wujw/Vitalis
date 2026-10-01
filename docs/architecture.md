@@ -2,7 +2,7 @@
 
 [文档导航](README.md) | [数据合同](data-contracts.md) | [运维](operations.md)
 
-Vitalis 是单仓库 Python 服务，HTTP API 与调度 worker 分进程。客户端使用有范围的用户令牌调用 HTTP；健康事实、推断、用户反馈和行动建议各自保留来源和权限边界。项目仍在预发布阶段，本页描述当前代码，而不是[重构任务书](plans/rebuild.md)中的目标目录。
+Vitalis 是单仓库 Python 服务，HTTP API 与调度 worker 分进程。客户端使用有范围的用户令牌调用 HTTP；健康事实、推断、用户反馈和行动建议各自保留来源和权限边界。项目仍在预发布阶段，本页描述当前代码，而不是[报告与文档改进方案](plans/Vitalis_Reports_Docs_Review.md)中的目标行为。
 
 ## 代码与运行边界
 
@@ -38,9 +38,10 @@ Zepp 云端 / Balance 2 上传 → 规范观测与训练 → 分块账本与覆�
 ### A15 deterministic pure analysis
 
 `vitalis.application.analysis.analyze(dataset, request, policy)` is the single
-calculation entry point for Daily, fixed 7-day Weekly, fixed 28-day Monthly,
+calculation entry point for Daily, calendar Weekly and calendar Monthly,
 morning, training-response, personal-model, personal-association, and
-shadow-only Open Health projections. `AnalysisDataset` is prepared by the
+shadow-only Open Health projections. The report engines also accept an explicit
+rolling mode, which is labeled as near 7 days or near 28 days in report metadata. `AnalysisDataset` is prepared by the
 application layer from detached normalized facts, feedback, recommendation
 links, and prior active-event state; it contains no ORM session or network
 client. `AnalysisRequest` supplies the user, target date, run ID, UTC as-of,
@@ -69,7 +70,7 @@ Scheduled nightly, morning, and evening syncs finish by writing one deterministi
 
 The worker claims notification intents with a database compare-and-swap lease, validates user ownership and the latest eligible saved Daily snapshot under that lease, and conditionally retargets a still-running intent before sending when a newer run has completed. Report date, local-day expiry, and the existing facts-only/coverage gates are checked without another health computation. Push transport runs outside the database transaction. Confirmed provider success is `succeeded`; a definite rejection is bounded-retry `failed`; timeout, process death, or any outcome that may have reached the provider is `uncertain` and is never automatically retried. Disabled or unconfigured delivery is `deferred`. Filesystem `.sent` markers remain only for the direct test/manual push helper and are not scheduled-delivery authority.
 
-`GET /api/data-status` 是来源覆盖和任务结果，不等同于 `/live` 进程探针或 `/ready` schema 探针。`GET /api/reports/{kind}` 只读已保存的 Daily、晨间、晚间、Weekly、固定 28 天 Monthly 等现有报告；`GET /api/deliveries` 只返回当前用户的通知意图状态和已清洗的调度元数据；`POST /api/analysis-runs` 返回持久任务 ID，`GET /api/jobs/{job_id}` 查询其状态。其它原始指标、资料、事件和 Zepp 配对能力按同一个 `/api` 前缀保留，完整路径与字段以运行服务的 `/openapi.json` 为准。有效数据的日期窗口、训练事实与用户确认优先级见[数据合同](data-contracts.md)。
+`GET /api/data-status` 是来源覆盖和任务结果，不等同于 `/live` 进程探针或 `/ready` schema 探针。`GET /api/reports/{kind}` 只读已保存的 Daily、晨间、晚间、日历周期 Weekly 和 Monthly 等现有报告；`GET /api/deliveries` 只返回当前用户的通知意图状态和已清洗的调度元数据；`POST /api/analysis-runs` 返回持久任务 ID，`GET /api/jobs/{job_id}` 查询其状态。其它原始指标、资料、事件和 Zepp 配对能力按同一个 `/api` 前缀保留，完整路径与字段以运行服务的 `/openapi.json` 为准。有效数据的日期窗口、训练事实与用户确认优先级见[数据合同](data-contracts.md)。
 
 原始健康查询沿 `entrypoints -> application/health_query -> adapters/persistence/health_reader` 方向流动。`HealthReader` 端口只传递 detached 值对象；指标聚合的流式端口在上下文内持有只读 session、逐条脱离 ORM 后交给应用层，退出时关闭 session。`HealthQuery` 负责来源限定的时间序列分桶、状态投影和 workout 详情投影，路由不持有 ORM session，也不调用其它路由函数。指标查询采用半开 UTC 窗口，日聚合通过配置时区保留 DST 的本地日边界；raw/密集文件预算显式标记截断，聚合结果超预算明确拒绝。token status 只读取存储元数据，不解密厂商 secret 或验证网络。
 

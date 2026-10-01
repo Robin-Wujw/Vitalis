@@ -145,6 +145,7 @@ def test_monthly_profile_recomputes_28_day_facts_from_normalized_history():
         TrendEngine().calculate(raw),
         [],
         associations,
+        period_mode="rolling",
     )
 
     assert profile.period_start == TARGET - timedelta(days=27)

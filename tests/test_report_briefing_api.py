@@ -43,13 +43,23 @@ def test_complete_report_queries_are_user_scoped_read_only_projections(client, m
     assert response.status_code == 200
     report = response.json()
     assert report["analysis_run_id"] == run_id
-    assert report["date"] == target.isoformat()
     assert report["sections"]
     assert "feedback_prompt" not in report
     assert "训练后告诉我" not in response.text
+    if period in {"morning", "evening"}:
+        assert report["date"] == target.isoformat()
+    else:
+        expected_end = date(2026, 8, 23) if period == "weekly" else date(2026, 7, 31)
+        assert report["date"] == expected_end.isoformat()
+        assert report["period_end"] == expected_end.isoformat()
     if period != "morning":
         assert report["period"] == period
-        assert report["period_end"] == target.isoformat()
+    if period in {"weekly", "monthly"}:
+        future_target = target + date.resolution
+        assert client.get(
+            f"/api/reports/{kind}", params={"day": future_target.isoformat()},
+            headers={"X-User-Id": user},
+        ).status_code == 404
     legacy_read = client.get(
         f"/api/intelligence/{period}-briefing", params={"day": target.isoformat()},
         headers={"X-User-Id": user},

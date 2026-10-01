@@ -4,7 +4,8 @@
 
 ## 按任务阅读
 
-- 首次使用：[快速开始](quickstart.md) → [运维与恢复](operations.md)。
+- 首次使用：[快速开始](quickstart.md) → [报告阅读与渠道](reports.md) → [运维与恢复](operations.md)。
+- 阅读报告和理解周期：[报告阅读与渠道](reports.md)。
 - 接入 Hermes 或其他客户端：[Agent 与客户端](agents.md) → 运行服务的 `/openapi.json`。
 - 了解系统或新增字段：[当前架构](architecture.md) → [数据合同](data-contracts.md) → 运行服务的 `/docs`。
 - 接入 Zepp：[Zepp 协议与证据](zepp.md)；扩展构建见[浏览器扩展](../clients/browser_extension/README.md)，设备构建见[Balance 2 Bridge](../clients/zepp_os/balance2_bridge/README.md)。
@@ -16,6 +17,7 @@
 | --- | --- |
 | 产品定位与状态 | [README](../README.md) |
 | 安装和第一份合成报告 | [quickstart](quickstart.md) |
+| 报告周期、阅读方式和渠道边界 | [reports](reports.md) |
 | 模块、数据流和进程边界 | [architecture](architecture.md) |
 | 单位、时间、缺失与分析资格 | [data-contracts](data-contracts.md) |
 | Zepp 协议变体与目录证据 | [zepp](zepp.md) |
@@ -26,4 +28,4 @@
 | 安全与隐私报告 | [SECURITY](../SECURITY.md) |
 | 当前 HTTP 字段、状态和路径 | 服务运行时的 `/openapi.json`；Skill 子集由 `tools/generate_api_reference.py` 生成 |
 
-[重构执行记录](plans/rebuild.md)只记录未完成的实施任务，不作为当前产品规格。Git 保存历史说明，不设第二套 API/旧版本迁移手册。
+[报告与文档改进方案](plans/Vitalis_Reports_Docs_Review.md)记录待核验的设计和实施任务，不作为当前产品规格。Git 保存历史说明，不设第二套 API/旧版本迁移手册。

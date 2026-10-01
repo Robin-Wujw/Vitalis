@@ -279,21 +279,16 @@ class MorningBriefingEngine:
         for session in (training.get("strength") or {}).get("recent_sessions") or []:
             if not isinstance(session, dict) or date_text(session.get("date")) != yesterday.isoformat():
                 continue
-            confirmed = [
+            named = [
                 item for item in session.get("explicit_exercises") or []
-                if item.get("source") in {None, "user_confirmed"} and item.get("exercise_name")
-            ]
-            named = confirmed or [
-                item for item in session.get("explicit_exercises") or [] if item.get("exercise_name")
+                if item.get("exercise_name")
             ]
             if named:
-                detail = "、".join(
-                    f"{item['exercise_name']} {number(item['sets'], 0)} 组"
-                    if item.get("sets") is not None else f"{item['exercise_name']}（组数未记录）"
+                workouts.extend(
+                    f"{item['exercise_name']} {number(item['sets'], 0)} 组。"
+                    if item.get("sets") is not None else f"{item['exercise_name']}（组数未记录）。"
                     for item in named
                 )
-                label = "已确认动作" if confirmed else "设备明确动作"
-                workouts.append(f"{label}：{detail}。")
             elif session.get("observed_sets"):
                 detail = observed_strength_summary(session["observed_sets"])
                 if detail:
@@ -353,7 +348,7 @@ class MorningBriefingEngine:
             facts.append(f"睡眠时长与个人参照：{baseline_text(sleep['duration_deviation'])}。")
         if sleep.get("regularity_minutes") is not None:
             facts.append(f"近期入睡时刻离散度 {number(sleep['regularity_minutes'])} 分钟")
-        return facts or ["昨晚没有可用的睡眠时长、时间或连续性记录"]
+        return facts or ["昨晚睡眠尚未同步。"]
 
     def _sleep_interpretation(self, sleep: dict[str, Any]) -> list[str]:
         wake_deviation = sleep.get("wake_count_deviation")
@@ -436,13 +431,11 @@ class MorningBriefingEngine:
             output.append("需要留意的信号：" + "；".join(negative) + "。")
         state = recovery.get("state_label")
         if state:
-            output.append(f"结合上述信号，当前综合判定为{state}。")
+            output.append(f"当前恢复信号显示{state}。")
         if hrv.get("corroboration_affects_decision"):
-            output.append("HRV 证据存在分歧，本次安排主要依据其他有效恢复信号，不凭单个 HRV 读数加量。")
+            output.append("HRV 证据存在分歧；不同记录不能直接混成一个值比较。")
         elif hrv.get("corroboration_status") == "conflicting":
-            output.append("不同 HRV 记录方向不一致，不能直接混成一个值比较。")
-        if not output:
-            output.append("恢复信号不足以支持明确的好坏判断，训练安排将优先遵守数据与安全门控。")
+            output.append("不同 HRV 记录方向不一致，分别保留，不合并比较。")
         return output
 
     def _plan_facts(self, decision: dict[str, Any]) -> list[str]:
@@ -510,11 +503,9 @@ class MorningBriefingEngine:
         return drivers[:6] or ["安排沿用已计算的恢复、负荷和安全门控结果。"]
 
     def _plan_limitations(self, payload: dict[str, Any]) -> list[str]:
-        quality = payload.get("data_quality") or {}
-        return unique([
-            f"{label}尚无可用记录，本次安排不依据该信号。"
-            for label in quality.get("missing_required_signal_labels") or []
-        ])
+        # Required gates are already shown beside the unavailable plan. Do not
+        # turn every optional missing signal into a report footer.
+        return []
 
     def _reasons(self, payload: dict[str, Any]) -> list[str]:
         decision = payload.get("decision") or {}

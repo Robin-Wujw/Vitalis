@@ -340,7 +340,7 @@ def test_facts_only_distinguishes_vendor_explicit_from_user_confirmed_actions():
 
     report = MorningBriefingEngine().build_payload(daily, {"facts_only": True})
     facts = next(section for section in report["sections"] if section["key"] == "observed_training")["facts"]
-    assert facts == ["设备明确动作：侧平举 4 组。"]
+    assert facts == ["侧平举 4 组。"]
     assert "action_plan" not in report
 
 

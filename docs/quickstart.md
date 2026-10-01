@@ -13,7 +13,7 @@ source .venv/bin/activate
 vitalis demo --database demo.db --day 2026-09-26
 ```
 
-`demo` 仅在**尚不存在**的 SQLite `.db`/`.sqlite` 文件中写入模拟 Zepp 数据、用户 `demo` 和该日的分析快照；输出包含 `analysis_run_id`，但不是完整报告。已有数据库不会被覆盖。`python -m vitalis` 与 `vitalis` 使用同一 CLI。
+`demo` 仅在**尚不存在**的 SQLite `.db`/`.sqlite` 文件中写入模拟 Zepp 数据、用户 `demo` 和该日的分析快照；输出包含 `analysis_run_id`，但不是完整报告。已有数据库不会被覆盖。`python -m vitalis` 与 `vitalis` 使用同一 CLI。报告正文按[报告阅读与渠道](reports.md)的周期和只读渠道规则生成；仓库中的[四类报告示例](reports.md#示例与验证边界)是合成设计样例，不含真实健康记录。
 
 在同一个终端为后续命令指定刚生成的库，检查 schema，然后启动仅绑定本机的 API：
 
@@ -36,4 +36,4 @@ curl 'http://127.0.0.1:8000/api/reports/daily?day=2026-09-26' \
 
 演示以外，先在**新的、独立的**数据库设置 `ZEPP_MOCK=false` 和私有的 `VITALIS_TOKEN_ENCRYPTION_KEY`（有效 Fernet 密钥；不要加入版本库，否则真实连接在启动时拒绝），执行 `vitalis db init`、`vitalis user create --id <local-user-id>`，再通过 `vitalis token issue --user <local-user-id> --scope manage --output <new-private-file>` 签发专用于管理/配对的 Bearer 令牌；这些命令必须指向同一数据库，令牌文件存于仓库外，不能当作公开链接。`POST /api/connect/zepp/pair` 可创建绑定该用户的一次性配对会话，再用返回的 `scan_url` 打开页面并按[浏览器扩展](../clients/browser_extension/README.md)的步骤登录 Zepp 官方页面。扩展 Origin 须按实际扩展 ID 加入 `VITALIS_PAIRING_ALLOWED_ORIGINS` 并重启 API；真实浏览器配对需受浏览器信任的 HTTPS 源以及与鉴权兼容的网关，不可直接公开完整 API。在另一个终端以相同私有环境运行 `vitalis worker`；配对仅创建持久同步任务，API 不会在 HTTP 请求中执行厂商同步。手动同步统一使用带 `Idempotency-Key` 的 `POST /api/sync-jobs`（`days` 为 1..730，或提交明确的 `from`/`to` 本地日期窗口）；取得 `job_id` 后用有 `read` 权限的令牌查询 `GET /api/jobs/{job_id}` 和 `GET /api/data-status`，需要停止时使用有 `sync` 权限的 `POST /api/jobs/{job_id}/cancel`，不能把入队误认为数据已更新。账号密码和验证码只进入 Zepp 官方页面，不提供给 Vitalis。区域、身份绑定和覆盖限制见 [Zepp 指南](zepp.md)。
 
-完整运行参数、备份和同步排查见[运维](operations.md)；Hermes 接入前请阅读[智能体集成](agents.md)中的权限与手动验收边界。
+完整运行参数、备份和同步排查见[运维](operations.md)；Hermes 接入前请阅读[智能体集成](agents.md)中的权限与手动验收边界。PushPlus 只读推送不需要 Hermes 或用户回复；真实 Hermes 安装、发现和调用仍需单独的授权 smoke test。

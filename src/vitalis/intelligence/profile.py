@@ -127,7 +127,7 @@ class ProfileLoader:
         raw.training_by_day = _records_by_day(self.repo.training_range(user_id, start, day))
         coverage_start = day - timedelta(days=55)
         raw.training_history_coverage = self.repo.training_history_coverage(
-            user_id, coverage_start, day, cutoff
+            user_id, coverage_start, day, cutoff, timezone_name=zone_name
         )
         verified = set(raw.training_history_coverage.get("verified_days", []))
         raw.training_history_coverage["prior_7d_verified"] = all(
@@ -149,7 +149,7 @@ class ProfileLoader:
         self._add_device_context(raw)
         workout_rows = [
             row
-            for row in self.repo.workouts(user_id, start, day)
+            for row in self.repo.workouts(user_id, start, day, timezone_name=zone_name)
             if row.started_at and start <= local_day(row.started_at, raw.timezone_name) <= day
             and _observed_key(row.started_at) <= cutoff.replace(tzinfo=None)
         ]
@@ -200,7 +200,7 @@ class ProfileLoader:
         raw.data_quality = self._quality(raw)
         raw.report_context = {
             "as_of": cutoff.isoformat(),
-            "timezone": str(local_timezone()),
+            "timezone": raw.timezone_name,
             "target_date": day.isoformat(),
             "target_day_complete": day < local_day(cutoff, raw.timezone_name),
             "training_history": raw.training_history_coverage,
@@ -348,6 +348,7 @@ class ProfileLoader:
                 load_start,
                 raw.day,
                 metric="heart_rate",
+                timezone_name=raw.timezone_name,
             )
             if load_profile_ready
             else []
@@ -598,8 +599,8 @@ class ProfileLoader:
 
     def _add_sample_window_summaries(self, raw: RawDailyProfile) -> None:
         """Load target-day sample windows without treating them as all-day coverage."""
-        start_at, _ = local_day_utc_bounds(raw.day)
-        _, end_at = local_day_utc_bounds(raw.day)
+        start_at, _ = local_day_utc_bounds(raw.day, raw.timezone_name)
+        _, end_at = local_day_utc_bounds(raw.day, raw.timezone_name)
         end_at = min(end_at, raw.as_of)
         if end_at <= start_at:
             return

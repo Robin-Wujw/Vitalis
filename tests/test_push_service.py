@@ -129,7 +129,7 @@ def test_morning_displays_sync_limitation_and_recovery_disagreement():
     assert "部分数据尚未完成更新" in text
     assert text.count("本报告使用已保存") == 1
     assert "HRV 证据存在分歧" in text
-    assert "单个 HRV 读数" in text
+    assert "不同记录不能直接混成一个值比较" in text
     assert "Amazfit" not in text
 
 
@@ -145,7 +145,7 @@ def test_facts_only_morning_shows_oxygen_when_hrv_and_rhr_are_missing():
     message = _sent(lambda service: service.push_daily_profile("test-user", daily, period="morning"))
     text = _visible_text(message.body)
     assert "夜间血氧中位数 96%" in text
-    assert "睡眠 HRV 未取得可用读数" in text
+    assert "睡眠 HRV 未取得可用读数" not in text
     assert "综合判定" not in text and "今天的安排" not in text
 
 
@@ -181,7 +181,7 @@ def test_evening_push_uses_complete_sections_and_actual_training_facts():
     message = _sent(lambda service: service.push_daily_profile("test-user", _daily_payload(), period="evening"))
     text = _visible_text(message.body)
     assert message.title.startswith("Vitalis 晚报 · 2026-09-05")
-    for heading in ("逐场训练", "日常活动与能量", "日内心率与压力覆盖", "恢复背景与当天训练"):
+    for heading in ("逐场训练", "日常活动与能量", "恢复背景与当天训练"):
         assert f">{heading}</h2>" in message.body
     assert "户外跑" in text and "45 分钟" in text and "7.10 公里" in text
     assert "节奏跑" in text
@@ -289,12 +289,12 @@ def test_weekly_push_renders_sections_coverage_changes_and_recommendations(role,
     message = received[0]
     text = _visible_text(message.body)
     assert message.extras["period"] == "weekly"
-    for heading in ("两期七日覆盖", "睡眠与恢复变化", "跑步与力量结构", "活动、能量与反馈", "既有门控建议"):
+    for heading in ("训练记录覆盖", "睡眠与恢复变化", "跑步与力量结构", "活动、能量与反馈", "下周建议"):
         assert heading in text
     assert "轻松跑" in text and "节奏或阈值跑" in text
     assert "EASY_RUN" not in text and "TEMPO_RUN" not in text
     assert "睡眠时长较前一期增加" not in text
-    assert "前后窗口来源不同" in text
+    assert "来源不同，前后窗口不作直接比较。" in text
     assert "保持当前结构" in text
     assert label in text
     assert "daily.calories" not in text
@@ -311,9 +311,9 @@ def test_monthly_push_uses_same_report_sections_and_noncausal_association():
     message = received[0]
     text = _visible_text(message.body)
     assert message.extras["period"] == "monthly"
-    for heading in ("两期二十八日覆盖", "持续恢复变化", "训练结构、活动与能量", "合格的个人关联", "阶段建议"):
+    for heading in ("训练与睡眠覆盖", "持续恢复变化", "训练结构、活动与能量", "个人数据关联", "下月建议"):
         assert heading in text
-    assert "不表示因果" in text
+    assert "不表示因果" not in text
 
 
 def test_reports_group_data_notes_without_repeating_summary_or_generic_limits():
@@ -328,8 +328,8 @@ def test_reports_group_data_notes_without_repeating_summary_or_generic_limits():
         text = _visible_text(message.body)
         assert "限制：" not in text
         assert "必要限制" not in text
-    assert "数据说明" in _visible_text(morning.body)
-    assert "睡眠分期有缺项" in _visible_text(morning.body)
+    assert "数据说明" not in _visible_text(morning.body)
+    assert "睡眠分期有缺项" not in _visible_text(morning.body)
     assert _visible_text(morning.body).count("出现疼痛时停止") == 1
     assert _visible_text(evening.body).count("户外跑：") == 1
     assert _visible_text(monthly.body).count("睡眠时长较前一期增加 5.7%") == 1
@@ -345,8 +345,11 @@ def test_morning_keeps_all_distinct_coverage_and_safety_notes():
     daily["features"]["sleep"]["limitation_labels"] = notes
     text = _visible_text(_sent(lambda service: service.push_daily_profile("test-user", daily, period="morning")).body)
 
-    assert "数据说明" in text
-    assert all(text.count(note) == 1 for note in notes)
+    assert "数据说明" not in text
+    assert text.count("夜间设备来源存在差异") == 1
+    assert text.count("训练记录时段不完整") == 1
+    assert "睡眠分期有缺项" not in text
+    assert "运动记录覆盖尚未核实" not in text
 
 
 def test_facts_only_morning_mentions_unknown_history_once():

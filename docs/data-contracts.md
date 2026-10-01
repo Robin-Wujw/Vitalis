@@ -39,8 +39,9 @@
 日期、UTC `as_of`、时区、同一分析 run ID、输入 revision 与配置摘要；`AnalysisPolicy`
 显式携带算法/证据版本、证据引用和 `open_health_insights` 的 shadow-only
 开关。纯入口不读数据库、网络、进程设置或当前时间，也不生成随机运行/建议
-标识。相同 dataset、request、policy 必须得到字节一致的 Daily、固定 7 日
-Weekly、固定 28 日 Monthly、晨间、个人响应/关联和 Open Health 结果。
+标识。相同 dataset、request、policy 必须得到字节一致的 Daily、日历周期
+Weekly、日历周期 Monthly、晨间、个人响应/关联和 Open Health 结果。报告引擎
+也支持明确的 rolling 模式；该模式只表示近 7 日或近 28 日，不冒充自然周期。
 
 事件生命周期只根据输入的先前活动状态计算候选转换；应用发布事务仍负责
 重新校验输入栅栏、持久化事件和观察，并在最终事件与候选事件不同时从相同

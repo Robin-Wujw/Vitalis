@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime, timedelta
-from math import isfinite
+from math import ceil, isfinite
 from statistics import median
 
 from vitalis.time import local_day
@@ -13,7 +13,25 @@ from .contracts import PeriodActivityMetric, Provenance
 
 
 ACTIVITY_METRICS = ("steps", "distance_km", "active_minutes")
-MIN_COMPARISON_DAYS = {7: 4, 28: 14}
+# Product comparison gates: a week needs 5/7 complete days; each month
+# uses its own ceil(70% of calendar days) gate.
+MIN_COMPARISON_DAYS = {7: 5}
+
+
+def comparison_gate(period_days: int, mode: str | None = None) -> int:
+    """Return the product gate for a calendar or explicitly rolling window."""
+    if period_days < 1:
+        raise ValueError("period_days must be positive")
+    if str(mode or "").strip().lower() in {"rolling", "rolling_7d", "rolling_28d", "rolling_month"}:
+        # Existing rolling callers use the historical 4/14-day gates. Calendar
+        # reports use the stricter product gates below.
+        if period_days == 7:
+            return 4
+        if period_days == 28:
+            return 14
+    if period_days == 7:
+        return 5
+    return max(1, ceil(period_days * 0.70))
 
 
 def build_period_activity_metrics(
@@ -21,6 +39,8 @@ def build_period_activity_metrics(
     period_start: date,
     period_days: int,
     previous_start: date | None = None,
+    *,
+    period_mode: str | None = None,
 ) -> list[PeriodActivityMetric]:
     """Build one canonical stream per activity/energy metric family.
 
@@ -32,7 +52,9 @@ def build_period_activity_metrics(
         raise ValueError("period_days must be positive")
     previous_start = previous_start or period_start - timedelta(days=period_days)
     target_day = raw.day
-    minimum_days = MIN_COMPARISON_DAYS.get(period_days, max(1, period_days // 2))
+    previous_period_days = (period_start - previous_start).days
+    minimum_days = comparison_gate(period_days, period_mode)
+    previous_minimum_days = comparison_gate(previous_period_days, period_mode)
     output: list[PeriodActivityMetric] = []
 
     series = getattr(raw, "series", {}) or {}
@@ -52,7 +74,9 @@ def build_period_activity_metrics(
             period_start=period_start,
             period_days=period_days,
             previous_start=previous_start,
+            previous_period_days=previous_period_days,
             minimum_days=minimum_days,
+            previous_minimum_days=previous_minimum_days,
             target_day=target_day,
             target_day_complete=_target_day_complete(raw),
         ))
@@ -81,7 +105,9 @@ def build_period_activity_metrics(
             period_start=period_start,
             period_days=period_days,
             previous_start=previous_start,
+            previous_period_days=previous_period_days,
             minimum_days=minimum_days,
+            previous_minimum_days=previous_minimum_days,
             target_day=target_day,
             target_day_complete=_target_day_complete(raw),
             role=role,
@@ -183,7 +209,9 @@ def _metric_from_daily(
     period_start,
     period_days,
     previous_start,
+    previous_period_days,
     minimum_days,
+    previous_minimum_days,
     target_day,
     target_day_complete,
     role=None,
@@ -219,26 +247,33 @@ def _metric_from_daily(
         limitations.append("周期末端本地日尚未结束，不计为完整日。")
     if (
         len(comparison_current_values) < minimum_days
-        or len(previous) < minimum_days
+        or len(previous) < previous_minimum_days
     ):
-        limitations.append(f"两期完整有效日不足 {minimum_days} 天，均值变化不比较。")
+        limitations.append(
+            "两期完整有效日不足 "
+            f"当前 {minimum_days} 天、前期 {previous_minimum_days} 天，均值变化不比较。"
+        )
 
     average_change = None
     if comparison_current_average is not None and previous_average not in (None, 0):
         if (
             len(comparison_current_values) >= minimum_days
-            and len(previous) >= minimum_days
+            and len(previous) >= previous_minimum_days
         ):
             average_change = _percent_change(
                 comparison_current_average, previous_average
             )
     total_change = None
     totals_are_partial = len(complete_current) < period_days
+    # Totals from unequal calendar months are not progress measures: the
+    # denominator is a different number of days even when both periods are
+    # fully observed.  Keep per-day averages available instead.
     if (
-        current_total is not None
+        period_days == previous_period_days
+        and current_total is not None
         and previous_total not in (None, 0)
         and len(complete_current) == period_days
-        and len(complete_previous) == period_days
+        and len(complete_previous) == previous_period_days
     ):
         total_change = _percent_change(current_total, previous_total)
     return PeriodActivityMetric(

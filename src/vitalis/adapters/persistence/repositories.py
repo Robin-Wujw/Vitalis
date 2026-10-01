@@ -37,6 +37,7 @@ from vitalis.domain import (
 from vitalis.intelligence.contracts import (
     HealthEvent,
     HealthEventObservation,
+    EventLifecycle,
     RecommendationInstance,
     RecommendationStatus,
     StrengthExerciseRecord,
@@ -1517,9 +1518,17 @@ class HealthRepository:
             ).limit(limit)
         ).scalars().all())
 
-    def workouts(self, user_id: str, start: date, end: date, limit: int = 500) -> list[orm.Workout]:
-        start_at, _ = local_day_utc_bounds(start)
-        _, end_at = local_day_utc_bounds(end)
+    def workouts(
+        self,
+        user_id: str,
+        start: date,
+        end: date,
+        limit: int = 500,
+        *,
+        timezone_name: str | None = None,
+    ) -> list[orm.Workout]:
+        start_at, _ = local_day_utc_bounds(start, timezone_name)
+        _, end_at = local_day_utc_bounds(end, timezone_name)
         return list(self.db.execute(
             select(orm.Workout).where(
                 orm.Workout.user_id == user_id,
@@ -1537,6 +1546,7 @@ class HealthRepository:
         metric: str = "heart_rate",
         source: str | None = None,
         limit: int = 200,
+        timezone_name: str | None = None,
     ):
         """Return source-qualified workouts with only the requested metric samples.
 
@@ -1551,8 +1561,8 @@ class HealthRepository:
             PauseInterval,
         )
 
-        start_at, _ = local_day_utc_bounds(start)
-        _, end_at = local_day_utc_bounds(end)
+        start_at, _ = local_day_utc_bounds(start, timezone_name)
+        _, end_at = local_day_utc_bounds(end, timezone_name)
         statement = select(orm.Workout).where(
             orm.Workout.user_id == user_id,
             orm.Workout.started_at >= _naive_utc(start_at),
@@ -1980,6 +1990,8 @@ class HealthRepository:
         start: date,
         end: date,
         as_of: datetime,
+        *,
+        timezone_name: str | None = None,
     ) -> dict:
         """Report conservative, attempt-proven workout-history coverage.
 
@@ -2000,8 +2012,8 @@ class HealthRepository:
             for offset in range((end - start).days + 1)
         }
         limitations: list[str] = []
-        period_start_at, _ = local_day_utc_bounds(start)
-        _, period_end_at = local_day_utc_bounds(end)
+        period_start_at, _ = local_day_utc_bounds(start, timezone_name)
+        _, period_end_at = local_day_utc_bounds(end, timezone_name)
         period_start_utc = _naive_utc(period_start_at)
         period_end_utc = _naive_utc(period_end_at)
         from vitalis.adapters.zepp.client import (
@@ -2104,7 +2116,7 @@ class HealthRepository:
         saw_partial_evidence = False
         saw_intraday_fetch = False
         last_synced_at: datetime | None = None
-        as_of_local_day = local_day(as_of_utc)
+        as_of_local_day = local_day(as_of_utc, timezone_name)
 
         def verified_chunk(chunk: orm.SyncChunk) -> bool:
             return (
@@ -2153,7 +2165,7 @@ class HealthRepository:
             for day in target_days:
                 if day > as_of_local_day:
                     continue
-                day_start, day_end = local_day_utc_bounds(day)
+                day_start, day_end = local_day_utc_bounds(day, timezone_name)
                 if day == as_of_local_day and as_of_utc < day_end:
                     continue
                 day_start_naive = _naive_utc(day_start)
@@ -2204,7 +2216,7 @@ class HealthRepository:
         if as_of_utc.date() < end:
             limitations.append("窗口末端晚于 as_of，未来日期不计入覆盖")
         elif as_of_utc.date() == end:
-            _, target_end = local_day_utc_bounds(end)
+            _, target_end = local_day_utc_bounds(end, timezone_name)
             if as_of_utc < target_end:
                 limitations.append("窗口末端当前本地日尚未结束，不计为完整覆盖")
         if budget_exhausted:
@@ -3198,6 +3210,43 @@ class HealthRepository:
         )).scalars().all()
         return [_event_from_row(row) for row in rows]
 
+    def health_events_as_of(self, user_id: str, as_of: date) -> list[HealthEvent]:
+        """Return event state known by a historical analysis date."""
+        events = self.db.execute(select(orm.HealthEventRecord).where(
+            orm.HealthEventRecord.user_id == user_id,
+        )).scalars().all()
+        output: list[HealthEvent] = []
+        for row in events:
+            event = _event_from_row(row)
+            evaluated = event.last_evaluated_date or event.end_date
+            if evaluated <= as_of:
+                if event.lifecycle is not EventLifecycle.RESOLVED:
+                    output.append(event)
+                continue
+            snapshot = self.db.execute(
+                select(orm.AnalysisSnapshot)
+                .join(orm.AnalysisRun, orm.AnalysisSnapshot.analysis_run_id == orm.AnalysisRun.id)
+                .where(
+                    orm.AnalysisSnapshot.user_id == user_id,
+                    orm.AnalysisRun.user_id == user_id,
+                    orm.AnalysisSnapshot.profile_type == "daily",
+                    orm.AnalysisRun.target_date <= as_of,
+                    orm.AnalysisRun.status == "SUCCEEDED",
+                ).order_by(
+                    orm.AnalysisRun.target_date.desc(),
+                    orm.AnalysisRun.completed_at.desc(),
+                    orm.AnalysisRun.id.desc(),
+                )
+            ).scalars().first()
+            if snapshot is not None:
+                for payload in snapshot.payload.get("events", []):
+                    if payload.get("id") == event.id:
+                        historical = HealthEvent.model_validate(payload)
+                        if historical.lifecycle is not EventLifecycle.RESOLVED:
+                            output.append(historical)
+                        break
+        return output
+
     def save_health_event(self, user_id: str, event: HealthEvent) -> HealthEvent:
         row = self.db.get(orm.HealthEventRecord, event.id)
         if row is None:
@@ -3437,6 +3486,26 @@ class HealthRepository:
             ).order_by(orm.AnalysisSnapshot.id.desc())
         ).scalars().first()
 
+    def latest_analysis_snapshot_for_target(
+        self,
+        user_id: str,
+        profile_type: str,
+        target_date: date,
+    ) -> orm.AnalysisSnapshot | None:
+        """Read a period snapshot produced by the requested analysis target."""
+        return self.db.execute(
+            self._current_snapshot_query(user_id).where(
+                *self._current_snapshot_conditions(user_id, profile_type),
+                orm.AnalysisRun.target_date == target_date,
+                orm.AnalysisSnapshot.period_end <= target_date,
+            ).order_by(
+                orm.AnalysisSnapshot.period_end.desc(),
+                orm.AnalysisRun.completed_at.desc().nulls_last(),
+                orm.AnalysisRun.id.desc(),
+                orm.AnalysisSnapshot.id.desc(),
+            )
+        ).scalars().first()
+
     def latest_analysis_snapshot_on_or_before(
         self,
         user_id: str,
@@ -3453,6 +3522,22 @@ class HealthRepository:
                 orm.AnalysisRun.id.desc(),
                 orm.AnalysisSnapshot.id.desc(),
             )
+        ).scalars().first()
+
+    def analysis_snapshot_for_run_on_or_before(
+        self,
+        user_id: str,
+        profile_type: str,
+        period_end: date,
+        run_id: str,
+    ) -> orm.AnalysisSnapshot | None:
+        """Load a component from one run when its period ends before the target."""
+        return self.db.execute(
+            self._current_snapshot_query(user_id).where(
+                *self._current_snapshot_conditions(user_id, profile_type),
+                orm.AnalysisSnapshot.period_end <= period_end,
+                orm.AnalysisSnapshot.analysis_run_id == run_id,
+            ).order_by(orm.AnalysisSnapshot.period_end.desc(), orm.AnalysisSnapshot.id.desc())
         ).scalars().first()
 
     def save_recommendation(

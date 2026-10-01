@@ -1,6 +1,8 @@
 """Render and optionally deliver already-computed Vitalis report projections."""
 from __future__ import annotations
 
+from collections import Counter
+import html
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -192,6 +194,15 @@ class _ReportStyleTreeprocessor(Treeprocessor):
         for element in root.iter():
             if element.tag in _REPORT_STYLES:
                 element.set("style", _REPORT_STYLES[element.tag])
+            elif element.tag == "img":
+                element.tag = "span"
+                element.text = element.get("alt", "")
+                element.attrib.clear()
+            elif element.tag == "a":
+                # Report values can contain Markdown-looking text. Keep the
+                # visible label, but never emit a clickable or executable URL.
+                element.tag = "span"
+                element.attrib.clear()
         return root
 
 
@@ -201,7 +212,8 @@ class _ReportStyleExtension(Extension):
 
 
 def _render_report_html(lines: list[str]) -> str:
-    source = "\n".join(str(line).replace("&", "&amp;").replace("<", "&lt;") for line in lines)
+    escaped = [html.escape(str(line), quote=False) for line in lines]
+    source = "\n".join(escaped)
     fragment = Markdown(extensions=[_ReportStyleExtension()]).convert(source)
     return '<div style="max-width:680px;margin:0 auto;padding:14px 14px 22px;box-sizing:border-box;border:1px solid #dbe4e8;border-radius:8px;background:#ffffff;color:#1f2937;font-family:Arial,sans-serif;font-size:15px;line-height:1.65;letter-spacing:0;word-break:break-word">' + fragment + "</div>"
 
@@ -215,7 +227,8 @@ def _report_summary(payload: dict) -> list[str]:
     ]
     return unique([
         item for item in payload.get("summary") or []
-        if not any(detail and (item == detail or item.endswith(detail)) for detail in details)
+        if not _is_interactive(str(item))
+        and not any(detail and (item == detail or item.endswith(detail)) for detail in details)
     ])
 
 
@@ -264,8 +277,7 @@ def _display_facts(section: dict, period: str | None = None) -> list[str]:
         if key == "sleep_recovery":
             return facts[:3]
         hrv = first("睡眠 HRV", "HRV")
-        missing_hrv = hrv if hrv and "未取得" in hrv else None
-        if missing_hrv:
+        if hrv and "未取得" in hrv:
             hrv = None
         heart = first("静息心率", "睡眠静息心率", "夜间心率中位数")
         if hrv or heart:
@@ -273,7 +285,7 @@ def _display_facts(section: dict, period: str | None = None) -> list[str]:
         other = next((item for prefix in (
             "夜间血氧中位数", "夜间呼吸频率", "夜间皮肤温度", "夜间最低五分钟心率中位数",
         ) if (item := first(prefix))), None)
-        return unique([other, missing_hrv]) if other else facts[:1]
+        return [other] if other else []
     if key in {"observed_training", "today_plan"}:
         return facts
     if key == "training":
@@ -281,9 +293,13 @@ def _display_facts(section: dict, period: str | None = None) -> list[str]:
             return [item for item in (
                 first("训练场次"), first("跑步 "), first("力量："),
             ) if item] or facts[:2]
-        return [item for item in facts if not item.startswith(("第 ", "跑步心率分布："))]
+        selected = [
+            item for item in facts
+            if not item.startswith(("第 ", "跑步心率分布："))
+        ]
+        return selected
     if key == "intraday":
-        return [item for item in facts if item.startswith("已记录心率")] or facts[:1]
+        return [item for item in facts if item.startswith(("已记录心率", "压力记录"))]
     if key == "training_activity":
         chosen = [first("训练场次", "已记录训练场次"), first("跑步", "已记录跑步"), first("力量：", "已记录力量：")]
         activity = first("步数：", "日常步数：")
@@ -298,36 +314,76 @@ def _display_facts(section: dict, period: str | None = None) -> list[str]:
     return facts[:2]
 
 
+_INTERACTIVE_PHRASES = (
+    "请回复", "回复我", "告诉我", "请确认", "确认是否接受", "等你回答",
+    "填写反馈", "提交反馈", "回答这个问题", "你今天累吗",
+)
+
+_RELEVANT_GAP_PHRASES = (
+    "不能直接比较", "不可直接比较", "前后窗口来源不同", "设备来源变化",
+    "设备来源", "来源不同", "不作直接比较", "时段不完整", "不能替代明确组数",
+)
+
+_EMPTY_FACT_PHRASES = (
+    "没有可用的日内心率或压力观测", "本周期没有可用活动或已记录反馈事实",
+    "本周期没有可用的训练、活动或能量事实", "当前没有达到个人关联最低配对",
+)
+
+
+def _is_interactive(text: str) -> bool:
+    return "?" in text or "？" in text or any(phrase in text for phrase in _INTERACTIVE_PHRASES)
+
+
+def _presentation_notes(section: dict, facts: list[str], interpretation: list[str], displayed: set[str] | None) -> list[str]:
+    return unique([
+        item for item in section.get("limitations") or []
+        if item not in facts
+        and item not in interpretation
+        and (displayed is None or item not in displayed)
+        and any(phrase in str(item) for phrase in _RELEVANT_GAP_PHRASES)
+        and not _is_interactive(str(item))
+    ])
+
+
 def _section_lines(section: dict, displayed: set[str] | None = None, period: str | None = None) -> list[str]:
-    lines = ["", f"## {section.get('title', '分析')}", ""]
-    facts = [item for item in _display_facts(section, period) if displayed is None or item not in displayed]
+    candidates = _display_facts(section, period)
+    remaining_displayed = Counter(displayed or ())
+    facts = []
+    for item in candidates:
+        if remaining_displayed[item]:
+            remaining_displayed[item] -= 1
+            continue
+        if not _is_interactive(str(item)):
+            facts.append(item)
     interpretation = [
         item for item in unique(section.get("interpretation") or [])
-        if item not in facts and (displayed is None or item not in displayed)
+        if item not in facts
+        and (displayed is None or item not in displayed)
+        and not _is_interactive(str(item))
     ]
     key = section.get("key")
-    if key not in {"today_plan", "training"}:
+    if key not in {"today_plan", "training", "actions"}:
         important = [item for item in interpretation if "HRV" in item and ("分歧" in item or "不一致" in item)]
         interpretation = unique(interpretation[:2] + important)
-    shown_interpretation = []
+    notes = _presentation_notes(section, facts, interpretation, displayed)
+    if not facts and not interpretation and not notes:
+        return []
+    if facts and all(any(marker in str(item) for marker in _EMPTY_FACT_PHRASES) for item in facts) and not interpretation and not notes:
+        return []
+
+    lines = ["", f"## {section.get('title', '分析')}", ""]
     if facts:
         lines.append(f"**{facts[0]}**")
         lines.extend(f"- {item}" for item in facts[1:])
-    else:
-        shown_interpretation = interpretation[:1]
-        lines.extend(f"- {item}" for item in shown_interpretation)
-        interpretation = interpretation[1:]
-    lines.extend(f"- {item}" for item in interpretation)
-    notes = unique([
-        item for item in section.get("limitations") or []
-        if item not in facts and item not in interpretation
-        and (displayed is None or item not in displayed)
-    ])
+    if interpretation:
+        heading = "建议" if key in {"today_plan", "actions"} else "分析"
+        lines.extend(["", f"### {heading}", ""])
+        lines.extend(f"- {item}" for item in interpretation)
     if notes:
-        lines.extend(["", "### 数据说明", ""])
+        lines.extend(["", "### 需要留意", ""])
         lines.extend(f"- {item}" for item in notes)
     if displayed is not None:
-        displayed.update([*facts, *shown_interpretation, *interpretation, *notes])
+        displayed.update([*facts, *interpretation, *notes])
     return lines
 
 
@@ -379,7 +435,7 @@ def _render_report_briefing(payload: dict, label: str) -> tuple[str, list[str]]:
     summary = _report_summary(payload)
     lines = _timing_lines(payload) + [f"# {label} · {end}", "", *summary]
     if metadata.get("retrospective"):
-        lines.extend(["", "> 本报告仅回顾指定日期范围的已记录事实，不提供当前、今晚或明天的处方。"])
+        lines.extend(["", "> 本报告仅回顾指定日期范围内的已记录事实。"])
     displayed = set(summary)
     for section in payload.get("sections", []):
         lines.extend(_section_lines(section, displayed, period=payload.get("period")))
@@ -395,11 +451,11 @@ def _render_evening(payload: dict) -> tuple[str, list[str]]:
 def _timing_lines(payload: dict) -> list[str]:
     context = payload.get("report_context") or {}
     timing = as_of_line(context)
-    lines = [f"> {timing} 不代表所有指标在此时测量。"] if timing else ["> 分析截止时刻未提供；日期汇总不代表实时测量。"]
+    lines = [f"> {timing}"] if timing else []
     metadata = context.get("delivery_metadata") or {}
     if metadata.get("sync_degraded"):
         notice = "本次同步等待超时" if metadata.get("sync_status") == "timeout" else "部分数据尚未完成更新"
-        lines.extend(["", f"> {notice}，本报告使用已保存且符合日期要求的数据。"])
+        lines.extend(["", f"> {notice}，本报告使用已保存的数据。"])
     return lines
 
 

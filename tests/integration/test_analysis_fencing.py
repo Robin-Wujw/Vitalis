@@ -302,8 +302,8 @@ def test_event_acknowledged_during_analysis_is_consistent_across_snapshots(
     )
     result = get_intelligence_command().analyze("owner", DAY)
     assert result.daily.events[0].acknowledged
-    assert result.weekly.inferences.events == result.daily.events
-    assert result.monthly.inferences.events == result.daily.events
+    assert result.weekly.inferences.events == []
+    assert result.monthly.inferences.events == []
     assert result.morning_briefing == MorningBriefingEngine().build(result.daily)
 
     with factory() as db:
@@ -312,5 +312,5 @@ def test_event_acknowledged_during_analysis_is_consistent_across_snapshots(
             for row in db.query(AnalysisSnapshot).filter_by(analysis_run_id=result.run.id)
         }
     assert rows["daily"]["events"][0]["acknowledged"] is True
-    assert rows["weekly"]["inferences"]["events"] == rows["daily"]["events"]
-    assert rows["monthly"]["inferences"]["events"] == rows["daily"]["events"]
+    assert rows["weekly"]["inferences"]["events"] == []
+    assert rows["monthly"]["inferences"]["events"] == []

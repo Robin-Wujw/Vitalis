@@ -187,13 +187,24 @@ class HealthTimelineEngine:
                         "overlap_count": len(response.overlapping_workout_ids),
                     },
                 ))
-        if monthly and start <= monthly.period_end <= end:
+        monthly_report_day = None
+        if monthly:
+            target_date = (monthly.report_context or {}).get("target_date")
+            if target_date:
+                try:
+                    monthly_report_day = date.fromisoformat(str(target_date)[:10])
+                except ValueError:
+                    monthly_report_day = None
+        if monthly and (
+            start <= monthly.period_end <= end
+            or monthly_report_day is not None and start <= monthly_report_day <= end
+        ):
             items.append(TimelineItem(
                 id=f"monthly:{monthly.analysis_run_id}",
                 type="monthly_summary",
-                date=monthly.period_end,
-                title="近 28 天健康总结",
-                summary="；".join(monthly.inferences.key_changes[:3]) or "已完成 28 天周期分析",
+                date=monthly_report_day or monthly.period_end,
+                title="月度健康总结",
+                summary="；".join(monthly.inferences.key_changes[:3]) or "已完成月度周期分析",
                 references={"analysis_run_id": monthly.analysis_run_id},
                 details={
                     "period_start": monthly.period_start.isoformat(),

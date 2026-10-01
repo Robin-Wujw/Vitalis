@@ -24,6 +24,7 @@ from vitalis.application.ports import (
     JobClaim,
 )
 from vitalis.intelligence.evidence import EVIDENCE_REFS
+from vitalis.intelligence.report_periods import resolve_month_period, resolve_week_period
 
 from vitalis.intelligence.context import AgentContextEngine
 from vitalis.intelligence.contracts import (
@@ -161,15 +162,17 @@ class IntelligenceCommand:
                         raw.feedback_by_workout.setdefault(
                             (item.workout_source, item.workout_id), []
                         ).append(item)
+                weekly_period = resolve_week_period(target)
+                monthly_period = resolve_month_period(target)
                 weekly_feedback = [
                     item.model_dump(mode="json")
                     for item in response_feedback
-                    if target - timedelta(days=6) <= item.date <= target
+                    if weekly_period.start <= item.date <= weekly_period.end
                 ]
                 monthly_feedback = [
                     item.model_dump(mode="json")
                     for item in response_feedback
-                    if target - timedelta(days=27) <= item.date <= target
+                    if monthly_period.start <= item.date <= monthly_period.end
                 ]
                 recommendation_by_workout = repo.recommendations_for_workout_keys(
                     user_id,
@@ -178,7 +181,7 @@ class IntelligenceCommand:
                         for item in raw.workouts if item.get("workout_id")
                     ],
                 )
-                prior_events = repo.active_health_events(user_id)
+                prior_events = repo.health_events_as_of(user_id, target)
 
             trace = analyze_with_trace(
                 AnalysisDataset(
@@ -426,13 +429,13 @@ class IntelligenceQuery:
     def weekly(self, user_id: str, day: date | None = None) -> WeeklyProfile | None:
         target = day or self._today_factory()
         with self._uow_factory() as uow:
-            row = uow.repository.latest_analysis_snapshot(user_id, "weekly", target)
+            row = uow.repository.latest_analysis_snapshot_for_target(user_id, "weekly", target)
             return WeeklyProfile.model_validate(row.payload) if row else None
 
     def monthly(self, user_id: str, day: date | None = None) -> MonthlyProfile | None:
         target = day or self._today_factory()
         with self._uow_factory() as uow:
-            row = uow.repository.latest_analysis_snapshot(user_id, "monthly", target)
+            row = uow.repository.latest_analysis_snapshot_for_target(user_id, "monthly", target)
             return MonthlyProfile.model_validate(row.payload) if row else None
 
     def trends(self, user_id: str, day: date | None = None) -> TrendResponse | None:
@@ -496,7 +499,7 @@ class IntelligenceQuery:
             daily_row = repo.latest_analysis_snapshot(user_id, "daily", target)
             if daily_row is None:
                 return None
-            weekly_row = repo.analysis_snapshot_for_run(
+            weekly_row = repo.analysis_snapshot_for_run_on_or_before(
                 user_id, "weekly", target, daily_row.analysis_run_id
             )
             model_row = repo.analysis_snapshot_for_run(
@@ -507,8 +510,11 @@ class IntelligenceQuery:
             daily = DailyProfile.model_validate(daily_row.payload)
             weekly = WeeklyProfile.model_validate(weekly_row.payload)
             personal_model = PersonalModel.model_validate(model_row.payload)
-            feedback = repo.subjective_feedback(user_id, target - timedelta(days=6), target)
-            events = repo.active_health_events(user_id)
+            weekly_period = resolve_week_period(target)
+            feedback = repo.subjective_feedback(
+                user_id, weekly_period.start, weekly_period.end
+            )
+            events = repo.health_events_as_of(user_id, target)
             profile = repo.user_profile(user_id)
         return AgentContextEngine().build(
             daily, weekly, events, feedback, personal_model, profile

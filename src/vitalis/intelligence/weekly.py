@@ -1,6 +1,7 @@
 """Weekly fact aggregation, inference selection, and deterministic actions."""
 
 from collections import Counter, defaultdict
+from dataclasses import replace
 from datetime import date, timedelta
 from statistics import mean, median
 
@@ -28,11 +29,22 @@ from .contracts import (
 from .localization import CONFIDENCE_LABELS, QUALITY_LABELS
 from .open_health.projection import coverage_summary, period_summary
 from .profile import RawDailyProfile
-from .period_activity import build_period_activity_metrics, period_training_details
+from .period_activity import (
+    build_period_activity_metrics,
+    comparison_gate,
+    period_training_details,
+)
+from .report_periods import (
+    PeriodMode,
+    ReportPeriod,
+    normalize_period_mode,
+    resolve_week_period,
+)
+from .trend import TrendEngine
 
 
 PERIOD_DAYS = 7
-MIN_COMPARISON_DAYS = 4
+MIN_COMPARISON_DAYS = comparison_gate(PERIOD_DAYS)
 
 
 class WeeklyProfileEngine:
@@ -46,18 +58,39 @@ class WeeklyProfileEngine:
         evidence_refs: list | None = None,
         open_health_insights: OpenHealthBundle | None = None,
         generated_at=None,
+        *,
+        period_mode: PeriodMode | str = PeriodMode.CALENDAR,
+        mode: PeriodMode | str | None = None,
     ) -> WeeklyProfile:
-        period_start = raw.day - timedelta(days=PERIOD_DAYS - 1)
-        previous_start = period_start - timedelta(days=PERIOD_DAYS)
-        sleep = _sleep_facts(raw, period_start, previous_start)
-        recovery = _recovery_facts(raw, trends)
-        training = _training_facts(raw, period_start, previous_start)
-        activity = _activity_facts(raw, period_start, previous_start)
+        selected_mode = normalize_period_mode(mode if mode is not None else period_mode)
+        period = resolve_week_period(raw.day, selected_mode)
+        period_raw = _period_raw(raw, period)
+        period_start = period.start
+        previous_start = period.reference_start
+        period_days = period.days
+        period_trends = _period_trends(period_raw)
+        period_events = [
+            item for item in events
+            if item.start_date <= period.end and item.end_date >= period.start
+        ]
+        sleep = _sleep_facts(
+            period_raw, period_start, previous_start,
+            period_days, period.reference_days,
+        )
+        recovery = _recovery_facts(period_raw, period_trends)
+        training = _training_facts(
+            period_raw, period_start, previous_start,
+            period_days, period.reference_days,
+        )
+        activity = _activity_facts(
+            period_raw, period_start, previous_start,
+            period_days, selected_mode,
+        )
         feedback_facts = _feedback_facts(feedback or [])
         quality = _quality(sleep, recovery, training, activity)
         relevant_trends = [
-            item for item in trends
-            if item.window_days == PERIOD_DAYS
+            item for item in period_trends
+            if item.window_days == period_days
             and item.status == Availability.AVAILABLE
         ]
         key_changes = _key_changes(relevant_trends)
@@ -68,7 +101,7 @@ class WeeklyProfileEngine:
             limitations.append("本周缺少可比较的设备级 HRV 趋势。")
         if feedback_facts.response_count == 0:
             limitations.append("本周尚未记录主观训练反馈。")
-        coverage = _training_coverage(raw, period_start)
+        coverage = _training_coverage(period_raw, period_start, period_days)
         if coverage["coverage_status"] != "COMPLETE":
             limitations.append(
                 "训练清单尚未完整核实："
@@ -83,17 +116,17 @@ class WeeklyProfileEngine:
         )
         inferences = WeeklyInferences(
             trends=relevant_trends,
-            events=events,
+            events=period_events,
             key_changes=key_changes,
             limitations=limitations,
         )
-        report_context = _report_context(raw, period_start, coverage)
+        report_context = _report_context(period_raw, period, coverage, raw)
         return WeeklyProfile(
             analysis_run_id=analysis_run_id,
-            user_id=raw.user_id,
+            user_id=period_raw.user_id,
             generated_at=generated_at if generated_at is not None else raw.as_of,
             period_start=period_start,
-            period_end=raw.day,
+            period_end=period.end,
             data_quality=quality,
             report_context=report_context,
             facts=facts,
@@ -101,25 +134,49 @@ class WeeklyProfileEngine:
             actions=WeeklyActions(
                 recommendations=_recommend(
                     facts,
-                    events,
-                    getattr(raw, "training_preferences", None),
+                    period_events,
+                    getattr(period_raw, "training_preferences", None),
                     coverage,
                 )
             ),
             evidence_refs=evidence_refs or [],
             open_health_period_summary=period_summary(
-                open_health_insights, period_start, raw.day
+                open_health_insights, period_start, period.end
             ),
             open_health_coverage=coverage_summary(
-                open_health_insights, period_days=PERIOD_DAYS
+                open_health_insights, period_days=period.days
             ),
         )
+
+
+def _period_raw(raw: RawDailyProfile, period: ReportPeriod) -> RawDailyProfile:
+    """Bound period calculations at the completed period end."""
+    context = dict(getattr(raw, "report_context", None) or {})
+    context.update(period.metadata())
+    context.update({
+        "as_of": raw.as_of.isoformat(),
+        "target_date": raw.day.isoformat(),
+        # A calendar period is complete by construction.  Rolling reports
+        # retain the caller's target-day completeness semantics.
+        "target_day_complete": (
+            True if period.mode is PeriodMode.CALENDAR
+            else bool(context.get("target_day_complete", True))
+        ),
+    })
+    return replace(raw, day=period.end, report_context=context)
+
+
+def _period_trends(raw: RawDailyProfile) -> list[TrendFeature]:
+    """Recompute trends at the selected period end, never reuse daily trends."""
+    return TrendEngine().calculate(raw, windows=(7, 28, 90))
 
 
 def _sleep_facts(
     raw: RawDailyProfile,
     period_start: date,
     previous_start: date,
+    period_days: int = PERIOD_DAYS,
+    previous_period_days: int = PERIOD_DAYS,
 ) -> WeeklySleepFacts:
     current = [
         float(item["sleep_duration"])
@@ -139,8 +196,8 @@ def _sleep_facts(
     current_average = _mean(current)
     previous_average = _mean(previous)
     comparable = (
-        len(current) >= MIN_COMPARISON_DAYS
-        and len(previous) >= MIN_COMPARISON_DAYS
+        len(current) >= comparison_gate(period_days)
+        and len(previous) >= comparison_gate(previous_period_days)
     )
     regularity = (
         median(abs(value - median(bedtimes)) for value in bedtimes)
@@ -223,8 +280,10 @@ def _training_facts(
     raw: RawDailyProfile,
     period_start: date,
     previous_start: date,
+    period_days: int = PERIOD_DAYS,
+    previous_period_days: int = PERIOD_DAYS,
 ) -> WeeklyTrainingFacts:
-    coverage = _training_coverage(raw, period_start)
+    coverage = _training_coverage(raw, period_start, period_days)
     covered_days = coverage.get("covered_days")
     current_records = [
         item for day, item in raw.training_by_day.items()
@@ -292,8 +351,8 @@ def _training_facts(
     comparable_load = (
         current_load is not None
         and previous_load not in (None, 0)
-        and len(current_records) >= MIN_COMPARISON_DAYS
-        and len(previous_records) >= MIN_COMPARISON_DAYS
+        and len(current_records) >= comparison_gate(period_days)
+        and len(previous_records) >= comparison_gate(previous_period_days)
         and coverage.get("current_complete", False)
         and coverage.get("previous_complete", False)
     )
@@ -327,8 +386,12 @@ def _activity_facts(
     raw: RawDailyProfile,
     period_start: date,
     previous_start: date,
+    period_days: int = PERIOD_DAYS,
+    period_mode: PeriodMode | str = PeriodMode.CALENDAR,
 ) -> WeeklyActivityFacts:
-    metrics = build_period_activity_metrics(raw, period_start, PERIOD_DAYS, previous_start)
+    metrics = build_period_activity_metrics(
+        raw, period_start, period_days, previous_start, period_mode=period_mode
+    )
     steps_metric = next((item for item in metrics if item.metric == "steps"), None)
     active_metric = next((item for item in metrics if item.metric == "active_minutes"), None)
     if steps_metric is None and not (getattr(raw, "series", {}) or {}):
@@ -350,7 +413,7 @@ def _activity_facts(
             "previous_average_steps": _rounded(_mean(prior_steps)) if prior_steps else None,
             "steps_change_percent": (
                 _rounded(_percent_change(_mean(steps), _mean(prior_steps)))
-                if len(steps) >= MIN_COMPARISON_DAYS and len(prior_steps) >= MIN_COMPARISON_DAYS
+                if len(steps) >= comparison_gate(period_days) and len(prior_steps) >= comparison_gate(period_days)
                 else None
             ),
         }
@@ -614,7 +677,11 @@ def _optional_sum(items: list[dict], field: str, converter):
     return sum(values) if values else None
 
 
-def _training_coverage(raw: RawDailyProfile, period_start: date) -> dict:
+def _training_coverage(
+    raw: RawDailyProfile,
+    period_start: date,
+    period_days: int = PERIOD_DAYS,
+) -> dict:
     records = [
         day for day in raw.training_by_day
         if period_start <= day <= raw.day
@@ -630,12 +697,12 @@ def _training_coverage(raw: RawDailyProfile, period_start: date) -> dict:
     explicit_record_days = values.get("record_days")
     status = str(values.get("coverage_status") or values.get("status") or "").upper()
     verified_days = values.get("verified_days")
-    previous_start = period_start - timedelta(days=PERIOD_DAYS)
+    previous_start = period_start - timedelta(days=period_days)
     previous_days = {
-        previous_start + timedelta(days=index) for index in range(PERIOD_DAYS)
+        previous_start + timedelta(days=index) for index in range(period_days)
     }
     current_days = {
-        period_start + timedelta(days=index) for index in range(PERIOD_DAYS)
+        period_start + timedelta(days=index) for index in range(period_days)
     }
     target_day_complete = bool(
         (getattr(raw, "report_context", None) or {}).get("target_day_complete", True)
@@ -673,18 +740,18 @@ def _training_coverage(raw: RawDailyProfile, period_start: date) -> dict:
         record_days = len(records)
     if not target_day_complete and status == "COMPLETE":
         status = "PARTIAL"
-        record_days = min(record_days, PERIOD_DAYS - 1)
+        record_days = min(record_days, period_days - 1)
     explicit_unknown_days = values.get("unknown_days")
     unknown_days = max(
         int(explicit_unknown_days) if explicit_unknown_days is not None else 0,
-        max(PERIOD_DAYS - record_days, 0),
+        max(period_days - record_days, 0),
     )
     if status not in {"COMPLETE", "PARTIAL", "UNKNOWN"}:
         status = "PARTIAL" if records else "UNKNOWN"
-    record_days = max(0, min(record_days, PERIOD_DAYS))
-    unknown_days = max(0, min(unknown_days, PERIOD_DAYS - record_days))
+    record_days = max(0, min(record_days, period_days))
+    unknown_days = max(0, min(unknown_days, period_days - record_days))
     if status == "COMPLETE":
-        record_days, unknown_days = PERIOD_DAYS, 0
+        record_days, unknown_days = period_days, 0
     return {
         "record_days": record_days,
         "unknown_days": unknown_days,
@@ -704,12 +771,19 @@ def _training_coverage(raw: RawDailyProfile, period_start: date) -> dict:
     }
 
 
-def _report_context(raw: RawDailyProfile, period_start: date, coverage: dict) -> dict:
-    context = dict(getattr(raw, "report_context", None) or {})
-    context.setdefault("period_start", period_start.isoformat())
-    context.setdefault("period_end", raw.day.isoformat())
-    context.setdefault(
-        "training_coverage",
-        {key: value for key, value in coverage.items() if key != "covered_days"},
-    )
+def _report_context(
+    period_raw: RawDailyProfile,
+    period: ReportPeriod,
+    coverage: dict,
+    original_raw: RawDailyProfile,
+) -> dict:
+    context = dict(getattr(period_raw, "report_context", None) or {})
+    context.update(period.metadata())
+    context.update({
+        "as_of": original_raw.as_of.isoformat(),
+        "target_date": original_raw.day.isoformat(),
+        "training_coverage": {
+            key: value for key, value in coverage.items() if key != "covered_days"
+        },
+    })
     return context

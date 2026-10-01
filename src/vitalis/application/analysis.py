@@ -51,6 +51,7 @@ from vitalis.intelligence.facts import facts_for_day
 from vitalis.intelligence.profile import RawDailyProfile
 from vitalis.intelligence.training_response import TrainingResponseEngine
 from vitalis.intelligence.weekly import WeeklyProfileEngine
+from vitalis.intelligence.report_periods import resolve_month_period, resolve_week_period
 
 
 @dataclass(frozen=True)
@@ -213,16 +214,22 @@ def analyze_with_trace(
         created_at=raw.as_of,
     )
 
-    weekly_feedback = list(dataset.weekly_feedback) if dataset.weekly_feedback is not None else [
-        item.model_dump(mode="json")
-        for item in response_feedback
-        if request.target_date - timedelta(days=6) <= item.date <= request.target_date
-    ]
-    monthly_feedback = list(dataset.monthly_feedback) if dataset.monthly_feedback is not None else [
-        item.model_dump(mode="json")
-        for item in response_feedback
-        if request.target_date - timedelta(days=27) <= item.date <= request.target_date
-    ]
+    weekly_period = resolve_week_period(request.target_date)
+    monthly_period = resolve_month_period(request.target_date)
+    weekly_feedback = _feedback_for_period(
+        dataset.weekly_feedback
+        if dataset.weekly_feedback is not None
+        else [item.model_dump(mode="json") for item in response_feedback],
+        weekly_period.start,
+        weekly_period.end,
+    )
+    monthly_feedback = _feedback_for_period(
+        dataset.monthly_feedback
+        if dataset.monthly_feedback is not None
+        else [item.model_dump(mode="json") for item in response_feedback],
+        monthly_period.start,
+        monthly_period.end,
+    )
     weekly, monthly, morning_briefing = build_report_projections(
         request.analysis_run_id,
         raw,
@@ -411,6 +418,20 @@ def _raw_for_request(raw: RawDailyProfile, request: AnalysisRequest) -> RawDaily
         timezone_name=request.timezone,
         report_context=report_context,
     )
+
+
+def _feedback_for_period(items: list[dict], start: date, end: date) -> list[dict]:
+    output = []
+    for item in items:
+        value = item.get("date") if isinstance(item, dict) else getattr(item, "date", None)
+        if isinstance(value, str):
+            try:
+                value = date.fromisoformat(value[:10])
+            except ValueError:
+                continue
+        if isinstance(value, date) and start <= value <= end:
+            output.append(item)
+    return output
 
 
 def _validate_inputs(

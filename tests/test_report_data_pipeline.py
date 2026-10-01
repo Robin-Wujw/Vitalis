@@ -151,9 +151,16 @@ def test_stored_observations_reach_analysis_and_all_four_reports():
     assert daily_energy[0].role == "unspecified"
     workouts = analyzed.daily.features.training.recent_workouts
     assert sorted(item.calories_kcal for item in workouts) == [330, 380]
-    assert analyzed.weekly.facts.training.workout_calories_kcal == 710
-    assert analyzed.monthly.facts.training.unknown_days == 0
-    assert analyzed.monthly.facts.training.rest_days == 26
+    # Calendar reports end before the target's local week/month. The two
+    # target-day workouts remain available to the daily/evening projection,
+    # while the completed period facts correctly exclude them.
+    assert analyzed.weekly.facts.training.workout_calories_kcal is None
+    assert analyzed.weekly.period_start == date(2026, 8, 17)
+    assert analyzed.weekly.period_end == date(2026, 8, 23)
+    assert analyzed.monthly.facts.training.unknown_days == 3
+    assert analyzed.monthly.facts.training.rest_days == 28
+    assert analyzed.monthly.period_start == date(2026, 7, 1)
+    assert analyzed.monthly.period_end == date(2026, 7, 31)
     assert activity.stress_summary
     morning = MorningBriefingEngine().build(analyzed.daily)
     evening = EveningBriefingEngine().build(analyzed.daily)
@@ -168,7 +175,8 @@ def test_stored_observations_reach_analysis_and_all_four_reports():
     assert "700" in text and "卧推" in text and "活动时长" in text
     assert all(f"第 {order} 组：卧推；8 次；40 千克" in text for order in range(1, 5))
     assert "放松区间" in text
-    assert weekly.period_end == TARGET and monthly.period_end == TARGET
+    assert weekly.period_end == date(2026, 8, 23)
+    assert monthly.period_end == date(2026, 7, 31)
 
 
 def test_morning_pipeline_does_not_require_a_workout_today():

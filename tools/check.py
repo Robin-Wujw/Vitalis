@@ -370,7 +370,7 @@ def run_target(target: str, *, ci: bool, env: dict[str, str]) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("target", choices=("quick", "backend", "clients", "docs", "package", "all"))
+    parser.add_argument("target", choices=("quick", "backend", "clients", "docs", "package", "e2e", "all"))
     parser.add_argument("--ci", action="store_true", help="require offline-only verification")
     args = parser.parse_args(argv)
     env = check_environment(args.ci)

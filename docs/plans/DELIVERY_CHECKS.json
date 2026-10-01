@@ -1,0 +1,109 @@
+{
+  "scope": "Design artifacts, synthetic examples, and the repository changes recorded below; no clinical validation or real PushPlus/Hermes integration performed.",
+  "repository_checks": {
+    "backend": "PASS: tools/check.py backend; 1073 passed",
+    "quick": "PASS: tools/check.py quick; 131 passed",
+    "docs": "PASS: tools/check.py docs; 17 tests, link checker, generated API reference",
+    "offline_e2e": "PASS: tools/check.py e2e; 2 passed",
+    "package": "BLOCKED after wheel/sdist content checks passed: uv executable is not installed",
+    "clients_contracts": "PASS: Skill/browser/Bridge contracts; 33 passed; Node syntax, Bridge tests and package dry-run passed",
+    "bridge_build": "BLOCKED: zeus CLI is not installed in the environment",
+    "git_diff_check": "PASS",
+    "real_pushplus": "NOT_RUN: no real notification sent",
+    "real_hermes": "BLOCKED: no authorized Hermes runtime supplied",
+    "browser_visual_check": "NOT_RUN: Chromium launch unavailable"
+  },
+  "checks": [
+    {
+      "file": "README.proposed.md",
+      "markdown_parse": "PASS",
+      "single_h1": "PASS",
+      "emphasis_rendering": "PASS",
+      "local_links": "PASS",
+      "bytes": 5447
+    },
+    {
+      "file": "Vitalis_Reports_Docs_Review.md",
+      "markdown_parse": "PASS",
+      "single_h1": "PASS",
+      "emphasis_rendering": "PASS",
+      "local_links": "PASS",
+      "bytes": 64932
+    },
+    {
+      "file": "reports/daily.md",
+      "markdown_parse": "PASS",
+      "single_h1": "PASS",
+      "emphasis_rendering": "PASS",
+      "local_links": "PASS",
+      "bytes": 713
+    },
+    {
+      "file": "reports/hermes-interaction.md",
+      "markdown_parse": "PASS",
+      "single_h1": "PASS",
+      "emphasis_rendering": "PASS",
+      "local_links": "PASS",
+      "bytes": 1565
+    },
+    {
+      "file": "reports/insufficient-data.md",
+      "markdown_parse": "PASS",
+      "single_h1": "PASS",
+      "emphasis_rendering": "PASS",
+      "local_links": "PASS",
+      "bytes": 535
+    },
+    {
+      "file": "reports/monthly.md",
+      "markdown_parse": "PASS",
+      "single_h1": "PASS",
+      "emphasis_rendering": "PASS",
+      "local_links": "PASS",
+      "bytes": 1004
+    },
+    {
+      "file": "reports/morning.md",
+      "markdown_parse": "PASS",
+      "single_h1": "PASS",
+      "emphasis_rendering": "PASS",
+      "local_links": "PASS",
+      "bytes": 668
+    },
+    {
+      "file": "reports/weekly.md",
+      "markdown_parse": "PASS",
+      "single_h1": "PASS",
+      "emphasis_rendering": "PASS",
+      "local_links": "PASS",
+      "bytes": 1210
+    }
+  ],
+  "sample_boilerplate_scan": "PASS for provided four report texts; literal scan plus editorial inspection, not validation of future model output.",
+  "pushplus_no_reply_requests": "PASS for provided examples",
+  "missing_data_example": "PASS",
+  "unknown_exercise_count_preserved": "PASS",
+  "sample_denominators_and_arithmetic": "PASS",
+  "task_count": 12,
+  "html_internal_links": "PASS",
+  "visible_unparsed_emphasis": "NONE",
+  "browser_visual_check": "NOT_RUN: Chromium launch unavailable. HTML parsed and links verified; no browser visual verification.",
+  "report_character_comparison": {
+    "morning": {
+      "previous_rendered_characters": 506,
+      "new_rendered_characters": 231
+    },
+    "daily": {
+      "previous_rendered_characters": 601,
+      "new_rendered_characters": 254
+    },
+    "weekly": {
+      "previous_rendered_characters": 751,
+      "new_rendered_characters": 456
+    },
+    "monthly": {
+      "previous_rendered_characters": 846,
+      "new_rendered_characters": 378
+    }
+  }
+}

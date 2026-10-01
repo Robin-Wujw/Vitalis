@@ -155,20 +155,13 @@ def metric_label(metric: str | None, *, overnight: bool = False) -> str:
 
 
 def coverage_text(status: Any, record_days: Any, unknown_days: Any, period_days: int) -> str:
-    labels = {
-        "COMPLETE": "训练历史已核实",
-        "PARTIAL": "训练历史部分核实",
-        "UNKNOWN": "训练历史覆盖尚未核实",
-    }
-    label = labels.get(str(status), "训练历史覆盖尚未核实")
     record = number(record_days, 0)
     unknown = number(unknown_days, 0)
-    parts = [label]
-    if record is not None:
-        parts.append(f"已核实 {record}/{period_days} 天")
-    if unknown is not None:
-        parts.append(f"尚未核实 {unknown} 天")
-    return "；".join(parts) + "。"
+    if status == "COMPLETE" and record is not None:
+        return f"训练记录覆盖完整（{record}/{period_days} 天）。"
+    if status == "PARTIAL" and record is not None and unknown is not None:
+        return f"训练记录已核实 {record}/{period_days} 天，{unknown} 天未核实。"
+    return "训练记录覆盖尚未核实。"
 
 
 def timestamp_text(value: Any, zone: str | None = None, *, short: bool = False) -> str:
@@ -188,7 +181,7 @@ def as_of_line(context: dict[str, Any]) -> str | None:
         return None
     shown = timestamp_text(value, context.get("timezone"))
     suffix = "；当日记录仍可能更新" if context.get("target_day_complete") is False else ""
-    return f"分析截至 {shown}{suffix}。"
+    return f"数据截至 {shown}{suffix}。"
 
 
 def list_facts(mapping: dict[str, Any], labels: list[tuple[str, str]]) -> list[str]:

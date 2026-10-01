@@ -38,7 +38,9 @@ def test_feedback_invalidates_saved_report_until_explicit_rerun():
 
     updated = get_intelligence_command().analyze(user_id, TARGET)
     assert query.weekly(user_id, TARGET).analysis_run_id == updated.run.id
-    assert updated.weekly.facts.feedback.response_count == 1
+    # The new input invalidates all current snapshots, but the target-day
+    # feedback is outside the preceding complete calendar week.
+    assert updated.weekly.facts.feedback.response_count == 0
     with session_scope() as db:
         assert len(HealthRepository(db).analysis_snapshots(user_id, "daily", TARGET, TARGET)) == 2
 

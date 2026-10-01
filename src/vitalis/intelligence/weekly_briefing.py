@@ -1,4 +1,4 @@
-"""Build the complete rolling seven-day report from a WeeklyProfile."""
+"""Build the complete weekly report from a WeeklyProfile."""
 from __future__ import annotations
 
 from typing import Any
@@ -79,19 +79,12 @@ class WeeklyBriefingEngine:
     def _coverage(self, payload: dict[str, Any]) -> dict[str, Any]:
         training = (payload.get("facts") or {}).get("training") or {}
         facts = [coverage_text(training.get("coverage_status"), training.get("record_days"), training.get("unknown_days"), 7)]
-        quality = payload.get("data_quality") or {}
-        if any(quality.get(key) is not None for key in ("sleep_days", "hrv_days", "activity_days", "training_days")):
-            facts.append("当前窗口有效天数：" + "；".join(
-                f"{label} {quality.get(key, 0)}/7"
-                for key, label in (("sleep_days", "睡眠"), ("hrv_days", "HRV"), ("activity_days", "活动"), ("training_days", "训练"))
-                if quality.get(key) is not None
-            ) + "。")
         as_of = as_of_line(payload.get("report_context") or {})
         if as_of:
             facts.append(as_of)
         return {
-            "key": "coverage", "title": "两期七日覆盖", "facts": facts,
-            "interpretation": ["只有有效覆盖足够且两期可比时才解释变化；尚未核实的日期不算休息日。"],
+            "key": "coverage", "title": "训练记录覆盖", "facts": facts,
+            "interpretation": [],
             "limitations": list((payload.get("data_quality") or {}).get("limitations") or []),
         }
 
@@ -129,7 +122,11 @@ class WeeklyBriefingEngine:
         interpretations = list(inferences.get("key_changes") or [])
         if not interpretations:
             interpretations = self._recovery_impact(sleep, recovery)
-        return {"key": "sleep_recovery", "title": "睡眠与恢复变化", "facts": fact_lines, "interpretation": interpretations[:8], "limitations": []}
+        if sleep.get("available_days") is not None and sleep.get("available_days", 0) < 5:
+            interpretations.append(
+                f"本周仅有 {number(sleep['available_days'], 0)} 晚睡眠记录，暂不比较趋势。"
+            )
+        return {"key": "sleep_recovery", "title": "睡眠与恢复变化", "facts": fact_lines, "interpretation": unique(interpretations)[:8], "limitations": []}
 
     @staticmethod
     def _recovery_impact(sleep: dict[str, Any], recovery: dict[str, Any]) -> list[str]:
@@ -144,7 +141,7 @@ class WeeklyBriefingEngine:
             if recovery.get("rhr_change_percent") is not None:
                 parts.append(f"静息心率 {recovery['rhr_change_percent']:+.1f}%")
             output.append("恢复信号较前一期变化：" + "；".join(parts) + "，训练结构调整仍需结合覆盖和既有门控。")
-        return output or ["恢复数据没有达到可比较门槛，暂不据此调整训练结构。"]
+        return output
 
     def _training(self, facts: dict[str, Any], inferences: dict[str, Any]) -> dict[str, Any]:
         training = facts.get("training") or {}
@@ -184,8 +181,6 @@ class WeeklyBriefingEngine:
         if training.get("totals_are_partial"):
             limitations.append("训练合计只覆盖已记录日期，不能当作完整周期总量。")
         interpretation = self._training_impact(training, inferences)
-        if not interpretation:
-            interpretation = ["两期可比记录不足，本节不判断是否需要调整跑步或力量安排。"]
         return {"key": "training", "title": "跑步与力量结构", "facts": lines, "interpretation": interpretation, "limitations": unique(limitations)}
 
     def _training_impact(self, training: dict[str, Any], inferences: dict[str, Any]) -> list[str]:
@@ -195,8 +190,8 @@ class WeeklyBriefingEngine:
         if training.get("load_change_percent") is not None:
             change = training["load_change_percent"]
             direction = "增加" if change > 0 else "减少"
-            return [f"训练负荷较前一期{direction} {abs(change):.1f}%，本周建议沿用既有门控，不因总量变化自动追加强度。"]
-        return ["训练量缺少足够的两期可比数据，暂不判断增减是否合适。"]
+            return [f"设备训练负荷较前一期{direction} {abs(change):.1f}%。"]
+        return []
 
     def _activity_feedback(self, facts: dict[str, Any], inferences: dict[str, Any]) -> dict[str, Any]:
         activity = facts.get("activity") or {}
@@ -239,9 +234,9 @@ class WeeklyBriefingEngine:
             impact = "增加" if activity_change > 0 else "减少"
             interpretation = [f"日均步数较前一期{impact} {abs(activity_change):.1f}%，活动变化与训练总量分开考虑。"]
         elif feedback.get("response_count", 0):
-            interpretation = ["已记录反馈显示主观体验可纳入本周调整；它不替代设备观测。"]
+            interpretation = ["已记录反馈显示本周主观体验。"]
         else:
-            interpretation = ["活动和反馈没有足够的两期变化证据，暂不据此改变训练处方。"]
+            interpretation = []
         return {"key": "activity_feedback", "title": "活动、能量与反馈", "facts": lines, "interpretation": interpretation, "limitations": unique(limitations)}
 
     @staticmethod
@@ -254,18 +249,15 @@ class WeeklyBriefingEngine:
 
     def _actions(self, payload: dict[str, Any]) -> dict[str, Any]:
         inferences = payload.get("inferences") or {}
-        facts = [item for item in inferences.get("key_changes") or []]
+        facts = list(inferences.get("key_changes") or [])
         interpretation = []
         for item in (payload.get("actions") or {}).get("recommendations") or []:
             title = item.get("title", "周期建议")
             action = item.get("action", "")
             reasons = "；".join(item.get("reasons") or [])
             interpretation.append(f"{title}：{action}" + (f"（依据：{reasons}）" if reasons else ""))
-        if not interpretation:
-            interpretation.append("当前没有可由周期事实支持的新增调整；保持项仍须服从既有门控。")
-        return {"key": "actions", "title": "既有门控建议", "facts": facts or ["本周期没有达到比较门槛的显著变化条目。"], "interpretation": interpretation, "limitations": list(inferences.get("limitations") or [])}
+        return {"key": "actions", "title": "下周建议", "facts": facts, "interpretation": interpretation, "limitations": []}
 
     @staticmethod
     def _summary(payload: dict[str, Any], sections: list[dict[str, Any]]) -> list[str]:
-        start, end = date_text(payload.get("period_start")), date_text(payload.get("period_end"))
-        return [f"滚动 7 日（{start} 至 {end}）的主要变化。", sections[1]["facts"][0], sections[2]["facts"][0]]
+        return list((payload.get("inferences") or {}).get("key_changes") or [])[:2]

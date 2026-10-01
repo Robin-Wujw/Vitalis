@@ -881,16 +881,3 @@ class ZeppBrowserLink(Base):
     sync_attempt_id: Mapped[str | None] = mapped_column(
         ForeignKey("sync_attempts.id"), nullable=True, index=True
     )
-
-
-class ZeppDeviceLink(Base):
-    """Revocable upload link for the user-owned Balance 2 Zepp OS app."""
-
-    __tablename__ = "zepp_device_links"
-
-    token_digest: Mapped[str] = mapped_column(String(64), primary_key=True)
-    user_id: Mapped[str] = mapped_column(String(64), index=True)
-    device_label: Mapped[str] = mapped_column(String(64), default="balance2_zepp_os")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

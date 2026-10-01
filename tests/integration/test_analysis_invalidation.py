@@ -105,12 +105,12 @@ def test_same_sample_replay_does_not_invalidate_but_new_value_does():
         repo.upsert_user(user_id)
     sample = MetricSample(
         user_id=user_id,
-        source="zepp_os",
+        source="zepp",
         metric="heart_rate",
         timestamp=datetime(2026, 8, 28, 4, tzinfo=timezone.utc),
         value=72,
         unit="bpm",
-        source_scope="device_callback",
+        source_scope="device",
         source_record_id="synthetic-sample",
     )
     with session_scope() as db:

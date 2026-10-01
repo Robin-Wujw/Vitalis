@@ -96,8 +96,7 @@ def documentation_files(root: Path) -> list[Path]:
     return sorted(
         [*root.glob("*.md"), *root.glob("docs/**/*.md"),
          *root.glob("skills/vitalis/**/*.md"),
-         *root.glob("clients/browser_extension/*.md"),
-         *root.glob("clients/zepp_os/balance2_bridge/*.md")]
+         *root.glob("clients/browser_extension/*.md")]
     )
 
 

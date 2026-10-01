@@ -4,13 +4,9 @@
 
 ## 观测与身份
 
-`User` 是本地所有者；每个 `(user_id, source)` 由一个 `SourceAccount` 负责，账号以 `(source, vendor_id)` 全局唯一。厂商凭据只通过 `SourceAccount` 关联并加密保存，`User` 和凭据表不再各自持久化一份厂商用户 ID。账号撤销只使凭据、配对/设备链接和在途同步失效，不删除本地用户或已经保存的健康事实；重新配对会增加账号 fencing epoch，撤销前创建的 worker 即使在重新授权后也不能提交。
+`User` 是本地所有者；每个 `(user_id, source)` 由一个 `SourceAccount` 负责，账号以 `(source, vendor_id)` 全局唯一。厂商凭据只通过 `SourceAccount` 关联并加密保存，`User` 和凭据表不再各自持久化一份厂商用户 ID。账号撤销只使凭据、配对会话和在途同步失效，不删除本地用户或已经保存的健康事实；重新配对会增加账号 fencing epoch，撤销前创建的 worker 即使在重新授权后也不能提交。
 
-每条观测保留用户、来源 `source`、语义范围 `source_scope`、设备 `device_id`、单位 `unit` 和适用的时间/日期；跨设备、来源或单位的原始数值不直接相加或平均。缺失设备在内部可用非 null 键满足唯一性，在对外接口保持缺失。时间戳按 UTC 存储，每日计算和训练开始日按 `VITALIS_TIMEZONE`（默认为 `Asia/Shanghai`）归档；未结束的本地日不能当作完整一天。设备上传同毫秒多条样本以独立 `sample_id`/`sample_ordinal` 辨别并幂等落库，原始测量毫秒时间不添加伪造微秒；没有设备 ID 时仍按来源身份保证唯一性，对外设备归属保持未知。
-
-### Balance 2 Bridge 身份与结算
-
-`POST /api/connect/zepp/device-link` 签发只显示一次的设备上传令牌；服务端只保存令牌摘要，令牌不能读取用户健康接口，也不能用 `X-User-Id` 替代 Bearer 身份。`POST /api/bridge/batches` 每次写入先在同一数据库事务中条件确认令牌未撤销、所属本地用户仍存在，再更新 `last_seen_at` 并保存合格样本；撤销、删除或并发改变所有权时整批不写入并返回认证失败。应用层只接受协议 v2 的心率事实：`sample_id` 必须包含并匹配毫秒时间与 `sample_ordinal`，时间限于当前时刻前 31 天至后 5 分钟，心率限于 20--240 bpm。永久拒收逐条结算且不重试；合法样本的重复批次按完整身份幂等确认，同一毫秒的不同 ID 不合并、不伪造微秒。设备链接提供的 `device_id` 是已知的 Balance 2 capability；其他入口缺少设备身份时仍保持未知，不从上传内容推断。
+每条观测保留用户、来源 `source`、语义范围 `source_scope`、设备 `device_id`、单位 `unit` 和适用的时间/日期；跨设备、来源或单位的原始数值不直接相加或平均。缺失设备在内部可用非 null 键满足唯一性，在对外接口保持缺失。时间戳按 UTC 存储，每日计算和训练开始日按 `VITALIS_TIMEZONE`（默认为 `Asia/Shanghai`）归档；未结束的本地日不能当作完整一天。同一毫秒的多条样本以独立 `source_record_id`/`sample_ordinal` 辨别并幂等落库，原始测量毫秒时间不添加伪造微秒；没有设备 ID 时仍按来源身份保证唯一性，对外设备归属保持未知。
 
 活动的未知 `steps`、`active_minutes`、`calories`、`distance_km` 保持缺失，旧数据的默认 `0` 没有观测证据时不是真值。距离仅在已知单位下换算；泛称热量 `role=unspecified` 不等于总能耗，同一日不同入口的重复读数不相加，训练热量不混成日总。无摄入记录不能推断热量赤字。
 
@@ -61,6 +57,6 @@ Weekly、日历周期 Monthly、晨间、个人响应/关联和 Open Health 结�
 
 HRV 的 RMSSD、SDNN、睡眠 HRV 不混为同一量；按设备和范围各自与个人基线比较。仅有心率不能推导逐搏 HRV；设备功能宣传不等于型号准确性验证。开放健康洞察 `open_health_insights` 始终标注 `shadow_only`，不能修改决策。用户确认的 `sex`、HRmax 等资料不能从年龄公式、训练观测或设备分区自动填充。反馈只记录用户明确提供的内容；训练关联必须同时指定 `workout_source` 和 `workout_id`。个人关联始终是描述性的 `association_only=true`，不代表因果。
 
-当前 `/api` 的非成功 HTTP 响应统一返回 `{ "code": string, "message": string, "retryable": boolean, "request_id": string }`，保留真实 HTTP 状态码；同一次请求的 `X-Request-ID` 与正文 `request_id` 一致。`code` 是稳定的机器可读错误类型，`message` 是固定、安全的展示文案，不能从验证输入、Bearer/Zepp 凭据、健康原文、供应商响应或 SQL 异常拼接。`retryable` 只表示服务建议稍后重试，写操作仍需持久幂等键；`401`/`403`、不存在的资源、幂等冲突及无效输入不建议自动重试。客户端排障可记录 `request_id`，不得记录请求正文或凭据。成功响应与逐条设备样本拒收结构不受本错误合同影响。
+当前 `/api` 的非成功 HTTP 响应统一返回 `{ "code": string, "message": string, "retryable": boolean, "request_id": string }`，保留真实 HTTP 状态码；同一次请求的 `X-Request-ID` 与正文 `request_id` 一致。`code` 是稳定的机器可读错误类型，`message` 是固定、安全的展示文案，不能从验证输入、Bearer/Zepp 凭据、健康原文、供应商响应或 SQL 异常拼接。`retryable` 只表示服务建议稍后重试，写操作仍需持久幂等键；`401`/`403`、不存在的资源、幂等冲突及无效输入不建议自动重试。客户端排障可记录 `request_id`，不得记录请求正文或凭据。成功响应不受本错误合同影响。
 
 字段级请求/响应和单一 `APIError` 定义由当前运行服务的 `/openapi.json` 与 `/docs` 提供；本指南只维护跨端点的语义，不复制接口字段表或错误码表。

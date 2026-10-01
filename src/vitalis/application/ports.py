@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Callable, Protocol
 
-from vitalis.domain import MetricSample, NormalizedDaily
+from vitalis.domain import NormalizedDaily
 
 
 class RangeSummaryReader(Protocol):
@@ -234,47 +234,6 @@ class BrowserLinkClaim:
     token_digest: str
     user_id: str
     source_claim: SourceClaim
-
-
-@dataclass(frozen=True)
-class BridgeDeviceCapability:
-    """The user and device identity fenced by a bridge upload capability."""
-
-    user_id: str
-    device_label: str
-
-
-BridgeSampleFactory = Callable[[BridgeDeviceCapability], list[MetricSample]]
-
-
-class BridgeRepository(Protocol):
-    """Persistence operations for one atomic Balance 2 upload."""
-
-    def create_device_link(
-        self, token_digest: str, user_id: str, device_label: str = "balance2_zepp_os"
-    ) -> Any: ...
-
-    def write_bridge_batch(
-        self,
-        token_digest: str,
-        seen_at: datetime,
-        sample_factory: BridgeSampleFactory,
-    ) -> BridgeDeviceCapability | None: ...
-
-
-class BridgeUnitOfWork(Protocol):
-    """Transaction boundary shared by bridge capability fencing and writes."""
-
-    repository: BridgeRepository
-    transaction: object
-
-    def __enter__(self) -> "BridgeUnitOfWork": ...
-
-    def __exit__(self, exc_type, exc_value, traceback) -> bool: ...
-
-    def commit(self) -> None: ...
-
-    def rollback(self) -> None: ...
 
 
 class CredentialProvider(Protocol):

@@ -1,13 +1,12 @@
 {
   "scope": "Design artifacts, synthetic examples, and the repository changes recorded below; no clinical validation or real PushPlus/Hermes integration performed.",
   "repository_checks": {
-    "backend": "PASS: tools/check.py backend; 1073 passed",
+    "backend": "PASS: tools/check.py backend; 1062 passed",
     "quick": "PASS: tools/check.py quick; 131 passed",
-    "docs": "PASS: tools/check.py docs; 17 tests, link checker, generated API reference",
+    "docs": "PASS: tools/check.py docs; 16 tests, link checker, generated API reference",
     "offline_e2e": "PASS: tools/check.py e2e; 2 passed",
     "package": "BLOCKED after wheel/sdist content checks passed: uv executable is not installed",
-    "clients_contracts": "PASS: Skill/browser/Bridge contracts; 33 passed; Node syntax, Bridge tests and package dry-run passed",
-    "bridge_build": "BLOCKED: zeus CLI is not installed in the environment",
+    "clients_contracts": "PASS: browser/Skill contracts; 30 passed; Node syntax and Skill syntax passed",
     "git_diff_check": "PASS",
     "real_pushplus": "NOT_RUN: no real notification sent",
     "real_hermes": "BLOCKED: no authorized Hermes runtime supplied",

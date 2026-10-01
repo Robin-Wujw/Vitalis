@@ -87,7 +87,6 @@ def test_cross_user_resource_and_pairing_ids_are_denied(client, issue_token):
     ("/api/sync-jobs", "POST", {"days": 1}, {"read"}),
     ("/api/feedback", "POST", {"date": "2026-08-28", "notes": "ok"}, {"read"}),
     ("/api/connect/zepp/pair", "POST", None, {"read"}),
-    ("/api/connect/zepp/device-link", "POST", None, {"sync"}),
 ])
 def test_missing_scope_denies_route(client, issue_token, path, method, json_body, scopes):
     token = issue_token(f"scope-{method}-{path.replace('/', '-')}", scopes)

@@ -42,11 +42,12 @@ def test_all_ci_runs_every_mandatory_target_despite_failure(monkeypatch):
     ]
 
 
-def test_ci_clients_requires_the_real_bridge_build(monkeypatch):
+def test_ci_clients_checks_browser_extension_and_skill(monkeypatch):
     seen = []
     monkeypatch.setattr(check, "run_steps", lambda checks, *, env: seen.extend(checks) or 0)
     assert check.run_target("clients", ci=True, env={}) == 0
-    assert any(step.command == (check.NPM, "run", "build") for step in seen)
+    assert any(step.command == ("node", "--check", "background.js") for step in seen)
+    assert any(step.name == "clients:skill-syntax" for step in seen)
 
 
 def test_docs_missing_checker_fails_explicitly(tmp_path, monkeypatch, capsys):
@@ -70,10 +71,8 @@ def test_commands_match_existing_manifests_and_are_bounded():
     assert any("ruff" in step.command for step in quick)
     assert any("tests/test_intelligence_contracts.py" in step.command for step in quick)
     assert any("tests/test_api.py" not in step.command and "tests" in step.command for step in backend)
-    assert any(step.command == (check.NPM, "test") and step.cwd == check.BRIDGE for step in clients)
-    assert any(step.command[:2] == (check.NPM, "pack") for step in clients)
-    assert not any(step.command[:2] == (check.NPM, "ci") for step in clients)
-    assert any(step.command == (check.NPM, "run", "build") for step in check.clients_checks(ci=True))
+    assert any(step.command == ("node", "--check", "popup.js") for step in clients)
+    assert any("tests/test_vitalis_skill.py" in step.command for step in clients)
 
 
 def test_wheel_contents_require_source_resources_and_reject_private_data(tmp_path):

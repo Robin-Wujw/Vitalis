@@ -13,7 +13,6 @@ REMAINING_PAIRS = (
     ("README.md", "README.en.md"),
     ("THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.en.md"),
     ("clients/browser_extension/README.md", "clients/browser_extension/README.en.md"),
-    ("clients/zepp_os/balance2_bridge/README.md", "clients/zepp_os/balance2_bridge/README.en.md"),
 )
 
 

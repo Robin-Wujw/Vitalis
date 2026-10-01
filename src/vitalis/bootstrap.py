@@ -12,7 +12,6 @@ from vitalis.adapters.persistence.intelligence_store import SqlIntelligenceStore
 from vitalis.adapters.persistence.analysis_jobs import SqlAnalysisJobRepository
 from vitalis.application.aggregation import RangeSummaryQuery
 from vitalis.application.health_query import HealthQuery
-from vitalis.application.bridge import BridgeBatchIngest
 from vitalis.application.connector import HealthConnector
 from vitalis.application.jobs import configure_analysis_jobs as bind_analysis_jobs
 from vitalis.application.ports import (
@@ -154,11 +153,6 @@ def get_range_summary() -> RangeSummaryQuery:
 def get_source_account_service() -> SourceAccountService:
     """Compose source-account management with the SQL UnitOfWork adapter."""
     return SourceAccountService(database.UnitOfWork)
-
-
-def get_bridge_batch_ingest(*, now_factory=None) -> BridgeBatchIngest:
-    """Compose Balance 2 capability fencing and batch ingestion."""
-    return BridgeBatchIngest(database.UnitOfWork, now_factory=now_factory)
 
 
 def get_connection_service(*, provider=None) -> ConnectionService:

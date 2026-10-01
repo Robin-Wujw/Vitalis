@@ -14,7 +14,6 @@ OUTPUT = ROOT / "skills" / "vitalis" / "references" / "api.md"
 BASE_OPERATIONS = frozenset({
     "get_data_status", "get_report", "create_analysis_run", "get_job",
     "create_sync_job", "list_workouts", "get_workout", "create_feedback",
-    "ingest_bridge_batch",
 })
 SKILL_SCRIPT = ROOT / "skills" / "vitalis" / "scripts" / "vitalis_api.py"
 _PATH_PARAM = re.compile(r"\{[^{}]+\}")

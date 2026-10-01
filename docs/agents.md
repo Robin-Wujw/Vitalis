@@ -4,9 +4,9 @@
 
 ## 框架中立的合同
 
-Vitalis 通过当前 `/api` 和 `/openapi.json` 提供用户范围的健康数据产品。Agent 只负责选择操作、解释已保存的结构化结果并提交用户明确给出的反馈；不得重新计算数据质量、趋势或训练处方。先用 `GET /api/data-status` 判断来源与覆盖；`GET /api/reports/{kind}` 只读已有结果，缺少指定日快照时返回 `404`，不会暗中同步。分析用 `POST /api/analysis-runs`、同步用 `POST /api/sync-jobs` 明确提交持久任务，拿到 ID 后查 `GET /api/jobs/{job_id}`。训练、反馈与 Bridge 上传的当前路径和参数以[自动生成的 Skill 子集](../skills/vitalis/references/api.md)及服务 OpenAPI 为准。
+Vitalis 通过当前 `/api` 和 `/openapi.json` 提供用户范围的健康数据产品。Agent 只负责选择操作、解释已保存的结构化结果并提交用户明确给出的反馈；不得重新计算数据质量、趋势或训练处方。先用 `GET /api/data-status` 判断来源与覆盖；`GET /api/reports/{kind}` 只读已有结果，缺少指定日快照时返回 `404`，不会暗中同步。分析用 `POST /api/analysis-runs`、同步用 `POST /api/sync-jobs` 明确提交持久任务，拿到 ID 后查 `GET /api/jobs/{job_id}`。训练与反馈的当前路径和参数以[自动生成的 Skill 子集](../skills/vitalis/references/api.md)及服务 OpenAPI 为准。
 
-服务端 Bearer 令牌绑定一个本地用户及期限，按操作分配 `read`、`analyze`、`sync`、`feedback` 或 `manage` 范围。`X-User-Id` 只能与令牌所属用户核对，不能提升权限；浏览器配对码和设备上传令牌具有不同的用途。令牌由本地 CLI 创建并安全保存，见[运维](operations.md)。不要把令牌、个人健康记录、Zepp Cookie 或错误正文加入模型提示、URL、日志及仓库。
+服务端 Bearer 令牌绑定一个本地用户及期限，按操作分配 `read`、`analyze`、`sync`、`feedback` 或 `manage` 范围。`X-User-Id` 只能与令牌所属用户核对，不能提升权限；浏览器配对码与 API Bearer 令牌具有不同的用途。令牌由本地 CLI 创建并安全保存，见[运维](operations.md)。不要把令牌、个人健康记录、Zepp Cookie 或错误正文加入模型提示、URL、日志及仓库。
 
 同步请求必须使用 `POST /api/sync-jobs`、`Idempotency-Key` 和 `sync` 范围；请求可用 `days`（1..730）或明确的 `from`/`to` 本地日期窗口，返回 `202` 后由 worker 执行。状态和取消分别使用用户范围的 `GET /api/jobs/{job_id}` 与 `POST /api/jobs/{job_id}/cancel`；跨用户任务不会泄露存在性，也不能取消。旧的 `POST /api/connect/zepp` 和隐藏 GET 别名已移除；连接、配对和凭据导入仍使用各自的 `/api/connect/zepp/*` 当前路径。
 

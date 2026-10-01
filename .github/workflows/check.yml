@@ -34,8 +34,6 @@ jobs:
           python -m pip install --disable-pip-version-check 'uv==0.12.9'
           uv sync --locked --extra dev
           .venv/bin/python -m ensurepip --upgrade
-      - name: Provision locked Balance 2 dependencies
-        run: npm --prefix clients/zepp_os/balance2_bridge ci
       - name: Run verification without real accounts
         run: |
           . .venv/bin/activate

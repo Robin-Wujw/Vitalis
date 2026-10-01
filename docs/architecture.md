@@ -25,10 +25,10 @@ Vitalis 是单仓库 Python 服务，HTTP API 与调度 worker 分进程。客�
 | [`src/vitalis/intelligence/`](../src/vitalis/intelligence/) | 个人基线、数据资格、状态、趋势、训练决策与不可变报告投影 |
 | [`skills/vitalis/`](../skills/vitalis/) | 可离仓安装的薄 HTTP 产品 Skill；不实现健康计算 |
 
-分析任务与范围聚合已由应用端口和 SQL 适配器分开；同步用例也通过 `HealthConnector` 与窄 UoW 端口隔离具体 Zepp/SQL 实现。`bootstrap.py` 只为显式合成数据 demo 组装该用例；demo 的 fetch 在数据库写事务之外执行，随后由一个显式提交的 UoW 写入用户和规范日数据。生产 HTTP 同步仍由 worker 拥有持久 attempt、分块和租约生命周期，不能把 demo 用例当作 API 调度入口。日报投递的资格与 payload 变换集中在无副作用的 `application/delivery_policy.py`；`adapters/daily_push.py` 只组合直接手动分析、Zepp 同步、PushPlus 和文件 marker。调度 worker 传入已保存快照并设置 `scheduled_delivery=True`，只使用通知 outbox 的 CAS 状态，不触碰文件 marker，也不重新同步或分析。当前健康查询、账号/同步任务/反馈/bridge 命令和报告读取由路由调用 application 用例，具体 Zepp、SQL 与通知能力在 bootstrap 组装的 adapter；架构测试禁止 domain/application 与普通 API 路由直接导入具体存储或厂商适配器。`GET /api/health/range` 由路由调用范围聚合用例，具体 SQL 日记录读取在 `bootstrap.py` 组装。新代码不应再增加路由层分析或 Skill 侧重算。现有只读请求从数据库读取快照；显式分析请求入队，worker 执行确定性引擎并保存新的 `AnalysisRun` 和报告。当前快照查询核对运行记录中的资料 revision、用户输入 revision 和非秘密策略摘要；资料、反馈、训练偏好、有效来源事实与同步覆盖更新后旧结果保留供审计，但不再作为当前结果。幂等重放、无变化的写入和无资格的同步状态不推进输入 revision；规则/目录/时区变化由配置摘要拦截，分析最终事务再核对这些资格。直接厂商请求在同步流程中发生，分块结果及租约状态保存在数据库；不同流的空、不可用、失败和部分成功不合并为一个成功布尔值。
+分析任务与范围聚合已由应用端口和 SQL 适配器分开；同步用例也通过 `HealthConnector` 与窄 UoW 端口隔离具体 Zepp/SQL 实现。`bootstrap.py` 只为显式合成数据 demo 组装该用例；demo 的 fetch 在数据库写事务之外执行，随后由一个显式提交的 UoW 写入用户和规范日数据。生产 HTTP 同步仍由 worker 拥有持久 attempt、分块和租约生命周期，不能把 demo 用例当作 API 调度入口。日报投递的资格与 payload 变换集中在无副作用的 `application/delivery_policy.py`；`adapters/daily_push.py` 只组合直接手动分析、Zepp 同步、PushPlus 和文件 marker。调度 worker 传入已保存快照并设置 `scheduled_delivery=True`，只使用通知 outbox 的 CAS 状态，不触碰文件 marker，也不重新同步或分析。当前健康查询、账号/同步任务/反馈和报告读取由路由调用 application 用例，具体 Zepp、SQL 与通知能力在 bootstrap 组装的 adapter；架构测试禁止 domain/application 与普通 API 路由直接导入具体存储或厂商适配器。`GET /api/health/range` 由路由调用范围聚合用例，具体 SQL 日记录读取在 `bootstrap.py` 组装。新代码不应再增加路由层分析或 Skill 侧重算。现有只读请求从数据库读取快照；显式分析请求入队，worker 执行确定性引擎并保存新的 `AnalysisRun` 和报告。当前快照查询核对运行记录中的资料 revision、用户输入 revision 和非秘密策略摘要；资料、反馈、训练偏好、有效来源事实与同步覆盖更新后旧结果保留供审计，但不再作为当前结果。幂等重放、无变化的写入和无资格的同步状态不推进输入 revision；规则/目录/时区变化由配置摘要拦截，分析最终事务再核对这些资格。直接厂商请求在同步流程中发生，分块结果及租约状态保存在数据库；不同流的空、不可用、失败和部分成功不合并为一个成功布尔值。
 
 ```text
-Zepp 云端 / Balance 2 上传 → 规范观测与训练 → 分块账本与覆盖状态
+Zepp 云端 → 规范观测与训练 → 分块账本与覆盖状态
                                            ↓
 用户资料与反馈 → 数据资格 → 基线/趋势/决策 → AnalysisRun / 快照
                                            ↓
@@ -77,10 +77,10 @@ The worker claims notification intents with a database compare-and-swap lease, v
 
 ## 身份、数据库与故障
 
-Bearer 访问令牌在库中只保存摘要，并绑定用户、期限和 `read` / `analyze` / `sync` / `feedback` / `manage` 用途；设备上传链接和浏览器配对码是独立凭据，不可拿来读健康报告。API 默认只监听回环地址。厂商凭据与数据库属于敏感资产，部署前需要设置分离的加密密钥、TLS 和网络访问控制，不能将本地 CORS 配置解释为授权。参见[安全说明](../SECURITY.md)。
+Bearer 访问令牌在库中只保存摘要，并绑定用户、期限和 `read` / `analyze` / `sync` / `feedback` / `manage` 用途；浏览器配对码是独立凭据，不可拿来读健康报告。API 默认只监听回环地址。厂商凭据与数据库属于敏感资产，部署前需要设置分离的加密密钥、TLS 和网络访问控制，不能将本地 CORS 配置解释为授权。参见[安全说明](../SECURITY.md)。
 
 新 SQLite 数据库由 `vitalis db init` 建立当前基线；非空旧库或版本、表、列、索引、唯一键、外键不符会在写入前拒绝，而不会自动迁移或清理。当前自动化运行在新临时库；PostgreSQL 的等价约束与恢复尚未完成 CI 证明，不列入已验证部署列表。分析任务在创建 `AnalysisRun` 后立即把 run 绑定到当前租约；租约被回收时，只将该任务绑定且仍为 RUNNING 的旧 run 标记为 `analysis_lease_reclaimed`，避免遗留 RUNNING 元数据污染报告。严格 exactly-once 仍不宣称为远程 PushPlus 传输语义。
 
 ## 研究边界
 
-`open_health_insights` 始终 `shadow_only`，不改变当前训练决策。模型与设备选择规则的证据条目在 [`intelligence/evidence.py`](../src/vitalis/intelligence/evidence.py) 的 `EVIDENCE_REFS` 中；来源论文支持有限的测量解释，不构成 Balance 2 / Helio Strap 特定型号独立验证，也不构成医疗结论。Zepp 的已证实 payload 变体、APK 动作目录与未知字段处理见[Zepp](zepp.md)。
+`open_health_insights` 始终 `shadow_only`，不改变当前训练决策。模型与设备选择规则的证据条目在 [`intelligence/evidence.py`](../src/vitalis/intelligence/evidence.py) 的 `EVIDENCE_REFS` 中；来源论文支持有限的测量解释，不构成任何特定型号的独立验证，也不构成医疗结论。Zepp 的已证实 payload 变体、APK 动作目录与未知字段处理见[Zepp](zepp.md)。

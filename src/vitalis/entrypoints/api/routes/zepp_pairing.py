@@ -6,17 +6,12 @@ reads the official login cookie and sends it through this short-lived channel.
 
 from __future__ import annotations
 
-import hashlib
-from datetime import datetime, timezone
-from typing import Literal
-
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from vitalis.entrypoints.api.deps import authenticated_user, require_scope
 from vitalis.config import settings
-from vitalis.bootstrap import get_bridge_batch_ingest, get_connector, get_connection_service
-from vitalis.application.bridge import BridgeAuthenticationError, BridgeProtocolError
+from vitalis.bootstrap import get_connector, get_connection_service
 from vitalis.application.connection import ConnectionOperationError
 
 router = APIRouter(prefix="/connect/zepp", tags=["connect"])
@@ -28,11 +23,6 @@ class PairingCredentials(BaseModel):
 
 class DisconnectNotice(BaseModel):
     reason: str = Field(default="Zepp 网页登录已失效，请重新登录", max_length=512)
-
-
-class DeviceHeartRateBatch(BaseModel):
-    protocol_version: Literal[2]
-    samples: list[object] = Field(min_length=1, max_length=1000)
 
 
 def _require_pairing_origin(request: Request) -> None:
@@ -177,42 +167,3 @@ def validate_linked_credentials(
             503 if exc.kind in {"network", "service"} else 409
         )
         raise HTTPException(status_code=status, detail=str(exc)) from exc
-
-
-@router.post("/device-link", summary="创建 Balance 2 Zepp OS 上传链接")
-def create_zepp_device_link(user_id: str = Depends(require_scope("manage"))) -> dict:
-    return get_bridge_batch_ingest().issue_device_link(user_id).as_dict()
-
-
-def _bridge_now() -> datetime:
-    """Provide an injectable boundary clock for the bridge race contract."""
-    return datetime.now(timezone.utc)
-
-
-def upload_zepp_device_heart_rate(
-    body: DeviceHeartRateBatch,
-    authorization: str = Header(default="", alias="Authorization"),
-) -> dict:
-    digest = _authorization_digest(authorization, "设备上传令牌无效")
-    try:
-        result = get_bridge_batch_ingest(now_factory=_bridge_now).ingest(
-            digest,
-            body.protocol_version,
-            body.samples,
-        )
-    except BridgeAuthenticationError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
-    except BridgeProtocolError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return result.as_dict()
-
-
-def _token_digest(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def _authorization_digest(authorization: str, detail: str) -> str:
-    scheme, separator, token = authorization.partition(" ")
-    if not separator or scheme.lower() != "bearer" or len(token) < 32:
-        raise HTTPException(status_code=401, detail=detail)
-    return _token_digest(token)

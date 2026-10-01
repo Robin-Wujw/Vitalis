@@ -8,7 +8,7 @@
 - 阅读报告和理解周期：[报告阅读与渠道](reports.md)。
 - 接入 Hermes 或其他客户端：[Agent 与客户端](agents.md) → 运行服务的 `/openapi.json`。
 - 了解系统或新增字段：[当前架构](architecture.md) → [数据合同](data-contracts.md) → 运行服务的 `/docs`。
-- 接入 Zepp：[Zepp 协议与证据](zepp.md)；扩展构建见[浏览器扩展](../clients/browser_extension/README.md)，设备构建见[Balance 2 Bridge](../clients/zepp_os/balance2_bridge/README.md)。
+- 接入 Zepp：[Zepp 协议与证据](zepp.md)；浏览器登录扩展见[扩展说明](../clients/browser_extension/README.md)。
 - 修改仓库：[AGENTS.md](../AGENTS.md) → [CONTRIBUTING.md](../CONTRIBUTING.md) → 相关源码与测试。安全边界见 [SECURITY.md](../SECURITY.md)。
 
 ## 主题归属

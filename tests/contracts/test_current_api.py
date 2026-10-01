@@ -34,7 +34,6 @@ OPERATIONS = {
     ("get", "/api/workouts"): "list_workouts",
     ("get", "/api/workouts/{workout_id}"): "get_workout",
     ("post", "/api/feedback"): "create_feedback",
-    ("post", "/api/bridge/batches"): "ingest_bridge_batch",
 }
 
 
@@ -217,7 +216,7 @@ def test_analysis_job_worker_persists_report_and_rejects_other_user(client):
     assert repeated.json()["job_id"] == job_id
 
 
-def test_feedback_write_requires_scope_and_bridge_needs_device_token(client, issue_token):
+def test_feedback_write_requires_scope(client, issue_token):
     limited = issue_token("current-feedback-user", {"read"})
     response = client.post(
         "/api/feedback", json={"date": "2026-08-29", "notes": "synthetic test"},
@@ -231,8 +230,6 @@ def test_feedback_write_requires_scope_and_bridge_needs_device_token(client, iss
     )
     assert response.status_code == 201, response.text
     assert response.json()["notes"] == "synthetic test"
-    bridge = client.post("/api/bridge/batches", json={"protocol_version": 2, "samples": [{}]})
-    assert_error(bridge, 401, "unauthorized", "Authentication required")
 
 
 def test_bad_pairing_and_malformed_requests_never_echo_supplied_values(client):

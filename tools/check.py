@@ -20,9 +20,7 @@ import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BRIDGE = ROOT / "clients" / "zepp_os" / "balance2_bridge"
 PYTHON = sys.executable
-NPM = shutil.which("npm.cmd" if os.name == "nt" else "npm") or "npm"
 UV = shutil.which("uv") or "uv"
 PYTEST = (PYTHON, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q")
 
@@ -112,7 +110,6 @@ def backend_checks() -> list[Check]:
         "--ignore=tests/architecture",
         "--ignore=tests/e2e",
         "--ignore=tests/test_browser_extension.py",
-        "--ignore=tests/test_zepp_os_bridge.py",
         "--ignore=tests/test_vitalis_skill.py",
         "--ignore=tests/test_bilingual_markdown.py",
     ), timeout=600)]
@@ -122,7 +119,6 @@ def clients_checks(ci: bool) -> list[Check]:
     checks = [
         Check("clients:contracts", PYTEST + (
             "tests/test_browser_extension.py",
-            "tests/test_zepp_os_bridge.py",
             "tests/test_vitalis_skill.py",
             "tests/contracts/test_skill_bundle.py",
             "tests/contracts/test_skill_http_client.py",
@@ -130,20 +126,12 @@ def clients_checks(ci: bool) -> list[Check]:
     ]
     for name in ("background.js", "popup.js", "page_credential.js"):
         checks.append(Check(f"clients:extension:{name}", ("node", "--check", name), ROOT / "clients" / "browser_extension", 30))
-    for name in (
-        "app.js", "app-side/index.js", "app-service/heart_rate_service.js",
-        "setting/index.js", "page/index.js", "shared/queue.js", "shared/queue_core.mjs",
-    ):
-        checks.append(Check(f"clients:bridge:{name}", ("node", "--check", name), BRIDGE, 30))
     checks.extend([
-        Check("clients:bridge-tests", (NPM, "test"), BRIDGE, 90),
-        Check("clients:bridge-package", (NPM, "pack", "--dry-run", "--offline", "--ignore-scripts", "--json"), BRIDGE, 90),
         Check("clients:skill-syntax", (
             PYTHON, "-B", "-c",
             "from pathlib import Path; files = sorted(Path('skills/vitalis/scripts').glob('*.py')); assert files, 'no Skill client'; [compile(p.read_text(encoding='utf-8'), str(p), 'exec') for p in files]",
         ), timeout=30),
     ])
-    checks.append(Check("clients:bridge-build", (NPM, "run", "build"), BRIDGE, 240))
     return checks
 
 

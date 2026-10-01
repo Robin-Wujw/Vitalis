@@ -15,8 +15,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from vitalis.application.ports import (
-    BridgeDeviceCapability,
-    BridgeSampleFactory,
     BrowserLinkClaim,
     FeedbackIdempotencyConflict,
     PairingClaim,
@@ -3944,10 +3942,6 @@ class HealthRepository:
             message=reason[:512],
             revoked_at=now,
         ))
-        self.db.execute(update(orm.ZeppDeviceLink).where(
-            orm.ZeppDeviceLink.user_id == user_id,
-            orm.ZeppDeviceLink.revoked_at.is_(None),
-        ).values(revoked_at=now))
         self.db.execute(delete(orm.OAuthState).where(
             orm.OAuthState.user_id == user_id,
             orm.OAuthState.source == source,
@@ -4649,71 +4643,6 @@ class HealthRepository:
         self.db.flush()
         return bool(result.rowcount)
 
-    # ---- Balance 2 Zepp OS device upload links ----
-
-    def create_device_link(
-        self, token_digest: str, user_id: str, device_label: str = "balance2_zepp_os"
-    ) -> orm.ZeppDeviceLink:
-        self.upsert_user(user_id)
-        row = orm.ZeppDeviceLink(
-            token_digest=token_digest,
-            user_id=user_id,
-            device_label=device_label,
-        )
-        self.db.add(row)
-        self.db.flush()
-        return row
-
-    def device_link(self, token_digest: str) -> orm.ZeppDeviceLink | None:
-        return self.db.get(orm.ZeppDeviceLink, token_digest)
-
-    def mark_device_link_seen(self, token_digest: str) -> None:
-        row = self.device_link(token_digest)
-        if row and row.revoked_at is None:
-            row.last_seen_at = datetime.utcnow()
-            self.db.flush()
-
-    def write_bridge_batch(
-        self,
-        token_digest: str,
-        seen_at: datetime,
-        sample_factory: BridgeSampleFactory,
-    ) -> BridgeDeviceCapability | None:
-        """Fence a device capability and persist its samples in this transaction.
-
-        Lock the owner before the link, matching revocation and sample revision
-        writes.  Only the conditional link update authenticates the capability.
-        """
-        owner_id = self.db.execute(select(orm.ZeppDeviceLink.user_id).where(
-            orm.ZeppDeviceLink.token_digest == token_digest,
-        )).scalar_one_or_none()
-        if owner_id is None or self.db.execute(select(orm.User.id).where(
-            orm.User.id == owner_id,
-        ).with_for_update()).scalar_one_or_none() is None:
-            return None
-        link = self.db.execute(
-            update(orm.ZeppDeviceLink)
-            .where(
-                orm.ZeppDeviceLink.token_digest == token_digest,
-                orm.ZeppDeviceLink.user_id == owner_id,
-                orm.ZeppDeviceLink.revoked_at.is_(None),
-                exists().where(orm.User.id == orm.ZeppDeviceLink.user_id),
-            )
-            .values(last_seen_at=_naive_utc(seen_at))
-            .returning(orm.ZeppDeviceLink.user_id, orm.ZeppDeviceLink.device_label)
-        ).one_or_none()
-        if link is None:
-            return None
-
-        capability = BridgeDeviceCapability(
-            user_id=link.user_id,
-            device_label=link.device_label,
-        )
-        samples = sample_factory(capability)
-        if samples:
-            self.save_metric_samples(samples)
-        return capability
-
     def delete_for_user(self, user_id: str) -> None:
         self.db.execute(select(orm.User.id).where(
             orm.User.id == user_id
@@ -4729,7 +4658,7 @@ class HealthRepository:
             orm.NotificationDelivery, orm.AnalysisRun,
             orm.FeedbackRequest, orm.SubjectiveFeedback,
             orm.SyncStreamState,
-            orm.ZeppDeviceLink, orm.ZeppBrowserLink, orm.ZeppPairingSession,
+            orm.ZeppBrowserLink, orm.ZeppPairingSession,
             orm.AccessToken, orm.AuthToken, orm.OAuthState, orm.SourceAccount,
         ):
             self.db.execute(delete(model).where(model.user_id == user_id))

@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from vitalis.config import settings
 
-SCHEMA_REVISION = "2026-09-source-account-uow"
+SCHEMA_REVISION = "2026-10-cloud-zepp-only"
 
 
 class SchemaMismatch(RuntimeError):

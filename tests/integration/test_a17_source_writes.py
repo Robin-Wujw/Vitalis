@@ -3,16 +3,12 @@
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import event as sa_event
-
 from vitalis.adapters.persistence import HealthRepository, session_scope
-from vitalis.adapters.persistence.database import get_engine
 from vitalis.adapters.persistence.repositories import SourceIdentityConflict
 from vitalis.domain import (
     DailyMetric,
     DenseDataFile,
     Device,
-    MetricSample,
     NormalizedDaily,
     SleepRecord,
     Workout,
@@ -225,39 +221,3 @@ def test_source_account_identity_changes_bump_revision_once():
         assert repo.analysis_input_revision(user_id) == 3
         repo.ensure_source_account(user_id, "zepp", "synthetic-vendor")
         assert repo.analysis_input_revision(user_id) == 3
-
-
-def test_bridge_batch_locks_owner_before_device_link_write():
-    user_id = "a17-bridge-lock-owner"
-    token_digest = "synthetic-bridge-lock-digest"
-    _fresh_user(user_id)
-    with session_scope() as db:
-        HealthRepository(db).create_device_link(token_digest, user_id)
-
-    statements = []
-
-    def record_statement(_connection, _cursor, statement, _parameters, _context, _many):
-        statements.append(statement.lower())
-
-    engine = get_engine()
-    sa_event.listen(engine, "before_cursor_execute", record_statement)
-    try:
-        with session_scope() as db:
-            capability = HealthRepository(db).write_bridge_batch(
-                token_digest,
-                START,
-                lambda owner: [MetricSample(
-                    user_id=owner.user_id, source="zepp_os", metric="heart_rate",
-                    timestamp=START, value=75, unit="bpm",
-                    source_record_id="synthetic-lock-sample",
-                )],
-            )
-            assert capability is not None and capability.user_id == user_id
-    finally:
-        sa_event.remove(engine, "before_cursor_execute", record_statement)
-
-    link_update = next(
-        index for index, statement in enumerate(statements)
-        if "update zepp_device_links" in statement
-    )
-    assert any("from users" in statement for statement in statements[:link_update])

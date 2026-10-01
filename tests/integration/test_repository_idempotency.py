@@ -23,10 +23,10 @@ def test_same_timestamp_with_distinct_source_ids_is_stored_and_replay_is_idempot
     observed_at = datetime(2026, 9, 26, 8, 7, 6, 123000, tzinfo=timezone.utc)
     samples = [
         MetricSample(
-            user_id="owner", source="zepp_os", metric="heart_rate",
+            user_id="owner", source="zepp", metric="heart_rate",
             timestamp=observed_at, value=rate, unit="bpm",
-            source_scope="device_callback", device_id=None,
-            source_record_id=f"z2:1790410026123:0:session{index}:0",
+            source_scope="device", device_id=None,
+            source_record_id=f"cloud-heart-rate-session-{index}",
             sample_ordinal=0,
         )
         for index, rate in enumerate((72.0, 74.0))
@@ -47,9 +47,9 @@ def test_same_timestamp_with_distinct_source_ids_is_stored_and_replay_is_idempot
             assert {row.device_id for row in rows} == {""}
         with Session(engine) as db:
             duplicate = StoredMetricSample(
-                user_id="owner", source="zepp_os", metric="heart_rate",
+                user_id="owner", source="zepp", metric="heart_rate",
                 timestamp=observed_at.replace(tzinfo=None), value=99, unit="bpm",
-                source_scope="device_callback", device_id="",
+                source_scope="device", device_id="",
                 source_record_id=samples[0].source_record_id,
             )
             db.add(duplicate)
@@ -65,9 +65,9 @@ def test_same_timestamp_with_distinct_ordinals_survives_replay(tmp_path):
     observed_at = datetime(2026, 9, 26, 8, 7, 6, 123000, tzinfo=timezone.utc)
     samples = [
         MetricSample(
-            user_id="owner", source="zepp_os", metric="heart_rate",
+            user_id="owner", source="zepp", metric="heart_rate",
             timestamp=observed_at, value=rate, unit="bpm",
-            source_scope="device_callback", device_id=None,
+            source_scope="device", device_id=None,
             sample_ordinal=ordinal,
         )
         for ordinal, rate in enumerate((72.0, 74.0))

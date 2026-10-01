@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from vitalis.entrypoints.api.deps import require_scope, require_user_id
-from vitalis.entrypoints.api.routes.zepp_pairing import upload_zepp_device_heart_rate
 from vitalis.bootstrap import (
     get_health_query,
     get_source_account_service,
@@ -232,9 +231,3 @@ def list_feedback(
     if period_start > period_end:
         raise HTTPException(status_code=422, detail="开始日期不能晚于结束日期")
     return get_intelligence_query().feedback(user_id, period_start, period_end)
-
-
-router.add_api_route(
-    "/bridge/batches", upload_zepp_device_heart_rate, methods=["POST"],
-    operation_id="ingest_bridge_batch", response_model=dict,
-)

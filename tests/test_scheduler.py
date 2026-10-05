@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -31,6 +31,8 @@ def test_scheduler_uses_configured_timezone_cron_and_single_dispatcher(monkeypat
     monkeypatch.setattr(settings, "sync_cron_hour", 4)
     monkeypatch.setattr(settings, "sync_cron_minute", 25)
     monkeypatch.setattr(settings, "sync_dispatcher_interval_seconds", 17)
+    monkeypatch.setattr(settings, "weekly_report_enabled", False)
+    monkeypatch.setattr(settings, "monthly_report_enabled", False)
 
     scheduler = jobs.start_scheduler()
 
@@ -61,6 +63,76 @@ def test_scheduler_uses_configured_timezone_cron_and_single_dispatcher(monkeypat
     assert heartbeat[1].interval.total_seconds() == 30
     startup_delay = datetime.now(timezone.utc) - dispatcher[2]["next_run_time"]
     assert abs(startup_delay.total_seconds()) < 5
+
+
+def test_scheduler_registers_optional_calendar_report_jobs(monkeypatch):
+    captured = []
+
+    class FakeScheduler:
+        def __init__(self, *, timezone):
+            self.timezone = timezone
+
+        def add_job(self, func, trigger, **kwargs):
+            captured.append((func, trigger, kwargs))
+
+        def start(self):
+            return None
+
+    monkeypatch.setattr(jobs, "BackgroundScheduler", FakeScheduler)
+    monkeypatch.setattr(settings, "weekly_report_enabled", True)
+    monkeypatch.setattr(settings, "weekly_report_hour", 8)
+    monkeypatch.setattr(settings, "weekly_report_minute", 15)
+    monkeypatch.setattr(settings, "monthly_report_enabled", True)
+    monkeypatch.setattr(settings, "monthly_report_hour", 9)
+    monkeypatch.setattr(settings, "monthly_report_minute", 45)
+
+    jobs.start_scheduler()
+
+    weekly = next(item for item in captured if item[2]["id"] == "weekly_analysis")
+    monthly = next(item for item in captured if item[2]["id"] == "monthly_analysis")
+    assert weekly[0] is jobs.weekly_analysis_job
+    assert "day_of_week='mon'" in str(weekly[1])
+    assert "hour='8'" in str(weekly[1])
+    assert "minute='15'" in str(weekly[1])
+    assert monthly[0] is jobs.monthly_analysis_job
+    assert "day='1'" in str(monthly[1])
+    assert "hour='9'" in str(monthly[1])
+    assert "minute='45'" in str(monthly[1])
+
+
+@pytest.mark.parametrize(("target_day", "timezone_name"), [
+    (date(2026, 8, 31), "Asia/Shanghai"),
+    (date(2026, 3, 9), "America/New_York"),
+    (date(2026, 11, 2), "America/New_York"),
+])
+def test_weekly_sync_covers_full_report_period(monkeypatch, target_day, timezone_name):
+    from vitalis.adapters.zepp.sync_coordinator import ZeppSyncCoordinator
+    from vitalis.intelligence.report_periods import delivery_period_dates
+
+    queued = []
+    coordinator = ZeppSyncCoordinator()
+
+    def create_attempt(user_id, *, days, trigger, trigger_ref):
+        queued.append((trigger, coordinator._window(None, days)))
+        return SimpleNamespace(id="weekly-window-attempt")
+
+    monkeypatch.setattr(settings, "timezone", timezone_name)
+    monkeypatch.setattr("vitalis.time.local_today", lambda: target_day)
+    monkeypatch.setattr(jobs, "_get_authorized_users", lambda: {"weekly-window-user"})
+    monkeypatch.setattr(
+        "vitalis.bootstrap.get_connector",
+        lambda _source: SimpleNamespace(create_attempt=create_attempt),
+    )
+    monkeypatch.setattr(jobs, "dispatcher_job", lambda: 0)
+
+    jobs.weekly_analysis_job()
+
+    assert len(queued) == 1
+    trigger, window = queued[0]
+    period_start, _ = delivery_period_dates("weekly", target_day)
+    assert trigger == "weekly"
+    assert window.start_day(timezone_name) == period_start.isoformat()
+    assert window.end_day(timezone_name) == target_day.isoformat()
 
 
 def test_scheduled_sync_only_enqueues_attempt(monkeypatch):
@@ -188,7 +260,7 @@ def test_analysis_dispatch_is_not_starved_by_sync_failure(monkeypatch):
     assert calls == [1]
 
 
-def test_dispatcher_drains_notification_delivery_after_sync(monkeypatch):
+def test_dispatcher_drains_notification_delivery_before_sync(monkeypatch):
     calls = []
 
     class FakeCoordinator:
@@ -213,7 +285,7 @@ def test_dispatcher_drains_notification_delivery_after_sync(monkeypatch):
     )
 
     assert jobs.dispatcher_job() == 1
-    assert calls == ["sync", "notification"]
+    assert calls == ["notification", "sync"]
 
 
 def test_dispatcher_limits_each_pass_to_configured_chunk_batch(monkeypatch):

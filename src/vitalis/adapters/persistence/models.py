@@ -627,7 +627,7 @@ class AnalysisJob(Base):
         ),
         CheckConstraint("attempt_count >= 0 AND lease_epoch >= 0", name="ck_analysis_job_counts"),
         CheckConstraint(
-            "delivery_period IS NULL OR delivery_period IN ('morning', 'evening')",
+            "delivery_period IS NULL OR delivery_period IN ('morning', 'evening', 'weekly', 'monthly')",
             name="ck_analysis_job_delivery_period",
         ),
         CheckConstraint(
@@ -673,7 +673,7 @@ class NotificationDelivery(Base):
             name="ck_notification_delivery_status",
         ),
         CheckConstraint(
-            "period IN ('morning', 'evening')",
+            "period IN ('morning', 'evening', 'weekly', 'monthly')",
             name="ck_notification_delivery_period",
         ),
         CheckConstraint(

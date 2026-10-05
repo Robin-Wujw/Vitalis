@@ -210,6 +210,34 @@ def deliver_daily_report(
         return outcome
 
 
+def deliver_period_report(
+    user_id: str,
+    pushplus_token: str,
+    profile: dict,
+    *,
+    period: str,
+    target_date: date,
+) -> dict:
+    """Deliver a saved weekly or monthly projection without recomputing it."""
+    if period not in {"weekly", "monthly"}:
+        raise ValueError("period must be weekly or monthly")
+    service = PushService(pushplus_token=pushplus_token)
+    if period == "weekly":
+        results = service.push_weekly_profile(user_id, profile)
+    else:
+        results = service.push_monthly_profile(user_id, profile)
+    if results.get("_pushplus_handler") != "ok":
+        raise DailyPushDeliveryError(
+            ambiguous=results.get("_delivery_outcome") == "uncertain"
+        )
+    return {
+        "status": "sent",
+        "period": period,
+        "date": target_date.isoformat(),
+        "quality": (profile.get("data_quality") or {}).get("status", "UNKNOWN"),
+    }
+
+
 def _require_local_api(api: str) -> None:
     """Keep the CLI argument, but never silently redirect a remote run locally."""
     parsed = urlsplit(api)

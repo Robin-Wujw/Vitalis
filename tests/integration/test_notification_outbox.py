@@ -196,6 +196,227 @@ def test_scheduler_delivers_exact_saved_run_without_filesystem_marker(
         engine.dispose()
 
 
+def test_dispatcher_delivers_before_sync_invalidates_saved_snapshot(tmp_path, monkeypatch):
+    from vitalis.adapters import daily_push
+    from vitalis.adapters.persistence import database
+    from vitalis.config import settings
+    from vitalis.scheduler import jobs
+
+    engine, factory = _database(tmp_path)
+    phases = []
+    sent = []
+    payload = {
+        "date": DAY.isoformat(),
+        "data_quality": {"status": "SUFFICIENT"},
+        "report_context": {"training_history": {
+            "status": "COMPLETE", "prior_7d_verified": True,
+        }},
+        "features": {"sleep": {"status": "AVAILABLE", "wake_time": "08:00:00"}},
+    }
+    try:
+        with factory.begin() as db:
+            db.execute(database.Base.metadata.tables["analysis_snapshots"].insert().values(
+                id="dispatch-snapshot", analysis_run_id="run-owner", user_id="owner",
+                profile_type="daily", period_start=DAY, period_end=DAY,
+                schema_version=contracts.DAILY_SCHEMA_VERSION,
+                intelligence_version=contracts.INTELLIGENCE_VERSION,
+                decision_policy_version=contracts.DECISION_POLICY_VERSION,
+                evidence_version=contracts.EVIDENCE_VERSION, payload=payload,
+            ))
+        monkeypatch.setattr(database, "SessionLocal", factory)
+        monkeypatch.setattr(settings, "push_user", "owner")
+        monkeypatch.setattr(settings, "pushplus_token", "offline-token")
+        monkeypatch.setattr(daily_push, "local_today", lambda: DAY)
+        monkeypatch.setattr(
+            "vitalis.time.local_day_utc_bounds",
+            lambda _day: (datetime(2026, 8, 29), datetime(2100, 1, 1)),
+        )
+
+        class OfflinePush:
+            def __init__(self, pushplus_token):
+                assert pushplus_token == "offline-token"
+
+            def push_daily_profile(self, user_id, profile, period):
+                phases.append("delivery")
+                sent.append((user_id, profile, period))
+                return {"_pushplus_handler": "ok"}
+
+        class SyncThatChangesInput:
+            def __init__(self, **_kwargs):
+                pass
+
+            def drain_once(self):
+                phases.append("sync")
+                with factory.begin() as db:
+                    db.get(User, "owner").analysis_input_revision += 1
+                return None
+
+        def drain_analysis(*, max_jobs):
+            phases.append("analysis")
+            return 0
+
+        monkeypatch.setattr(daily_push, "PushService", OfflinePush)
+        monkeypatch.setattr("vitalis.bootstrap.get_connector", lambda _source: object())
+        monkeypatch.setattr(
+            "vitalis.adapters.zepp.sync_coordinator.ZeppSyncCoordinator",
+            SyncThatChangesInput,
+        )
+        monkeypatch.setattr("vitalis.application.jobs.drain_analysis_jobs", drain_analysis)
+
+        assert jobs.dispatcher_job() == 1
+        assert sent == [("owner", payload, "morning")]
+        assert phases == ["analysis", "delivery", "sync"]
+        with factory() as db:
+            assert db.query(NotificationDelivery).one().status == "succeeded"
+            assert db.get(User, "owner").analysis_input_revision == 1
+            assert HealthRepository(db).latest_analysis_snapshot("owner", "daily", DAY) is None
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("period", ["weekly", "monthly"])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_calendar_delivery_uses_period_snapshot_and_deduplicates(
+    tmp_path, monkeypatch, period, enabled,
+):
+    from vitalis.adapters import daily_push
+    from vitalis.adapters.persistence import database
+    from vitalis.config import settings
+    from vitalis.intelligence.report_periods import delivery_period_dates
+    from tests.test_report_content import synthetic_period_fixture
+
+    engine, factory = _database(tmp_path)
+    run_id = f"run-{period}"
+    start, target = delivery_period_dates(period, DAY)
+    payload = synthetic_period_fixture(period)
+    payload.update({
+        "analysis_run_id": run_id,
+        "user_id": "owner",
+        "period_start": start.isoformat(),
+        "period_end": target.isoformat(),
+        "report_context": {
+            **payload.get("report_context", {}),
+            "period_mode": "calendar",
+        },
+    })
+    sent = []
+
+    class OfflinePush:
+        def __init__(self, pushplus_token):
+            assert pushplus_token == "offline-token"
+
+        def push_weekly_profile(self, user_id, profile):
+            sent.append((user_id, "weekly", profile["period_end"]))
+            return {"_pushplus_handler": "ok"}
+
+        def push_monthly_profile(self, user_id, profile):
+            sent.append((user_id, "monthly", profile["period_end"]))
+            return {"_pushplus_handler": "ok"}
+
+    try:
+        with factory.begin() as db:
+            db.query(NotificationDelivery).delete()
+            db.add(AnalysisRun(
+                id=run_id,
+                user_id="owner",
+                target_date=DAY,
+                status="SUCCEEDED",
+                started_at=NOW,
+                completed_at=NOW,
+                intelligence_version=contracts.INTELLIGENCE_VERSION,
+                decision_policy_version=contracts.DECISION_POLICY_VERSION,
+                evidence_version=contracts.EVIDENCE_VERSION,
+                config_digest=_current_analysis_config_digest(),
+            ))
+            db.flush()
+            db.execute(database.Base.metadata.tables["analysis_snapshots"].insert().values(
+                id=f"snapshot-{period}",
+                analysis_run_id=run_id,
+                user_id="owner",
+                profile_type=period,
+                period_start=start,
+                period_end=target,
+                schema_version=(
+                    contracts.WEEKLY_SCHEMA_VERSION
+                    if period == "weekly" else contracts.MONTHLY_SCHEMA_VERSION
+                ),
+                intelligence_version=contracts.INTELLIGENCE_VERSION,
+                decision_policy_version=contracts.DECISION_POLICY_VERSION,
+                evidence_version=contracts.EVIDENCE_VERSION,
+                payload=payload,
+            ))
+            repo = HealthRepository(db)
+            first = repo.enqueue_notification_delivery("owner", run_id, period, target)
+            second = repo.enqueue_notification_delivery("owner", run_id, period, target)
+            assert first.id == second.id
+            assert first.target_date == target
+        monkeypatch.setattr(database, "SessionLocal", factory)
+        monkeypatch.setattr(settings, "push_user", "owner")
+        monkeypatch.setattr(settings, "pushplus_token", "offline-token")
+        monkeypatch.setattr(settings, f"{period}_report_enabled", enabled)
+        monkeypatch.setattr(daily_push, "PushService", OfflinePush)
+        from vitalis.scheduler import jobs
+        assert jobs.drain_notification_deliveries() == 1
+        assert sent == ([("owner", period, target.isoformat())] if enabled else [])
+        assert jobs.drain_notification_deliveries() == 0
+        with factory() as db:
+            row = db.query(NotificationDelivery).filter_by(period=period).one()
+            assert row.status == ("succeeded" if enabled else "deferred")
+            assert row.last_error == (None if enabled else "delivery_disabled")
+    finally:
+        engine.dispose()
+
+
+def test_late_calendar_analysis_repoints_existing_unsent_intent(tmp_path):
+    from vitalis.intelligence.report_periods import delivery_period_dates
+
+    engine, factory = _database(tmp_path)
+    _, period_end = delivery_period_dates("weekly", DAY)
+    try:
+        with factory.begin() as db:
+            db.add_all([
+                AnalysisRun(
+                    id="run-calendar-old",
+                    user_id="owner",
+                    target_date=DAY,
+                    status="SUCCEEDED",
+                    started_at=NOW,
+                    completed_at=NOW,
+                    intelligence_version=contracts.INTELLIGENCE_VERSION,
+                    decision_policy_version=contracts.DECISION_POLICY_VERSION,
+                    evidence_version=contracts.EVIDENCE_VERSION,
+                    config_digest=_current_analysis_config_digest(),
+                ),
+                AnalysisRun(
+                    id="run-calendar-new",
+                    user_id="owner",
+                    target_date=DAY,
+                    status="SUCCEEDED",
+                    started_at=NOW + timedelta(minutes=1),
+                    completed_at=NOW + timedelta(minutes=1),
+                    intelligence_version=contracts.INTELLIGENCE_VERSION,
+                    decision_policy_version=contracts.DECISION_POLICY_VERSION,
+                    evidence_version=contracts.EVIDENCE_VERSION,
+                    config_digest=_current_analysis_config_digest(),
+                ),
+            ])
+            db.flush()
+            repo = HealthRepository(db)
+            row = repo.enqueue_notification_delivery(
+                "owner", "run-calendar-old", "weekly", period_end
+            )
+            assert row.status == "pending"
+            assert repo.refresh_existing_calendar_notification_deliveries(
+                "owner", "run-calendar-new", DAY
+            ) == 1
+            db.refresh(row)
+            assert row.analysis_run_id == "run-calendar-new"
+            assert row.target_date == period_end
+            assert row.status == "pending"
+    finally:
+        engine.dispose()
+
+
 @pytest.mark.parametrize("enqueue_new_run", [False, True])
 def test_claimed_delivery_uses_latest_eligible_run_before_sending(
     tmp_path, monkeypatch, enqueue_new_run,

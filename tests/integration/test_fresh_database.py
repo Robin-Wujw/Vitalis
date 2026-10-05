@@ -38,6 +38,25 @@ def test_fresh_database_initializes_once_and_keeps_revision(tmp_path):
         engine.dispose()
 
 
+def test_previous_delivery_schema_is_refused_without_modifying_data(tmp_path):
+    path = tmp_path / "previous-delivery.db"
+    engine = create_engine(f"sqlite:///{path.as_posix()}")
+    try:
+        init_db(engine)
+        with engine.begin() as db:
+            db.execute(text(
+                "UPDATE vitalis_schema SET revision='2026-10-cloud-zepp-only'"
+            ))
+        original = path.read_bytes()
+        with pytest.raises(SchemaMismatch, match="版本不匹配"):
+            check_schema(engine)
+        with pytest.raises(SchemaMismatch, match="版本不匹配"):
+            init_db(engine)
+        assert path.read_bytes() == original
+    finally:
+        engine.dispose()
+
+
 def test_existing_unversioned_database_is_not_modified(tmp_path):
     path = tmp_path / "previous.db"
     with sqlite3.connect(path) as db:

@@ -44,7 +44,7 @@ class SqlAnalysisJobRepository:
         self, user_id: str, day: date, key: str, request_hash: str,
         delivery_period: str | None = None,
     ) -> str:
-        if delivery_period not in (None, "morning", "evening"):
+        if delivery_period not in (None, "morning", "evening", "weekly", "monthly"):
             raise ValueError("invalid delivery period")
         job_id = uuid4().hex
         try:

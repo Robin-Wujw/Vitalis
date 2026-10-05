@@ -4,6 +4,7 @@ import pytest
 
 from vitalis.intelligence.report_periods import (
     PeriodMode,
+    delivery_period_dates,
     resolve_month_period,
     resolve_week_period,
 )
@@ -42,6 +43,18 @@ def test_rolling_periods_keep_explicit_window_labels():
     assert (month.start, month.end) == (date(2026, 8, 1), date(2026, 8, 28))
     assert week.metadata()["period_kind"] == "rolling_week"
     assert month.metadata()["period_kind"] == "rolling_month"
+
+
+def test_scheduled_report_uses_logical_period_end_as_identity():
+    assert delivery_period_dates("weekly", date(2026, 8, 28)) == (
+        date(2026, 8, 17), date(2026, 8, 23)
+    )
+    assert delivery_period_dates("monthly", date(2026, 8, 28)) == (
+        date(2026, 7, 1), date(2026, 7, 31)
+    )
+    assert delivery_period_dates("morning", date(2026, 8, 28)) == (
+        date(2026, 8, 28), date(2026, 8, 28)
+    )
 
 
 def test_unknown_period_mode_is_rejected():

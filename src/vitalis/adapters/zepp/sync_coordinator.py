@@ -1125,7 +1125,9 @@ class ZeppSyncCoordinator:
                     report.status == "failed"
                     and report.error_kind == "resource_limit"
                     and chunk["stream"] == "workout_detail"
-                    and attempt.get("trigger") in {"nightly", "morning", "evening"}
+                    and attempt.get("trigger") in {
+                        "nightly", "morning", "evening", "weekly", "monthly",
+                    }
                 )
                 if optional_detail_limit:
                     report.status = "unavailable"
@@ -1154,7 +1156,14 @@ class ZeppSyncCoordinator:
                     chunk["allow_unavailable"] or optional_detail_limit
                 ):
                     final_status = "failed"
-                ok = repo.finalize_chunk(claim.lease.entity_id, claim.lease.token, claim.lease.epoch, final_status, now=now, stages=stage_status, raw_records=max(result.raw_records, report.raw_records), records_written=report.records_written, error_kind=error_kind, error=error)
+                ok = repo.finalize_chunk(
+                    claim.lease.entity_id, claim.lease.token, claim.lease.epoch,
+                    final_status, now=now, stages=stage_status,
+                    raw_records=max(result.raw_records, report.raw_records),
+                    records_written=report.records_written,
+                    error_kind=error_kind, error=error,
+                    optional_detail_limit=optional_detail_limit,
+                )
                 if not ok:
                     raise StaleSyncLease("chunk lease expired before finalize")
                 repo.save_sync_stream_state(
@@ -1267,7 +1276,11 @@ class ZeppSyncCoordinator:
         if terminal_status not in {"succeeded", "partial"}:
             return
         trigger = attempt.get("trigger")
-        if trigger not in {"nightly", "morning", "evening"}:
+        if trigger == "nightly":
+            delivery_period = None
+        elif trigger in {"morning", "evening", "weekly", "monthly"}:
+            delivery_period = trigger
+        else:
             return
         window_end = attempt["window_end"]
         if window_end.tzinfo is None:
@@ -1276,7 +1289,6 @@ class ZeppSyncCoordinator:
             window_end - timedelta(microseconds=1),
             attempt.get("timezone") or None,
         )
-        delivery_period = trigger if trigger in {"morning", "evening"} else None
         key = f"scheduled-sync:{attempt['id']}:{target_date.isoformat()}:{delivery_period or '-'}"
         request_hash = hashlib.sha256(
             f"analyze:v2:{target_date.isoformat()}:{delivery_period or '-'}".encode("ascii")

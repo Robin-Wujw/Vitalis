@@ -53,8 +53,8 @@ def create_analysis_job(
     ):
         raise ValueError("invalid idempotency key")
 
-    if delivery_period not in (None, "morning", "evening"):
-        raise ValueError("delivery_period must be morning or evening")
+    if delivery_period not in (None, "morning", "evening", "weekly", "monthly"):
+        raise ValueError("delivery_period must be morning, evening, weekly, or monthly")
     request_hash = sha256(
         f"analyze:v2:{day.isoformat()}:{delivery_period or '-'}".encode("ascii")
     ).hexdigest()

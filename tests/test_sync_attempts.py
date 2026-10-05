@@ -344,6 +344,43 @@ def test_stale_token_finalize_is_rejected_and_retry_is_counted():
         assert chunk.attempt_count == 2
 
 
+def test_optional_detail_resource_limit_keeps_other_unavailable_and_lease_guards():
+    init_db()
+    user_id = "ledger-optional-detail-limit"
+    try:
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            repo.delete_for_user(user_id)
+            attempt = _attempt(repo, user_id, trigger="weekly", manifest=[
+                {"stable_key": "detail", "stream": "workout_detail"},
+                {"stable_key": "heart", "stream": "heart_rate"},
+            ])
+            assert repo.claim_attempt(attempt.id, "attempt-token", now=NOW)
+            detail, heart = repo.sync_chunks(attempt.id)
+            assert repo.claim_chunk(detail.id, "detail-token", now=NOW)
+            assert repo.claim_chunk(heart.id, "heart-token", now=NOW)
+            assert not repo.finalize_chunk(
+                detail.id, "detail-token", 1, "unavailable", now=NOW,
+                error_kind="not_available", optional_detail_limit=True,
+            )
+            assert not repo.finalize_chunk(
+                heart.id, "heart-token", 1, "unavailable", now=NOW,
+                error_kind="resource_limit", optional_detail_limit=True,
+            )
+            assert not repo.finalize_chunk(
+                detail.id, "stale-token", 1, "unavailable", now=NOW,
+                error_kind="resource_limit", optional_detail_limit=True,
+            )
+            assert repo.finalize_chunk(
+                detail.id, "detail-token", 1, "unavailable", now=NOW,
+                error_kind="resource_limit", optional_detail_limit=True,
+            )
+            assert detail.status == "unavailable" and heart.status == "running"
+    finally:
+        with session_scope() as db:
+            HealthRepository(db).delete_for_user(user_id)
+
+
 def test_specific_finalize_helpers_cover_success_and_failure():
     init_db()
     with session_scope() as db:

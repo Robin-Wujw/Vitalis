@@ -41,6 +41,12 @@ class Settings:
     pairing_rate_limit_window_seconds: int
     push_user: str
     pushplus_token: str = field(repr=False)
+    weekly_report_enabled: bool
+    weekly_report_hour: int
+    weekly_report_minute: int
+    monthly_report_enabled: bool
+    monthly_report_hour: int
+    monthly_report_minute: int
 
 
 def load_settings(environ: Mapping[str, str]) -> Settings:
@@ -151,6 +157,12 @@ def load_settings(environ: Mapping[str, str]) -> Settings:
         pairing_rate_limit_window_seconds=integer("ZEPP_PAIRING_RATE_LIMIT_WINDOW_SECONDS", 60, 1, 86400),
         push_user=environ.get("VITALIS_PUSH_USER", ""),
         pushplus_token=environ.get("PUSHPLUS_TOKEN", ""),
+        weekly_report_enabled=boolean("VITALIS_WEEKLY_REPORT_ENABLED", False),
+        weekly_report_hour=integer("VITALIS_WEEKLY_REPORT_HOUR", 10, 0, 23),
+        weekly_report_minute=integer("VITALIS_WEEKLY_REPORT_MINUTE", 0, 0, 59),
+        monthly_report_enabled=boolean("VITALIS_MONTHLY_REPORT_ENABLED", False),
+        monthly_report_hour=integer("VITALIS_MONTHLY_REPORT_HOUR", 10, 0, 23),
+        monthly_report_minute=integer("VITALIS_MONTHLY_REPORT_MINUTE", 30, 0, 59),
     )
 
 

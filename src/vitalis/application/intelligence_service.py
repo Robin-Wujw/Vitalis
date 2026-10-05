@@ -24,7 +24,11 @@ from vitalis.application.ports import (
     JobClaim,
 )
 from vitalis.intelligence.evidence import EVIDENCE_REFS
-from vitalis.intelligence.report_periods import resolve_month_period, resolve_week_period
+from vitalis.intelligence.report_periods import (
+    delivery_period_dates,
+    resolve_month_period,
+    resolve_week_period,
+)
 
 from vitalis.intelligence.context import AgentContextEngine
 from vitalis.intelligence.contracts import (
@@ -312,15 +316,20 @@ class IntelligenceCommand:
                 )
                 row = repo.complete_analysis_run(run.id, AnalysisRunStatus.SUCCEEDED.value)
                 repo.rearm_unavailable_notification_deliveries(user_id, run.id, target)
-                if (
-                    job_claim is not None
-                    and job_claim.delivery_period in {"morning", "evening"}
-                ):
+                repo.refresh_existing_calendar_notification_deliveries(
+                    user_id, run.id, target
+                )
+                if job_claim is not None and job_claim.delivery_period in {
+                    "morning", "evening", "weekly", "monthly",
+                }:
+                    _, report_end = delivery_period_dates(
+                        job_claim.delivery_period, target
+                    )
                     repo.enqueue_notification_delivery(
                         user_id,
                         run.id,
                         job_claim.delivery_period,
-                        target,
+                        report_end,
                     )
                 completed_run = _run_from_row(row)
                 uow.commit()

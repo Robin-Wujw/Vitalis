@@ -23,4 +23,4 @@ python tools/check.py quick
 git diff --check
 ```
 
-`python tools/check.py backend`、`clients`、`package` 和 `all --ci` 按改动范围运行；`package` 会构建并检查 wheel/sdist 内容、在离仓环境安装 wheel，验证第三方声明随包提供且本地 APK/图片不进入源分发包。`all --ci` 的某些设备构建步骤可能依赖在线预检查，不能把未运行的部分写成通过。提交说明应列行为变化、目标测试与文档更新；失败和跳过写明原因。示例输入用合成或脱敏记录，保留缺失字段、来源、单位和训练身份；协议修改同时更新对应测试及客户端。按[文档中心](docs/README.md)的主题归属更新唯一当前指南，不以已删除的旧双语契约或历史笔记代替当前源码；文档历史可在 Git 中追溯。许可证材料见[第三方声明](THIRD_PARTY_NOTICES.md)。
+`python tools/check.py backend`、`clients`、`package` 和 `all --ci` 按改动范围运行；`package` 会构建并检查 wheel/sdist 内容、在离仓环境安装 wheel，验证第三方声明随包提供且本地 APK/图片不进入源分发包。`all --ci` 汇总上述目标及离线端到端验收；检查前需准备锁定依赖、`uv`、Node.js 和离线缓存。缺少工具或依赖时如实记录阻塞，不能把未运行的部分写成通过。提交说明应列行为变化、目标测试与文档更新；失败和跳过写明原因。示例输入用合成或脱敏记录，保留缺失字段、来源、单位和训练身份；协议修改同时更新对应测试及客户端。按[文档中心](docs/README.md)的主题归属更新唯一当前指南，不以已删除的旧双语契约或历史笔记代替当前源码；文档历史可在 Git 中追溯。许可证材料见[第三方声明](THIRD_PARTY_NOTICES.md)。

@@ -121,6 +121,19 @@ def resolve_month_period(
     )
 
 
+def delivery_period_dates(kind: str, target_day: date) -> tuple[date, date]:
+    """Return the logical calendar window for a scheduled report."""
+    if kind in {"morning", "evening"}:
+        return target_day, target_day
+    if kind == "weekly":
+        period = resolve_week_period(target_day)
+    elif kind == "monthly":
+        period = resolve_month_period(target_day)
+    else:
+        raise ValueError("unsupported notification period")
+    return period.start, period.end
+
+
 # Short aliases make the resolver convenient for callers and tests without
 # duplicating the period arithmetic in report engines.
 weekly_period = resolve_week_period
@@ -132,6 +145,7 @@ __all__ = [
     "normalize_period_mode",
     "resolve_week_period",
     "resolve_month_period",
+    "delivery_period_dates",
     "weekly_period",
     "monthly_period",
 ]

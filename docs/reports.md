@@ -33,6 +33,8 @@ Hermes 是可选的互动入口。用户主动追问时，可以解释同一快�
 
 两种渠道共享事实和分析规则。Hermes 新增的反馈只进入后续分析输入，不回写旧快照；关闭 Hermes 不影响 PushPlus 报告的生成、调度和投递。
 
+PushPlus 的晨报和晚报按现有 worker 时间运行。周报和月报自动投递默认关闭；分别设置 `VITALIS_WEEKLY_REPORT_ENABLED=true` 或 `VITALIS_MONTHLY_REPORT_ENABLED=true` 后，worker 会在配置的本地时间为单向推送用户排队周一周报或每月 1 日月报。周一的周报同步窗口覆盖上一完整周和排队当天，共 8 个本地日期。通知幂等键使用报告种类和周期结束日，迟到数据形成新分析时只更新尚未发送的意图。关闭周报或月报开关也会阻止对应的已排队报告外发，将意图保留为 `deferred`。当前推送配置仍是一个显式 `VITALIS_PUSH_USER`，周/月的启用和时间是部署级设置；按用户静默时段、详细程度和多频道偏好尚未接入。
+
 ## 示例与验证边界
 
 仓库中的[晨报示例](plans/reports/morning.md)、[日报示例](plans/reports/daily.md)、[周报示例](plans/reports/weekly.md)和[月报示例](plans/reports/monthly.md)使用合成数据，展示文案目标，不代表某个真实用户的已发送报告。[数据不足示例](plans/reports/insufficient-data.md)展示受影响的比较如何提示。[Hermes 对话示例](plans/reports/hermes-interaction.md)展示对话规则，不等于已完成真实 Hermes 环境联调。

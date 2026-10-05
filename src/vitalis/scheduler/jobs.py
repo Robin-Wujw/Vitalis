@@ -74,7 +74,7 @@ def nightly_sync_job() -> None:
 
 
 def _profile_push_job(period: str, sync_days: int) -> None:
-    """Queue the morning/evening attempt at its existing local time."""
+    """Queue one scheduled sync whose terminal state creates the report job."""
     for user_id in _get_authorized_users():
         try:
             _sync_user(user_id, days=sync_days, label=period)
@@ -89,6 +89,14 @@ def morning_analysis_job() -> None:
 
 def evening_analysis_job() -> None:
     _profile_push_job("evening", sync_days=1)
+
+
+def weekly_analysis_job() -> None:
+    _profile_push_job("weekly", sync_days=8)
+
+
+def monthly_analysis_job() -> None:
+    _profile_push_job("monthly", sync_days=2)
 
 
 def worker_heartbeat_job() -> None:
@@ -111,7 +119,11 @@ NOTIFICATION_LEASE_SECONDS = 300
 
 def drain_notification_deliveries(*, max_deliveries: int = 1) -> int:
     """Claim saved report intents and deliver them without recomputing health data."""
-    from vitalis.adapters.daily_push import DailyPushDeliveryError, deliver_daily_report
+    from vitalis.adapters.daily_push import (
+        DailyPushDeliveryError,
+        deliver_daily_report,
+        deliver_period_report,
+    )
     from vitalis.adapters.persistence import HealthRepository, session_scope
     from vitalis.adapters.persistence.models import NotificationDelivery
     from vitalis.time import local_day_utc_bounds
@@ -138,7 +150,13 @@ def drain_notification_deliveries(*, max_deliveries: int = 1) -> int:
         status = "failed"
         error = "render_failed"
         next_attempt_at = None
-        if not settings.push_user or not settings.pushplus_token or settings.push_user != delivery["user_id"]:
+        if (
+            not settings.push_user
+            or not settings.pushplus_token
+            or settings.push_user != delivery["user_id"]
+            or (delivery["period"] == "weekly" and not settings.weekly_report_enabled)
+            or (delivery["period"] == "monthly" and not settings.monthly_report_enabled)
+        ):
             status = "deferred"
             error = "delivery_disabled"
         else:
@@ -153,16 +171,25 @@ def drain_notification_deliveries(*, max_deliveries: int = 1) -> int:
                     status = "deferred"
                     error = "snapshot_unavailable"
                 else:
-                    _, plan_expires_at = local_day_utc_bounds(delivery["target_date"])
-                    result = deliver_daily_report(
-                        delivery["user_id"],
-                        settings.pushplus_token,
-                        payload,
-                        period=delivery["period"],
-                        target_date=delivery["target_date"],
-                        plan_expires_at=plan_expires_at,
-                        scheduled_delivery=True,
-                    )
+                    if delivery["period"] in {"weekly", "monthly"}:
+                        result = deliver_period_report(
+                            delivery["user_id"],
+                            settings.pushplus_token,
+                            payload,
+                            period=delivery["period"],
+                            target_date=delivery["target_date"],
+                        )
+                    else:
+                        _, plan_expires_at = local_day_utc_bounds(delivery["target_date"])
+                        result = deliver_daily_report(
+                            delivery["user_id"],
+                            settings.pushplus_token,
+                            payload,
+                            period=delivery["period"],
+                            target_date=delivery["target_date"],
+                            plan_expires_at=plan_expires_at,
+                            scheduled_delivery=True,
+                        )
                     if result.get("status") == "deferred":
                         status = "deferred"
                         error = str(result.get("reason") or "stored_data_incomplete")
@@ -206,6 +233,9 @@ def dispatcher_job() -> int:
     analysis_drained = drain_analysis_jobs(max_jobs=1)
     if analysis_drained:
         log.info("analysis dispatcher drained jobs=%s", analysis_drained)
+    notification_drained = drain_notification_deliveries(max_deliveries=1)
+    if notification_drained:
+        log.info("notification dispatcher drained deliveries=%s", notification_drained)
     coordinator = ZeppSyncCoordinator(
         connector=get_connector("zepp"),
         lease_seconds=getattr(settings, "sync_lease_seconds", 120),
@@ -220,9 +250,6 @@ def dispatcher_job() -> int:
         drained += 1
     if drained:
         log.info("sync dispatcher drained chunks=%s", drained)
-    notification_drained = drain_notification_deliveries(max_deliveries=1)
-    if notification_drained:
-        log.info("notification dispatcher drained deliveries=%s", notification_drained)
     return drained + analysis_drained + notification_drained
 
 
@@ -249,6 +276,30 @@ def start_scheduler() -> BackgroundScheduler:
         id="evening_analysis", misfire_grace_time=1800,
         max_instances=1, coalesce=True,
     )
+    if settings.weekly_report_enabled:
+        scheduler.add_job(
+            weekly_analysis_job,
+            CronTrigger(
+                day_of_week="mon",
+                hour=settings.weekly_report_hour,
+                minute=settings.weekly_report_minute,
+                timezone=settings.timezone,
+            ),
+            id="weekly_analysis", misfire_grace_time=3600,
+            max_instances=1, coalesce=True,
+        )
+    if settings.monthly_report_enabled:
+        scheduler.add_job(
+            monthly_analysis_job,
+            CronTrigger(
+                day=1,
+                hour=settings.monthly_report_hour,
+                minute=settings.monthly_report_minute,
+                timezone=settings.timezone,
+            ),
+            id="monthly_analysis", misfire_grace_time=3600,
+            max_instances=1, coalesce=True,
+        )
     scheduler.add_job(
         dispatcher_job,
         IntervalTrigger(

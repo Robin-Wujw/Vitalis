@@ -484,7 +484,6 @@ def _key_changes(trends: list[TrendFeature]) -> list[str]:
         "sleep_rhr": 3,
         "resting_hr": 3,
         "training_load": 4,
-        "steps": 5,
     }
     selected = [
         item for item in trends

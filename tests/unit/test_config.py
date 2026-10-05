@@ -18,6 +18,12 @@ def test_load_settings_is_explicit_and_does_not_change_process_environment(monke
         ("PORT", "nope"),
         ("PORT", "65536"),
         ("SYNC_CRON_HOUR", "24"),
+        ("VITALIS_WEEKLY_REPORT_ENABLED", "perhaps"),
+        ("VITALIS_WEEKLY_REPORT_HOUR", "24"),
+        ("VITALIS_WEEKLY_REPORT_MINUTE", "60"),
+        ("VITALIS_MONTHLY_REPORT_ENABLED", "perhaps"),
+        ("VITALIS_MONTHLY_REPORT_HOUR", "-1"),
+        ("VITALIS_MONTHLY_REPORT_MINUTE", "-1"),
         ("ZEPP_MOCK", "perhaps"),
         ("DATABASE_URL", "mysql://host/db"),
         ("VITALIS_TIMEZONE", "not/a/timezone"),
@@ -49,3 +55,20 @@ def test_settings_hold_server_delivery_config_without_leaking_secret():
     values = load_settings({"PUSHPLUS_TOKEN": "secret", "VITALIS_PUSH_USER": "owner"})
     assert values.push_user == "owner"
     assert values.pushplus_token == "secret"
+    assert values.weekly_report_enabled is False
+    assert values.monthly_report_enabled is False
+
+
+def test_calendar_report_schedule_is_explicitly_configurable():
+    values = load_settings({
+        "VITALIS_WEEKLY_REPORT_ENABLED": "true",
+        "VITALIS_WEEKLY_REPORT_HOUR": "8",
+        "VITALIS_WEEKLY_REPORT_MINUTE": "15",
+        "VITALIS_MONTHLY_REPORT_ENABLED": "true",
+        "VITALIS_MONTHLY_REPORT_HOUR": "9",
+        "VITALIS_MONTHLY_REPORT_MINUTE": "45",
+    })
+    assert values.weekly_report_enabled is True
+    assert (values.weekly_report_hour, values.weekly_report_minute) == (8, 15)
+    assert values.monthly_report_enabled is True
+    assert (values.monthly_report_hour, values.monthly_report_minute) == (9, 45)

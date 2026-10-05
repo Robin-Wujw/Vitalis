@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from vitalis.intelligence.contracts import (
     ConfidenceBand,
@@ -303,3 +303,42 @@ def test_weekly_comparison_requires_four_days_in_each_period():
     assert profile.facts.sleep.change_percent is None
     assert profile.facts.activity.previous_available_days == 3
     assert profile.facts.activity.steps_change_percent is None
+
+
+def test_calendar_weekly_steps_use_activity_average_in_report_changes():
+    from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
+
+    raw = RawDailyProfile(
+        user_id="weekly-step-statistics",
+        day=date(2026, 10, 5),
+        as_of=datetime(2026, 10, 5, 9, tzinfo=timezone.utc),
+        timezone_name="UTC",
+    )
+    values = [1000] * 6 + [13000] + [2000] * 6 + [8900]
+    first_day = date(2026, 9, 21)
+    raw.series["steps"] = [
+        SeriesPoint(
+            metric="steps", value=value, unit="steps",
+            day=first_day + timedelta(days=index),
+            observed_at=first_day + timedelta(days=index),
+            source="zepp", source_scope="normalized_daily_record",
+        )
+        for index, value in enumerate(values)
+    ]
+
+    profile = WeeklyProfileEngine().build("weekly-step-run", raw, [], [])
+
+    assert profile.period_start == date(2026, 9, 28)
+    assert profile.period_end == date(2026, 10, 4)
+    assert profile.facts.activity.available_days == 7
+    assert profile.facts.activity.previous_available_days == 7
+    assert profile.facts.activity.steps_change_percent == 10.0
+    median_trend = next(item for item in profile.inferences.trends if item.metric == "steps")
+    assert median_trend.change_percent == 100.0
+    assert not any("步数" in item for item in profile.inferences.key_changes)
+
+    sections = WeeklyBriefingEngine().build(profile).model_dump(mode="json")["sections"]
+    recovery = next(item for item in sections if item["key"] == "sleep_recovery")
+    activity = next(item for item in sections if item["key"] == "activity_feedback")
+    assert not any("步数" in item for item in recovery["interpretation"])
+    assert any("日均步数" in item and "10.0%" in item for item in activity["interpretation"])

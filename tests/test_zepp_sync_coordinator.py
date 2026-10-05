@@ -1151,24 +1151,76 @@ def test_coordinator_wellness_chunk_handles_non_capped_payload():
     assert result.incomplete is False
 
 
-@pytest.mark.parametrize("period", ("morning", "evening"))
+@pytest.mark.parametrize("period", ("nightly", "morning", "evening", "weekly", "monthly", "manual"))
+def test_scheduled_reports_continue_past_oversized_optional_workout_detail(period):
+    from vitalis.adapters.zepp.parser import MAX_WORKOUT_DETAIL_SAMPLES
+
+    user_id = f"coord-oversized-detail-{period}"
+    _clean(user_id)
+
+    class OversizedWorkoutConnector(WorkoutConnector):
+        def fetch_sport_detail(self, workout_id, source):
+            return {"data": {
+                "trackid": int(workout_id), "source": source,
+                "time": "0;" * (MAX_WORKOUT_DETAIL_SAMPLES + 1),
+                "heart_rate": "0,0;0,0",
+            }}
+
+    try:
+        coordinator, attempt = _one_chunk_attempt(
+            user_id, OversizedWorkoutConnector(), trigger=period,
+        )
+        with session_scope() as db:
+            for chunk in HealthRepository(db).sync_chunks(attempt.id):
+                chunk.status = "queued" if chunk.stream == "workouts" else "succeeded"
+
+        report = coordinator.run_attempt(attempt.id)
+        with session_scope() as db:
+            repo = HealthRepository(db)
+            detail = next(
+                chunk for chunk in repo.sync_chunks(attempt.id)
+                if chunk.stream == "workout_detail"
+            )
+            assert detail.error_kind == "resource_limit", (
+                detail.status, detail.error, report.message, report.progress["status"],
+            )
+            assert detail.status == ("failed" if period == "manual" else "unavailable")
+            workout = repo.workout(user_id, detail.stages["params"]["workout_id"])
+            assert workout is not None and not workout.detail_synced
+            assert workout.detail is None
+            jobs = db.query(orm.AnalysisJob).filter_by(user_id=user_id).all()
+            if period == "manual":
+                assert not report.success and jobs == []
+            else:
+                assert report.progress["status"] in {"succeeded", "partial"}
+                assert len(jobs) == 1 and jobs[0].status == "queued"
+                assert jobs[0].delivery_period == (None if period == "nightly" else period)
+    finally:
+        _clean(user_id)
+
+
+@pytest.mark.parametrize("period", ("morning", "evening", "weekly", "monthly"))
 def test_scheduled_sync_enqueues_analysis_without_inline_delivery(period):
     user_ids = (f"coord-scheduled-{period}-owner", f"coord-scheduled-{period}-other")
-    for user_id in user_ids:
-        _clean(user_id)
-        coordinator, attempt = _one_chunk_attempt(
-            user_id, HeartConnector(), trigger=period
-        )
-        assert coordinator.run_attempt(attempt.id).success
-        coordinator._apply_terminal_side_effect(attempt.id, "succeeded")
+    try:
+        for user_id in user_ids:
+            _clean(user_id)
+            coordinator, attempt = _one_chunk_attempt(
+                user_id, HeartConnector(), trigger=period
+            )
+            assert coordinator.run_attempt(attempt.id).success
+            coordinator._apply_terminal_side_effect(attempt.id, "succeeded")
 
-    with session_scope() as db:
-        jobs = db.query(orm.AnalysisJob).filter(
-            orm.AnalysisJob.user_id.in_(user_ids),
-        ).all()
-        assert len(jobs) == 2
-        assert {job.delivery_period for job in jobs} == {period}
-        assert {job.status for job in jobs} == {"queued"}
-        assert db.query(orm.NotificationDelivery).filter(
-            orm.NotificationDelivery.user_id.in_(user_ids),
-        ).count() == 0
+        with session_scope() as db:
+            jobs = db.query(orm.AnalysisJob).filter(
+                orm.AnalysisJob.user_id.in_(user_ids),
+            ).all()
+            assert len(jobs) == 2
+            assert {job.delivery_period for job in jobs} == {period}
+            assert {job.status for job in jobs} == {"queued"}
+            assert db.query(orm.NotificationDelivery).filter(
+                orm.NotificationDelivery.user_id.in_(user_ids),
+            ).count() == 0
+    finally:
+        for user_id in user_ids:
+            _clean(user_id)

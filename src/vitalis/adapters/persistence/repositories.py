@@ -2556,6 +2556,7 @@ class HealthRepository:
         *, now: datetime | None = None, next_retry_at: datetime | None = None,
         stages: dict | None = None, raw_records: int = 0, records_written: int = 0,
         error_kind: str | None = None, error: str | None = None,
+        optional_detail_limit: bool = False,
     ) -> bool:
         now = _naive_utc(now or datetime.now(timezone.utc))
         if status == "retry_wait" and next_retry_at is None:
@@ -2619,6 +2620,11 @@ class HealthRepository:
                 )),
             ),
         )
+        unavailable_guard = orm.SyncChunk.allow_unavailable.is_(True)
+        if optional_detail_limit and error_kind == "resource_limit":
+            unavailable_guard = or_(
+                unavailable_guard, orm.SyncChunk.stream == "workout_detail",
+            )
         result = self.db.execute(update(orm.SyncChunk).where(
             orm.SyncChunk.id == chunk_id,
             orm.SyncChunk.attempt_id.in_(active_attempt),
@@ -2627,7 +2633,7 @@ class HealthRepository:
             orm.SyncChunk.lease_epoch == lease_epoch,
             orm.SyncChunk.lease_expires_at > now,
             orm.SyncChunk.stages["_attempt_lease_fence"].as_string() == parent_fence,
-            *([orm.SyncChunk.allow_unavailable.is_(True)] if status == "unavailable" else []),
+            *([unavailable_guard] if status == "unavailable" else []),
         ).values(**values))
         self.db.flush()
         return bool(result.rowcount)
@@ -4339,52 +4345,63 @@ class HealthRepository:
         "render_failed",
     }
 
+    def _repoint_notification_delivery(
+        self, existing: orm.NotificationDelivery, analysis_run_id: str
+    ) -> orm.NotificationDelivery:
+        if existing.analysis_run_id != analysis_run_id:
+            result = self.db.execute(update(orm.NotificationDelivery).where(
+                orm.NotificationDelivery.id == existing.id,
+                orm.NotificationDelivery.analysis_run_id == existing.analysis_run_id,
+                or_(
+                    orm.NotificationDelivery.status.in_(("pending", "failed")),
+                    and_(
+                        orm.NotificationDelivery.status == "deferred",
+                        orm.NotificationDelivery.last_error.in_((
+                            "delivery_disabled", "snapshot_unavailable",
+                            "sleep_incomplete", "stored_data_incomplete",
+                        )),
+                    ),
+                ),
+            ).values(
+                analysis_run_id=analysis_run_id,
+                status="pending",
+                attempt_count=0,
+                lease_token=None,
+                lease_expires_at=None,
+                next_attempt_at=None,
+                last_error=None,
+                updated_at=datetime.utcnow(),
+            ))
+            if result.rowcount:
+                self.db.refresh(existing)
+        return existing
+
     def enqueue_notification_delivery(
         self, user_id: str, analysis_run_id: str, period: str, target_date: date
     ) -> orm.NotificationDelivery:
-        if period not in {"morning", "evening"}:
-            raise ValueError("notification period must be morning or evening")
+        if period not in {"morning", "evening", "weekly", "monthly"}:
+            raise ValueError(
+                "notification period must be morning, evening, weekly, or monthly"
+            )
         run = self.db.execute(select(orm.AnalysisRun).where(
             orm.AnalysisRun.id == analysis_run_id,
             orm.AnalysisRun.user_id == user_id,
-            orm.AnalysisRun.target_date == target_date,
             orm.AnalysisRun.status == "SUCCEEDED",
         )).scalar_one_or_none()
         if run is None:
             raise ValueError("notification delivery requires a succeeded analysis run")
+        from vitalis.intelligence.report_periods import delivery_period_dates
+
+        _, expected_end = delivery_period_dates(period, run.target_date)
+        if expected_end != target_date:
+            raise ValueError("notification target date does not match its report period")
         existing = self.db.execute(select(orm.NotificationDelivery).where(
             orm.NotificationDelivery.user_id == user_id,
             orm.NotificationDelivery.target_date == target_date,
             orm.NotificationDelivery.period == period,
         )).scalar_one_or_none()
         if existing is not None:
-            if existing.analysis_run_id != analysis_run_id:
-                result = self.db.execute(update(orm.NotificationDelivery).where(
-                    orm.NotificationDelivery.id == existing.id,
-                    orm.NotificationDelivery.analysis_run_id == existing.analysis_run_id,
-                    or_(
-                        orm.NotificationDelivery.status.in_(("pending", "failed")),
-                        and_(
-                            orm.NotificationDelivery.status == "deferred",
-                            orm.NotificationDelivery.last_error.in_((
-                                "delivery_disabled", "snapshot_unavailable",
-                                "sleep_incomplete", "stored_data_incomplete",
-                            )),
-                        ),
-                    ),
-                ).values(
-                    analysis_run_id=analysis_run_id,
-                    status="pending",
-                    attempt_count=0,
-                    lease_token=None,
-                    lease_expires_at=None,
-                    next_attempt_at=None,
-                    last_error=None,
-                    updated_at=datetime.utcnow(),
-                ))
-                if result.rowcount:
-                    self.db.refresh(existing)
-            return existing
+            return self._repoint_notification_delivery(existing, analysis_run_id)
         row = orm.NotificationDelivery(
             id=hashlib.sha256(
                 f"{user_id}:{target_date.isoformat()}:{period}".encode("utf-8")
@@ -4420,6 +4437,35 @@ class HealthRepository:
         self.db.add(row)
         self.db.flush()
         return row
+
+    def refresh_existing_calendar_notification_deliveries(
+        self, user_id: str, analysis_run_id: str, target_date: date
+    ) -> int:
+        """Point unsent weekly/monthly intents at a newer eligible analysis run."""
+        run = self.db.execute(select(orm.AnalysisRun.id).where(
+            orm.AnalysisRun.id == analysis_run_id,
+            orm.AnalysisRun.user_id == user_id,
+            orm.AnalysisRun.target_date == target_date,
+            orm.AnalysisRun.status == "SUCCEEDED",
+        )).scalar_one_or_none()
+        if run is None:
+            raise ValueError("calendar notification refresh requires a succeeded analysis run")
+        from vitalis.intelligence.report_periods import delivery_period_dates
+
+        refreshed = 0
+        for period in ("weekly", "monthly"):
+            _, period_end = delivery_period_dates(period, target_date)
+            existing = self.db.execute(select(orm.NotificationDelivery).where(
+                orm.NotificationDelivery.user_id == user_id,
+                orm.NotificationDelivery.period == period,
+                orm.NotificationDelivery.target_date == period_end,
+            )).scalar_one_or_none()
+            if existing is None:
+                continue
+            row = self._repoint_notification_delivery(existing, analysis_run_id)
+            if row.analysis_run_id == analysis_run_id:
+                refreshed += 1
+        return refreshed
 
     def rearm_unavailable_notification_deliveries(
         self, user_id: str, analysis_run_id: str, target_date: date
@@ -4475,7 +4521,7 @@ class HealthRepository:
         self, delivery_id: str, user_id: str, analysis_run_id: str,
         lease_token: str,
     ) -> orm.AnalysisSnapshot | None:
-        """Prepare the newest eligible daily snapshot under the delivery lease."""
+        """Prepare the newest eligible snapshot under the delivery lease."""
         now = _naive_utc(datetime.now(timezone.utc))
         delivery = self.db.execute(select(orm.NotificationDelivery).where(
             orm.NotificationDelivery.id == delivery_id,
@@ -4487,26 +4533,15 @@ class HealthRepository:
         )).scalar_one_or_none()
         if delivery is None:
             return None
-        latest_run_id = self.db.execute(
-            select(orm.AnalysisRun.id).where(
-                orm.AnalysisRun.user_id == user_id,
-                orm.AnalysisRun.target_date == delivery.target_date,
-                orm.AnalysisRun.status == "SUCCEEDED",
-            ).order_by(
-                orm.AnalysisRun.completed_at.desc(), orm.AnalysisRun.id.desc()
-            ).limit(1)
-        ).scalar_one_or_none()
-        if latest_run_id is None:
-            return None
-        snapshot = self.db.execute(
-            self._current_snapshot_query(user_id).where(
-                *self._current_snapshot_conditions(user_id, "daily"),
-                orm.AnalysisSnapshot.analysis_run_id == latest_run_id,
-                orm.AnalysisSnapshot.period_end == delivery.target_date,
-            )
-        ).scalars().first()
+        profile_type = (
+            "daily" if delivery.period in {"morning", "evening"} else delivery.period
+        )
+        snapshot = self.latest_analysis_snapshot(
+            user_id, profile_type, delivery.target_date
+        )
         if snapshot is None:
             return None
+        latest_run_id = snapshot.analysis_run_id
         if latest_run_id != analysis_run_id:
             result = self.db.execute(update(orm.NotificationDelivery).where(
                 orm.NotificationDelivery.id == delivery_id,

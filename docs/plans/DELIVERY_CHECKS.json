@@ -1,16 +1,33 @@
 {
-  "scope": "Design artifacts, synthetic examples, and the repository changes recorded below; no clinical validation or real PushPlus/Hermes integration performed.",
+  "scope": "Synthetic/local verification for the report calendar and durable weekly/monthly PushPlus scheduling increment. Separately approved daily-delivery fixes were deployed to three server code files while preserving the existing schema and historical sync; one current scheduled morning delivery was confirmed by the provider success ledger. Calendar deployment requires preserving the existing server data while adopting the current schema. No clinical validation, real Hermes integration, or browser visual review performed.",
   "repository_checks": {
-    "backend": "PASS: tools/check.py backend; 1062 passed",
-    "quick": "PASS: tools/check.py quick; 131 passed",
+    "aggregate": "PASS: tools/check.py all --ci; exit 0 on 2026-10-05 with Python 3.13.12 and uv 0.12.9",
+    "targeted_calendar_sync_delivery": "PASS: initial calendar/sync/delivery suite 150; scheduler suite 12; weekly comparison/rendering suite 26; sync lease/resource-limit suite 21; dispatcher/outbox/analysis-job suite 51",
+    "backend": "PASS: tools/check.py backend within final all --ci; 1095 passed",
+    "quick": "PASS: tools/check.py quick within all --ci; 138 passed",
     "docs": "PASS: tools/check.py docs; 16 tests, link checker, generated API reference",
     "offline_e2e": "PASS: tools/check.py e2e; 2 passed",
-    "package": "BLOCKED after wheel/sdist content checks passed: uv executable is not installed",
+    "package": "PASS: tools/check.py package within all --ci; wheel/sdist checks (114 wheel resources, 118 sdist files), offline locked installation, detached CLI and resource smoke test",
     "clients_contracts": "PASS: browser/Skill contracts; 30 passed; Node syntax and Skill syntax passed",
     "git_diff_check": "PASS",
-    "real_pushplus": "NOT_RUN: no real notification sent",
+    "real_pushplus": "PASS: ordinary current-day morning delivery confirmed succeeded with one attempt and no error after the approved recovery analysis; provider acceptance does not assert user read/acceptance",
     "real_hermes": "BLOCKED: no authorized Hermes runtime supplied",
     "browser_visual_check": "NOT_RUN: Chromium launch unavailable"
+  },
+  "calendar_delivery": {
+    "period_identity": "PASS: weekly/monthly delivery uses the logical calendar period end",
+    "scheduling": "PASS: opt-in Monday/month-start worker jobs enqueue durable analysis and notification intents",
+    "weekly_sync_window": "PASS: previous complete week plus current Monday; Shanghai and New York spring/fall DST regression cases reproduced the omitted first date before correction and pass after correction",
+    "weekly_steps_comparison": "PASS: calendar report prose uses the selected activity stream's daily-average comparison, retaining the distinct median comparison only in detailed trends; regression reproduced conflicting mean/median changes before correction",
+    "deduplication_and_revision": "PASS: pending calendar intents reuse period identity and latest eligible snapshot",
+    "preferences_scope": "LIMITED: deployment-level single PushPlus user and enable/time settings; per-user silent/detail/channel preferences are not implemented"
+  },
+  "server_daily_push_recovery": {
+    "diagnosis": "PASS: optional-detail finalization guards left a running chunk that blocked reports; analysis-before-sync-before-delivery ordering then invalidated freshly saved snapshots during historical backfill",
+    "hotfix": "PASS: approved patches to three files; changed functions statically matched tested local implementations; original code backed up and all deployed fingerprints verified",
+    "schema_and_records": "PRESERVED: retained the existing deployed schema and health records; ongoing historical sync remains active",
+    "worker_recovery": "PASS: API and worker active without restarts; blocked detail finalized unavailable/resource_limit; dispatcher handles analysis and notification before its own sync batch",
+    "current_scheduled_delivery": "PASS: one explicitly approved current-day morning analysis queued through the normal application entrypoint; worker reused the existing delivery intent and received provider success, one attempt, no error; no test notification"
   },
   "checks": [
     {

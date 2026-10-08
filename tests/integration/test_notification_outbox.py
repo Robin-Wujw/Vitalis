@@ -173,7 +173,7 @@ def test_scheduler_delivers_exact_saved_run_without_filesystem_marker(
         monkeypatch.setattr(settings, "pushplus_token", "offline-token")
         monkeypatch.setattr(daily_push, "local_today", lambda: DAY)
         monkeypatch.setattr(
-            "vitalis.time.local_day_utc_bounds",
+            "vitalis.adapters.daily_push.local_day_utc_bounds",
             lambda _day: (datetime(2026, 8, 29), datetime(2100, 1, 1)),
         )
 
@@ -190,7 +190,7 @@ def test_scheduler_delivers_exact_saved_run_without_filesystem_marker(
         assert sent == [("owner", payload, "morning")]
         with factory() as db:
             row = db.query(NotificationDelivery).one()
-            assert row.status == "succeeded"
+            assert row.status == "accepted"
         assert not list(tmp_path.glob("*.sent"))
     finally:
         engine.dispose()
@@ -228,7 +228,7 @@ def test_dispatcher_delivers_before_sync_invalidates_saved_snapshot(tmp_path, mo
         monkeypatch.setattr(settings, "pushplus_token", "offline-token")
         monkeypatch.setattr(daily_push, "local_today", lambda: DAY)
         monkeypatch.setattr(
-            "vitalis.time.local_day_utc_bounds",
+            "vitalis.adapters.daily_push.local_day_utc_bounds",
             lambda _day: (datetime(2026, 8, 29), datetime(2100, 1, 1)),
         )
 
@@ -267,7 +267,7 @@ def test_dispatcher_delivers_before_sync_invalidates_saved_snapshot(tmp_path, mo
         assert sent == [("owner", payload, "morning")]
         assert phases == ["analysis", "delivery", "sync"]
         with factory() as db:
-            assert db.query(NotificationDelivery).one().status == "succeeded"
+            assert db.query(NotificationDelivery).one().status == "accepted"
             assert db.get(User, "owner").analysis_input_revision == 1
             assert HealthRepository(db).latest_analysis_snapshot("owner", "daily", DAY) is None
     finally:
@@ -361,7 +361,7 @@ def test_calendar_delivery_uses_period_snapshot_and_deduplicates(
         assert jobs.drain_notification_deliveries() == 0
         with factory() as db:
             row = db.query(NotificationDelivery).filter_by(period=period).one()
-            assert row.status == ("succeeded" if enabled else "deferred")
+            assert row.status == ("accepted" if enabled else "deferred")
             assert row.last_error == (None if enabled else "delivery_disabled")
     finally:
         engine.dispose()
@@ -453,7 +453,7 @@ def test_claimed_delivery_uses_latest_eligible_run_before_sending(
         monkeypatch.setattr(settings, "pushplus_token", "offline-token")
         monkeypatch.setattr(daily_push, "local_today", lambda: DAY)
         monkeypatch.setattr(
-            "vitalis.time.local_day_utc_bounds",
+            "vitalis.adapters.daily_push.local_day_utc_bounds",
             lambda _day: (datetime(2026, 8, 29), datetime(2100, 1, 1)),
         )
         original_scope = persistence.session_scope
@@ -505,7 +505,7 @@ def test_claimed_delivery_uses_latest_eligible_run_before_sending(
         assert sent == [("owner", "new", "morning")]
         with factory() as db:
             row = db.query(NotificationDelivery).one()
-            assert row.status == "succeeded"
+            assert row.status == "accepted"
             assert row.analysis_run_id == "run-new"
     finally:
         engine.dispose()
@@ -693,7 +693,7 @@ def test_http_5xx_marks_outbox_delivery_uncertain(tmp_path, monkeypatch):
         monkeypatch.setattr(settings, "pushplus_token", "offline-token")
         monkeypatch.setattr(daily_push, "local_today", lambda: DAY)
         monkeypatch.setattr(
-            "vitalis.time.local_day_utc_bounds",
+            "vitalis.adapters.daily_push.local_day_utc_bounds",
             lambda _day: (datetime(2026, 8, 29), datetime(2100, 1, 1)),
         )
 
@@ -837,5 +837,92 @@ def test_sqlite_backup_preserves_pending_delivery(tmp_path):
                 "SELECT status, period FROM notification_deliveries"
             ).fetchone()
             assert (status, period) == ("pending", "morning")
+    finally:
+        engine.dispose()
+
+
+def test_accepted_delivery_polls_without_a_second_send(tmp_path):
+    engine, factory = _database(tmp_path)
+    try:
+        with factory.begin() as db:
+            repo = HealthRepository(db)
+            send = repo.claim_notification_delivery(now=NOW)
+            assert send is not None
+            assert repo.complete_notification_delivery(
+                send.id, send.lease_token, "accepted",
+                provider_id="short-code", provider_status="accepted",
+                next_poll_at=NOW, now=NOW,
+            )
+        with factory.begin() as db:
+            repo = HealthRepository(db)
+            poll = repo.claim_notification_poll(now=NOW, max_attempts=3)
+            assert poll is not None
+            assert poll.lease_kind == "poll"
+            assert poll.send_attempt_count == 1
+            assert poll.poll_attempt_count == 1
+            assert repo.complete_notification_delivery(
+                poll.id, poll.lease_token, "delivered",
+                provider_id="short-code", provider_status="2",
+                poll_attempt_id=poll.poll_attempt_id,
+                expected_provider_id="short-code", now=NOW,
+            )
+        with factory() as db:
+            row = db.query(NotificationDelivery).one()
+            assert row.status == "delivered"
+            assert row.send_attempt_count == 1
+            assert row.poll_attempt_count == 1
+            assert row.provider_id == "short-code"
+    finally:
+        engine.dispose()
+
+
+def test_stale_poll_attempt_cannot_complete_current_lease(tmp_path):
+    engine, factory = _database(tmp_path)
+    try:
+        with factory.begin() as db:
+            repo = HealthRepository(db)
+            send = repo.claim_notification_delivery(now=NOW)
+            repo.complete_notification_delivery(
+                send.id, send.lease_token, "accepted", provider_id="old-code",
+                provider_status="accepted", next_poll_at=NOW, now=NOW,
+            )
+        with factory.begin() as db:
+            repo = HealthRepository(db)
+            poll = repo.claim_notification_poll(now=NOW)
+            assert poll is not None
+            assert not repo.complete_notification_delivery(
+                poll.id, poll.lease_token, "delivered", provider_id="new-code",
+                provider_status="2", poll_attempt_id="late-poll",
+                expected_provider_id="old-code",
+            )
+            current = db.get(NotificationDelivery, poll.id)
+            assert current.status == "running"
+            assert current.provider_id == "old-code"
+    finally:
+        engine.dispose()
+
+
+def test_explicit_failure_retries_with_backoff_until_max_attempts(tmp_path):
+    engine, factory = _database(tmp_path)
+    try:
+        now = NOW
+        for _attempt in range(3):
+            with factory.begin() as db:
+                repo = HealthRepository(db)
+                row = repo.claim_notification_delivery(now=now, max_attempts=3)
+                assert row is not None
+                assert repo.complete_notification_delivery(
+                    row.id, row.lease_token, "failed", error="transport_rejected",
+                    next_attempt_at=now, now=now,
+                )
+            now += timedelta(seconds=1)
+        with factory.begin() as db:
+            assert HealthRepository(db).claim_notification_delivery(
+                now=now, max_attempts=3
+            ) is None
+        with factory() as db:
+            row = db.query(NotificationDelivery).one()
+            assert row.attempt_count == 3
+            assert row.status == "failed"
     finally:
         engine.dispose()

@@ -45,7 +45,7 @@ class AggregatedBlock:
     # Training aggregates.
     workout_count_total: int = 0
     training_duration_total: int = 0
-    training_load_total: int = 0
+    training_load_total: int | None = None
 
     raw_days: list[NormalizedDaily] = field(default_factory=list, repr=False)
 
@@ -129,4 +129,7 @@ def aggregate_block(block: AggregatedBlock) -> None:
         block.training_duration_total = sum(
             day.total_duration for day in training_days
         )
-        block.training_load_total = sum(day.total_load for day in training_days)
+        loads = [day.total_load for day in training_days]
+        block.training_load_total = (
+            sum(loads) if all(value is not None for value in loads) else None
+        )

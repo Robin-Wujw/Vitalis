@@ -184,7 +184,8 @@ def _reset_dev_database(database: Path, confirmed: bool) -> None:
 
 def _demo(database: Path, day: str | None) -> None:
     """Generate a separate synthetic data set without vendor credentials."""
-    from datetime import date, timedelta
+    from datetime import date, datetime, time, timedelta, timezone
+    from zoneinfo import ZoneInfo
 
     if database.exists() or database.is_symlink():
         raise ValueError("demo requires a new database path; existing data will not be overwritten")
@@ -195,19 +196,69 @@ def _demo(database: Path, day: str | None) -> None:
 
     from vitalis import bootstrap
     from vitalis.application.sync import SyncCommand
+    from vitalis.adapters.demo import seed_demo_workouts
     from vitalis.adapters.persistence import init_db
+    from vitalis.intelligence.report_periods import resolve_month_period
 
+    period = resolve_month_period(target_day)
+    start = min(target_day - timedelta(days=55), period.reference_start)
+    as_of = datetime.combine(target_day, time(21, 20), ZoneInfo(settings.timezone)).astimezone(timezone.utc)
     init_db()
     sync = bootstrap.get_demo_sync().execute(SyncCommand(
-        "demo", name="Synthetic demo", start=target_day - timedelta(days=28), end=target_day
+        "demo", name="Synthetic demo", start=start, end=target_day
     ))
-    result = bootstrap.get_intelligence_command().analyze("demo", target_day)
+    seed_demo_workouts(start, target_day, as_of, settings.timezone)
+    result = bootstrap.get_intelligence_command(
+        today_factory=lambda: target_day, now_factory=lambda: as_of,
+    ).analyze("demo", target_day)
     print(json.dumps({
         "dataset": "synthetic_demo",
         "database": str(database.resolve()),
         "user_id": "demo",
         "days_imported": sync.days_synced,
         "analysis_run_id": result.daily.analysis_run_id,
+    }, ensure_ascii=False))
+
+
+def _write_report(report_kind: str, user_id: str, day: str | None, target: str, output: Path) -> None:
+    """Render a stored briefing to a new local file without sending it."""
+    from datetime import date
+
+    from vitalis import bootstrap
+    from vitalis.intelligence.report_rendering import render_report
+
+    if output.exists() or output.is_symlink():
+        raise ValueError("report output must be a new path; existing files and symlinks are refused")
+    target_day = date.fromisoformat(day) if day else None
+    query = bootstrap.get_intelligence_query()
+    briefing = {
+        "morning": query.morning_briefing,
+        "daily": query.evening_briefing,
+        "evening": query.evening_briefing,
+        "weekly": query.weekly_briefing,
+        "monthly": query.monthly_briefing,
+    }[report_kind](user_id, target_day)
+    if briefing is None:
+        raise ValueError(f"no {report_kind} briefing is available for this user and date")
+    rendered = render_report(briefing, target)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    created = False
+    try:
+        descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        created = True
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
+            stream.write(rendered.content)
+    except Exception:
+        if created:
+            output.unlink(missing_ok=True)
+        raise
+    print(json.dumps({
+        "report": report_kind,
+        "target": target,
+        "media_type": rendered.media_type,
+        "renderer_version": rendered.renderer_version,
+        "content_sha256": rendered.content_sha256,
+        "output": str(output.resolve()),
     }, ensure_ascii=False))
 
 
@@ -302,6 +353,12 @@ def main(argv: list[str] | None = None) -> int:
     demo = subcommands.add_parser("demo", help="Create synthetic data in a new SQLite database")
     demo.add_argument("--database", type=Path, required=True)
     demo.add_argument("--day", help="Local date in YYYY-MM-DD format")
+    report = subcommands.add_parser("report", help="Render a stored report without sending it")
+    report.add_argument("kind", choices=("morning", "daily", "evening", "weekly", "monthly"))
+    report.add_argument("--user", required=True)
+    report.add_argument("--day", help="Report date in YYYY-MM-DD format")
+    report.add_argument("--format", dest="target", choices=("markdown", "html"), default="markdown")
+    report.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "serve":
@@ -340,6 +397,8 @@ def main(argv: list[str] | None = None) -> int:
                 _restore(args.backup, args.database)
         elif args.command == "demo":
             _demo(args.database, args.day)
+        elif args.command == "report":
+            _write_report(args.kind, args.user, args.day, args.target, args.output)
     except (ValueError, RuntimeError, OSError) as exc:
         print(f"vitalis: {exc}", file=sys.stderr)
         return 1

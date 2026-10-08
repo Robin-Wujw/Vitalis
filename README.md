@@ -2,40 +2,63 @@
 
 [English](README.en.md) | [文档中心](docs/README.md)
 
-Vitalis 将可穿戴设备的睡眠、活动和训练记录变成可追溯的个人健康分析与训练建议。确定性引擎计算事实之上的推断；Hermes 等客户端只能读取结构化结果、解释证据和记录用户明确提供的反馈，而不能自行生成健康结论。
+Vitalis 把 Zepp 的睡眠、活动和训练记录整理为可追溯的个人分析与报告。它是预发布的个人趋势工具，不是医疗设备；缺失观测保持缺失，客户端不能自行编造健康事实或训练处方。
 
-## 产品主线
+## 看一份报告
 
-Zepp 和设备补充数据经过同步、规范化和来源核对，形成个人基线与不可变分析快照，再由 API 和客户端读取同一份结果。Zepp 账号密码只输入官方页面，缺失观测不会被伪造。
+以下摘录来自程序生成的[合成日报](docs/examples/reports/daily.md)，没有使用真实健康记录：
 
-## 当前状态
+> **二头肌弯举总次数增加**
+>
+> 2026-10-07 · 数据截至 21:20
+>
+> 昨夜睡眠：7 小时 26 分钟；今日步数：6,076 步。
+>
+> 弯举：每手 10 kg，3 组，12 / 10 / 8 次；较 10 月 4 日同样重量和组数下多 6 次。
+>
+> 下次训练重点观察同样重量下的组次记录。
 
-项目仍处于预发布阶段。源码位于 `src/vitalis/`；CLI 提供 `serve`、`worker`、`user create`、`token issue/revoke`、`db init/reset`、`doctor` 和不需要真实账号的 `demo`。当前 HTTP 操作统一使用 `/api` 前缀，调度器只由独立 worker 启动。健康智能提供 Daily、Weekly、Monthly、训练响应和只用于描述的 `open_health_insights`，后者不改变现行训练决策。数据语义与适用边界见[数据合同](docs/data-contracts.md)。
+完整示例：[晨报](docs/examples/reports/morning.md)、[日报](docs/examples/reports/daily.md)、[周报](docs/examples/reports/weekly.md)、[月报](docs/examples/reports/monthly.md)；也可打开[日报 HTML 预览](docs/examples/reports/daily.html)。
 
-用户范围的 HTTP 调用使用绑定本地用户的 Bearer 令牌及 `read`、`analyze`、`sync`、`feedback`、`manage` 权限；`X-User-Id` 不能单独认证。产品 Skill 使用独立的 Bearer HTTP 薄客户端；离仓 mock 验收与真实 Hermes 环境调用需分开核验，详见[智能体集成](docs/agents.md)。
+## 最短演示
 
-## 报告与渠道
+以下命令在仓库根目录执行，使用合成数据，不接触真实 Zepp 账号，也不会发送通知。需要 Python 3.11–3.13；安装使用锁定的 `uv` 依赖。首次安装 `uv` 和依赖需要联网；已有 `uv` 及完整依赖缓存时，可用 `uv sync --locked --offline --extra dev` 安装。安装完成后的演示和本地报告导出不需要网络。
 
-Vitalis 默认生成按用户本地日历边界计算的晨报、晚报、周报和月报：周报覆盖上一完整周，月报覆盖上一完整月。报告直接给出数据、比较、分析和建议；缺口只在影响当前结论时提示。也支持明确标记为“近 7 日”或“近 28 日”的滚动窗口，不能把滚动窗口称作自然周/月。完整的周期和阅读说明见[报告阅读与渠道](docs/reports.md)。
+```bash
+python -m pip install 'uv==0.12.9'
+uv sync --locked --extra dev
+```
 
-PushPlus 是单向自动接收的只读出口，不要求回复或确认；Hermes 是可选的对话入口，用于用户主动追问和明确授权的反馈记录。发送成功不等于已读、接受或完成。
+PowerShell 设置显式 mock 环境后，在一个新路径创建数据库并生成报告：
 
-## 信任边界
+```powershell
+$env:ZEPP_MOCK = 'true'
+$env:VITALIS_ENV = 'test'
+$env:DATABASE_URL = 'sqlite:///./demo.db'
+uv run --locked --extra dev vitalis demo --database .\demo.db --day 2026-10-07
+uv run --locked --extra dev vitalis report daily --user demo --day 2026-10-07 --format markdown --output .\daily.md
+Get-Content .\daily.md
+```
 
-- **事实、推断和建议分离。** 设备观测、系统判断和行动建议保留不同语义与来源。
-- **缺失数据保持缺失。** Vitalis 不用零值、旧快照、厂商分数或模板内容补齐关键观测。
-- **设备与身份隔离。** 指标按来源、scope、设备和单位保存；一个 Zepp 厂商身份只能属于一个本地用户。
-- **个人基线优先。** 系统关注相对个人历史的变化，不把单一人群阈值当作个人结论。
-- **Agent 不重新计算健康事实。** Agent 只能使用版本化结构化结果，不能自行生成趋势、分数或训练处方。
-- **不是医疗设备。** Vitalis 用于个人趋势观察和运动决策支持，不诊断疾病，也不替代医生判断。
+`demo` 只接受不存在的 `.db`/`.sqlite` 文件；`report` 从已保存分析读取，写入新文件并拒绝覆盖，不启动同步、不发送 PushPlus。`Get-Content` 会显示刚生成的可读 Markdown。晨报、周报和月报把 `daily` 替换为相应 kind。完整 API 读取、令牌和真实连接步骤见[快速开始](docs/quickstart.md)。
 
-## 最短入口
+## 产品边界
 
-在 Python 3.11-3.13 环境安装后，运行 `vitalis demo --database demo.db --day 2026-09-26` 可向**新建的** SQLite 文件写入合成数据和一次分析；`python -m vitalis` 提供同一命令。已有文件不会被覆盖。安装、令牌签发和首份报告见[快速开始](docs/quickstart.md)。生产或长期数据需要先确认[运维](docs/operations.md)与[安全](SECURITY.md)边界，不能直接公开本地默认服务。
+- Zepp 数据经同步、规范化和来源核对后进入持久分析快照；API、PushPlus 和 Hermes 读取同一结果。
+- 用户范围的 HTTP 请求使用绑定用户的 Bearer 令牌；`X-User-Id` 不能代替鉴权。调度器只由独立 `worker` 启动。
+- 报告区分事实、比较、分析和建议；发送被受理不等于已送达、已读、接受或目标完成。
+- Hermes 是可选对话入口，只在用户明确授权时记录反馈；产品 Skill 是可离仓的薄 HTTP 客户端，不重新计算健康事实。
 
-## 按角色阅读
+## 按角色查找
 
-- 首次使用：[快速开始](docs/quickstart.md)；部署或同步排障：[运维](docs/operations.md)。
-- 接口或字段开发：[当前架构](docs/architecture.md) → 服务的 `/docs` → [数据合同](docs/data-contracts.md)。
-- Zepp 连接：[Zepp](docs/zepp.md)；Hermes/其他客户端：[智能体集成](docs/agents.md)。
-- 仓库开发：[AGENTS.md](AGENTS.md) 与 [CONTRIBUTING.md](CONTRIBUTING.md)；完整索引见[文档中心](docs/README.md)。
+- 第一次运行和 API 读取：[快速开始](docs/quickstart.md)
+- 报告周期、PushPlus 与 Hermes：[报告与渠道](docs/reports.md)
+- 模块职责与数据流：[当前架构](docs/architecture.md)
+- 字段、单位、缺失和时间资格：[数据合同](docs/data-contracts.md)
+- Zepp 连接与协议边界：[Zepp](docs/zepp.md)
+- Skill、Bearer 和客户端边界：[智能体集成](docs/agents.md)
+- 配置、worker、备份和排障：[运维](docs/operations.md)
+- 仓库开发：[AGENTS.md](AGENTS.md) 与 [CONTRIBUTING.md](CONTRIBUTING.md)
+- 安全报告：[SECURITY.md](SECURITY.md)；第三方原文：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+
+Vitalis 本身当前没有在 `pyproject.toml` 或仓库根目录声明许可证；不要把第三方 MIT/Apache 声明误读为 Vitalis 的许可证。

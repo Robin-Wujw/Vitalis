@@ -114,7 +114,7 @@ class BaselineEngine:
             direction = "below"
         return Deviation(
             **context,
-            percent=round(percent, 1),
+            percent=round(percent, 1) if percent is not None else None,
             robust_z=round(robust_z, 2) if robust_z is not None else None,
             direction=direction,
         )

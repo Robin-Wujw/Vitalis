@@ -510,7 +510,11 @@ class ZeppConnector(HealthConnector):
                     user_id=user.id, date=day,
                     workout_count=len(day_workouts),
                     total_duration=sum(w.duration for w in day_workouts),
-                    total_load=sum(w.load or 0 for w in day_workouts),
+                    total_load=(
+                        sum(w.load for w in day_workouts)
+                        if all(w.load is not None for w in day_workouts)
+                        else None
+                    ),
                 )
             metric_samples = []
             if day in hrv:

@@ -2,20 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
-import os
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager, nullcontext
 from datetime import UTC, date, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
-
-try:
-    import fcntl
-except ImportError:  # Windows
-    fcntl = None
-    import msvcrt
 
 from vitalis.adapters.notifications import PushService
 from vitalis.adapters.persistence import HealthRepository, session_scope
@@ -27,6 +17,7 @@ from vitalis.application.delivery_policy import (
     stored_profile_is_usable as _stored_profile_is_usable,
 )
 from vitalis.bootstrap import get_intelligence_command
+from vitalis.config import settings
 from vitalis.domain import User
 from vitalis.time import local_day_utc_bounds, local_today
 
@@ -69,15 +60,15 @@ def run_daily_push(
 
     today = local_today()
     current_date = target_date or today
-    marker = _delivery_marker(Path(state_dir), user_id, current_date, period)
-    # Direct manual delivery uses the marker as its first expensive-work gate.
-    if not test_delivery and marker.exists():
-        return {
-            "status": "already_sent",
-            "period": period,
-            "date": current_date.isoformat(),
-        }
+    # Durable NotificationDelivery is the single authority for normal sends.
+    # test_delivery is deliberately isolated and never mutates that intent.
     _require_local_api(api)
+    if not test_delivery:
+        existing = _existing_direct_delivery(user_id, current_date, period)
+        if existing is not None and existing["status"] in {
+            "accepted", "delivered", "uncertain", "running",
+        }:
+            return existing
 
     days = sync_days if sync_days is not None else (2 if period == "morning" else 1)
     if retrospective:
@@ -137,77 +128,229 @@ def deliver_daily_report(
     plan_expires_at: datetime | None = None,
     retrospective: bool = False,
     scheduled_delivery: bool = False,
+    send_attempt_id: str | None = None,
 ) -> dict:
-    """Deliver a saved report using the pure policy and concrete transport."""
+    """Deliver a saved report through the durable notification intent."""
     today = local_today()
     current_date = target_date or today
     timezone_name = (
         (daily.get("report_context") or {}).get("timezone") or "UTC"
     )
-    marker_authoritative = not test_delivery and not scheduled_delivery
-    marker = (
-        _delivery_marker(Path(state_dir), user_id, current_date, period)
-        if marker_authoritative else None
-    )
-    guard = nullcontext() if not marker_authoritative else _delivery_lock(marker)
-    with guard:
-        already_sent = bool(marker_authoritative and marker.exists())
-        if already_sent:
-            return {
-                "status": "already_sent",
-                "period": period,
-                "date": current_date.isoformat(),
-            }
-        if plan_expires_at is None and not retrospective and (
-            scheduled_delivery or target_date is None
-        ):
-            _, plan_expires_at = local_day_utc_bounds(current_date)
+    if plan_expires_at is None and not retrospective and (
+        scheduled_delivery or target_date is None
+    ):
+        _, plan_expires_at = local_day_utc_bounds(current_date)
+
+    # A test delivery is intentionally isolated from the ordinary outbox.  It
+    # exercises the real renderer and fake transport but cannot mark a report sent.
+    if test_delivery:
         decision = prepare_delivery(
-            daily,
-            period=period,
-            target_date=target_date,
-            today=today,
-            as_of=datetime.now(UTC),
-            timezone=timezone_name,
-            test_delivery=test_delivery,
-            already_sent=already_sent,
-            sync_degraded=sync_degraded,
-            sync_status=sync_status,
-            sync_detail=sync_detail,
-            plan_expires_at=plan_expires_at,
+            daily, period=period, target_date=target_date, today=today,
+            as_of=datetime.now(UTC), timezone=timezone_name, test_delivery=True,
+            already_sent=False, sync_degraded=sync_degraded, sync_status=sync_status,
+            sync_detail=sync_detail, plan_expires_at=plan_expires_at,
             retrospective=retrospective,
         )
         if decision["status"] != "ready":
             return decision
         payload = decision["payload"]
-        results = PushService(pushplus_token=pushplus_token).push_daily_profile(
-            user_id, payload, period=period
-        )
-        if results.get("_pushplus_handler") != "ok":
+        try:
+            service = PushService(
+                pushplus_token=pushplus_token,
+                pushplus_access_key=getattr(settings, "pushplus_access_key", ""),
+            )
+        except TypeError:
+            service = PushService(pushplus_token=pushplus_token)
+        results = service.push_daily_profile(user_id, payload, period=period)
+        provider = _provider_result(results)
+        if provider["status"] not in {"accepted", "delivered"}:
             raise DailyPushDeliveryError(
-                ambiguous=results.get("_delivery_outcome") == "uncertain"
+                ambiguous=provider["status"] == "uncertain"
             )
-        if marker_authoritative:
-            _mark_delivered(marker)
-        outcome = {
-            "status": "test_sent" if test_delivery else "sent",
-            "period": period,
-            "date": payload["date"],
-            "quality": payload.get("data_quality", {}).get("status", "UNKNOWN"),
-            "sync_degraded": sync_degraded,
-            "sync_status": sync_status,
-        }
-        if test_delivery:
-            outcome["scheduled_delivery_unchanged"] = True
-        if retrospective:
-            outcome["retrospective"] = True
-        if decision["facts_only"]:
-            outcome.update(
-                mode="facts_only",
-                facts_only=True,
-                coverage_reason=decision["facts_only_reason"],
-            )
+        outcome = _delivery_outcome(
+            payload, period, provider, sync_degraded, sync_status,
+            test=True, retrospective=retrospective, decision=decision,
+        )
         return outcome
+
+    decision = prepare_delivery(
+        daily, period=period, target_date=target_date, today=today,
+        as_of=datetime.now(UTC), timezone=timezone_name, test_delivery=False,
+        already_sent=False, sync_degraded=sync_degraded, sync_status=sync_status,
+        sync_detail=sync_detail, plan_expires_at=plan_expires_at,
+        retrospective=retrospective,
+    )
+    if decision["status"] != "ready":
+        return decision
+    payload = decision["payload"]
+
+    claim = None
+    if not scheduled_delivery:
+        claim = _claim_direct_notification(
+            user_id, payload, period, current_date,
+        )
+        if claim is None:
+            return {
+                "status": "already_sent",
+                "period": period,
+                "date": current_date.isoformat(),
+            }
+        if claim.get("status") == "deferred":
+            return {
+                "status": "deferred", "period": period,
+                "date": current_date.isoformat(),
+                "reason": claim.get("reason", "analysis_run_required"),
+            }
+        if claim.get("status") in {"accepted", "delivered", "uncertain"}:
+            return {
+                "status": claim["status"], "period": period,
+                "date": current_date.isoformat(),
+                "provider_id": claim.get("provider_id"),
+            }
+
+    try:
+        service = PushService(
+            pushplus_token=pushplus_token,
+            pushplus_access_key=getattr(settings, "pushplus_access_key", ""),
+            send_attempt_id=claim.get("send_attempt_id") if claim else send_attempt_id,
+        )
+    except TypeError:
+        service = PushService(pushplus_token=pushplus_token)
+    results = service.push_daily_profile(user_id, payload, period=period)
+    provider = _provider_result(results)
+    if claim is not None:
+        _complete_direct_notification(claim, provider, results)
+    if provider["status"] not in {"accepted", "delivered"}:
+        raise DailyPushDeliveryError(
+            ambiguous=provider["status"] == "uncertain"
+        )
+    outcome = _delivery_outcome(
+        payload, period, provider, sync_degraded, sync_status,
+        test=False, retrospective=retrospective, decision=decision,
+    )
+    if scheduled_delivery:
+        outcome["_pushplus_result"] = provider
+        outcome["_render"] = results.get("_render") or {}
+    return outcome
+
+
+def _existing_direct_delivery(
+    user_id: str, target_date: date, period: ReportPeriod,
+) -> dict | None:
+    with session_scope() as db:
+        row = HealthRepository(db).notification_delivery_for_key(
+            user_id, target_date, period,
+        )
+        if row is None:
+            return None
+        if row.status == "running" and (
+            row.lease_expires_at is None or row.lease_expires_at <= datetime.utcnow()
+        ):
+            return None
+        return {
+            "status": row.status,
+            "period": period,
+            "date": target_date.isoformat(),
+            "provider_id": row.provider_id,
+        }
+
+
+def _provider_result(results: dict) -> dict:
+    result = results.get("_pushplus_result")
+    if isinstance(result, dict):
+        return result
+    handler = results.get("_pushplus_handler")
+    if handler in {"ok", "accepted"}:
+        return {"status": "accepted", "provider_id": None}
+    if handler == "delivered":
+        return {"status": "delivered", "provider_id": None}
+    return {
+        "status": "uncertain" if results.get("_delivery_outcome") == "uncertain" else "failed",
+        "provider_id": None,
+    }
+
+
+def _delivery_outcome(
+    payload: dict, period: str, provider: dict, sync_degraded: bool,
+    sync_status: str | None, *, test: bool, retrospective: bool, decision: dict,
+) -> dict:
+    outcome = {
+        "status": "test_accepted" if test else provider["status"],
+        "period": period,
+        "date": payload["date"],
+        "quality": payload.get("data_quality", {}).get("status", "UNKNOWN"),
+        "sync_degraded": sync_degraded,
+        "sync_status": sync_status,
+    }
+    if provider.get("provider_id"):
+        outcome["provider_id"] = provider["provider_id"]
+    if test:
+        outcome["scheduled_delivery_unchanged"] = True
+    if retrospective:
+        outcome["retrospective"] = True
+    if decision.get("facts_only"):
+        outcome.update(
+            mode="facts_only", facts_only=True,
+            coverage_reason=decision["facts_only_reason"],
+        )
+    return outcome
+
+
+def _claim_direct_notification(
+    user_id: str, payload: dict, period: ReportPeriod, target_date: date,
+) -> dict | None:
+    analysis_run_id = payload.get("analysis_run_id")
+    if not analysis_run_id:
+        # A normal send must point at a canonical succeeded analysis run. Test
+        # deliveries are handled above and do not enter this path.
+        return {"status": "deferred", "reason": "analysis_run_required"}
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        row = repo.enqueue_notification_delivery(
+            user_id, str(analysis_run_id), period, target_date,
+        )
+        existing_status = row.status
+        if existing_status in {"accepted", "delivered", "uncertain"}:
+            return {
+                "status": existing_status, "provider_id": row.provider_id,
+                "delivery_id": row.id, "lease_token": None,
+            }
+        claimed = repo.claim_notification_delivery(delivery_id=row.id)
+        if claimed is None:
+            return None
+        return {
+            "status": claimed.status, "delivery_id": claimed.id,
+            "lease_token": claimed.lease_token,
+            "send_attempt_id": claimed.send_attempt_id,
+        }
+
+
+def _complete_direct_notification(claim: dict, provider: dict, results: dict) -> None:
+    if not claim.get("delivery_id") or not claim.get("lease_token"):
+        return
+    render = results.get("_render") or {}
+    status = provider.get("status", "failed")
+    next_poll_at = None
+    if status == "accepted":
+        from datetime import timedelta
+        if provider.get("provider_id"):
+            next_poll_at = datetime.now(UTC) + timedelta(
+                seconds=getattr(settings, "pushplus_query_interval_seconds", 60)
+            ) if getattr(settings, "pushplus_access_key", "") else None
+    error = None if status in {"accepted", "delivered"} else (
+        "transport_ambiguous" if status == "uncertain" else "transport_rejected"
+    )
+    with session_scope() as db:
+        HealthRepository(db).complete_notification_delivery(
+            claim["delivery_id"], claim["lease_token"], status,
+            error=error, next_poll_at=next_poll_at,
+            provider_id=provider.get("provider_id"),
+            provider_status=provider.get("provider_status"),
+            template=render.get("template"),
+            renderer_version=render.get("renderer_version"),
+            content_sha256=render.get("content_sha256"),
+            send_attempt_id=claim.get("send_attempt_id"),
+        )
 
 
 def deliver_period_report(
@@ -218,23 +361,43 @@ def deliver_period_report(
     period: str,
     target_date: date,
 ) -> dict:
-    """Deliver a saved weekly or monthly projection without recomputing it."""
+    """Deliver a saved calendar report through the same durable intent path."""
     if period not in {"weekly", "monthly"}:
         raise ValueError("period must be weekly or monthly")
-    service = PushService(pushplus_token=pushplus_token)
-    if period == "weekly":
-        results = service.push_weekly_profile(user_id, profile)
-    else:
-        results = service.push_monthly_profile(user_id, profile)
-    if results.get("_pushplus_handler") != "ok":
-        raise DailyPushDeliveryError(
-            ambiguous=results.get("_delivery_outcome") == "uncertain"
+    claim = _claim_direct_notification(user_id, profile, period, target_date)
+    if claim is None:
+        return {"status": "already_sent", "period": period, "date": target_date.isoformat()}
+    if claim.get("status") in {"accepted", "delivered", "uncertain"}:
+        return {
+            "status": claim["status"], "period": period,
+            "date": target_date.isoformat(), "provider_id": claim.get("provider_id"),
+        }
+    if claim.get("status") == "deferred":
+        return {
+            "status": "deferred", "period": period, "date": target_date.isoformat(),
+            "reason": claim.get("reason", "analysis_run_required"),
+        }
+    try:
+        service = PushService(
+            pushplus_token=pushplus_token,
+            pushplus_access_key=getattr(settings, "pushplus_access_key", ""),
+            send_attempt_id=claim.get("send_attempt_id"),
         )
+    except TypeError:
+        service = PushService(pushplus_token=pushplus_token)
+    results = (
+        service.push_weekly_profile(user_id, profile)
+        if period == "weekly" else service.push_monthly_profile(user_id, profile)
+    )
+    provider = _provider_result(results)
+    _complete_direct_notification(claim, provider, results)
+    if provider["status"] not in {"accepted", "delivered"}:
+        raise DailyPushDeliveryError(ambiguous=provider["status"] == "uncertain")
     return {
-        "status": "sent",
-        "period": period,
+        "status": provider["status"], "period": period,
         "date": target_date.isoformat(),
         "quality": (profile.get("data_quality") or {}).get("status", "UNKNOWN"),
+        "provider_id": provider.get("provider_id"),
     }
 
 
@@ -345,43 +508,3 @@ def _assess_sync(sync: dict) -> tuple[bool, str, str | None]:
 
 def _analyze(user_id: str, day: date) -> dict:
     return IntelligenceCommand().analyze(user_id, day).daily.model_dump(mode="json")
-
-
-
-def _delivery_marker(
-    state_dir: Path, user_id: str, day: date, period: ReportPeriod
-) -> Path:
-    user_key = hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:16]
-    return state_dir / f"{day.isoformat()}-{period}-{user_key}.sent"
-
-
-@contextmanager
-def _delivery_lock(marker: Path) -> Iterator[None]:
-    marker.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(marker.parent, 0o700)
-    lock_path = marker.with_suffix(".lock")
-    with lock_path.open("a", encoding="utf-8") as lock_file:
-        os.chmod(lock_path, 0o600)
-        if fcntl is not None:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-        else:
-            lock_file.seek(0)
-            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
-            try:
-                yield
-            finally:
-                lock_file.seek(0)
-                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-
-
-def _mark_delivered(marker: Path) -> None:
-    descriptor = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as marker_file:
-        os.chmod(marker, 0o600)
-        marker_file.write("sent\n")
-        marker_file.flush()
-        os.fsync(marker_file.fileno())

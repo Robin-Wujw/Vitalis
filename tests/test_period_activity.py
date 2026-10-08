@@ -159,3 +159,54 @@ def test_period_energy_uses_local_day_at_both_window_boundaries(monkeypatch, per
     assert metric.available_days == 1
     assert metric.previous_available_days == 0
     assert metric.previous_total is None
+
+
+def test_period_activity_average_excludes_an_incomplete_target_day():
+    raw = RawDailyProfile(user_id="period-incomplete-average", day=TARGET)
+    raw.report_context = {"target_day_complete": False}
+    raw.series["steps"] = [
+        _point("steps", TARGET - timedelta(days=offset), 100, "steps")
+        for offset in range(1, 7)
+    ] + [_point("steps", TARGET, 1000, "steps")]
+    raw.series["steps"] += [
+        _point("steps", TARGET - timedelta(days=7 + offset), 100, "steps")
+        for offset in range(7)
+    ]
+
+    metric = next(item for item in build_period_activity_metrics(
+        raw, TARGET - timedelta(days=6), 7, TARGET - timedelta(days=13)
+    ) if item.metric == "steps")
+
+    assert metric.available_days == 7
+    assert metric.complete_days == 6
+    assert metric.average == 100
+    assert metric.previous_average == 100
+    assert metric.change_percent == 0
+    assert metric.totals_are_partial is True
+
+
+def test_period_activity_prefers_current_stream_over_previous_only_priority_stream():
+    raw = RawDailyProfile(user_id="period-current-stream", day=TARGET)
+    raw.series["steps"] = [
+        _point(
+            "steps", TARGET - timedelta(days=offset), 100, "steps",
+            scope="device", device="watch",
+        )
+        for offset in range(7)
+    ] + [
+        _point(
+            "steps", TARGET - timedelta(days=7 + offset), 200, "steps",
+            scope="user_fused", device=None,
+        )
+        for offset in range(7)
+    ]
+
+    metric = next(item for item in build_period_activity_metrics(
+        raw, TARGET - timedelta(days=6), 7, TARGET - timedelta(days=13)
+    ) if item.metric == "steps")
+
+    assert metric.provenance.source_scope == "device"
+    assert metric.provenance.device_id == "watch"
+    assert metric.available_days == 7
+    assert metric.previous_available_days == 0
+    assert metric.change_percent is None

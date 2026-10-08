@@ -179,6 +179,59 @@ def test_rolling_training_load_includes_target_day():
     assert training.duration_7d == 210
 
 
+def test_training_load_comparison_requires_a_complete_current_window():
+    raw = RawDailyProfile(user_id="partial-load-window", day=TARGET)
+    raw.training_by_day = {
+        TARGET: {
+            "date": TARGET,
+            "total_duration": 30,
+            "total_load": 100,
+            "workout_count": 1,
+        },
+        **{
+            TARGET - timedelta(days=offset): {
+                "date": TARGET - timedelta(days=offset),
+                "total_duration": 0,
+                "total_load": 100,
+                "workout_count": 0,
+            }
+            for offset in range(7, 28)
+        },
+    }
+    raw.training_history_coverage = {
+        "status": "PARTIAL",
+        "verified_days": [
+            (TARGET - timedelta(days=offset)).isoformat()
+            for offset in range(7, 28)
+        ],
+    }
+
+    training = TrainingAnalyzer().analyze(raw, {})
+
+    assert training.today_load == 100
+    assert training.load_7d is None
+    assert training.load_7d_reference is None
+    assert training.load_7d_change_percent is None
+    assert training.load_state == LoadState.INSUFFICIENT_DATA
+
+
+def test_training_load_missing_stays_distinct_from_observed_zero():
+    missing = RawDailyProfile(user_id="missing-load", day=TARGET)
+    missing.training_by_day[TARGET] = {
+        "date": TARGET, "total_duration": 30, "total_load": None, "workout_count": 1,
+    }
+    zero = RawDailyProfile(user_id="zero-load", day=TARGET)
+    zero.training_by_day[TARGET] = {
+        "date": TARGET, "total_duration": 30, "total_load": 0, "workout_count": 1,
+    }
+
+    missing_features = TrainingAnalyzer().analyze(missing, {})
+    zero_features = TrainingAnalyzer().analyze(zero, {})
+
+    assert missing_features.today_load is None
+    assert zero_features.today_load == 0
+
+
 def test_training_status_uses_vo2max_threshold_and_pai_without_combining_scores():
     raw = _profile()
     raw.series.update({

@@ -76,7 +76,8 @@ def test_user_can_replace_confirmed_strength_exercises():
             session_focus="PUSH",
             exercises=[
                 StrengthExerciseInput(
-                    exercise_name="卧推", sets=4, repetitions=8, weight_kg=60
+                    exercise_name="卧推", sets=4, repetitions=8, weight_kg=60,
+                    weight_basis="per_hand",
                 ),
                 StrengthExerciseInput(
                     exercise_name="肩推", sets=3, repetitions=10, rir=2
@@ -97,6 +98,9 @@ def test_user_can_replace_confirmed_strength_exercises():
     assert [item.exercise_name for item in stored] == ["卧推", "肩推"]
     assert [item.repetitions for item in records] == [8, 10]
     assert [item.repetitions for item in stored] == [8, 10]
+    assert records[0].weight_basis == "per_hand"
+    assert stored[0].weight_basis == "per_hand"
+    assert stored[0].weight_unit == "kg"
     with session_scope() as db:
         before_replay_revision = db.get(
             UserRow,
@@ -108,7 +112,10 @@ def test_user_can_replace_confirmed_strength_exercises():
         StrengthWorkoutConfirmationInput(
             session_focus="PUSH",
             exercises=[
-                StrengthExerciseInput(exercise_name="卧推", sets=4, repetitions=8, weight_kg=60),
+                StrengthExerciseInput(
+                    exercise_name="卧推", sets=4, repetitions=8, weight_kg=60,
+                    weight_basis="per_hand",
+                ),
                 StrengthExerciseInput(exercise_name="肩推", sets=3, repetitions=10, rir=2),
             ],
         ),
@@ -235,3 +242,90 @@ def test_strength_analysis_supports_explicit_five_day_rotation():
 
     assert analysis.detected_split == "FIVE_DAY"
     assert analysis.next_focus == "CHEST"
+
+
+def _comparison_workout(day, workout_id, rows, *, source="zepp"):
+    return {
+        "workout_id": workout_id,
+        "source": source,
+        "local_day": day,
+        "confirmed_exercises": [],
+        "samples": [],
+        "detail": {"strength_sets": [
+            {
+                "source": "strength_sets",
+                "order": order,
+                "exercise_id": row.get(
+                    "exercise_id", row.get("exercise_name", "curl")
+                ),
+                "exercise_name": row.get("exercise_name", "curl"),
+                "repetitions": repetitions,
+                "weight_value": row.get("weight_value", row.get("weight", 10)),
+                "weight_kg": row.get("weight_kg", row.get("weight", 10)),
+                "weight_unit": row.get("unit", "kg"),
+                "weight_basis": row.get("basis", "per_hand"),
+            }
+            for order, (repetitions, row) in enumerate(rows, start=1)
+        ]},
+        "data": {"type": "strength", "training_family": "strength", "duration": 30},
+    }
+
+
+def test_strength_comparison_preserves_order_and_does_not_average_sets():
+    prior_day = TARGET - timedelta(days=1)
+    raw = _raw([
+        _comparison_workout(prior_day, "prior", [(10, {})] * 3),
+        _comparison_workout(TARGET, "current", [(12, {}), (10, {}), (8, {})]),
+    ])
+
+    comparison = StrengthAnalyzer().analyze(raw).recent_sessions[0].comparisons[0]
+
+    assert comparison.comparable is True
+    assert comparison.current_repetitions == [12, 10, 8]
+    assert comparison.previous_repetitions == [10, 10, 10]
+    assert comparison.current_weights == [10, 10, 10]
+    assert comparison.delta_total_repetitions == 0
+    assert comparison.reference_workout_id == "prior"
+    assert comparison.reference_workout_date == prior_day
+
+
+def test_strength_comparison_reports_ordered_delta_for_uniform_progress_and_no_change():
+    prior_day = TARGET - timedelta(days=1)
+    for repetitions, expected_delta in (
+        ([12, 12, 12], 6),
+        ([12, 10, 8], 0),
+    ):
+        raw = _raw([
+            _comparison_workout(prior_day, "prior", [(10, {})] * 3),
+            _comparison_workout(TARGET, "current", [(value, {}) for value in repetitions]),
+        ])
+        comparison = StrengthAnalyzer().analyze(raw).recent_sessions[0].comparisons[0]
+        assert comparison.comparable is True
+        assert comparison.current_repetitions == repetitions
+        assert comparison.delta_total_repetitions == expected_delta
+
+
+def test_strength_comparison_blocks_changed_weight_sets_basis_unit_and_source():
+    prior_day = TARGET - timedelta(days=1)
+    cases = [
+        ([(10, {})] * 3, [(12, {"weight": 12})] * 3, "weight_mismatch"),
+        ([(10, {})] * 3, [(12, {}), (12, {})], "set_count_mismatch"),
+        ([(10, {})] * 3, [(12, {"exercise_name": "row"})] * 3, "no_reference_session"),
+        ([(10, {})] * 3, [(12, {"basis": None})] * 3, "weight_basis_unknown"),
+        ([(10, {})] * 3, [(12, {"unit": None, "weight_kg": None})] * 3, "weight_unit_unknown"),
+    ]
+    for previous, current, reason in cases:
+        prior = _comparison_workout(prior_day, "prior", previous)
+        current_workout = _comparison_workout(TARGET, "current", current)
+        raw = _raw([prior, current_workout])
+        comparison = StrengthAnalyzer().analyze(raw).recent_sessions[0].comparisons[0]
+        assert comparison.comparable is False
+        assert comparison.blocked_reason == reason
+        assert comparison.delta_total_repetitions is None
+
+    raw = _raw([
+        _comparison_workout(prior_day, "prior", [(10, {})] * 3, source="zepp"),
+        _comparison_workout(TARGET, "current", [(12, {})] * 3, source="other"),
+    ])
+    comparison = StrengthAnalyzer().analyze(raw).recent_sessions[0].comparisons[0]
+    assert comparison.blocked_reason == "source_mismatch"

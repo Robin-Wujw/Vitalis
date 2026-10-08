@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from functools import partial
+from typing import Callable
 from zoneinfo import ZoneInfo
 
 from vitalis.adapters.persistence import HealthRepository, database, session_scope
@@ -39,13 +40,16 @@ def _intelligence_uow():
     return SqlIntelligenceStore(database.UnitOfWork).uow()
 
 
-def get_intelligence_command() -> IntelligenceCommand:
+def get_intelligence_command(
+    *, today_factory: Callable[[], date] | None = None,
+    now_factory: Callable[[], datetime] | None = None,
+) -> IntelligenceCommand:
     return IntelligenceCommand(
         _intelligence_uow,
         timezone_name=settings.timezone,
         catalog_revision=load_catalog().catalog_revision,
-        today_factory=local_today,
-        now_factory=lambda: datetime.now(timezone.utc),
+        today_factory=today_factory or local_today,
+        now_factory=now_factory or (lambda: datetime.now(timezone.utc)),
     )
 
 

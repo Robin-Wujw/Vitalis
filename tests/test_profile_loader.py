@@ -1,8 +1,11 @@
 from datetime import date, datetime, timedelta, timezone
 
-from vitalis.intelligence.contracts import QualityStatus
+from vitalis.intelligence.activity import ActivityAnalyzer
+from vitalis.intelligence.baseline import BaselineEngine
+from vitalis.intelligence.contracts import Availability, QualityStatus
 from vitalis.intelligence.profile import ProfileLoader
 from vitalis.domain import (
+    ActivityRecord,
     DailyMetric,
     DenseDataFile,
     Device,
@@ -24,8 +27,61 @@ def test_profile_loader_reports_missing_signals_without_fabricating_facts():
         raw = ProfileLoader(repo).load(user_id, day)
 
     assert raw.data_quality.status == QualityStatus.INSUFFICIENT
-    assert raw.data_quality.missing_required_signals == ["sleep_duration", "hrv"]
+    assert raw.data_quality.missing_required_signals == ["sleep_duration"]
     assert raw.facts == {}
+
+
+def test_training_coverage_reaches_previous_calendar_month(monkeypatch):
+    user_id = "calendar-coverage-start"
+    day = date(2026, 10, 8)
+    captured = {}
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+
+        def fake_coverage(user, start, end, as_of, *, timezone_name=None):
+            captured.update({"user": user, "start": start, "end": end})
+            return {"status": "UNKNOWN", "verified_days": []}
+
+        monkeypatch.setattr(repo, "training_history_coverage", fake_coverage)
+        ProfileLoader(repo).load(user_id, day)
+
+    assert captured == {
+        "user": user_id,
+        "start": date(2026, 8, 1),
+        "end": day,
+    }
+
+
+def test_missing_optional_hrv_does_not_block_activity_analysis():
+    user_id = "activity-without-hrv"
+    day = date(2026, 8, 28)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+        repo.save_daily(NormalizedDaily(
+            user_id=user_id,
+            date=day,
+            sleep=SleepRecord(user_id=user_id, date=day, sleep_duration=450),
+            activity=ActivityRecord(
+                user_id=user_id,
+                date=day,
+                steps=8000,
+                observed_fields=["steps"],
+            ),
+        ))
+        raw = ProfileLoader(repo).load(user_id, day)
+
+    assert raw.data_quality.status == QualityStatus.SUFFICIENT
+    assert "hrv" not in raw.data_quality.missing_required_signals
+    activity = ActivityAnalyzer().analyze(
+        raw, BaselineEngine().build(raw.series, raw.day)
+    )
+    assert activity.status == Availability.AVAILABLE
+    assert activity.steps is not None
+    assert activity.steps.value == 8000
 
 
 def test_profile_loader_keeps_device_streams_and_local_identities_separate():

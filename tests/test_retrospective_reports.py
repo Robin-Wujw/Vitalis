@@ -3,7 +3,8 @@ from datetime import date
 import pytest
 
 from vitalis.adapters import daily_push
-from vitalis.adapters.notifications import _render_evening
+from vitalis.intelligence.report_rendering import render_report
+from vitalis.intelligence.evening_briefing import EveningBriefingEngine
 
 
 @pytest.fixture(autouse=True)
@@ -55,7 +56,7 @@ def test_explicit_evening_replay_analyzes_target_day_and_omits_expired_decision(
     )
     assert syncs == [("user", 2)]
     assert analyses == [("user", date(2026, 8, 28))]
-    assert result["status"] == "test_sent"
+    assert result["status"] == "test_accepted"
     assert result["retrospective"] is True
     assert result["scheduled_delivery_unchanged"] is True
     assert "decision" not in sent[0]
@@ -93,12 +94,13 @@ def test_normal_delivery_does_not_silently_replay_a_past_date(monkeypatch, tmp_p
 def test_retrospective_evening_contains_no_current_or_tomorrow_prescription():
     payload = _profile()
     payload["delivery_metadata"] = {"retrospective": True}
-    title, lines = _render_evening(payload)
-    assert "晚报补发" in title and "2026-08-28" in title
-    text = "\n".join(lines)
-    assert "仅回顾指定日期" in text
+    rendered = render_report(EveningBriefingEngine().build(payload), target="markdown")
+    title, text = rendered.title, rendered.content
+    assert title.startswith("Vitalis 日报")
+    assert "2026-08-28" in text
     assert "## 今晚恢复" not in text
     assert "## 明天衔接" not in text
+    assert "今天的重点" not in text
 
 
 def test_retrospective_without_observations_remains_deferred(monkeypatch, tmp_path):

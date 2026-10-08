@@ -95,7 +95,8 @@ def test_daily_delivery_has_one_pure_policy_and_one_concrete_adapter():
         assert forbidden not in policy, f"delivery policy imports concrete dependency: {forbidden}"
     assert "prepare_delivery" in policy
     assert "from vitalis.application.delivery_policy import" in adapter
-    assert "PushService" in adapter and "_delivery_marker" in adapter
+    assert "PushService" in adapter and "HealthRepository" in adapter
+    assert "_delivery_marker" not in adapter
     assert "vitalis.adapters.daily_push" in scheduler
     assert "vitalis.services.daily_push" not in scheduler
 

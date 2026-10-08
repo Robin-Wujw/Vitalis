@@ -1,39 +1,71 @@
 # 快速开始
 
-[文档导航](README.md) | [运行与排障](operations.md)
+[文档中心](README.md) | [报告与渠道](reports.md) | [运维](operations.md)
 
-## 合成数据：第一次分析
+本页带你在新目录生成一份合成报告、读取已保存快照，并说明真实 Zepp 连接的边界。合成路径不会发送 PushPlus，也不需要真实账号。
 
-声明的 Python 范围为 3.11-3.13；当前自动化基线在 3.13 上验证。从仓库根目录使用唯一锁文件安装（PowerShell 激活命令为 `.venv\Scripts\Activate.ps1`）：
+## 生成本地报告
 
-```bash
+前提：Python 3.11–3.13；命令从仓库根目录执行；使用新建或可丢弃的 SQLite 路径。先安装锁定依赖：
+
+```powershell
 python -m pip install 'uv==0.12.9'
-uv sync --locked
-source .venv/bin/activate
-vitalis demo --database demo.db --day 2026-09-26
+uv sync --locked --extra dev
 ```
 
-`demo` 仅在**尚不存在**的 SQLite `.db`/`.sqlite` 文件中写入模拟 Zepp 数据、用户 `demo` 和该日的分析快照；输出包含 `analysis_run_id`，但不是完整报告。已有数据库不会被覆盖。`python -m vitalis` 与 `vitalis` 使用同一 CLI。报告正文按[报告阅读与渠道](reports.md)的周期和只读渠道规则生成；仓库中的[四类报告示例](reports.md#示例与验证边界)是合成设计样例，不含真实健康记录。
+在 PowerShell 中显式启用 mock 和测试环境，创建一个新库：
 
-在同一个终端为后续命令指定刚生成的库，检查 schema，然后启动仅绑定本机的 API：
-
-```bash
-export DATABASE_URL=sqlite:///./demo.db
-vitalis doctor
-vitalis serve
+```powershell
+$env:ZEPP_MOCK = 'true'
+$env:VITALIS_ENV = 'test'
+$env:DATABASE_URL = 'sqlite:///./demo.db'
+uv run --locked --extra dev vitalis demo --database .\demo.db --day 2026-10-07
 ```
 
-Windows PowerShell 用 `$env:DATABASE_URL = 'sqlite:///./demo.db'` 代替 `export`。`doctor` 校验 schema，并将尚未启动过的 worker 显示为 `not_seen`；有心跳时报告近期活动，但不证明数据已经更新。服务提供 `/docs`（OpenAPI）和当前用户接口 `/api`。在另一个终端发请求时，同样指定 `DATABASE_URL`；服务和令牌签发必须指向**同一个**库。可信本地操作员可按[运维的令牌步骤](operations.md)为已有用户 `demo` 签发短期 `read` 令牌并私下设置 `VITALIS_ACCESS_TOKEN`，然后读取第一份快照：
+预期输出是 JSON 元信息，包含 `dataset=synthetic_demo`、用户 `demo`、导入天数和 `analysis_run_id`；它不是可读报告。目标数据库必须不存在，已有文件不会覆盖。
 
-```bash
-curl 'http://127.0.0.1:8000/api/reports/daily?day=2026-09-26' \
-  -H "Authorization: Bearer $VITALIS_ACCESS_TOKEN"
+从已保存分析导出一份新 Markdown 文件：
+
+```powershell
+uv run --locked --extra dev vitalis report daily --user demo --day 2026-10-07 --format markdown --output .\daily.md
+Get-Content .\daily.md
 ```
 
-`GET` 只读已有快照；若所选日期没有分析，返回 `404`，不会自动同步或推断。`X-User-Id` 可省略；填写时必须等于令牌所属用户，不能以它代替令牌。完整路径、参数及响应字段以服务的 `/docs` 为准。
+`report` 只读取持久化分析，不同步、不重新计算、不发送通知，并拒绝覆盖已有输出文件。`morning`、`weekly`、`monthly` 可替换 `daily`；`--format html` 写保守的 inline HTML 片段。成功结果是指定路径存在且内容可直接阅读。
 
-## 连接真实 Zepp
+## 读取 API 快照
 
-演示以外，先在**新的、独立的**数据库设置 `ZEPP_MOCK=false` 和私有的 `VITALIS_TOKEN_ENCRYPTION_KEY`（有效 Fernet 密钥；不要加入版本库，否则真实连接在启动时拒绝），执行 `vitalis db init`、`vitalis user create --id <local-user-id>`，再通过 `vitalis token issue --user <local-user-id> --scope manage --output <new-private-file>` 签发专用于管理/配对的 Bearer 令牌；这些命令必须指向同一数据库，令牌文件存于仓库外，不能当作公开链接。`POST /api/connect/zepp/pair` 可创建绑定该用户的一次性配对会话，再用返回的 `scan_url` 打开页面并按[浏览器扩展](../clients/browser_extension/README.md)的步骤登录 Zepp 官方页面。扩展 Origin 须按实际扩展 ID 加入 `VITALIS_PAIRING_ALLOWED_ORIGINS` 并重启 API；真实浏览器配对需受浏览器信任的 HTTPS 源以及与鉴权兼容的网关，不可直接公开完整 API。在另一个终端以相同私有环境运行 `vitalis worker`；配对仅创建持久同步任务，API 不会在 HTTP 请求中执行厂商同步。手动同步统一使用带 `Idempotency-Key` 的 `POST /api/sync-jobs`（`days` 为 1..730，或提交明确的 `from`/`to` 本地日期窗口）；取得 `job_id` 后用有 `read` 权限的令牌查询 `GET /api/jobs/{job_id}` 和 `GET /api/data-status`，需要停止时使用有 `sync` 权限的 `POST /api/jobs/{job_id}/cancel`，不能把入队误认为数据已更新。账号密码和验证码只进入 Zepp 官方页面，不提供给 Vitalis。区域、身份绑定和覆盖限制见 [Zepp 指南](zepp.md)。
+前提：服务和令牌签发必须使用同一个数据库；本地 API 默认是 `127.0.0.1:8000`。在保持 `DATABASE_URL` 的终端启动服务：
 
-完整运行参数、备份和同步排查见[运维](operations.md)；Hermes 接入前请阅读[智能体集成](agents.md)中的权限与手动验收边界。PushPlus 只读推送不需要 Hermes 或用户回复；真实 Hermes 安装、发现和调用仍需单独的授权 smoke test。
+```powershell
+uv run --locked --extra dev vitalis serve
+```
+
+另开终端，为已有的 `demo` 用户签发只读令牌。令牌文件应放在仓库外的新路径，命令输出不会打印令牌：
+
+```powershell
+uv run --locked --extra dev vitalis token issue --user demo --scope read --output C:\Users\Public\vitalis-demo-read.token
+$env:VITALIS_ACCESS_TOKEN = Get-Content C:\Users\Public\vitalis-demo-read.token -Raw
+curl.exe "http://127.0.0.1:8000/api/reports/daily?day=2026-10-07" -H "Authorization: Bearer $env:VITALIS_ACCESS_TOKEN"
+```
+
+预期响应是 JSON 报告快照。`GET /api/reports/{kind}` 只读已有结果；没有指定日期快照时返回 404，不会自动分析。`X-User-Id` 不能代替 Bearer 令牌，若同时提供必须与令牌绑定用户一致。完整请求字段以运行服务的 `/openapi.json` 为准。
+
+## 真实 Zepp 连接
+
+不要把演示库改成真实库。为新的独立数据库设置 `ZEPP_MOCK=false`、有效的 `VITALIS_TOKEN_ENCRYPTION_KEY` 和必要的 Zepp 配置，运行 `vitalis db init`、`vitalis user create --id <用户>`，再用 `manage` scope 令牌调用 `POST /api/connect/zepp/pair`。打开返回的 `scan_url`，只在官方 Zepp 页面登录；密码和验证码不输入 Vitalis。浏览器端步骤见[扩展指南](../clients/browser_extension/README.md)。
+
+真实同步由独立 `vitalis worker` 处理。手动 `POST /api/sync-jobs` 必须带新的 `Idempotency-Key`，得到 `job_id` 后读取 `GET /api/jobs/{job_id}`；受理不等于同步完成。服务默认只绑定回环地址，公网部署还需要 TLS、鉴权、来源白名单和网关配置。
+
+## 常见失败
+
+| 现象 | 处理 |
+| --- | --- |
+| `demo` 拒绝路径 | 删除或改用一个全新的 `.db`/`.sqlite` 路径；不要覆盖用户库。 |
+| `report` 拒绝输出 | 改用新文件名；命令不会覆盖已有文件。 |
+| `404` 报告快照 | 确认日期和数据库一致；显式创建分析任务后等待 worker 成功。 |
+| `401`/`403` | 检查令牌文件、用户绑定和 scope；不要用 `X-User-Id` 冒充认证。 |
+| `doctor` 显示 `not_seen` | API schema 可能正常，但 worker 尚未启动；启动独立 worker 后再诊断。 |
+| 真实连接拒绝密钥 | `ZEPP_MOCK=false` 时配置有效 Fernet 密钥，并与数据库分开保存。 |
+
+报告事实、缺失和渠道状态见[报告与渠道](reports.md)；配置、备份和排障见[运维](operations.md)。

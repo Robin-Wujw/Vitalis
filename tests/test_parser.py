@@ -121,6 +121,29 @@ def test_parse_training_aggregates():
     assert tr.total_load == 95
 
 
+def test_parse_training_preserves_missing_load_and_observed_zero():
+    parser = ZeppParser()
+    missing = parser.parse_training({
+        "data": {
+            "date": "2026-08-25",
+            "items": [{"duration": 30}],
+        }
+    })
+    zero = parser.parse_training({
+        "data": {
+            "date": "2026-08-25",
+            "items": [{"duration": 30, "load": 0}],
+        }
+    })
+
+    assert missing is not None
+    assert missing.total_duration == 30
+    assert missing.workout_count == 1
+    assert missing.total_load is None
+    assert zero is not None
+    assert zero.total_load == 0
+
+
 def test_parse_training_empty_items():
     assert ZeppParser().parse_training({"code": 0, "data": {"items": []}}) is None
 

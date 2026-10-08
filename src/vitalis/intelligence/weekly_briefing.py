@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from .contracts import ReportBriefing
+from .report_presentation import internal_sections, period_presentation
 from .report_formatting import (
     as_of_line,
     coverage_text,
@@ -59,6 +60,9 @@ class WeeklyBriefingEngine:
             self._actions(payload),
         ]
         context = dict(payload.get("report_context") or {})
+        presentation_payload = dict(payload)
+        presentation_payload["report_context"] = context
+        presentation = period_presentation(presentation_payload, "weekly")
         return ReportBriefing(
             period="weekly",
             analysis_run_id=payload.get("analysis_run_id", ""),
@@ -69,8 +73,9 @@ class WeeklyBriefingEngine:
             generated_at=payload.get("generated_at"),
             report_context=context,
             data_quality=payload.get("data_quality") or {},
+            **presentation,
             summary=self._summary(payload, sections),
-            sections=sections,
+            sections=internal_sections(sections),
         ).model_dump(mode="json")
 
     def build(self, profile: Any) -> ReportBriefing:

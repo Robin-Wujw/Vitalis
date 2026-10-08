@@ -5,7 +5,7 @@ from vitalis.adapters.zepp.parser import ZEPP_STRENGTH_LAP_LABELS
 from vitalis.intelligence.contracts import StrengthExerciseInput, TrainingPreferences
 from vitalis.intelligence.evening_briefing import EveningBriefingEngine
 from vitalis.intelligence.strength import StrengthAnalyzer, normalize_exercise
-from vitalis.adapters.notifications import _render_evening, _render_report_html
+from vitalis.intelligence.report_rendering import render_report
 from vitalis.intelligence.decision import DecisionEngine
 from vitalis.intelligence.profile import RawDailyProfile
 
@@ -188,13 +188,18 @@ def test_evening_digest_groups_consecutive_sets_without_merging_a_b_a():
     session = StrengthAnalyzer()._session(raw, raw.workouts[0], None)
     payload = _payload(session.model_dump(mode="json"))
     report = EveningBriefingEngine().build(payload)
-    title, lines = _render_evening(payload)
-    digest = "\n".join(lines)
+    rendered = render_report(report, target="markdown")
+    title, digest = rendered.title, rendered.content
     detail = "\n".join(report.sections[0].facts)
 
-    assert title.startswith("Vitalis 晚报")
-    assert "逐组观测动作：卧推 2 组、划船 1 组、卧推 1 组、动作代码 999999（名称未确认） 1 组。" in digest
-    assert "第 1 组" not in digest
+    assert title.startswith("Vitalis ")
+    # Canonical Markdown keeps adjacent grouping while preserving A/B/A order
+    # and the observed dose; it is not a lossy averaged digest.
+    assert digest.index("卧推") < digest.index("划船") < digest.index("卧推", digest.index("划船"))
+    assert "负重未记录 · 2 组 · 8 / 9 次" in digest
+    assert "负重未记录 · 1 组 · 10 次" in digest
+    assert "负重未记录 · 1 组 · 8 次" in digest
+    assert "3 × 10" not in digest
     assert "第 1 组：卧推；8 次；负重未记录。" in detail
     assert "第 5 组：动作代码 999999（名称未确认）" in detail
     assert session.explicit_exercises == []
@@ -216,9 +221,11 @@ def test_observed_report_uses_existing_html_escape_path():
         }],
         "explicit_exercises": [],
     }
-    title, lines = _render_evening(_payload(session))
-    html = _render_report_html(lines)
+    rendered = render_report(
+        EveningBriefingEngine().build(_payload(session)), target="html"
+    )
+    title, html = rendered.title, rendered.content
 
-    assert title.startswith("Vitalis 晚报")
-    assert '&lt;img src="x" onerror="alert(1)"&gt;' in html
+    assert title.startswith("Vitalis ")
+    assert '&lt;img src=&quot;x&quot; onerror=&quot;alert(1)&quot;&gt;' in html
     assert '<img src="x"' not in html

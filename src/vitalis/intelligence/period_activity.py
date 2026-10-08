@@ -184,6 +184,9 @@ def _select_stream(points, period_start, target_day, previous_start, period_days
         except (ImportError, TypeError, ValueError):
             priority = ()
         return (
+            # A high-priority stream that exists only in the reference period
+            # must not hide a lower-priority stream available in the current one.
+            int(current_days > 0),
             priority,
             current_days,
             previous_days,
@@ -234,12 +237,14 @@ def _metric_from_daily(
     complete_previous = set(previous)
     current_total = sum(current.values()) if current else None
     previous_total = sum(previous.values()) if previous else None
-    current_average = _mean(current.values())
-    previous_average = _mean(previous.values())
+    # Exclude an unfinished target day from both the displayed current average
+    # and its comparison denominator.  The raw total remains a lower bound.
     comparison_current_values = [
         value for day, value in current.items() if day in complete_current
     ]
-    comparison_current_average = _mean(comparison_current_values)
+    current_average = _mean(comparison_current_values)
+    previous_average = _mean(previous.values())
+    comparison_current_average = current_average
     limitations = []
     if len(current) < period_days:
         limitations.append("周期存在未观测日，总量为已记录下界。")

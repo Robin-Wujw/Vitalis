@@ -1,27 +1,86 @@
-"""Render and optionally deliver already-computed Vitalis report projections."""
+"""Render report projections and deliver them through configured notification handlers."""
 from __future__ import annotations
 
-from collections import Counter
-import html
+import hashlib
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable
+from typing import Any
+from urllib.parse import quote
+from uuid import uuid4
 
 import httpx
-from markdown import Markdown
-from markdown.extensions import Extension
-from markdown.treeprocessors import Treeprocessor
 
 from vitalis.config import settings
 from vitalis.intelligence.evening_briefing import EveningBriefingEngine
 from vitalis.intelligence.morning_briefing import MorningBriefingEngine
 from vitalis.intelligence.monthly_briefing import MonthlyBriefingEngine
 from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
-from vitalis.intelligence.report_formatting import as_of_line, unique
 
 log = logging.getLogger("vitalis.push")
 PUSHPLUS_URL = "https://www.pushplus.plus/send"
+PUSHPLUS_QUERY_URL = (
+    "https://www.pushplus.plus/api/open/message/sendMessageResult"
+)
+_ALLOWED_TEMPLATES = {"markdown", "html"}
+
+
+class NotificationSendError(RuntimeError):
+    """Transport failure with an explicit remote-outcome classification."""
+
+    def __init__(
+        self,
+        message: str = "notification delivery failed",
+        *,
+        ambiguous: bool,
+        retryable: bool | None = None,
+        provider_id: str | None = None,
+        provider_status: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.ambiguous = ambiguous
+        self.retryable = (not ambiguous) if retryable is None else retryable
+        self.provider_id = provider_id
+        self.provider_status = provider_status
+
+
+class NotificationQueryError(RuntimeError):
+    """A status query failed without changing the already accepted send."""
+
+
+@dataclass
+class PushMessage:
+    title: str
+    body: str
+    user_id: str
+    template: str = "markdown"
+    timestamp: datetime = field(default_factory=datetime.now)
+    extras: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PushStatus:
+    """Provider outcome returned by the PushPlus send or status query."""
+
+    status: str
+    provider_id: str | None = None
+    provider_status: str | None = None
+    send_attempt_id: str | None = None
+    poll_attempt_id: str | None = None
+    retryable: bool = False
+    ambiguous: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "provider_id": self.provider_id,
+            "provider_status": self.provider_status,
+            "send_attempt_id": self.send_attempt_id,
+            "poll_attempt_id": self.poll_attempt_id,
+            "retryable": self.retryable,
+            "ambiguous": self.ambiguous,
+        }
 
 
 def _http_status_error_is_ambiguous(exc: httpx.HTTPStatusError) -> bool:
@@ -33,31 +92,93 @@ def _http_status_error_is_ambiguous(exc: httpx.HTTPStatusError) -> bool:
     return not 400 <= status_code < 500
 
 
-class NotificationSendError(RuntimeError):
-    """Transport failure with an explicit remote-outcome classification."""
+def _response_status_error(response: object, *, operation: str) -> NotificationSendError | None:
+    """Classify an HTTP response without logging its body."""
+    status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, int) and status_code >= 400:
+        ambiguous = not 400 <= status_code < 500
+        return NotificationSendError(
+            f"{operation} response uncertain" if ambiguous else f"{operation} rejected",
+            ambiguous=ambiguous,
+            retryable=not ambiguous,
+        )
+    try:
+        raise_for_status = getattr(response, "raise_for_status", None)
+        if callable(raise_for_status):
+            raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        ambiguous = _http_status_error_is_ambiguous(exc)
+        return NotificationSendError(
+            f"{operation} response uncertain" if ambiguous else f"{operation} rejected",
+            ambiguous=ambiguous,
+            retryable=not ambiguous,
+        )
+    return None
 
-    def __init__(self, message: str = "notification delivery failed", *, ambiguous: bool):
-        super().__init__(message)
-        self.ambiguous = ambiguous
+
+def _render_metadata(rendered: object) -> dict[str, str]:
+    """Read the small render evidence contract without retaining report text."""
+    return {
+        "template": str(getattr(rendered, "template", "")),
+        "renderer_version": str(getattr(rendered, "renderer_version", "")),
+        "content_sha256": str(getattr(rendered, "content_sha256", "")),
+    }
 
 
-@dataclass
-class PushMessage:
-    title: str
-    body: str
-    user_id: str
-    template: str = "html"
-    timestamp: datetime = field(default_factory=datetime.now)
-    extras: dict = field(default_factory=dict)
+def _payload_for_extras(briefing: object) -> dict[str, Any]:
+    if hasattr(briefing, "model_dump"):
+        return briefing.model_dump(mode="json")
+    if isinstance(briefing, dict):
+        return dict(briefing)
+    raise TypeError("briefing must be a mapping or a Pydantic model")
+
+
+def validate_push_message(message: PushMessage) -> None:
+    """Apply the one report renderer contract before any transport call."""
+    from vitalis.intelligence.report_rendering import validate_report_content
+
+    if message.template not in _ALLOWED_TEMPLATES:
+        raise ValueError("notification template must be markdown or html")
+    validate_report_content(message.body, message.template)
+    digest = hashlib.sha256(message.body.encode("utf-8")).hexdigest()
+    expected = message.extras.get("content_sha256")
+    if expected is not None and str(expected) != digest:
+        raise ValueError("notification content digest does not match body")
 
 
 class PushService:
     """Transport service; report engines remain the single content projection."""
 
-    def __init__(self, webhook_url: str = "", pushplus_token: str | None = None):
+    def __init__(
+        self,
+        webhook_url: str = "",
+        pushplus_token: str | None = None,
+        *,
+        pushplus_access_key: str | None = None,
+        template: str = "markdown",
+        query_max_attempts: int | None = None,
+        query_interval_seconds: float | None = None,
+        send_attempt_id: str | None = None,
+    ) -> None:
+        if template not in _ALLOWED_TEMPLATES:
+            raise ValueError("notification template must be markdown or html")
         self.webhook_url = webhook_url
         self.pushplus_token = settings.pushplus_token if pushplus_token is None else pushplus_token
-        self._handlers: list[Callable[[PushMessage], None]] = []
+        self.pushplus_access_key = (
+            settings.pushplus_access_key
+            if pushplus_access_key is None else pushplus_access_key
+        )
+        self.template = template
+        self.query_max_attempts = (
+            settings.pushplus_query_max_attempts
+            if query_max_attempts is None else query_max_attempts
+        )
+        self.query_interval_seconds = (
+            settings.pushplus_query_interval_seconds
+            if query_interval_seconds is None else query_interval_seconds
+        )
+        self.send_attempt_id = send_attempt_id
+        self._handlers: list[Callable[[PushMessage], object]] = []
         self._register_default_handlers()
 
     def _register_default_handlers(self) -> None:
@@ -67,60 +188,97 @@ class PushService:
         if self.pushplus_token:
             self._handlers.append(self._pushplus_handler)
 
-    def add_handler(self, handler: Callable[[PushMessage], None]) -> None:
+    def add_handler(self, handler: Callable[[PushMessage], object]) -> None:
         self._handlers.append(handler)
 
-    def push(self, msg: PushMessage) -> dict:
-        results = {}
+    def push(self, msg: PushMessage) -> dict[str, Any]:
+        validate_push_message(msg)
+        results: dict[str, Any] = {}
         for handler in self._handlers:
+            name = getattr(handler, "__name__", handler.__class__.__name__)
             try:
-                handler(msg)
-                results[handler.__name__] = "ok"
+                result = handler(msg)
+                if isinstance(result, PushStatus):
+                    result = result.as_dict()
+                if isinstance(result, dict):
+                    results[name] = result.get("status", "ok")
+                    if name == "_pushplus_handler":
+                        results["_pushplus_result"] = result
+                else:
+                    results[name] = "ok"
             except NotificationSendError as exc:
-                results[handler.__name__] = "error: delivery failed"
-                results.setdefault(
-                    "_delivery_outcome", "uncertain" if exc.ambiguous else "failed"
-                )
+                outcome = "uncertain" if exc.ambiguous else "failed"
+                results[name] = "error: delivery failed"
+                results.setdefault("_delivery_outcome", outcome)
+                if name == "_pushplus_handler":
+                    results["_pushplus_result"] = PushStatus(
+                        outcome,
+                        provider_id=exc.provider_id,
+                        provider_status=exc.provider_status,
+                        send_attempt_id=msg.extras.get("send_attempt_id"),
+                        retryable=exc.retryable,
+                        ambiguous=exc.ambiguous,
+                    ).as_dict()
                 log.warning(
-                    "push handler failed: handler=%s outcome=%s",
-                    handler.__name__, results["_delivery_outcome"],
+                    "push handler failed: handler=%s outcome=%s", name, outcome
                 )
-            except Exception:
-                results[handler.__name__] = "error: delivery failed"
+            except Exception:  # noqa: BLE001 - isolate user-provided handlers
+                results[name] = "error: delivery failed"
                 results.setdefault("_delivery_outcome", "failed")
-                log.warning("push handler failed: handler=%s outcome=failed", handler.__name__)
+                if name == "_pushplus_handler":
+                    results["_pushplus_result"] = PushStatus(
+                        "failed",
+                        send_attempt_id=msg.extras.get("send_attempt_id"),
+                        retryable=True,
+                    ).as_dict()
+                log.warning("push handler failed: handler=%s outcome=failed", name)
+        if self.pushplus_token and "_pushplus_handler" not in results:
+            # A custom handler is not evidence that PushPlus delivered anything.
+            results["_pushplus_handler"] = "not_configured"
+            results["_pushplus_result"] = PushStatus("not_configured").as_dict()
+        return results
+
+    def _render_and_push(self, user_id: str, briefing: object) -> dict[str, Any]:
+        from vitalis.intelligence.report_rendering import render_report
+
+        rendered = render_report(briefing, target=self.template)
+        metadata = _render_metadata(rendered)
+        payload = _payload_for_extras(briefing)
+        payload.update(metadata)
+        message = PushMessage(
+            title=str(getattr(rendered, "title", "Vitalis 报告")),
+            body=str(getattr(rendered, "content", "")),
+            user_id=user_id,
+            template=str(getattr(rendered, "template", self.template)),
+            extras={**payload, **metadata, **({"send_attempt_id": self.send_attempt_id} if self.send_attempt_id else {})},
+        )
+        results = self.push(message)
+        results["_render"] = metadata
         return results
 
     def push_daily_profile(self, user_id: str, profile, period: str = "morning") -> dict:
         if period == "morning":
-            briefing = MorningBriefingEngine().build_payload(profile, (profile if isinstance(profile, dict) else {}).get("delivery_metadata"))
-            title, lines = _render_morning(briefing)
-            extras = briefing
+            briefing = MorningBriefingEngine().build_payload(
+                profile,
+                (profile if isinstance(profile, dict) else {}).get("delivery_metadata"),
+            )
         elif period == "evening":
             briefing = EveningBriefingEngine().build(profile)
-            title, lines = _render_evening(briefing.model_dump(mode="json"))
-            extras = briefing.model_dump(mode="json")
         else:
             raise ValueError("period must be morning or evening")
-        return self.push(PushMessage(title=title, body=_render_report_html(lines), user_id=user_id, extras=extras))
+        return self._render_and_push(user_id, briefing)
 
     def push_morning_briefing(self, user_id: str, briefing) -> dict:
-        payload = briefing.model_dump(mode="json") if hasattr(briefing, "model_dump") else dict(briefing)
-        title, lines = _render_morning(payload)
-        return self.push(PushMessage(title=title, body=_render_report_html(lines), user_id=user_id, extras=payload))
+        return self._render_and_push(user_id, briefing)
 
     def push_weekly_profile(self, user_id: str, profile) -> dict:
         briefing = WeeklyBriefingEngine().build(profile)
-        payload = briefing.model_dump(mode="json")
-        title, lines = _render_report_briefing(payload, "周报")
-        return self.push(PushMessage(title=title, body=_render_report_html(lines), user_id=user_id, extras=payload))
+        return self._render_and_push(user_id, briefing)
 
     def push_monthly_profile(self, user_id: str, profile) -> dict:
         """Explicit monthly capability; this method does not schedule monthly delivery."""
         briefing = MonthlyBriefingEngine().build(profile)
-        payload = briefing.model_dump(mode="json")
-        title, lines = _render_report_briefing(payload, "月报")
-        return self.push(PushMessage(title=title, body=_render_report_html(lines), user_id=user_id, extras=payload))
+        return self._render_and_push(user_id, briefing)
 
     @staticmethod
     def _log_handler(msg: PushMessage) -> None:
@@ -133,345 +291,123 @@ class PushService:
             with httpx.Client(timeout=10.0, trust_env=False) as client:
                 response = client.post(self.webhook_url, json={
                     "user_id": msg.user_id, "title": msg.title, "body": msg.body,
-                    "template": msg.template, "timestamp": msg.timestamp.isoformat(), "extras": msg.extras,
+                    "template": msg.template, "timestamp": msg.timestamp.isoformat(),
+                    "extras": msg.extras,
                 })
-                response.raise_for_status()
-        except (httpx.TimeoutException, httpx.TransportError) as exc:
-            raise NotificationSendError("notification transport timeout", ambiguous=True) from exc
-        except OSError as exc:
-            message = "network unavailable" if "network" in str(exc).lower() else "notification transport failed"
-            raise NotificationSendError(message, ambiguous=True) from exc
-        except httpx.HTTPStatusError as exc:
-            ambiguous = _http_status_error_is_ambiguous(exc)
-            raise NotificationSendError(
-                "notification response uncertain" if ambiguous else "notification rejected",
-                ambiguous=ambiguous,
-            ) from exc
-
-    def _pushplus_handler(self, msg: PushMessage) -> None:
-        try:
-            with httpx.Client(timeout=10.0, trust_env=False) as client:
-                response = client.post(PUSHPLUS_URL, json={
-                    "token": self.pushplus_token, "title": msg.title,
-                    "content": msg.body, "template": msg.template,
-                })
-                try:
-                    response.raise_for_status()
-                except httpx.HTTPStatusError as exc:
-                    ambiguous = _http_status_error_is_ambiguous(exc)
-                    raise NotificationSendError(
-                        "transport response uncertain" if ambiguous else "transport rejected",
-                        ambiguous=ambiguous,
-                    ) from exc
-                try:
-                    payload = response.json()
-                except ValueError as exc:
-                    raise NotificationSendError("notification response uncertain", ambiguous=True) from exc
-                if not isinstance(payload, dict) or payload.get("code") != 200:
-                    raise NotificationSendError("notification rejected", ambiguous=False)
+                error = _response_status_error(response, operation="notification")
+                if error is not None:
+                    raise error
         except NotificationSendError:
             raise
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise NotificationSendError("notification transport timeout", ambiguous=True) from exc
         except OSError as exc:
-            message = "network unavailable" if "network" in str(exc).lower() else "notification transport failed"
-            raise NotificationSendError(message, ambiguous=True) from exc
+            raise NotificationSendError("notification transport failed", ambiguous=True) from exc
 
+    def _pushplus_handler(self, msg: PushMessage) -> dict[str, Any]:
+        send_attempt_id = str(
+            msg.extras.get("send_attempt_id") or self.send_attempt_id or uuid4().hex
+        )
+        try:
+            with httpx.Client(timeout=10.0, trust_env=False) as client:
+                response = client.post(PUSHPLUS_URL, json={
+                    "token": self.pushplus_token,
+                    "title": msg.title,
+                    "content": msg.body,
+                    "template": msg.template,
+                })
+                error = _response_status_error(response, operation="notification")
+                if error is not None:
+                    error.args = (str(error),)
+                    raise error
+                try:
+                    payload = response.json()
+                except (TypeError, ValueError) as exc:
+                    raise NotificationSendError(
+                        "notification response uncertain", ambiguous=True, retryable=False
+                    ) from exc
+                if not isinstance(payload, dict) or payload.get("code") != 200:
+                    raise NotificationSendError(
+                        "notification rejected", ambiguous=False, retryable=True
+                    )
+                provider_id = payload.get("data")
+                if not isinstance(provider_id, str) or not provider_id.strip():
+                    raise NotificationSendError(
+                        "notification response uncertain", ambiguous=True, retryable=False
+                    )
+                return PushStatus(
+                    "accepted",
+                    provider_id=provider_id.strip(),
+                    provider_status="accepted",
+                    send_attempt_id=send_attempt_id,
+                ).as_dict()
+        except NotificationSendError as exc:
+            exc.provider_id = exc.provider_id or None
+            raise
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            raise NotificationSendError(
+                "notification transport timeout", ambiguous=True, retryable=False
+            ) from exc
+        except OSError as exc:
+            raise NotificationSendError(
+                "notification transport failed", ambiguous=True, retryable=False
+            ) from exc
 
-_REPORT_STYLES = {
-    "blockquote": "margin:0 0 18px;padding:10px 12px;border-left:4px solid #0f766e;background:#f0fdfa;color:#475569",
-    "h2": "margin:24px 0 10px;padding:8px 10px;border-left:4px solid #0f766e;border-radius:4px;background:#f1f5f9;color:#0f4c5c;font-size:19px;line-height:1.35",
-    "h3": "margin:18px 0 8px;color:#243b53;font-size:16px;line-height:1.4",
-    "p": "margin:8px 0;color:#334155;line-height:1.75",
-    "ul": "margin:8px 0 12px;padding-left:21px;color:#334155",
-    "li": "margin:6px 0;line-height:1.7",
-    "strong": "color:#111827;font-weight:650",
-}
+    def query_pushplus(self, provider_id: str, *, poll_attempt_id: str | None = None) -> dict[str, Any]:
+        """Query an accepted PushPlus message without ever issuing another POST."""
+        if not provider_id:
+            raise ValueError("provider_id is required for a PushPlus status query")
+        if not self.pushplus_access_key:
+            return PushStatus("accepted", provider_id=provider_id).as_dict()
+        poll_attempt_id = poll_attempt_id or uuid4().hex
+        try:
+            with httpx.Client(timeout=10.0, trust_env=False) as client:
+                response = client.get(
+                    f"{PUSHPLUS_QUERY_URL}?shortCode={quote(provider_id, safe='')}",
+                    headers={"access-key": self.pushplus_access_key},
+                )
+                if getattr(response, "status_code", 200) >= 400:
+                    return PushStatus(
+                        "accepted", provider_id=provider_id,
+                        provider_status="accepted", poll_attempt_id=poll_attempt_id,
+                    ).as_dict()
+                try:
+                    payload = response.json()
+                except (TypeError, ValueError):
+                    return PushStatus(
+                        "accepted", provider_id=provider_id,
+                        provider_status="accepted", poll_attempt_id=poll_attempt_id,
+                    ).as_dict()
+                if not isinstance(payload, dict) or payload.get("code") != 200:
+                    return PushStatus(
+                        "accepted", provider_id=provider_id,
+                        provider_status="accepted", poll_attempt_id=poll_attempt_id,
+                    ).as_dict()
+                data = payload.get("data")
+                if isinstance(data, dict):
+                    raw_status = data.get("status")
+                else:
+                    raw_status = None
+                raw_provider_status = str(raw_status) if raw_status is not None else "unknown"
+                provider_status = {
+                    "0": "pending", "1": "pending", "2": "delivered", "3": "failed",
+                }.get(raw_provider_status, "unknown")
+                status = {
+                    "0": "accepted", "1": "accepted", "2": "delivered", "3": "failed",
+                }.get(raw_provider_status, "accepted")
+                return PushStatus(
+                    status,
+                    provider_id=provider_id,
+                    provider_status=provider_status,
+                    poll_attempt_id=poll_attempt_id,
+                    retryable=status == "failed",
+                ).as_dict()
+        except (httpx.TimeoutException, httpx.TransportError, OSError):
+            # A query timeout never changes accepted into failed and never retries POST.
+            return PushStatus(
+                "accepted", provider_id=provider_id,
+                provider_status="accepted", poll_attempt_id=poll_attempt_id,
+            ).as_dict()
 
-
-class _ReportStyleTreeprocessor(Treeprocessor):
-    def run(self, root):
-        for element in root.iter():
-            if element.tag in _REPORT_STYLES:
-                element.set("style", _REPORT_STYLES[element.tag])
-            elif element.tag == "img":
-                element.tag = "span"
-                element.text = element.get("alt", "")
-                element.attrib.clear()
-            elif element.tag == "a":
-                # Report values can contain Markdown-looking text. Keep the
-                # visible label, but never emit a clickable or executable URL.
-                element.tag = "span"
-                element.attrib.clear()
-        return root
-
-
-class _ReportStyleExtension(Extension):
-    def extendMarkdown(self, markdown):
-        markdown.treeprocessors.register(_ReportStyleTreeprocessor(markdown), "vitalis_report_style", 5)
-
-
-def _render_report_html(lines: list[str]) -> str:
-    escaped = [html.escape(str(line), quote=False) for line in lines]
-    source = "\n".join(escaped)
-    fragment = Markdown(extensions=[_ReportStyleExtension()]).convert(source)
-    return '<div style="max-width:680px;margin:0 auto;padding:14px 14px 22px;box-sizing:border-box;border:1px solid #dbe4e8;border-radius:8px;background:#ffffff;color:#1f2937;font-family:Arial,sans-serif;font-size:15px;line-height:1.65;letter-spacing:0;word-break:break-word">' + fragment + "</div>"
-
-
-def _report_summary(payload: dict) -> list[str]:
-    sections = payload.get("sections") or []
-    details = [
-        item for section in sections
-        for key in ("facts", "interpretation")
-        for item in section.get(key) or []
-    ]
-    return unique([
-        item for item in payload.get("summary") or []
-        if not _is_interactive(str(item))
-        and not any(detail and (item == detail or item.endswith(detail)) for detail in details)
-    ])
-
-
-def _compact_period_metric(line: str) -> str:
-    if "本期有效日" not in line and "本期有记录" not in line:
-        return line
-    parts = line.rstrip("。").split("；")
-    selected = [parts[0]]
-    current = next((item for item in parts[1:] if item.startswith(("本期有效日", "本期有记录"))), None)
-    if current:
-        selected.append(current)
-    total = next((item for item in parts[1:] if "已记录小计" in item or "合计 " in item or item.startswith("本期 ")), None)
-    if total:
-        selected.append(total.split("，均值变化")[0].split("，完整日均值变化")[0])
-    average = next((item for item in parts[1:] if item.startswith("有记录日均")), None)
-    if average:
-        selected.append(average)
-    return "；".join(selected) + "。" if len(selected) > 1 else line
-
-
-def _display_facts(section: dict, period: str | None = None) -> list[str]:
-    facts = [
-        str(item).replace("（Zepp 汇总）", "").replace("（Zepp 厂商汇总）", "")
-        for item in section.get("facts") or []
-        if not str(item).startswith((
-            "设备睡眠评分", "设备准备度", "设备能量评分", "设备压力日记录",
-            "设备训练负荷指数", "设备训练负荷 ", "平均压力评分", "压力采样：",
-        ))
-    ]
-    key = section.get("key")
-
-    def first(*prefixes: str) -> str | None:
-        return next((item for item in facts if item.startswith(prefixes)), None)
-
-    if key == "sleep":
-        timing = [first(prefix) for prefix in ("睡眠时长", "入睡", "醒来", "夜间醒来")]
-        headline = "；".join(item.rstrip("。") for item in timing if item)
-        comparison = first("睡眠时长与个人参照")
-        return [*([headline + "。"] if headline else facts[:1]), *([comparison] if comparison else [])]
-    if key in {"yesterday_activity", "today_activity", "activity"}:
-        activity = [first(prefix) for prefix in ("步数", "活动距离", "活动时长")]
-        headline = "；".join(item.rstrip("。") for item in activity if item)
-        energies = unique([item for item in facts if "热量" in item or "总消耗" in item])[:2]
-        return unique([*([headline + "。"] if headline else facts[:1]), *energies])
-    if key in {"recovery", "sleep_recovery"}:
-        if key == "sleep_recovery":
-            return facts[:3]
-        hrv = first("睡眠 HRV", "HRV")
-        if hrv and "未取得" in hrv:
-            hrv = None
-        heart = first("静息心率", "睡眠静息心率", "夜间心率中位数")
-        if hrv or heart:
-            return unique([hrv, heart])
-        other = next((item for prefix in (
-            "夜间血氧中位数", "夜间呼吸频率", "夜间皮肤温度", "夜间最低五分钟心率中位数",
-        ) if (item := first(prefix))), None)
-        return [other] if other else []
-    if key in {"observed_training", "today_plan"}:
-        return facts
-    if key == "training":
-        if period == "weekly":
-            return [item for item in (
-                first("训练场次"), first("跑步 "), first("力量："),
-            ) if item] or facts[:2]
-        selected = [
-            item for item in facts
-            if not item.startswith(("第 ", "跑步心率分布："))
-        ]
-        return selected
-    if key == "intraday":
-        return [item for item in facts if item.startswith(("已记录心率", "压力记录"))]
-    if key == "training_activity":
-        chosen = [first("训练场次", "已记录训练场次"), first("跑步", "已记录跑步"), first("力量：", "已记录力量：")]
-        activity = first("步数：", "日常步数：")
-        energy = next((item for item in facts if ("热量" in item or "总消耗" in item) and "本期有记录" in item), None)
-        selected = [*chosen, _compact_period_metric(activity) if activity else None, _compact_period_metric(energy) if energy else None]
-        return unique([item for item in selected if item]) or facts[:2]
-    if key == "activity_feedback":
-        chosen = [first("活动有效"), next((item for item in facts if "热量" in item or "总消耗" in item), None), first("已记录主观反馈")]
-        return unique([_compact_period_metric(item) for item in chosen if item]) or facts[:2]
-    if key == "actions":
-        return facts[:1]
-    return facts[:2]
-
-
-_INTERACTIVE_PHRASES = (
-    "请回复", "回复我", "告诉我", "请确认", "确认是否接受", "等你回答",
-    "填写反馈", "提交反馈", "回答这个问题", "你今天累吗",
-)
-
-_RELEVANT_GAP_PHRASES = (
-    "不能直接比较", "不可直接比较", "前后窗口来源不同", "设备来源变化",
-    "设备来源", "来源不同", "不作直接比较", "时段不完整", "不能替代明确组数",
-)
-
-_EMPTY_FACT_PHRASES = (
-    "没有可用的日内心率或压力观测", "本周期没有可用活动或已记录反馈事实",
-    "本周期没有可用的训练、活动或能量事实", "当前没有达到个人关联最低配对",
-)
-
-
-def _is_interactive(text: str) -> bool:
-    return "?" in text or "？" in text or any(phrase in text for phrase in _INTERACTIVE_PHRASES)
-
-
-def _presentation_notes(section: dict, facts: list[str], interpretation: list[str], displayed: set[str] | None) -> list[str]:
-    return unique([
-        item for item in section.get("limitations") or []
-        if item not in facts
-        and item not in interpretation
-        and (displayed is None or item not in displayed)
-        and any(phrase in str(item) for phrase in _RELEVANT_GAP_PHRASES)
-        and not _is_interactive(str(item))
-    ])
-
-
-def _section_lines(section: dict, displayed: set[str] | None = None, period: str | None = None) -> list[str]:
-    candidates = _display_facts(section, period)
-    remaining_displayed = Counter(displayed or ())
-    facts = []
-    for item in candidates:
-        if remaining_displayed[item]:
-            remaining_displayed[item] -= 1
-            continue
-        if not _is_interactive(str(item)):
-            facts.append(item)
-    interpretation = [
-        item for item in unique(section.get("interpretation") or [])
-        if item not in facts
-        and (displayed is None or item not in displayed)
-        and not _is_interactive(str(item))
-    ]
-    key = section.get("key")
-    if key not in {"today_plan", "training", "actions"}:
-        important = [item for item in interpretation if "HRV" in item and ("分歧" in item or "不一致" in item)]
-        interpretation = unique(interpretation[:2] + important)
-    notes = _presentation_notes(section, facts, interpretation, displayed)
-    if not facts and not interpretation and not notes:
-        return []
-    if facts and all(any(marker in str(item) for marker in _EMPTY_FACT_PHRASES) for item in facts) and not interpretation and not notes:
-        return []
-
-    lines = ["", f"## {section.get('title', '分析')}", ""]
-    if facts:
-        lines.append(f"**{facts[0]}**")
-        lines.extend(f"- {item}" for item in facts[1:])
-    if interpretation:
-        heading = "建议" if key in {"today_plan", "actions"} else "分析"
-        lines.extend(["", f"### {heading}", ""])
-        lines.extend(f"- {item}" for item in interpretation)
-    if notes:
-        lines.extend(["", "### 需要留意", ""])
-        lines.extend(f"- {item}" for item in notes)
-    if displayed is not None:
-        displayed.update([*facts, *interpretation, *notes])
-    return lines
-
-
-def _render_morning(briefing: dict) -> tuple[str, list[str]]:
-    date = briefing.get("date", "日期未提供")
-    metadata = (briefing.get("report_context") or {}).get("delivery_metadata") or {}
-    facts_only = bool(metadata.get("facts_only"))
-    if facts_only:
-        title = f"Vitalis 晨报 · {date}"
-    else:
-        plan = briefing.get("action_plan") or {}
-        primary = plan.get("primary_session") or {}
-        title_label = primary.get("title") or briefing.get("action_label", "今日安排")
-        title = f"Vitalis 晨报 · {date} · {title_label}"
-    summary = _report_summary(briefing)
-    lines = _timing_lines(briefing) + [f"# 晨报 · {date}", "", *summary]
-    retrospective = bool(metadata.get("retrospective"))
-    sections = [
-        section for section in briefing.get("sections", [])
-        if (not facts_only or section.get("key") in {
-            "sleep", "recovery", "yesterday_activity", "observed_training", "today_activity",
-        })
-        and (not retrospective or section.get("key") != "today_plan")
-    ]
-    displayed = set(summary)
-    for section in sections:
-        lines.extend(_section_lines(section, displayed, period="morning"))
-    safety = MorningBriefingEngine.safety_lines(briefing) if not facts_only else []
-    cautions = unique([
-        item for item in briefing.get("cautions") or []
-        if item not in displayed and item not in safety
-        and not (metadata.get("sync_degraded") and item.startswith("本次同步"))
-    ])
-    if cautions:
-        lines.extend(["", "## 需要留意", ""])
-        lines.extend(f"- {item}" for item in cautions)
-    if safety:
-        lines.extend(["", "## 停止条件", ""])
-        lines.extend(f"- {item}" for item in safety)
-    return title, lines
-
-
-def _render_report_briefing(payload: dict, label: str) -> tuple[str, list[str]]:
-    end = payload.get("period_end", payload.get("date", "日期未提供"))
-    context = payload.get("report_context") or {}
-    metadata = context.get("delivery_metadata") or {}
-    suffix = "补发" if metadata.get("retrospective") else ""
-    title = f"Vitalis {label}{suffix} · {end}"
-    summary = _report_summary(payload)
-    lines = _timing_lines(payload) + [f"# {label} · {end}", "", *summary]
-    if metadata.get("retrospective"):
-        lines.extend(["", "> 本报告仅回顾指定日期范围内的已记录事实。"])
-    displayed = set(summary)
-    for section in payload.get("sections", []):
-        lines.extend(_section_lines(section, displayed, period=payload.get("period")))
-    return title, lines
-
-
-def _render_evening(payload: dict) -> tuple[str, list[str]]:
-    if payload.get("period") != "evening" or not payload.get("sections"):
-        payload = EveningBriefingEngine().build(payload).model_dump(mode="json")
-    return _render_report_briefing(payload, "晚报")
-
-
-def _timing_lines(payload: dict) -> list[str]:
-    context = payload.get("report_context") or {}
-    timing = as_of_line(context)
-    lines = [f"> {timing}"] if timing else []
-    metadata = context.get("delivery_metadata") or {}
-    if metadata.get("sync_degraded"):
-        notice = "本次同步等待超时" if metadata.get("sync_status") == "timeout" else "部分数据尚未完成更新"
-        lines.extend(["", f"> {notice}，本报告使用已保存的数据。"])
-    return lines
-
-
-# Kept as a small public-compatible helper for callers that render coach steps.
-def _render_coach_actions(action_plan: dict) -> list[str]:
-    primary = action_plan.get("primary_session") or {}
-    if not primary:
-        return ["今天没有生成训练安排。"]
-    lines = [f"### 主要：{primary.get('title', '训练')} · {primary.get('intensity_label', '')}", "", primary.get("focus", "")]
-    for step in primary.get("steps", []):
-        details = []
-        if step.get("duration_minutes"):
-            details.append(f"{step['duration_minutes']} 分钟")
-        if step.get("sets"):
-            details.append(f"{step['sets']} 组")
-        if step.get("repetitions"):
-            details.append(str(step["repetitions"]))
-        lines.append(f"{step.get('order', '')}. {step.get('name', '步骤')}" + (f"：{'；'.join(details)}" if details else ""))
-    return lines
+    # Explicit spelling used by scheduler code and tests.
+    poll_pushplus = query_pushplus

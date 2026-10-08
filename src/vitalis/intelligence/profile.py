@@ -31,6 +31,7 @@ from vitalis.time import local_day, local_day_utc_bounds, local_sleep_window, lo
 from .facts import facts_for_day
 from .localization import QUALITY_LABELS, SIGNAL_LABELS, labels
 from .open_health.common import OpenHealthObservation
+from .report_periods import resolve_month_period
 
 
 SAMPLE_METRICS = (
@@ -125,7 +126,10 @@ class ProfileLoader:
         raw.sleep_by_day = _records_by_day(self.repo.sleep_range(user_id, start, day))
         raw.activity_by_day = _records_by_day(self.repo.activity_range(user_id, start, day))
         raw.training_by_day = _records_by_day(self.repo.training_range(user_id, start, day))
-        coverage_start = day - timedelta(days=55)
+        coverage_start = min(
+            day - timedelta(days=55),
+            resolve_month_period(day).reference_start,
+        )
         raw.training_history_coverage = self.repo.training_history_coverage(
             user_id, coverage_start, day, cutoff, timezone_name=zone_name
         )
@@ -718,12 +722,12 @@ class ProfileLoader:
         ]
 
     def _quality(self, raw: RawDailyProfile) -> DataQuality:
-        required = ["sleep_duration", "hrv"]
+        # HRV is optional for the profile as a whole; recovery/HRV analyzers
+        # retain their own gates and report insufficient data when needed.
+        required = ["sleep_duration"]
         missing = []
         if not _has_day(raw.series.get("sleep_duration", []), raw.day):
             missing.append("sleep_duration")
-        if not any(_has_day(raw.series.get(metric, []), raw.day) for metric in ("hrv_rmssd", "hrv_sdnn", "sleep_hrv")):
-            missing.append("hrv")
 
         if not missing:
             status = QualityStatus.SUFFICIENT

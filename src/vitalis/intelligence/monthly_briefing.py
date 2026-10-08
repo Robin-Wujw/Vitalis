@@ -7,6 +7,7 @@ from typing import Any
 
 from .contracts import ReportBriefing
 from .period_activity import comparison_gate
+from .report_presentation import internal_sections, period_presentation
 from .report_formatting import as_of_line, coverage_text, date_text, energy_label, metric_label, number, payload_of, percent, running_class_label, unique, value_with_unit
 
 
@@ -77,6 +78,7 @@ class MonthlyBriefingEngine:
             self._associations(payload),
             self._actions(payload),
         ]
+        presentation = period_presentation(payload, "monthly")
         return ReportBriefing(
             period="monthly",
             analysis_run_id=payload.get("analysis_run_id", ""),
@@ -87,8 +89,9 @@ class MonthlyBriefingEngine:
             generated_at=payload.get("generated_at"),
             report_context=dict(payload.get("report_context") or {}),
             data_quality=payload.get("data_quality") or {},
+            **presentation,
             summary=self._summary(payload),
-            sections=sections,
+            sections=internal_sections(sections),
         ).model_dump(mode="json")
 
     def build(self, profile: Any) -> ReportBriefing:

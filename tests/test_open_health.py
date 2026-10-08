@@ -91,6 +91,39 @@ def test_readiness_refuses_zero_dispersion_baseline():
     assert result.refusal_reason.code == "ZERO_READINESS_DISPERSION"
 
 
+def test_readiness_duplicate_date_values_do_not_bypass_prior_night_gate():
+    rows = [
+        {"date": d(1), "rmssd_ms": value, "source": "watch", "device_id": "old"}
+        for value in (98, 100, 102)
+    ]
+    rows.append({"date": d(2), "rmssd_ms": 50, "source": "watch", "device_id": "old"})
+
+    result = compute_readiness(rows, target_date=d(2))
+
+    assert result.status == OpenHealthStatus.REFUSED
+    assert result.refusal_reason.code == "INSUFFICIENT_READINESS_HISTORY"
+    assert result.payload.prior_nights == 1
+    assert result.payload.history_nights == 2
+
+
+def test_readiness_uses_latest_timestamp_without_cross_source_average():
+    rows = [
+        {"date": d(1), "rmssd_ms": 98, "source": "watch", "device_id": "a", "timestamp": "2026-01-01T01:00:00"},
+        {"date": d(1), "rmssd_ms": 102, "source": "watch", "device_id": "a", "timestamp": "2026-01-01T02:00:00"},
+        {"date": d(2), "rmssd_ms": 100, "source": "watch", "device_id": "a"},
+        {"date": d(3), "rmssd_ms": 102, "source": "watch", "device_id": "a"},
+        {"date": d(4), "rmssd_ms": 50, "source": "watch", "device_id": "a"},
+        {"date": d(1), "rmssd_ms": 500, "source": "other", "device_id": "b"},
+    ]
+
+    result = compute_readiness(rows, target_date=d(4))
+
+    assert result.status == OpenHealthStatus.AVAILABLE
+    assert result.payload.prior_nights == 3
+    assert isclose(result.payload.baseline_ln_rmssd or 0, sum(__import__("math").log(value) for value in (102, 100, 102)) / 3, abs_tol=1e-12)
+    assert result.provenance[0].device_id == "a"
+
+
 def anomaly_rows(current_values=((20, 70, 20), (20, 70, 20))):
     rows = []
     for day in range(1, 13):
@@ -147,6 +180,41 @@ def test_anomaly_gap_resets_continuity_state():
     assert result.payload.flagged is True
 
 
+def test_anomaly_does_not_reuse_baseline_after_source_device_switch():
+    rows = [
+        {
+            "date": d(day),
+            "rmssd_ms": 96 + (day % 5) * 2,
+            "rhr_bpm": 48 + (day % 4),
+            "respiratory_rate": 13 + (day % 3) * 0.4,
+            "source": "old-watch",
+            "device_id": "old",
+        }
+        for day in range(1, 13)
+    ]
+    rows.extend([
+        {"date": d(13), "rmssd_ms": 20, "rhr_bpm": 70, "respiratory_rate": 20, "source": "new-watch", "device_id": "new"},
+        {"date": d(14), "rmssd_ms": 20, "rhr_bpm": 70, "respiratory_rate": 20, "source": "new-watch", "device_id": "new"},
+    ])
+
+    result = compute_anomaly(rows, target_date=d(14))
+
+    assert result.status == OpenHealthStatus.REFUSED
+    assert result.refusal_reason.code == "INSUFFICIENT_ANOMALY_DIMENSIONS"
+    assert result.provenance[0].source == "new-watch"
+    assert result.provenance[0].device_id == "new"
+
+
+def test_anomaly_with_comparable_same_source_baseline_remains_normal():
+    result = compute_anomaly(
+        anomaly_rows(current_values=((100, 50, 13.4), (100, 50, 13.4))),
+        target_date=d(14),
+    )
+
+    assert result.status == OpenHealthStatus.AVAILABLE
+    assert result.payload.flagged is False
+
+
 def test_period_coverage_uses_anomaly_baseline_nights_and_sleep_nights():
     anomaly = compute_anomaly(anomaly_rows(), target_date=d(14))
     sleep = compute_sleep(sleep_rows(14), target_date=d(14))
@@ -193,6 +261,67 @@ def test_sleep_cross_midnight_no_target_no_nap_and_regularity():
     assert with_target.payload.target_met is False
     assert with_target.payload.target_gap_minutes == 30
     assert with_target.profile_revision_used == 3
+
+
+def test_sleep_missing_duration_does_not_turn_time_in_bed_into_sleep():
+    result = compute_sleep([
+        {"date": d(1), "bedtime": "23:00", "wake_time": "07:00", "naps_known": False}
+    ], target_date=d(1))
+
+    assert result.status == OpenHealthStatus.REFUSED
+    assert result.tier == "refused"
+    assert result.refusal_reason.code == "MISSING_SLEEP_DURATION"
+    assert result.payload.time_in_bed_minutes == 480
+    assert result.payload.sleep_minutes is None
+    assert result.payload.efficiency is None
+    assert result.payload.naps_known is False
+    assert result.payload.nap_minutes is None
+
+
+def test_sleep_explicit_false_naps_known_wins_over_nap_value():
+    result = compute_sleep([
+        {
+            "date": d(1),
+            "bedtime": "23:00",
+            "wake_time": "07:00",
+            "sleep_minutes": 450,
+            "nap_minutes": 20,
+            "naps_known": False,
+        }
+    ], target_date=d(1))
+
+    assert result.payload.naps_known is False
+    assert result.payload.nap_minutes is None
+
+
+def test_sleep_confidence_counts_distinct_valid_nights_not_date_placeholders():
+    rows = [{"date": d(day)} for day in range(1, 29)]
+    for day in (27, 28):
+        rows[day - 1].update({
+            "bedtime": "23:00",
+            "wake_time": "07:00",
+            "sleep_minutes": 450,
+            "naps_known": True,
+        })
+
+    result = compute_sleep(rows, target_date=d(28))
+
+    assert isclose(result.confidence, 2 / 28, abs_tol=1e-12)
+    assert result.coverage["valid_sleep_nights"] == 2
+
+
+def test_sleep_duplicate_dates_do_not_bypass_regularity_gate():
+    rows = []
+    for day in (1, 2, 3):
+        rows.extend([
+            {"date": d(day), "bedtime": "23:00", "wake_time": "07:00", "sleep_minutes": 450, "naps_known": True},
+            {"date": d(day), "bedtime": "23:30", "wake_time": "07:30", "sleep_minutes": 450, "naps_known": True},
+        ])
+
+    result = compute_sleep(rows, target_date=d(3))
+
+    assert result.payload.regularity[0].status == "REFUSED"
+    assert result.payload.regularity[0].available_nights == 3
 
 
 def test_sleep_rejects_implausible_window_and_duration():

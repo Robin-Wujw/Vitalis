@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 
+from vitalis.intelligence.baseline import BaselineEngine
 from vitalis.intelligence.contracts import Availability, ConfidenceBand, TrendDirection
 from vitalis.intelligence.profile import RawDailyProfile, SeriesPoint
 from vitalis.intelligence.trend import TrendEngine
@@ -90,3 +91,37 @@ def test_ninety_day_trend_compares_against_preceding_ninety_days():
     assert trend.previous_median == 60
     assert trend.change_percent == -10
     assert trend.direction == TrendDirection.FALLING
+
+
+def test_incomplete_target_day_is_excluded_from_cumulative_activity_trends():
+    raw = RawDailyProfile(user_id="incomplete-activity-trend", day=TARGET)
+    raw.report_context = {"target_day_complete": False}
+    raw.series = {
+        "steps": _points("steps", [100] * 6 + [1000], unit="steps"),
+        "active_minutes": _points("active_minutes", [10] * 6 + [100], unit="min"),
+        "sleep_duration": _points("sleep_duration", [400] * 6 + [800], unit="min"),
+    }
+
+    trends = TrendEngine().calculate(raw, windows=(7,))
+    by_metric = {item.metric: item for item in trends}
+
+    assert by_metric["steps"].current_distinct_days == 6
+    assert by_metric["active_minutes"].current_distinct_days == 6
+    assert by_metric["sleep_duration"].current_distinct_days == 7
+
+
+def test_zero_reference_with_nonzero_mad_keeps_percent_missing():
+    raw = RawDailyProfile(user_id="zero-baseline", day=TARGET)
+    raw.series = {
+        "skin_temperature_delta": _points(
+            "skin_temperature_delta", [-0.2, 0.0, 0.2, 0.3], unit="C"
+        )
+    }
+    baseline = BaselineEngine().build(raw.series, TARGET)["skin_temperature_delta"][0]
+
+    deviation = BaselineEngine.deviation(0.3, baseline)
+
+    assert baseline.reference_value == 0
+    assert baseline.mad > 0
+    assert deviation.percent is None
+    assert deviation.robust_z is not None

@@ -6,7 +6,8 @@ from vitalis.intelligence.evening_briefing import EveningBriefingEngine
 from vitalis.intelligence.morning_briefing import MorningBriefingEngine
 from vitalis.intelligence.monthly_briefing import MonthlyBriefingEngine
 from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
-from vitalis.adapters.notifications import PushService, _render_report_html
+from vitalis.adapters.notifications import PushService
+from vitalis.intelligence.report_rendering import render_report
 
 
 TARGET_DATE = date(2026, 9, 5)
@@ -15,8 +16,15 @@ TARGET_DATE = date(2026, 9, 5)
 def _training_plan():
     return {
         "primary_session": {
+            "role": "PRIMARY",
+            "role_label": "主要安排",
+            "session_type": "RUNNING",
+            "session_type_label": "跑步",
+            "code": "easy_run",
+            "goal": "补足有氧频次并控制恢复成本",
             "title": "轻松跑",
             "focus": "补足有氧频次并控制恢复成本",
+            "intensity": "low",
             "intensity_label": "低强度",
             "total_duration_minutes": [30, 45],
             "steps": [{
@@ -30,8 +38,15 @@ def _training_plan():
             "stop_conditions": ["出现疼痛时停止。"],
         },
         "optional_session": {
+            "role": "OPTIONAL",
+            "role_label": "可选安排",
+            "session_type": "STRENGTH",
+            "session_type_label": "力量训练",
+            "code": "pull_strength",
+            "goal": "背部和肱二头肌",
             "title": "拉类力量训练",
             "focus": "背部和肱二头肌",
+            "intensity": "moderate",
             "intensity_label": "中等强度",
             "total_duration_minutes": [40, 60],
             "steps": [],
@@ -41,6 +56,15 @@ def _training_plan():
         "session_relationship_label": "可分开完成，至少间隔 6 小时",
         "safety_status": "CLEAR",
         "safety_status_label": "安全门控通过",
+        "valid_for_date": TARGET_DATE.isoformat(),
+        "expires_at": "2026-09-06T03:00:00+00:00",
+        "weekly_balance": {
+            "running_completed_7d": 2, "running_target_7d": 3,
+            "running_completed_28d": 6, "running_target_28d": 12,
+            "strength_completed_7d": 2, "strength_target_7d": 3,
+            "strength_completed_28d": 6, "strength_target_28d": 12,
+            "running_due": True, "strength_due": True,
+        },
     }
 
 
@@ -82,6 +106,8 @@ def synthetic_daily_fixture(scenario="complete"):
         "today_load": None if missing else 62,
         "recent_workouts": [] if missing else [{
             "date": TARGET_DATE.isoformat(),
+            "source": "zepp",
+            "workout_id": "fixture-running-today",
             "type_label": "户外跑",
             "duration_minutes": 45,
             "distance_km": 7.1,
@@ -90,6 +116,8 @@ def synthetic_daily_fixture(scenario="complete"):
         }],
         "running": {"recent_sessions": [] if missing else [{
             "date": TARGET_DATE.isoformat(),
+            "source": "zepp",
+            "workout_id": "fixture-running-today",
             "classification": "TEMPO_RUN",
             "classification_label": "节奏跑",
             "confidence": "HIGH",
@@ -166,8 +194,21 @@ def synthetic_daily_fixture(scenario="complete"):
         "decision": {
             "action": "INSUFFICIENT_DATA" if missing else "TRAIN_LIGHT",
             "action_label": "暂不生成训练建议" if missing else "轻量训练",
-            "action_plan": {**({"primary_session": None, "optional_session": None, "session_relationship": "NONE", "safety_status": "LIMITED", "safety_status_label": "数据覆盖有限"} if missing else _training_plan())},
-            "evidence": {"facts": [] if missing else [{"label": "静息心率高于个人基线"}]},
+            "action_plan": {**({
+                "primary_session": None, "optional_session": None,
+                "session_relationship": "NONE", "safety_status": "LIMITED",
+                "safety_status_label": "数据覆盖有限",
+                "valid_for_date": TARGET_DATE.isoformat(),
+                "expires_at": "2026-09-06T03:00:00+00:00",
+                "weekly_balance": {
+                    "running_completed_7d": 0, "running_target_7d": 3,
+                    "running_completed_28d": 0, "running_target_28d": 12,
+                    "strength_completed_7d": 0, "strength_target_7d": 3,
+                    "strength_completed_28d": 0, "strength_target_28d": 12,
+                    "running_due": False, "strength_due": False,
+                },
+            } if missing else _training_plan())},
+            "evidence": {"facts": [] if missing else [{"code": "RHR_ABOVE_BASELINE", "label": "静息心率高于个人基线"}]},
             "limitation_labels": ["恢复决策所需信号不足"] if missing else [],
         },
     }
@@ -261,13 +302,23 @@ def synthetic_period_fixture(period, scenario="complete"):
         "personal_associations": [],
     }
     recommendations = [] if missing else [{"title": "保持当前结构", "action": "在恢复允许时保持跑步与力量交替，避免连续叠加高强度。", "reasons": ["两期恢复变化仍需结合覆盖。"]}]
+    reference_start = period_start - timedelta(days=days)
+    reference_end = period_start - timedelta(days=1)
     common = {
         "analysis_run_id": f"fixture-{period}-{scenario}",
         "user_id": "fixture-user",
         "period_start": period_start.isoformat(),
         "period_end": TARGET_DATE.isoformat(),
         "generated_at": "2026-09-06T08:00:00+00:00",
-        "report_context": {"as_of": "2026-09-05T22:00:00+00:00", "heterogeneous_sources": heterogeneous},
+        "report_context": {
+            "as_of": "2026-09-05T22:00:00+00:00",
+            "period_mode": "rolling",
+            "reference_period": {
+                "start": reference_start.isoformat(),
+                "end": reference_end.isoformat(),
+            },
+            "heterogeneous_sources": heterogeneous,
+        },
         "data_quality": quality,
         "facts": {
             "sleep": {"available_days": available, "previous_available_days": days if previous_comparable else 0, "average_minutes": current_sleep, "previous_average_minutes": previous_sleep, "change_percent": 5.7 if previous_comparable else None, "bedtime_regularity_minutes": None if missing else 19},
@@ -303,13 +354,29 @@ def test_four_report_scenarios_have_full_sections(scenario):
     monthly = MonthlyBriefingEngine().build(synthetic_period_fixture("monthly", scenario))
     expected_morning = ["sleep", "recovery"] + ([] if scenario == "missing" else ["today_activity"]) + ["today_plan"]
     assert [item["key"] for item in morning["sections"]] == expected_morning
-    assert [item.key for item in evening.sections] == ["training", "activity", "intraday", "recovery"]
+    evening_keys = [item.key for item in evening.sections]
+    assert evening_keys[:4] == ["training", "activity", "intraday", "recovery"]
+    assert all(key.startswith("display_") for key in evening_keys[4:])
+    assert all(not item.display for item in evening.sections[:4])
+    assert all(item.display for item in evening.sections[4:])
     assert len(weekly.sections) == 5 and len(monthly.sections) == 5
     assert weekly.period_start == date.fromisoformat(synthetic_period_fixture("weekly", scenario)["period_start"])
     assert (weekly.period_end - weekly.period_start).days == 6
     assert (monthly.period_end - monthly.period_start).days == 27
-    for report in (morning, evening.model_dump(), weekly.model_dump(), monthly.model_dump()):
-        text = str(report)
+    # Keep internal section shape as an audit, but assert user-visible output
+    # only through the canonical renderer.
+    assert all(not item.get("display", False) for item in morning["sections"])
+    assert all(not section.display for report in (weekly, monthly) for section in report.sections)
+    for report in (morning, evening, weekly, monthly):
+        payload = report if isinstance(report, dict) else report.model_dump(mode="json")
+        assert payload["headline"]
+        assert payload["as_of"] or payload["report_context"].get("as_of")
+        assert isinstance(payload["metrics"], list)
+        assert isinstance(payload["findings"], list)
+        assert isinstance(payload["training"], list)
+        assert isinstance(payload["suggestions"], list)
+        assert isinstance(payload["alerts"], list)
+        text = render_report(report, target="markdown").content
         assert "训练后告诉我" not in text
         assert "feedback_prompt" not in text
         assert "UNKNOWN" not in text
@@ -346,9 +413,11 @@ def test_partial_fixture_keeps_current_facts_but_blocks_cross_period_comparison(
     assert period["facts"]["sleep"]["previous_average_minutes"] is None
     assert period["facts"]["recovery"]["hrv_previous_median_ms"] is None
     briefing = WeeklyBriefingEngine().build(period)
-    text = str(briefing.model_dump())
-    assert "变化 5.7%" not in text
-    assert "训练记录已核实 4/7 天，3 天未核实" in text
+    visible = render_report(briefing, target="markdown").content
+    internal = str(briefing.model_dump(mode="json"))
+    assert "变化 5.7%" not in visible
+    assert "训练记录已核实 4/7 天，3 天未核实" in internal
+    assert "变化 5.7%" not in internal
 
 
 def test_heterogeneous_fixture_does_not_make_invalid_cross_source_comparison():
@@ -359,48 +428,63 @@ def test_heterogeneous_fixture_does_not_make_invalid_cross_source_comparison():
     assert metric["change_percent"] is None
     assert period["facts"]["recovery"]["streams"][0]["previous_median"] is None
     briefing = MonthlyBriefingEngine().build(period)
-    text = str(briefing.model_dump())
-    assert "睡眠时长较前一期增加" not in text
-    assert "前后窗口来源不同" in text
+    visible = render_report(briefing, target="markdown").content
+    internal = str(briefing.model_dump(mode="json"))
+    assert "睡眠时长较前一期增加" not in visible
+    assert "睡眠时长较前一期增加" not in internal
+    assert "前后窗口来源不同" in internal
 
 
 def test_morning_preserves_recovery_disagreement_and_does_not_judge_single_value():
     result = MorningBriefingEngine().build_payload(synthetic_daily_fixture("heterogeneous"))
-    text = str(result)
-    assert "存在分歧" in text
-    assert "71 毫秒" in text
+    text = render_report(result, target="markdown").content
+    assert "存在来源分歧" in text
+    # Conflicting HRV is optional for the display and must not become a single value.
+    assert "71 毫秒" not in text
     assert "绝对" not in text
 
 
 def test_evening_separates_energy_roles_and_shows_activity():
-    result = EveningBriefingEngine().build(synthetic_daily_fixture()).model_dump()
-    text = str(result)
-    assert "设备估算热量（统计范围待确认）" in text
-    assert "本次训练估算热量" in text
-    assert "步数" in text and "活动距离" in text and "活动时长" in text
-    assert "daily.calories" not in text and "activity.calories" not in text and "workout.calories" not in text
-    assert "user_fused" not in text and "source_scope" not in text
-    assert "相加" not in text
+    result = EveningBriefingEngine().build(synthetic_daily_fixture())
+    visible = render_report(result, target="markdown").content
+    internal = str(result.model_dump(mode="json"))
+    assert "设备估算热量（统计范围待确认）" in internal
+    assert "本次训练估算热量" in internal
+    assert "步数" in internal and "活动距离" in internal and "活动时长" in internal
+    assert "步数" in visible and "45 分钟" in visible
+    assert {metric.key for metric in result.metrics} >= {"sleep", "steps"}
+    assert result.training
+    for text in (internal, visible):
+        assert "daily.calories" not in text and "activity.calories" not in text and "workout.calories" not in text
+        assert "user_fused" not in text and "source_scope" not in text
+        assert "相加" not in text
 
 
 def test_weekly_maps_running_classifications_and_consumes_inferences():
     result = WeeklyBriefingEngine().build(synthetic_period_fixture("weekly", "heterogeneous"))
-    text = str(result)
-    assert "轻松跑" in text and "节奏或阈值跑" in text
-    assert "EASY_RUN" not in text and "TEMPO_RUN" not in text
-    assert "睡眠时长较前一期增加" not in text
-    assert "前后窗口来源不同" in text
+    visible = render_report(result, target="markdown").content
+    internal = str(result.model_dump(mode="json"))
+    assert "轻松跑" in internal and "节奏或阈值跑" in internal
+    assert "EASY_RUN" not in internal and "TEMPO_RUN" not in internal
+    assert "睡眠时长较前一期增加" not in internal
+    assert "前后窗口来源不同" in internal
+    assert "轻松跑" not in visible and "节奏或阈值跑" not in visible
 
 
 def test_monthly_association_is_explicitly_non_causal():
     result = MonthlyBriefingEngine().build(synthetic_period_fixture("monthly", "complete"))
-    text = str(result)
-    assert "个人数据关联" in text
-    assert "不表示因果" not in text
+    visible = render_report(result, target="markdown").content
+    internal = str(result.model_dump(mode="json"))
+    assert "个人数据关联" in internal
+    assert "不表示因果" not in internal
+    assert "个人数据关联" not in visible
 
 
 def test_html_escapes_untrusted_fact_text():
-    html = _render_report_html(["## 事实", "", "恶意 <script>alert(1)</script>"])
+    html = render_report({
+        "period": "evening", "date": "2026-09-05", "headline": "事实",
+        "findings": ["恶意 <script>alert(1)</script>"],
+    }, target="html").content
     assert "&lt;script&gt;" in html
     assert "<script>" not in html
 
@@ -411,8 +495,12 @@ def test_push_monthly_profile_uses_same_sections_without_scheduling():
     service.add_handler(received.append)
     service.push_monthly_profile("fixture-user", synthetic_period_fixture("monthly", "complete"))
     assert received
-    assert "持续恢复变化" in received[0].body
-    assert received[0].extras["period"] == "monthly"
+    message = received[0]
+    assert message.template == "markdown"
+    assert "本月睡眠与训练结构" in message.body
+    assert "平均睡眠" in message.body
+    assert message.extras["period"] == "monthly"
+    assert any(section["title"] == "持续恢复变化" for section in message.extras["sections"])
 
 
 @pytest.mark.parametrize("period", ["weekly", "monthly"])
@@ -422,6 +510,8 @@ def test_period_activity_metrics_render_human_units_without_raw_metric_names(per
         {
             "metric": "steps",
             "unit": "steps",
+            "period_days": 7 if period == "weekly" else 28,
+            "provenance": {"source": "zepp", "source_scope": "user_fused"},
             "total": 58_000,
             "average": 8_285.7,
             "available_days": 7,
@@ -432,6 +522,8 @@ def test_period_activity_metrics_render_human_units_without_raw_metric_names(per
         {
             "metric": "distance_km",
             "unit": "km",
+            "period_days": 7 if period == "weekly" else 28,
+            "provenance": {"source": "zepp", "source_scope": "user_fused"},
             "total": 42.5,
             "average": 6.1,
             "available_days": 7,
@@ -442,6 +534,8 @@ def test_period_activity_metrics_render_human_units_without_raw_metric_names(per
         {
             "metric": "active_minutes",
             "unit": "min",
+            "period_days": 7 if period == "weekly" else 28,
+            "provenance": {"source": "zepp", "source_scope": "user_fused"},
             "total": 330,
             "average": 47.1,
             "available_days": 7,
@@ -453,6 +547,8 @@ def test_period_activity_metrics_render_human_units_without_raw_metric_names(per
             "metric": "calories",
             "unit": "kcal",
             "role": "unspecified",
+            "period_days": 7 if period == "weekly" else 28,
+            "provenance": {"source": "zepp", "source_scope": "user_fused"},
             "total": 2_800,
             "average": 400,
             "available_days": 7,
@@ -463,6 +559,8 @@ def test_period_activity_metrics_render_human_units_without_raw_metric_names(per
         {
             "metric": "vendor_internal_activity",
             "unit": "steps",
+            "period_days": 7 if period == "weekly" else 28,
+            "provenance": {"source": "zepp", "source_scope": "user_fused"},
             "total": 10,
             "average": 2,
             "available_days": 7,
@@ -472,15 +570,18 @@ def test_period_activity_metrics_render_human_units_without_raw_metric_names(per
         },
     ]
     engine = WeeklyBriefingEngine() if period == "weekly" else MonthlyBriefingEngine()
-    text = str(engine.build(payload).model_dump())
+    report = engine.build(payload)
+    visible = render_report(report, target="markdown").content
+    internal = str(report.model_dump(mode="json"))
     total_prefix = "本期" if period == "weekly" else "已记录小计"
-    assert f"{total_prefix} 58,000 步" in text and "日均 8,285.7 步" in text
-    assert f"{total_prefix} 42.5 公里" in text and "日均 6.1 公里" in text
-    assert f"{total_prefix} 330 分钟" in text and "日均 47.1 分钟" in text
+    assert f"{total_prefix} 58,000 步" in internal and "日均 8,285.7 步" in internal
+    assert f"{total_prefix} 42.5 公里" in internal and "日均 6.1 公里" in internal
+    assert f"{total_prefix} 330 分钟" in internal and "日均 47.1 分钟" in internal
     calories_total = f"{total_prefix} 2,800 千卡"
-    assert calories_total in text and "日均 400 千卡" in text
-    assert "vendor_internal_activity" not in text
-    assert "其他观测" in text
+    assert calories_total in internal and "日均 400 千卡" in internal
+    assert "vendor_internal_activity" not in internal
+    assert "其他观测" in internal
+    assert "vendor_internal_activity" not in visible
 
 
 @pytest.mark.parametrize("period", ["weekly", "monthly"])
@@ -503,6 +604,12 @@ def test_period_energy_does_not_infer_kcal_from_metric_name(period, unit, shown)
     payload = synthetic_period_fixture(period, "complete")
     payload["facts"]["activity"]["metrics"] = [{
         "metric": "calories", "role": "unspecified", "unit": unit,
+        "period_days": 7 if period == "weekly" else 28,
+        "available_days": 7 if period == "weekly" else 28,
+        "complete_days": 7 if period == "weekly" else 28,
+        "previous_available_days": 7 if period == "weekly" else 28,
+        "previous_complete_days": 7 if period == "weekly" else 28,
+        "provenance": {"source": "zepp", "source_scope": "user_fused"},
         "total": 123, "average": 41,
     }]
     engine = WeeklyBriefingEngine() if period == "weekly" else MonthlyBriefingEngine()
@@ -556,13 +663,14 @@ def test_monthly_changes_appear_once_and_multiple_recovery_streams_are_distinct(
     assert "配对 18 天" in next(section for section in report.sections if section.key == "associations").facts[0]
 
 
-def test_monthly_old_snapshot_without_previous_sleep_count_does_not_claim_change():
+def test_monthly_missing_previous_sleep_coverage_does_not_claim_change():
     payload = synthetic_period_fixture("monthly", "complete")
-    payload["facts"]["sleep"].pop("previous_available_days")
+    sleep = payload["facts"]["sleep"]
+    sleep.update({"previous_available_days": 0, "previous_average_minutes": 405, "change_percent": 5.7})
     report = MonthlyBriefingEngine().build(payload)
     sleep_line = next(section for section in report.sections if section.key == "sleep_recovery").facts[0]
 
-    assert "前期有效天数未记录" in sleep_line
+    assert "前期有效 0/28 天" in sleep_line
     assert "两期均值变化" not in sleep_line
 
 
@@ -590,13 +698,13 @@ def test_monthly_activity_fallback_keeps_metrics_missing_from_a_partial_list():
     assert any("11,200 千卡" in item for item in facts)
 
 
-def test_monthly_missing_coverage_is_not_rendered_as_zero_or_full_total():
+def test_monthly_unknown_coverage_is_not_rendered_as_zero_or_full_total():
     payload = synthetic_period_fixture("monthly", "partial")
-    payload["facts"]["training"].pop("totals_are_partial")
+    payload["facts"]["training"]["totals_are_partial"] = True
     metric = payload["facts"]["activity"]["metrics"][0]
-    metric.pop("totals_are_partial")
+    metric["totals_are_partial"] = True
     for key in ("available_days", "complete_days", "previous_available_days", "previous_complete_days"):
-        metric.pop(key)
+        metric[key] = None
     metric["change_percent"] = 12
     facts = next(section for section in MonthlyBriefingEngine().build(payload).sections if section.key == "training_activity").facts
     steps = next(item for item in facts if item.startswith("步数："))

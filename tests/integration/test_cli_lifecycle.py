@@ -93,3 +93,69 @@ def test_new_database_demo_analysis_and_restart(tmp_path):
     again = _cli("demo", "--database", target)
     assert again.returncode == 1
     assert "existing data" in again.stderr
+
+
+def test_report_export_is_read_only_and_never_overwrites_a_file(tmp_path):
+    import sqlite3
+
+    target = tmp_path / "reports.db"
+    created = _cli("demo", "--database", target, "--day", "2026-10-07")
+    assert created.returncode == 0, created.stderr
+    assert json.loads(created.stdout)["days_imported"] >= 61
+    database_url = f"sqlite:///{target.as_posix()}"
+
+    def counts():
+        with sqlite3.connect(target) as db:
+            tables = db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+            return {name: db.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0] for (name,) in tables}
+
+    before = counts()
+    for kind in ("morning", "daily", "weekly", "monthly"):
+        for format in ("markdown", "html"):
+            output = tmp_path / f"{kind}.{format}"
+            result = _cli(
+                "report", kind, "--user", "demo", "--day", "2026-10-07",
+                "--format", format, "--output", output, database_url=database_url,
+            )
+            assert result.returncode == 0, result.stderr
+            metadata = json.loads(result.stdout)
+            content = output.read_bytes()
+            import hashlib
+            assert metadata["content_sha256"] == hashlib.sha256(content).hexdigest()
+            assert metadata["media_type"] == f"text/{format}"
+            assert metadata["renderer_version"]
+            assert b"2026-10-07" in content
+            again = _cli(
+                "report", kind, "--user", "demo", "--day", "2026-10-07",
+                "--format", format, "--output", output, database_url=database_url,
+            )
+            assert again.returncode == 1
+            assert output.read_bytes() == content
+    assert counts() == before
+
+
+def test_report_creation_race_preserves_the_other_writers_file(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from vitalis import bootstrap
+    from vitalis.entrypoints import cli
+
+    briefing = {
+        "period": "evening", "headline": "合成记录", "date": "2026-10-07",
+        "metrics": [{"key": "steps", "label": "步数", "value": 0, "unit": "steps"}],
+    }
+    reader = lambda *_args: briefing
+    monkeypatch.setattr(bootstrap, "get_intelligence_query", lambda: SimpleNamespace(
+        morning_briefing=reader, evening_briefing=reader, weekly_briefing=reader,
+        monthly_briefing=reader,
+    ))
+    output = tmp_path / "report.md"
+
+    def racing_writer(*_args):
+        output.write_text("other writer's file", encoding="utf-8")
+        raise FileExistsError("file was created concurrently")
+
+    monkeypatch.setattr(cli.os, "open", racing_writer)
+    import pytest
+    with pytest.raises(FileExistsError):
+        cli._write_report("daily", "demo", "2026-10-07", "markdown", output)
+    assert output.read_text(encoding="utf-8") == "other writer's file"

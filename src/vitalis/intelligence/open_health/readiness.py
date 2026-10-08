@@ -21,7 +21,7 @@ from vitalis.intelligence.contracts import (
     ReadinessInsight,
 )
 
-from .common import OpenHealthObservation, as_observation, sorted_observations
+from .common import OpenHealthObservation, distinct_observations, sorted_observations
 from .ewma import UPSTREAM_REVISION
 
 
@@ -52,21 +52,22 @@ def compute_readiness(
 ) -> OpenHealthInsights:
     rows = sorted_observations(list(observations))
     target = target_date or (rows[-1].date if rows else date.today())
-    target_rows = [
-        row for row in rows if row.date == target and _valid_nightly_rmssd(row)
-    ]
-    target_row = target_rows[-1] if target_rows else None
+    # Resolve duplicate calendar days before applying the nightly gates. The
+    # selected row is the latest explicit timestamp, or a deterministic input
+    # tie-break when a vendor only supplies a date.
+    valid_rows = distinct_observations(rows, valid=_valid_nightly_rmssd)
+    target_row = next((row for row in valid_rows if row.date == target), None)
     stream_key = (
         target_row.source,
         target_row.source_scope,
         target_row.device_id,
     ) if target_row else None
-    history = [
+    history = distinct_observations([
         row for row in rows
         if row.date <= target
         and _valid_nightly_rmssd(row)
         and (row.source, row.source_scope, row.device_id) == stream_key
-    ] if stream_key else []
+    ], valid=_valid_nightly_rmssd) if stream_key else []
     prior = [
         row for row in history
         if target - timedelta(days=7) <= row.date < target

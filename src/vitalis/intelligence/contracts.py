@@ -610,6 +610,8 @@ class RecoveryFeatures(BaseModel):
 
 
 class WorkoutFeature(BaseModel):
+    workout_id: str | None = None
+    source: str | None = None
     date: date
     vendor_reported_sets: int | None = Field(default=None, ge=1)
     started_at: datetime | None = None
@@ -627,7 +629,7 @@ class WorkoutFeature(BaseModel):
     recognition_source_label: str
     vendor_type_id: int | None = None
     duration_minutes: int = Field(ge=0)
-    vendor_load: float = Field(ge=0)
+    vendor_load: float | None = Field(default=None, ge=0)
     heart_rate_avg_bpm: int | None = Field(default=None, ge=1)
     heart_rate_max_bpm: int | None = Field(default=None, ge=1)
     detail_available: bool = False
@@ -740,12 +742,17 @@ class RunningAnalysis(BaseModel):
     limitations: list[str] = Field(default_factory=list)
 
 
+StrengthWeightBasis = Literal["per_hand", "total", "machine", "bodyweight"]
+
+
 class StrengthExerciseInput(BaseModel):
     exercise_name: str = Field(min_length=1, max_length=100)
     exercise_id: str | None = Field(default=None, max_length=100)
     sets: int | None = Field(default=None, ge=1, le=100)
     repetitions: int | None = Field(default=None, ge=1, strict=True)
     weight_kg: float | None = Field(default=None, ge=0, le=2000)
+    weight_unit: str | None = Field(default=None, max_length=32)
+    weight_basis: StrengthWeightBasis | None = None
     rpe: float | None = Field(default=None, ge=1, le=10)
     rir: float | None = Field(default=None, ge=0, le=10)
     rest_seconds: int | None = Field(default=None, ge=0, le=3600)
@@ -787,13 +794,36 @@ class StrengthExerciseRecord(BaseModel):
     sets: int | None = Field(default=None, ge=1)
     repetitions: int | None = Field(default=None, ge=1, strict=True)
     weight_kg: float | None = Field(default=None, ge=0)
+    weight_unit: str | None = None
+    weight_basis: StrengthWeightBasis | None = None
     rpe: float | None = Field(default=None, ge=1, le=10)
     rir: float | None = Field(default=None, ge=0, le=10)
     rest_seconds: int | None = Field(default=None, ge=0)
     source: Literal["user_confirmed", "vendor_explicit"]
     confidence: ConfidenceBand
     confidence_label: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # Source time is retained when known; absent source time stays absent for stable output.
+    created_at: datetime | None = None
+
+
+class StrengthExerciseComparison(BaseModel):
+    """Deterministic same-exercise comparison for one analyzed session."""
+
+    exercise_id: str | None = None
+    exercise_name: str
+    reference_workout_source: str | None = None
+    reference_workout_id: str | None = None
+    reference_workout_date: DateValue | None = None
+    current_repetitions: list[int | None] = Field(default_factory=list)
+    previous_repetitions: list[int | None] = Field(default_factory=list)
+    current_weights: list[float | None] = Field(default_factory=list)
+    previous_weights: list[float | None] = Field(default_factory=list)
+    weight_unit: str | None = None
+    weight_basis: StrengthWeightBasis | None = None
+    set_count: int | None = Field(default=None, ge=0)
+    comparable: bool = False
+    blocked_reason: str | None = None
+    delta_total_repetitions: int | None = None
 
 
 class ExerciseHypothesis(BaseModel):
@@ -824,6 +854,7 @@ class StrengthSessionAnalysis(BaseModel):
     confidence_label: str
     explicit_exercises: list[StrengthExerciseRecord] = Field(default_factory=list)
     observed_sets: list[StrengthSetObservation] = Field(default_factory=list)
+    comparisons: list[StrengthExerciseComparison] = Field(default_factory=list)
     hypotheses: list[ExerciseHypothesis] = Field(default_factory=list)
     movement_patterns: list[str] = Field(default_factory=list)
     movement_pattern_labels: list[str] = Field(default_factory=list)
@@ -1487,12 +1518,60 @@ class DailyProfile(BaseModel):
     open_health_insights: "OpenHealthBundle | None" = None
 
 
+class ReportMetricComparison(BaseModel):
+    label: str
+    reference_value: float | None = None
+    change_percent: float | None = None
+    reference_period_start: DateValue | None = None
+    reference_period_end: DateValue | None = None
+
+
+class ReportMetric(BaseModel):
+    key: str
+    label: str
+    value: float | None = None
+    unit: str
+    digits: int = Field(default=0, ge=0, le=2)
+    comparison: ReportMetricComparison | None = None
+    detail: str | None = None
+    gap: str | None = None
+
+
+class ReportSet(BaseModel):
+    order: int = Field(ge=1)
+    repetitions: int | None = Field(default=None, ge=0)
+    weight_value: float | None = Field(default=None, ge=0)
+    weight_unit: str | None = None
+    weight_basis: str | None = None
+    duration_seconds: int | None = Field(default=None, ge=0)
+    rest_seconds: int | None = Field(default=None, ge=0)
+
+
+class ReportExercise(BaseModel):
+    name: str
+    exercise_id: str | None = None
+    set_count: int = Field(ge=0)
+    sets: list[ReportSet] = Field(default_factory=list)
+    comparison: str | None = None
+    reference_date: DateValue | None = None
+
+
+class ReportWorkout(BaseModel):
+    title: str
+    date: DateValue
+    started_at: datetime | None = None
+    duration_minutes: float | None = Field(default=None, ge=0)
+    facts: list[str] = Field(default_factory=list)
+    exercises: list[ReportExercise] = Field(default_factory=list)
+
+
 class ReportSection(BaseModel):
     key: str
     title: str
     facts: list[str] = Field(default_factory=list)
     interpretation: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
+    display: bool = False
 
 
 class ReportBriefing(BaseModel):
@@ -1506,6 +1585,13 @@ class ReportBriefing(BaseModel):
     generated_at: datetime | None = None
     report_context: dict[str, Any] = Field(default_factory=dict)
     data_quality: dict[str, Any] = Field(default_factory=dict)
+    headline: str = "已记录数据回顾"
+    as_of: datetime | None = None
+    metrics: list[ReportMetric] = Field(default_factory=list)
+    findings: list[str] = Field(default_factory=list)
+    training: list[ReportWorkout] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
+    alerts: list[str] = Field(default_factory=list)
     summary: list[str] = Field(default_factory=list)
     sections: list[ReportSection] = Field(default_factory=list)
 
@@ -1538,7 +1624,15 @@ class MorningBriefing(BaseModel):
     decision_action: DecisionAction
     action_label: str
     action_plan: ActionPlan | None = None
+    period: Literal["morning"] = "morning"
     report_context: dict[str, Any] = Field(default_factory=dict)
+    headline: str = "昨夜记录与今日重点"
+    as_of: datetime | None = None
+    metrics: list[ReportMetric] = Field(default_factory=list)
+    findings: list[str] = Field(default_factory=list)
+    training: list[ReportWorkout] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
+    alerts: list[str] = Field(default_factory=list)
     summary: list[str] = Field(default_factory=list)
     sections: list[ReportSection] = Field(default_factory=list)
     observations: list[MorningBriefingReason] = Field(default_factory=list)
@@ -1785,7 +1879,7 @@ class WorkoutExposure(BaseModel):
     training_family: str
     training_family_label: str
     duration_minutes: int = Field(ge=0)
-    vendor_load: float = Field(ge=0)
+    vendor_load: float | None = Field(default=None, ge=0)
     heart_rate_avg_bpm: int | None = Field(default=None, ge=1)
     heart_rate_max_bpm: int | None = Field(default=None, ge=1)
 

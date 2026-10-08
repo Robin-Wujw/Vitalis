@@ -99,6 +99,25 @@ def test_training_response_uses_pre_workout_baseline_and_t1_t2_t3_windows():
     assert t1_hrv.direction == "below"
 
 
+def test_training_response_preserves_missing_and_observed_zero_loads():
+    missing_raw = _raw_response()
+    missing_raw.workouts[0]["data"].pop("load")
+    zero_raw = _raw_response()
+    zero_raw.workouts[0]["data"]["load"] = 0
+
+    missing = TrainingResponseEngine().build(
+        "missing-load-response", missing_raw, [], {}
+    )[0]
+    zero = TrainingResponseEngine().build(
+        "zero-load-response", zero_raw, [], {}
+    )[0]
+
+    assert missing.exposure.duration_minutes == 45
+    assert missing.exposure.vendor_load is None
+    assert zero.exposure.duration_minutes == 45
+    assert zero.exposure.vendor_load == 0
+
+
 def test_overlapping_workout_marks_response_as_confounded():
     response = next(
         item for item in TrainingResponseEngine().build(

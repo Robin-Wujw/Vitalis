@@ -498,13 +498,15 @@ class StrengthExercise(Base):
     sets: Mapped[int | None] = mapped_column(Integer, nullable=True)
     repetitions: Mapped[int | None] = mapped_column(Integer, nullable=True)
     weight_kg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    weight_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    weight_basis: Mapped[str | None] = mapped_column(String(16), nullable=True)
     rpe: Mapped[float | None] = mapped_column(Float, nullable=True)
     rir: Mapped[float | None] = mapped_column(Float, nullable=True)
     rest_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source: Mapped[str] = mapped_column(String(24))
     confidence: Mapped[str] = mapped_column(String(16))
     confidence_label: Mapped[str] = mapped_column(String(16))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class StrengthCorrectionRevision(Base):
@@ -669,7 +671,7 @@ class NotificationDelivery(Base):
             "user_id", "target_date", "period", name="uq_notification_delivery"
         ),
         CheckConstraint(
-            "status IN ('pending', 'running', 'succeeded', 'failed', 'uncertain', 'deferred')",
+            "status IN ('pending', 'running', 'accepted', 'delivered', 'failed', 'uncertain', 'deferred')",
             name="ck_notification_delivery_status",
         ),
         CheckConstraint(
@@ -677,7 +679,7 @@ class NotificationDelivery(Base):
             name="ck_notification_delivery_period",
         ),
         CheckConstraint(
-            "attempt_count >= 0",
+            "attempt_count >= 0 AND send_attempt_count >= 0 AND poll_attempt_count >= 0",
             name="ck_notification_delivery_attempts",
         ),
         CheckConstraint(
@@ -686,6 +688,7 @@ class NotificationDelivery(Base):
             name="ck_notification_delivery_lease",
         ),
         Index("ix_notification_delivery_due", "status", "next_attempt_at"),
+        Index("ix_notification_delivery_poll", "status", "next_poll_at"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -695,9 +698,20 @@ class NotificationDelivery(Base):
     target_date: Mapped[date] = mapped_column(Date, index=True)
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    send_attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    poll_attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    send_attempt_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    poll_attempt_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    provider_id: Mapped[str | None] = mapped_column(String(256), nullable=True, index=True)
+    provider_status: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    template: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    renderer_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_kind: Mapped[str | None] = mapped_column(String(8), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    next_poll_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     last_error: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

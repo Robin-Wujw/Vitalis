@@ -63,6 +63,11 @@ class TrendEngine:
         windows: tuple[int, ...] = TREND_WINDOWS,
     ) -> list[TrendFeature]:
         output: list[TrendFeature] = []
+        target_day_complete = bool(
+            (getattr(raw, "report_context", None) or {}).get(
+                "target_day_complete", True
+            )
+        )
         for metric in sorted(TREND_METRICS & raw.series.keys()):
             streams = stream_daily_values(raw.series[metric])
             for (source, scope, device_id, unit), daily in sorted(
@@ -81,6 +86,7 @@ class TrendEngine:
                         daily,
                         raw.day,
                         window,
+                        target_day_complete=target_day_complete,
                     ))
         return output
 
@@ -94,6 +100,8 @@ class TrendEngine:
         daily: dict[date, float],
         target_day: date,
         window_days: int,
+        *,
+        target_day_complete: bool = True,
     ) -> TrendFeature:
         minimum = MINIMUM_DAYS[window_days]
         current_start = target_day - timedelta(days=window_days - 1)
@@ -101,6 +109,11 @@ class TrendEngine:
         current = sorted(
             (day, value) for day, value in daily.items()
             if current_start <= day <= target_day
+            and (
+                target_day_complete
+                or day < target_day
+                or metric not in {"steps", "active_minutes"}
+            )
         )
         previous = sorted(
             (day, value) for day, value in daily.items()

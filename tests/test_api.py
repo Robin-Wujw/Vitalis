@@ -138,6 +138,11 @@ def test_morning_briefing_projects_persisted_daily_snapshot(client):
     assert briefing["analysis_run_id"] == job["analysis_run_id"]
     assert briefing == client.get("/api/reports/morning", headers=headers).json()
     assert briefing["schema_version"] == "4.0"
+    assert briefing["headline"]
+    assert briefing["as_of"] or briefing["report_context"].get("as_of")
+    for field in ("metrics", "findings", "training", "suggestions", "alerts"):
+        assert isinstance(briefing[field], list)
+    assert all(not section.get("display", False) for section in briefing["sections"])
     assert len(briefing["sections"]) >= 3
     assert "feedback_prompt" not in briefing
     assert client.get(
@@ -212,7 +217,7 @@ def test_daily_profile_second_user_abstains(client):
     body = resp.json()
     assert body["data_quality"]["status"] == "INSUFFICIENT"
     assert body["data_quality"]["status_label"] == "数据不足"
-    assert body["data_quality"]["missing_required_signal_labels"] == ["睡眠时长", "心率变异性"]
+    assert body["data_quality"]["missing_required_signal_labels"] == ["睡眠时长"]
     assert body["decision"]["action"] == "INSUFFICIENT_DATA"
     assert body["decision"]["confidence"] == "NONE"
     assert body["decision"]["action_label"] == "数据不足，暂不建议"

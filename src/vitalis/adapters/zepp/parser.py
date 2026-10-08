@@ -727,6 +727,7 @@ class ZeppParser:
             )
             if weight_value is None:
                 weight_value = ZeppParser._strength_number(item, ("weight",), 0, 2000)
+            weight_basis = ZeppParser._strength_weight_basis(item)
             observation = StrengthSetObservation(
                 order=order,
                 started_at=ZeppParser._utc(started) if started else None,
@@ -743,6 +744,7 @@ class ZeppParser:
                 weight_kg=weight_kg,
                 weight_value=weight_value,
                 weight_unit=weight_unit if weight_value is not None else None,
+                weight_basis=weight_basis,
                 duration_seconds=ZeppParser._strength_number(
                     item, ("durationSeconds", "duration", "workTime"), 0, MAX_WORKOUT_SECONDS, integer=True,
                 ),
@@ -830,6 +832,15 @@ class ZeppParser:
         if normalized not in {"kg", "kgs", "kilogram", "kilograms", "公斤", "千克"}:
             return None
         return ZeppParser._strength_number(item, ("weight",), 0, 2000)
+
+    @staticmethod
+    def _strength_weight_basis(item: dict) -> str | None:
+        """Keep only an explicitly supplied, supported loading basis."""
+        value = ZeppParser._first_text(item, ("weightBasis", "weight_basis"))
+        if value is None:
+            return None
+        normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+        return normalized if normalized in {"per_hand", "total", "machine", "bodyweight"} else None
 
     @staticmethod
     def _deduplicate_workout_samples(
@@ -1667,10 +1678,15 @@ class ZeppParser:
         if not items:
             return None
         total_duration = 0
-        total_load = 0
+        load_values = []
         for it in items:
             total_duration += int(it.get("duration", 0))
-            total_load += int(it.get("load", 0))
+            load_values.append(it.get("load"))
+        total_load = (
+            sum(int(value) for value in load_values)
+            if all(value is not None for value in load_values)
+            else None
+        )
         day = date.fromisoformat(data.get("date") or items[0]["startTime"][:10])
         return TrainingRecord(
             user_id="",

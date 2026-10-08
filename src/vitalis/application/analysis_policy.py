@@ -27,14 +27,23 @@ def analysis_policy_digest(
     return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+_PRESENTATION_FILES = frozenset({
+    "report_rendering.py", "report_formatting.py", "report_presentation.py",
+    "morning_briefing.py", "evening_briefing.py", "weekly_briefing.py",
+    "monthly_briefing.py",
+})
+
+
 @lru_cache(maxsize=1)
 def installed_analysis_rules_digest() -> str:
-    """Fingerprint the shipped Python rules and time interpretation, not secrets."""
+    """Fingerprint analysis semantics; presentation revisions have their own version."""
     digest = sha256()
     for package in ("vitalis.intelligence", "vitalis.domain", "vitalis.application"):
         root = resources.files(package)
         for file in sorted(root.rglob("*.py")):
             relative = file.relative_to(root).as_posix()
+            if package == "vitalis.intelligence" and relative in _PRESENTATION_FILES:
+                continue
             digest.update(f"{package}/{relative}\0".encode())
             digest.update(file.read_bytes())
     for package, name in (

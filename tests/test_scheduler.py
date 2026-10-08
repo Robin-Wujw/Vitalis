@@ -139,7 +139,7 @@ def test_weekly_sync_covers_full_report_period(monkeypatch, target_day, timezone
     ("deferred", "snapshot_unavailable", 0, 1),
     ("deferred", "sleep_incomplete", 0, 1),
     ("deferred", "stored_data_incomplete", 0, 1),
-    ("succeeded", None, 0, 0),
+    ("accepted", None, 0, 0),
     ("uncertain", "transport_ambiguous", 0, 0),
     ("running", None, 0, 0),
     ("deferred", "delivery_disabled", 0, 0),

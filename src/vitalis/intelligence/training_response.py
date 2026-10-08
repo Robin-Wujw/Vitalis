@@ -168,7 +168,9 @@ class TrainingResponseEngine:
                 training_family=str(data.get("training_family") or "skill"),
                 training_family_label=str(data.get("training_family_label") or "技巧训练"),
                 duration_minutes=int(data.get("duration") or 0),
-                vendor_load=float(data.get("load") or 0),
+                vendor_load=(
+                    float(data["load"]) if data.get("load") is not None else None
+                ),
                 heart_rate_avg_bpm=_positive_int(data.get("heart_rate_avg")),
                 heart_rate_max_bpm=_positive_int(data.get("heart_rate_max")),
             ),

@@ -1,47 +1,17 @@
-# Vitalis Zepp Login
+# Vitalis Zepp Login Extension
 
 [简体中文](README.md)
 
-This Manifest V3 extension is the user-side half of Vitalis cloud pairing.
+This Manifest V3 extension is the browser side of Vitalis Zepp pairing. The directory is self-contained when packaged and does not rely on repository-relative documentation.
+
+## Pairing
 
 1. Open `chrome://extensions` or `edge://extensions`.
 2. Enable developer mode, choose **Load unpacked**, and select this directory.
-3. Follow the [current quickstart](../../docs/quickstart.md): use a `manage` bearer to call `POST /api/connect/zepp/pair`, open the returned `scan_url`, and read its one-time code.
-4. Enter the Vitalis address and pairing code in the extension, then choose **Login and connect**.
-5. Complete sign-in on the official page. The extension resumes pairing automatically.
+3. On an initialized Vitalis service, call `POST /api/connect/zepp/pair` with a Bearer token that has the `manage` scope. The response contains a one-time pairing code and `scan_url`; open that URL only on the official Zepp page.
+4. Enter the Vitalis service origin and pairing code in the popup, then choose **Login and connect**.
+5. Complete sign-in on the official page. The extension resumes pairing and reports when sign-in is required again.
 
-The Vitalis address must use browser-trusted HTTPS when it is not localhost. The
-extension has built-in host access for `http://localhost/*` and `http://127.0.0.1/*`;
-non-local HTTPS origins still request browser permission at runtime. Configure the exact
-`chrome-extension://<extension ID>` origin shown by the browser in the server's
-`VITALIS_PAIRING_ALLOWED_ORIGINS` setting, then restart the API. Private Network Access
-preflights are accepted only for allowlisted origins; host access does not bypass API
-authentication or authorize the extension origin on the server.
+The non-local Vitalis origin must use browser-trusted HTTPS. Configure the exact `chrome-extension://<extension ID>` origin shown by the browser in `VITALIS_PAIRING_ALLOWED_ORIGINS`, then restart the API. Host permission does not authorize the extension on the server or bypass API authentication.
 
-The popup saves both pairing fields as they are pasted, so closing and reopening it
-while copying the second value does not discard the first one. Starting a new pairing
-code flow clears any locally retained browser-link token, so a new database pairing
-cannot be sent to an old database's link-update endpoint.
-
-Cookie discovery uses only the known Zepp login-cookie names on permitted Zepp/Huami
-domains and is independent of the cookie's URL path.
-
-When an existing login cannot be detected, the popup shows a local-only diagnostic with
-the visible cookie count and cookie name/domain pairs. Cookie values are never included
-in that diagnostic or uploaded to Vitalis, and the diagnostic is cleared after pairing.
-
-Current Zepp pages may keep the active `apptoken` and user id in page storage instead of
-the former login cookie. An allowlisted content script reads only the fixed credential
-keys from page storage or the page's own first-party cookie view on Zepp/Huami HTTPS
-origins and passes them directly to the background worker. This covers partitioned or
-profile-specific cookie stores that are not returned to the extension cookie API. The
-credential is never written to extension storage or logs.
-
-Pairing opens Zepp's own `universalLogin` route with the Watchface application as its
-official callback. An existing account-center session can therefore complete the app
-handoff without another password prompt before the page-storage bridge runs.
-
-The extension reads only Zepp/Huami cookies. Access to a Vitalis origin is
-requested at runtime and granted for the exact origin entered by the user. It checks
-the session when the cookie changes and every 30 minutes, updates Vitalis through a
-revocable browser link, and reports when sign-in is required again.
+Starting a new pairing flow clears the locally retained browser-link token. The popup keeps both pasted fields across a close/reopen. Cookie discovery uses only allowlisted Zepp/Huami domains and known login-cookie names, and the page bridge reads only fixed credential keys. Credentials are never written to extension storage or logs. A local diagnostic may show cookie counts and name/domain pairs, never values; it is cleared after pairing.

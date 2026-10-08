@@ -108,7 +108,9 @@ class HealthTimelineEngine:
                     "sport_mode": data.get("sport_mode") or "unknown",
                     "training_family": data.get("training_family") or "skill",
                     "duration_minutes": int(data.get("duration") or 0),
-                    "vendor_load": float(data.get("load") or 0),
+                    "vendor_load": (
+                        float(data["load"]) if data.get("load") is not None else None
+                    ),
                 },
             ))
         for feedback in repo.subjective_feedback(user_id, start, end):

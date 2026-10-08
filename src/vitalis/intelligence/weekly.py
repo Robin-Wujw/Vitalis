@@ -92,11 +92,15 @@ class WeeklyProfileEngine:
             item for item in period_trends
             if item.window_days == period_days
             and item.status == Availability.AVAILABLE
+            and _weekly_trend_has_comparable_sleep_coverage(item, period_days)
         ]
         key_changes = _key_changes(relevant_trends)
         limitations = []
-        if sleep.available_days < MIN_COMPARISON_DAYS:
-            limitations.append("本周睡眠有效天数不足 4 天。")
+        comparison_days = MIN_COMPARISON_DAYS
+        if sleep.available_days < comparison_days:
+            limitations.append(
+                f"本周睡眠有效天数不足 {comparison_days} 天。"
+            )
         if recovery.hrv_median_ms is None:
             limitations.append("本周缺少可比较的设备级 HRV 趋势。")
         if feedback_facts.response_count == 0:
@@ -169,6 +173,19 @@ def _period_raw(raw: RawDailyProfile, period: ReportPeriod) -> RawDailyProfile:
 def _period_trends(raw: RawDailyProfile) -> list[TrendFeature]:
     """Recompute trends at the selected period end, never reuse daily trends."""
     return TrendEngine().calculate(raw, windows=(7, 28, 90))
+
+
+def _weekly_trend_has_comparable_sleep_coverage(
+    trend: TrendFeature, period_days: int
+) -> bool:
+    """Keep 7-day sleep trends on the same 5/7 gate as facts."""
+    if trend.metric not in {"sleep_duration", "sleep_hrv", "sleep_rhr"}:
+        return True
+    minimum = comparison_gate(period_days)
+    return (
+        trend.current_distinct_days >= minimum
+        and trend.previous_distinct_days >= minimum
+    )
 
 
 def _sleep_facts(
@@ -453,10 +470,17 @@ def _quality(
     activity: WeeklyActivityFacts,
 ) -> WeeklyDataQuality:
     hrv_days = recovery.hrv_available_days
-    sufficient_signals = int(sleep.available_days >= MIN_COMPARISON_DAYS) + int(hrv_days >= MIN_COMPARISON_DAYS)
-    if sufficient_signals == 2:
+    sufficient_signals = sum([
+        sleep.available_days >= MIN_COMPARISON_DAYS,
+        hrv_days >= MIN_COMPARISON_DAYS,
+        activity.available_days >= MIN_COMPARISON_DAYS,
+        training.record_days >= MIN_COMPARISON_DAYS,
+    ])
+    if sufficient_signals >= 2:
         status = QualityStatus.SUFFICIENT
-        confidence = ConfidenceBand.HIGH if sleep.available_days >= 6 else ConfidenceBand.MODERATE
+        confidence = ConfidenceBand.HIGH if max(
+            sleep.available_days, activity.available_days
+        ) >= 6 else ConfidenceBand.MODERATE
     elif sufficient_signals == 1:
         status = QualityStatus.PARTIAL
         confidence = ConfidenceBand.LOW
@@ -672,8 +696,9 @@ def _rounded(value: float | None) -> float | None:
 
 
 def _optional_sum(items: list[dict], field: str, converter):
-    values = [converter(item[field]) for item in items if item.get(field) is not None]
-    return sum(values) if values else None
+    if not items or any(item.get(field) is None for item in items):
+        return None
+    return sum(converter(item[field]) for item in items)
 
 
 def _training_coverage(

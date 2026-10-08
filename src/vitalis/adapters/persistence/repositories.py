@@ -1104,13 +1104,20 @@ class HealthRepository:
                     written += 1
                     revision_changed = True
                 continue
+            load_values = [(row.data or {}).get("load") for row in rows]
             training = TrainingRecord(
                 user_id=user_id,
                 source="canonical_workouts",
                 date=day,
                 workout_count=len(rows),
                 total_duration=sum(int((row.data or {}).get("duration") or 0) for row in rows),
-                total_load=sum(int((row.data or {}).get("load") or 0) for row in rows),
+                # A missing workout load makes the daily aggregate unknown;
+                # an observed zero remains a real zero.
+                total_load=(
+                    sum(int(value) for value in load_values)
+                    if all(value is not None for value in load_values)
+                    else None
+                ),
             )
             if self._upsert(
                 orm.TrainingRecord,
@@ -3065,13 +3072,18 @@ class HealthRepository:
                 sets=row.sets,
                 repetitions=row.repetitions,
                 weight_kg=row.weight_kg,
+                weight_unit=row.weight_unit,
+                weight_basis=row.weight_basis,
                 rpe=row.rpe,
                 rir=row.rir,
                 rest_seconds=row.rest_seconds,
                 source=row.source,
                 confidence=row.confidence,
                 confidence_label=row.confidence_label,
-                created_at=row.created_at.replace(tzinfo=timezone.utc),
+                created_at=(
+                    row.created_at.replace(tzinfo=timezone.utc)
+                    if row.created_at is not None else None
+                ),
             ))
         return output
 
@@ -4418,9 +4430,19 @@ class HealthRepository:
                 analysis_run_id=analysis_run_id,
                 status="pending",
                 attempt_count=0,
+                send_attempt_count=0,
+                poll_attempt_count=0,
+                send_attempt_id=None,
+                poll_attempt_id=None,
+                provider_id=None,
+                provider_status=None,
+                template=None,
+                renderer_version=None,
+                content_sha256=None,
                 lease_token=None,
                 lease_expires_at=None,
                 next_attempt_at=None,
+                next_poll_at=None,
                 last_error=None,
                 updated_at=datetime.utcnow(),
             ))
@@ -4542,9 +4564,20 @@ class HealthRepository:
             analysis_run_id=analysis_run_id,
             status="pending",
             attempt_count=0,
+            send_attempt_count=0,
+            poll_attempt_count=0,
+            send_attempt_id=None,
+            poll_attempt_id=None,
+            provider_id=None,
+            provider_status=None,
+            template=None,
+            renderer_version=None,
+            content_sha256=None,
             last_error=None,
             next_attempt_at=None,
+            next_poll_at=None,
             lease_token=None,
+            lease_kind=None,
             lease_expires_at=None,
             updated_at=datetime.utcnow(),
         ))
@@ -4557,6 +4590,15 @@ class HealthRepository:
         """Return a delivery row only within its owning user's scope."""
         row = self.db.get(orm.NotificationDelivery, delivery_id)
         return row if row is not None and row.user_id == user_id else None
+
+    def notification_delivery_for_key(
+        self, user_id: str, target_date: date, period: str
+    ) -> orm.NotificationDelivery | None:
+        return self.db.execute(select(orm.NotificationDelivery).where(
+            orm.NotificationDelivery.user_id == user_id,
+            orm.NotificationDelivery.target_date == target_date,
+            orm.NotificationDelivery.period == period,
+        )).scalar_one_or_none()
 
     def notification_deliveries(
         self, user_id: str, *, limit: int = 100
@@ -4610,16 +4652,8 @@ class HealthRepository:
             self.db.flush()
         return snapshot
 
-    def claim_notification_delivery(
-        self, *, lease_seconds: int = 300, now: datetime | None = None,
-        max_attempts: int = 3,
-    ) -> orm.NotificationDelivery | None:
-        if lease_seconds < 1 or max_attempts < 1:
-            raise ValueError("notification lease and retry limits must be positive")
-        current = _naive_utc(now or datetime.now(timezone.utc))
-        # A lost worker cannot safely retry a remote notification: the remote may
-        # have accepted it before the process died. Convert expired leases to an
-        # explicit uncertain state before claiming new, definitely pending work.
+    def _expire_notification_leases(self, current: datetime) -> None:
+        """A lost send or poll may have reached the provider; never replay it."""
         self.db.execute(update(orm.NotificationDelivery).where(
             orm.NotificationDelivery.status == "running",
             orm.NotificationDelivery.lease_token.is_not(None),
@@ -4629,21 +4663,39 @@ class HealthRepository:
             status="uncertain",
             last_error="lease_expired_uncertain",
             lease_token=None,
+            lease_kind=None,
             lease_expires_at=None,
+            next_attempt_at=None,
+            next_poll_at=None,
             updated_at=current,
         ))
-        candidate = self.db.execute(select(orm.NotificationDelivery.id).where(
+
+    def claim_notification_delivery(
+        self, *, delivery_id: str | None = None, lease_seconds: int = 300,
+        now: datetime | None = None, max_attempts: int = 3,
+    ) -> orm.NotificationDelivery | None:
+        if lease_seconds < 1 or max_attempts < 1:
+            raise ValueError("notification lease and retry limits must be positive")
+        current = _naive_utc(now or datetime.now(timezone.utc))
+        self._expire_notification_leases(current)
+        conditions = [
             orm.NotificationDelivery.status.in_(("pending", "failed")),
             or_(
                 orm.NotificationDelivery.next_attempt_at.is_(None),
                 orm.NotificationDelivery.next_attempt_at <= current,
             ),
             orm.NotificationDelivery.attempt_count < max_attempts,
+        ]
+        if delivery_id is not None:
+            conditions.append(orm.NotificationDelivery.id == delivery_id)
+        candidate = self.db.execute(select(orm.NotificationDelivery.id).where(
+            *conditions,
         ).order_by(orm.NotificationDelivery.created_at).limit(1)).scalar_one_or_none()
         if candidate is None:
             self.db.flush()
             return None
         token = uuid4().hex
+        send_attempt_id = uuid4().hex
         result = self.db.execute(update(orm.NotificationDelivery).where(
             orm.NotificationDelivery.id == candidate,
             orm.NotificationDelivery.status.in_(("pending", "failed")),
@@ -4655,8 +4707,69 @@ class HealthRepository:
         ).values(
             status="running",
             lease_token=token,
+            lease_kind="send",
             lease_expires_at=current + timedelta(seconds=max(1, lease_seconds)),
             attempt_count=orm.NotificationDelivery.attempt_count + 1,
+            send_attempt_count=orm.NotificationDelivery.send_attempt_count + 1,
+            send_attempt_id=send_attempt_id,
+            poll_attempt_id=None,
+            next_attempt_at=None,
+            next_poll_at=None,
+            updated_at=current,
+        ))
+        self.db.flush()
+        if not result.rowcount:
+            return None
+        return self.db.get(orm.NotificationDelivery, candidate)
+
+    def claim_notification_poll(
+        self, *, user_id: str | None = None, lease_seconds: int = 300,
+        now: datetime | None = None, max_attempts: int = 3,
+    ) -> orm.NotificationDelivery | None:
+        """Claim a provider status query separately from a send attempt."""
+        if lease_seconds < 1 or max_attempts < 1:
+            raise ValueError("notification lease and poll limits must be positive")
+        current = _naive_utc(now or datetime.now(timezone.utc))
+        self._expire_notification_leases(current)
+        poll_conditions = [
+            orm.NotificationDelivery.status == "accepted",
+            orm.NotificationDelivery.provider_id.is_not(None),
+            orm.NotificationDelivery.next_poll_at.is_not(None),
+            orm.NotificationDelivery.next_poll_at <= current,
+            orm.NotificationDelivery.poll_attempt_count < max_attempts,
+        ]
+        if user_id is not None:
+            poll_conditions.append(orm.NotificationDelivery.user_id == user_id)
+        candidate = self.db.execute(select(orm.NotificationDelivery.id).where(
+            *poll_conditions,
+        ).order_by(
+            orm.NotificationDelivery.next_poll_at,
+            orm.NotificationDelivery.created_at,
+        ).limit(1)).scalar_one_or_none()
+        if candidate is None:
+            self.db.flush()
+            return None
+        token = uuid4().hex
+        poll_attempt_id = uuid4().hex
+        claim_conditions = [
+            orm.NotificationDelivery.id == candidate,
+            orm.NotificationDelivery.status == "accepted",
+            orm.NotificationDelivery.provider_id.is_not(None),
+            orm.NotificationDelivery.next_poll_at <= current,
+            orm.NotificationDelivery.poll_attempt_count < max_attempts,
+        ]
+        if user_id is not None:
+            claim_conditions.append(orm.NotificationDelivery.user_id == user_id)
+        result = self.db.execute(update(orm.NotificationDelivery).where(
+            *claim_conditions,
+        ).values(
+            status="running",
+            lease_token=token,
+            lease_kind="poll",
+            lease_expires_at=current + timedelta(seconds=max(1, lease_seconds)),
+            poll_attempt_count=orm.NotificationDelivery.poll_attempt_count + 1,
+            poll_attempt_id=poll_attempt_id,
+            next_poll_at=None,
             updated_at=current,
         ))
         self.db.flush()
@@ -4667,13 +4780,43 @@ class HealthRepository:
     def complete_notification_delivery(
         self, delivery_id: str, lease_token: str, status: str,
         *, error: str | None = None, next_attempt_at: datetime | None = None,
+        next_poll_at: datetime | None = None,
+        provider_id: str | None | object = _EXPECTED_UNSET,
+        provider_status: str | None | object = _EXPECTED_UNSET,
+        template: str | None | object = _EXPECTED_UNSET,
+        renderer_version: str | None | object = _EXPECTED_UNSET,
+        content_sha256: str | None | object = _EXPECTED_UNSET,
+        send_attempt_id: str | None = None, poll_attempt_id: str | None = None,
+        expected_provider_id: str | None = None, attempt_id: str | None = None,
+        now: datetime | None = None,
     ) -> bool:
-        if status not in {"succeeded", "failed", "uncertain", "deferred"}:
+        if status not in {"accepted", "delivered", "failed", "uncertain", "deferred"}:
             raise ValueError("invalid notification delivery status")
         safe_error = error if error in self._SAFE_NOTIFICATION_ERRORS else (
             "delivery_failed" if error else None
         )
-        now = _naive_utc(datetime.now(timezone.utc))
+        now = _naive_utc(now or datetime.now(timezone.utc))
+        delivery = self.db.execute(select(orm.NotificationDelivery).where(
+            orm.NotificationDelivery.id == delivery_id,
+            orm.NotificationDelivery.status == "running",
+            orm.NotificationDelivery.lease_token == lease_token,
+            orm.NotificationDelivery.lease_expires_at > now,
+        )).scalar_one_or_none()
+        if delivery is None:
+            return False
+        if expected_provider_id is not None and delivery.provider_id != expected_provider_id:
+            return False
+        if (
+            delivery.lease_kind == "poll"
+            and provider_id is not _EXPECTED_UNSET
+            and provider_id != delivery.provider_id
+        ):
+            return False
+        expected_attempt = attempt_id or send_attempt_id or poll_attempt_id
+        if expected_attempt is not None and expected_attempt not in {
+            delivery.send_attempt_id, delivery.poll_attempt_id,
+        }:
+            return False
         if status == "deferred" and safe_error == "snapshot_unavailable":
             owner_id = self.db.execute(select(orm.NotificationDelivery.user_id).where(
                 orm.NotificationDelivery.id == delivery_id,
@@ -4707,28 +4850,55 @@ class HealthRepository:
                     ).values(
                         status="pending",
                         attempt_count=0,
+                        send_attempt_count=0,
+                        poll_attempt_count=0,
+                        send_attempt_id=None,
+                        poll_attempt_id=None,
+                        provider_id=None,
+                        provider_status=None,
+                        template=None,
+                        renderer_version=None,
+                        content_sha256=None,
                         last_error=None,
                         next_attempt_at=None,
+                        next_poll_at=None,
                         lease_token=None,
+                        lease_kind=None,
                         lease_expires_at=None,
                         updated_at=now,
                     ))
                     if result.rowcount:
                         self.db.flush()
                         return True
+        values: dict[str, object] = {
+            "status": status,
+            "last_error": safe_error,
+            "next_attempt_at": _naive_utc(next_attempt_at) if next_attempt_at else None,
+            "next_poll_at": _naive_utc(next_poll_at) if next_poll_at else None,
+            "lease_token": None,
+            "lease_kind": None,
+            "lease_expires_at": None,
+            "updated_at": now,
+        }
+        for name, value in (
+            ("provider_id", provider_id), ("provider_status", provider_status),
+            ("template", template), ("renderer_version", renderer_version),
+            ("content_sha256", content_sha256),
+        ):
+            if value is not _EXPECTED_UNSET:
+                if name == "provider_id" and value is None and delivery.provider_id is not None:
+                    continue
+                values[name] = value
+        if send_attempt_id is not None:
+            values["send_attempt_id"] = send_attempt_id
+        if poll_attempt_id is not None:
+            values["poll_attempt_id"] = poll_attempt_id
         result = self.db.execute(update(orm.NotificationDelivery).where(
             orm.NotificationDelivery.id == delivery_id,
             orm.NotificationDelivery.status == "running",
             orm.NotificationDelivery.lease_token == lease_token,
             orm.NotificationDelivery.lease_expires_at > now,
-        ).values(
-            status=status,
-            last_error=safe_error,
-            next_attempt_at=_naive_utc(next_attempt_at) if next_attempt_at else None,
-            lease_token=None,
-            lease_expires_at=None,
-            updated_at=now,
-        ))
+        ).values(**values))
         self.db.flush()
         return bool(result.rowcount)
 

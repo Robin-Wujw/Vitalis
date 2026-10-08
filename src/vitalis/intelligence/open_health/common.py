@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from collections.abc import Callable
+from datetime import date, datetime, time, timezone
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -63,6 +64,81 @@ def as_observation(value: OpenHealthObservation | dict[str, Any]) -> OpenHealthO
 
 def sorted_observations(values: list[OpenHealthObservation | dict[str, Any]]) -> list[OpenHealthObservation]:
     return sorted((as_observation(value) for value in values), key=lambda item: item.date)
+
+
+_TIMESTAMP_KEYS = (
+    "observed_at",
+    "timestamp",
+    "recorded_at",
+    "measured_at",
+    "measurement_timestamp",
+    "source_timestamp",
+)
+
+
+def _parse_observation_timestamp(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    return None
+
+
+def observation_timestamp(row: OpenHealthObservation) -> datetime | None:
+    """Return an explicit measurement timestamp, if the input carries one."""
+    extra = row.model_extra or {}
+    for key in _TIMESTAMP_KEYS:
+        timestamp = _parse_observation_timestamp(extra.get(key))
+        if timestamp is not None:
+            return timestamp
+    return None
+
+
+def _timestamp_sort_key(value: datetime) -> datetime:
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def distinct_observations(
+    values: list[OpenHealthObservation | dict[str, Any]],
+    *,
+    valid: Callable[[OpenHealthObservation], bool] | None = None,
+) -> list[OpenHealthObservation]:
+    """Choose one valid observation per calendar day without averaging sources.
+
+    A dated fact with an explicit timestamp wins by timestamp. When timestamps
+    are absent, the last valid input is retained as a deterministic tie-breaker;
+    this keeps duplicate rows from inflating coverage while never synthesizing a
+    value across sources.
+    """
+    selected: dict[date, tuple[OpenHealthObservation, int, datetime | None]] = {}
+    for index, row in enumerate(sorted_observations(values)):
+        if valid is not None and not valid(row):
+            continue
+        timestamp = observation_timestamp(row)
+        previous = selected.get(row.date)
+        if previous is None:
+            selected[row.date] = (row, index, timestamp)
+            continue
+        previous_row, previous_index, previous_timestamp = previous
+        if timestamp is not None:
+            if previous_timestamp is None or _timestamp_sort_key(timestamp) >= _timestamp_sort_key(previous_timestamp):
+                selected[row.date] = (row, index, timestamp)
+        elif previous_timestamp is None and index >= previous_index:
+            selected[row.date] = (row, index, timestamp)
+        else:
+            # An untimestamped row cannot displace an explicitly timestamped fact.
+            selected[row.date] = (previous_row, previous_index, previous_timestamp)
+    return [selected[day][0] for day in sorted(selected)]
 
 
 def profile_value(profile: Any, name: str) -> Any:

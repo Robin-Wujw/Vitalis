@@ -11,7 +11,7 @@ from vitalis.bootstrap import get_intelligence_command
 from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
 from vitalis.domain import ActivityRecord, DailyMetric, MetricSample, NormalizedDaily, SleepRecord, Workout
 from vitalis.adapters import daily_push
-from vitalis.adapters.notifications import _render_morning, _render_report_html
+from vitalis.intelligence.report_rendering import render_report
 from vitalis.adapters.zepp.sync_coordinator import PLAN_VERSION, stable_chunk_key
 from vitalis.adapters.persistence import HealthRepository, session_scope
 from vitalis.adapters.persistence.database import get_engine
@@ -203,8 +203,8 @@ def test_unverified_history_keeps_observed_yesterday_facts_in_real_morning_html(
         def push_daily_profile(self, user_id, payload, period):
             assert user_id == daily.user_id and period == "morning"
             briefing = MorningBriefingEngine().build_payload(payload, payload.get("delivery_metadata"))
-            title, lines = _render_morning(briefing)
-            received.append((title, _render_report_html(lines), briefing))
+            rendered = render_report(briefing, target="html")
+            received.append((rendered.title, rendered.content, briefing))
             return {"_pushplus_handler": "ok"}
 
     monkeypatch.setattr(daily_push, "local_today", lambda: TARGET)
@@ -214,12 +214,13 @@ def test_unverified_history_keeps_observed_yesterday_facts_in_real_morning_html(
         period="morning", target_date=TARGET, state_dir=tmp_path, test_delivery=True,
     )
 
-    assert result["status"] == "test_sent" and result["mode"] == "facts_only"
+    assert result["status"] == "test_accepted" and result["mode"] == "facts_only"
     title, html, briefing = received[0]
     assert title.startswith("Vitalis 晨报")
     assert "昨天的活动" in html and "步数 8,200 步" in html
     assert "设备估算热量（统计范围待确认） 700 千卡" in html
-    assert "昨天已记录的训练" in html and "力量训练" in html
+    assert "力量训练" in html and "38 分钟" in html
+    assert "本次训练估算热量 190 千卡" in html
     assert "今天的安排" not in html and "action_plan" not in repr(briefing)
-    assert html.count("部分运动记录来源还未查全") == 1
+    assert briefing["summary"] == ["部分运动记录来源还未查全；已记录的训练照常展示，今天暂不生成训练安排。"]
     assert not list(tmp_path.glob("*.sent"))

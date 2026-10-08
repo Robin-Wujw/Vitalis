@@ -118,15 +118,10 @@ NOTIFICATION_LEASE_SECONDS = 300
 
 
 def drain_notification_deliveries(*, max_deliveries: int = 1) -> int:
-    """Claim saved report intents and deliver them without recomputing health data."""
-    from vitalis.adapters.daily_push import (
-        DailyPushDeliveryError,
-        deliver_daily_report,
-        deliver_period_report,
-    )
+    """Claim durable intents and complete sends; accepted rows are only polled."""
+    from vitalis.adapters.daily_push import DailyPushDeliveryError, _provider_result
     from vitalis.adapters.persistence import HealthRepository, session_scope
     from vitalis.adapters.persistence.models import NotificationDelivery
-    from vitalis.time import local_day_utc_bounds
 
     if not isinstance(max_deliveries, int) or max_deliveries < 1:
         raise ValueError("max_deliveries must be positive")
@@ -140,25 +135,23 @@ def drain_notification_deliveries(*, max_deliveries: int = 1) -> int:
             if row is None:
                 break
             delivery = {
-                "id": row.id,
-                "user_id": row.user_id,
-                "analysis_run_id": row.analysis_run_id,
-                "period": row.period,
-                "target_date": row.target_date,
-                "lease_token": row.lease_token,
+                "id": row.id, "user_id": row.user_id,
+                "analysis_run_id": row.analysis_run_id, "period": row.period,
+                "target_date": row.target_date, "lease_token": row.lease_token,
+                "send_attempt_id": row.send_attempt_id,
             }
         status = "failed"
         error = "render_failed"
         next_attempt_at = None
+        render = {}
+        provider = {}
         if (
-            not settings.push_user
-            or not settings.pushplus_token
+            not settings.push_user or not settings.pushplus_token
             or settings.push_user != delivery["user_id"]
             or (delivery["period"] == "weekly" and not settings.weekly_report_enabled)
             or (delivery["period"] == "monthly" and not settings.monthly_report_enabled)
         ):
-            status = "deferred"
-            error = "delivery_disabled"
+            status, error = "deferred", "delivery_disabled"
         else:
             try:
                 with session_scope() as db:
@@ -168,44 +161,45 @@ def drain_notification_deliveries(*, max_deliveries: int = 1) -> int:
                     )
                     payload = dict(snapshot.payload) if snapshot is not None else None
                 if payload is None:
-                    status = "deferred"
-                    error = "snapshot_unavailable"
+                    status, error = "deferred", "snapshot_unavailable"
                 else:
+                    from vitalis.adapters import daily_push
                     if delivery["period"] in {"weekly", "monthly"}:
-                        result = deliver_period_report(
-                            delivery["user_id"],
-                            settings.pushplus_token,
-                            payload,
-                            period=delivery["period"],
-                            target_date=delivery["target_date"],
+                        try:
+                            service = daily_push.PushService(
+                                pushplus_token=settings.pushplus_token,
+                                pushplus_access_key=settings.pushplus_access_key,
+                                send_attempt_id=delivery["send_attempt_id"],
+                            )
+                        except TypeError:
+                            service = daily_push.PushService(pushplus_token=settings.pushplus_token)
+                        result = (
+                            service.push_weekly_profile(delivery["user_id"], payload)
+                            if delivery["period"] == "weekly"
+                            else service.push_monthly_profile(delivery["user_id"], payload)
                         )
                     else:
-                        _, plan_expires_at = local_day_utc_bounds(delivery["target_date"])
-                        result = deliver_daily_report(
-                            delivery["user_id"],
-                            settings.pushplus_token,
-                            payload,
-                            period=delivery["period"],
-                            target_date=delivery["target_date"],
-                            plan_expires_at=plan_expires_at,
-                            scheduled_delivery=True,
+                        # Preserve the shared date, sleep, history, and plan-expiry
+                        # gates while the scheduler remains the lease owner.
+                        result = daily_push.deliver_daily_report(
+                            delivery["user_id"], settings.pushplus_token, payload,
+                            period=delivery["period"], target_date=delivery["target_date"],
+                            scheduled_delivery=True, send_attempt_id=delivery["send_attempt_id"],
                         )
                     if result.get("status") == "deferred":
-                        status = "deferred"
-                        error = str(result.get("reason") or "stored_data_incomplete")
+                        status, error = "deferred", result.get("reason", "render_failed")
                     else:
-                        status = "succeeded"
-                        error = None
+                        provider = _provider_result(result)
+                        render = result.get("_render") or {}
+                        status = provider["status"]
+                        error = None if status in {"accepted", "delivered"} else (
+                            "transport_ambiguous" if status == "uncertain" else "transport_rejected"
+                        )
             except DailyPushDeliveryError as exc:
-                if exc.ambiguous:
-                    status = "uncertain"
-                    error = "transport_ambiguous"
-                else:
-                    status = "failed"
-                    error = "transport_rejected"
+                status = "uncertain" if exc.ambiguous else "failed"
+                error = "transport_ambiguous" if exc.ambiguous else "transport_rejected"
             except Exception:
-                status = "failed"
-                error = "render_failed"
+                status, error = "failed", "render_failed"
 
         if status == "failed":
             with session_scope() as db:
@@ -214,10 +208,71 @@ def drain_notification_deliveries(*, max_deliveries: int = 1) -> int:
                     next_attempt_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
                         seconds=min(3600, 60 * (2 ** max(0, current.attempt_count - 1)))
                     )
+        next_poll_at = None
+        if status == "accepted" and provider.get("provider_id") and getattr(settings, "pushplus_access_key", ""):
+            next_poll_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+                seconds=getattr(settings, "pushplus_query_interval_seconds", 60)
+            )
         with session_scope() as db:
             HealthRepository(db).complete_notification_delivery(
                 delivery["id"], delivery["lease_token"], status,
-                error=error, next_attempt_at=next_attempt_at,
+                error=error, next_attempt_at=next_attempt_at, next_poll_at=next_poll_at,
+                provider_id=provider.get("provider_id"), provider_status=provider.get("provider_status"),
+                template=render.get("template"), renderer_version=render.get("renderer_version"),
+                content_sha256=render.get("content_sha256"), send_attempt_id=delivery["send_attempt_id"],
+            )
+        drained += 1
+    return drained
+
+
+def drain_notification_polls(*, max_polls: int = 1) -> int:
+    """Query accepted PushPlus messages without ever re-POSTing them."""
+    from vitalis.adapters.notifications import PushService
+    from vitalis.adapters.persistence import HealthRepository, session_scope
+
+    if not isinstance(max_polls, int) or max_polls < 1:
+        raise ValueError("max_polls must be positive")
+    if not settings.push_user or not settings.pushplus_token or not getattr(settings, "pushplus_access_key", ""):
+        return 0
+    drained = 0
+    for _ in range(max_polls):
+        with session_scope() as db:
+            row = HealthRepository(db).claim_notification_poll(
+                user_id=settings.push_user,
+                lease_seconds=NOTIFICATION_LEASE_SECONDS,
+                max_attempts=getattr(settings, "pushplus_query_max_attempts", MAX_NOTIFICATION_ATTEMPTS),
+            )
+            if row is None:
+                break
+            info = {
+                "id": row.id, "token": row.lease_token, "provider_id": row.provider_id,
+                "poll_attempt_id": row.poll_attempt_id,
+            }
+        result = PushService(
+            pushplus_token=settings.pushplus_token,
+            pushplus_access_key=getattr(settings, "pushplus_access_key", ""),
+        ).query_pushplus(info["provider_id"], poll_attempt_id=info["poll_attempt_id"])
+        status = result.get("status", "accepted")
+        next_poll_at = None
+        next_attempt_at = None
+        if status == "accepted":
+            next_poll_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+                seconds=getattr(settings, "pushplus_query_interval_seconds", 60)
+            )
+        elif status == "failed":
+            with session_scope() as db:
+                current = db.get(NotificationDelivery, info["id"])
+                if current is not None and current.attempt_count < MAX_NOTIFICATION_ATTEMPTS:
+                    next_attempt_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+                        seconds=min(3600, 60 * (2 ** max(0, current.attempt_count - 1)))
+                    )
+        with session_scope() as db:
+            HealthRepository(db).complete_notification_delivery(
+                info["id"], info["token"], status,
+                error=("transport_ambiguous" if status == "uncertain" else None),
+                next_attempt_at=next_attempt_at, next_poll_at=next_poll_at,
+                provider_id=info["provider_id"], provider_status=result.get("provider_status"),
+                poll_attempt_id=info["poll_attempt_id"],
             )
         drained += 1
     return drained
@@ -286,8 +341,12 @@ def dispatcher_job() -> int:
     if analysis_drained:
         log.info("analysis dispatcher drained jobs=%s", analysis_drained)
     notification_drained = drain_notification_deliveries(max_deliveries=1)
-    if notification_drained:
-        log.info("notification dispatcher drained deliveries=%s", notification_drained)
+    poll_drained = drain_notification_polls(max_polls=1)
+    if notification_drained or poll_drained:
+        log.info(
+            "notification dispatcher drained sends=%s polls=%s",
+            notification_drained, poll_drained,
+        )
     coordinator = ZeppSyncCoordinator(
         connector=get_connector("zepp"),
         lease_seconds=getattr(settings, "sync_lease_seconds", 120),
@@ -302,7 +361,7 @@ def dispatcher_job() -> int:
         drained += 1
     if drained:
         log.info("sync dispatcher drained chunks=%s", drained)
-    return drained + analysis_drained + notification_drained
+    return drained + analysis_drained + notification_drained + poll_drained
 
 
 def start_scheduler() -> BackgroundScheduler:

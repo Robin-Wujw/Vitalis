@@ -179,6 +179,7 @@ class StrengthSetObservation(BaseModel):
     vendor_exercise_code: int | None = Field(default=None, ge=0)
     weight_value: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     weight_unit: str | None = None
+    weight_basis: Literal["per_hand", "total", "machine", "bodyweight"] | None = None
     limitations: list[str] = Field(default_factory=list)
     started_at: datetime | None = None
     ended_at: datetime | None = None
@@ -261,7 +262,7 @@ class TrainingRecord(BaseModel):
     date: Optional[DateType] = None
     workout_count: int = 0
     total_duration: int = 0  # 分钟
-    total_load: int = 0
+    total_load: int | None = None
     training_status: TrainingReadiness = TrainingReadiness.MODERATE
 
 

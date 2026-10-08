@@ -965,8 +965,14 @@ class OvernightVitalsAnalyzer:
 
 
 def _record_sum(records: list[dict], metric: str) -> float | None:
-    values = [float(row[metric]) for row in records if row.get(metric) is not None]
-    return sum(values) if values else None
+    """Sum a field only when every selected record observed it.
+
+    A missing daily load is not an observed zero; returning ``None`` keeps a
+    period total from being presented as a complete lower-bound calculation.
+    """
+    if not records or any(row.get(metric) is None for row in records):
+        return None
+    return sum(float(row[metric]) for row in records)
 
 
 class TrainingAnalyzer:
@@ -986,35 +992,58 @@ class TrainingAnalyzer:
                 limitation_labels=[LIMITATION_LABELS["training_history_missing"]],
             )
         today = raw.training_by_day.get(raw.day)
-        recent_7 = [
-            item for day, item in raw.training_by_day.items()
-            if raw.day - timedelta(days=6) <= day <= raw.day
-        ]
-        recent_28 = [
-            item for day, item in raw.training_by_day.items()
-            if raw.day - timedelta(days=27) <= day <= raw.day
-        ]
-        verified_days = set(raw.training_history_coverage.get("verified_days", []))
-        today_verified = raw.day.isoformat() in verified_days
+        coverage = raw.training_history_coverage or {}
+        verified_days = {
+            value if isinstance(value, date) else date.fromisoformat(str(value))
+            for value in coverage.get("verified_days", [])
+            if isinstance(value, date) or isinstance(value, str)
+        }
+
+        def window_dates(start: date, end: date) -> set[date]:
+            return {
+                start + timedelta(days=offset)
+                for offset in range((end - start).days + 1)
+            }
+
+        def window_complete(start: date, end: date) -> bool:
+            expected = window_dates(start, end)
+            if verified_days:
+                return expected <= verified_days
+            return expected <= set(raw.training_by_day)
+
+        def window_records(start: date, end: date) -> list[dict]:
+            records = [
+                item for item_day, item in raw.training_by_day.items()
+                if start <= item_day <= end
+            ]
+            # A verified day with no workout row is a known zero, not an
+            # unknown load.  Do not synthesize rows for unverified dates.
+            records.extend(
+                {"total_load": 0, "total_duration": 0, "workout_count": 0}
+                for item_day in window_dates(start, end) & verified_days
+                if item_day not in raw.training_by_day
+            )
+            return records
+
+        recent_7_start = raw.day - timedelta(days=6)
+        recent_28_start = raw.day - timedelta(days=27)
+        recent_7 = window_records(recent_7_start, raw.day)
+        recent_28 = window_records(recent_28_start, raw.day)
+        current_window_complete = window_complete(recent_7_start, raw.day)
+        recent_28_complete = window_complete(recent_28_start, raw.day)
+        today_verified = raw.day in verified_days
         today_load = _record_sum([today], "total_load") if today else (0.0 if today_verified else None)
-        load_7d = _record_sum(recent_7, "total_load")
+        load_7d = _record_sum(recent_7, "total_load") if current_window_complete else None
         prior_week_loads = []
+        prior_windows_complete = True
         for week in range(1, 4):
             week_end = raw.day - timedelta(days=week * 7)
             week_start = week_end - timedelta(days=6)
-            prior_week_loads.append(_record_sum([
-                item for item_day, item in raw.training_by_day.items()
-                if week_start <= item_day <= week_end
-            ], "total_load"))
-        has_full_comparison_window = bool(
-            raw.training_by_day
-            and min(raw.training_by_day) <= raw.day - timedelta(days=28)
-        )
-        if raw.training_history_coverage:
-            has_full_comparison_window = all(
-                (raw.day - timedelta(days=offset)).isoformat() in verified_days
-                for offset in range(7, 28)
-            )
+            prior_windows_complete &= window_complete(week_start, week_end)
+            prior_week_loads.append(_record_sum(
+                window_records(week_start, week_end), "total_load"
+            ))
+        has_full_comparison_window = current_window_complete and prior_windows_complete
         reference = (
             sum(prior_week_loads) / len(prior_week_loads)
             if has_full_comparison_window and all(value is not None for value in prior_week_loads)
@@ -1071,6 +1100,8 @@ class TrainingAnalyzer:
                 strength_sessions += 1
                 strength_days.append(workout_day)
             recent_workouts.append(WorkoutFeature(
+                workout_id=workout.get("workout_id"),
+                source=workout.get("source"),
                 date=workout_day,
                 vendor_reported_sets=reported_set_count(data) if family == "strength" else None,
                 started_at=workout.get("started_at"),
@@ -1088,7 +1119,9 @@ class TrainingAnalyzer:
                 duration_minutes=int(data.get("duration", 0) or 0),
                 calories_kcal=workout_calories_kcal(data),
                 distance_km=workout_distance_km(data),
-                vendor_load=float(data.get("load", 0) or 0),
+                vendor_load=(
+                    float(data["load"]) if data.get("load") is not None else None
+                ),
                 heart_rate_avg_bpm=int(data.get("heart_rate_avg", 0) or 0) or None,
                 heart_rate_max_bpm=int(data.get("heart_rate_max", 0) or 0) or None,
                 detail_available=bool(workout.get("detail_available")),
@@ -1103,7 +1136,10 @@ class TrainingAnalyzer:
         if running.sessions_28d and running.zone_method == "unavailable":
             limitations.append("aerobic_intensity_classification_unavailable")
         duration_7d = _record_sum(recent_7, "total_duration")
-        load_28d = _record_sum(recent_28, "total_load")
+        load_28d = (
+            _record_sum(recent_28, "total_load")
+            if recent_28_complete else None
+        )
         return TrainingFeatures(
             status=Availability.AVAILABLE,
             status_label=AVAILABILITY_LABELS[Availability.AVAILABLE.value],

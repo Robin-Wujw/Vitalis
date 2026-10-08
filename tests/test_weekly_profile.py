@@ -342,3 +342,47 @@ def test_calendar_weekly_steps_use_activity_average_in_report_changes():
     activity = next(item for item in sections if item["key"] == "activity_feedback")
     assert not any("步数" in item for item in recovery["interpretation"])
     assert any("日均步数" in item and "10.0%" in item for item in activity["interpretation"])
+
+
+def test_activity_only_weekly_report_is_partial_not_globally_unavailable():
+    raw = RawDailyProfile(user_id="activity-only-week", day=TARGET)
+    raw.series["steps"] = _series(
+        "steps", [1000] * 14, "steps"
+    )
+
+    profile = WeeklyProfileEngine().build(
+        "activity-only-run", raw, [], [], period_mode="rolling"
+    )
+
+    assert profile.facts.activity.available_days == 7
+    assert profile.data_quality.status.value == "PARTIAL"
+
+
+def test_weekly_sleep_trend_uses_the_same_five_day_gate_as_sleep_facts():
+    raw = RawDailyProfile(user_id="sparse-sleep-week", day=TARGET)
+    raw.series["sleep_duration"] = [
+        SeriesPoint(
+            metric="sleep_duration",
+            value=440 if offset < 4 else 390,
+            unit="min",
+            day=TARGET - timedelta(days=offset),
+            observed_at=TARGET - timedelta(days=offset),
+            source="zepp",
+            source_scope="normalized_daily_record",
+        )
+        for offset in [0, 1, 2, 3, 7, 8, 9, 10, 11, 12, 13]
+    ]
+    for offset in [*range(4), *range(7, 14)]:
+        day = TARGET - timedelta(days=offset)
+        raw.sleep_by_day[day] = {
+            "date": day,
+            "sleep_duration": 440 if offset < 4 else 390,
+        }
+
+    profile = WeeklyProfileEngine().build(
+        "sparse-sleep-run", raw, [], [], period_mode="rolling"
+    )
+
+    assert profile.facts.sleep.available_days == 4
+    assert profile.facts.sleep.change_percent is None
+    assert not any("睡眠时长" in item for item in profile.inferences.key_changes)

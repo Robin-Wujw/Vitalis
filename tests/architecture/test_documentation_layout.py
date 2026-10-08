@@ -9,7 +9,7 @@ from vitalis.entrypoints.api.app import app
 ROOT = Path(__file__).parents[2]
 CANONICAL = {
     "docs/quickstart.md", "docs/architecture.md", "docs/data-contracts.md",
-    "docs/zepp.md", "docs/agents.md", "docs/operations.md",
+    "docs/zepp.md", "docs/agents.md", "docs/operations.md", "docs/reports.md",
     "AGENTS.md", "CONTRIBUTING.md", "SECURITY.md",
 }
 

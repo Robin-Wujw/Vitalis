@@ -330,6 +330,20 @@ def _training_facts(
             strength_sessions += 1
     current_load = _optional_sum(current_records, "total_load", float)
     previous_load = _optional_sum(previous_records, "total_load", float)
+    current_load_days = [
+        item for item in current_records if item.get("total_load") is not None
+    ]
+    previous_load_days = [
+        item for item in previous_records if item.get("total_load") is not None
+    ]
+    current_load_average = (
+        current_load / len(current_load_days)
+        if current_load is not None and current_load_days else None
+    )
+    previous_load_average = (
+        previous_load / len(previous_load_days)
+        if previous_load is not None and previous_load_days else None
+    )
     details_complete = bool(workouts) or bool(
         current_records and recorded_workout_count == 0
     )
@@ -348,11 +362,11 @@ def _training_facts(
         vendor_load=round(current_load, 1) if current_load is not None else None,
         previous_vendor_load=round(previous_load, 1) if previous_load is not None else None,
         load_change_percent=(
-            _rounded(_percent_change(current_load, previous_load))
-            if current_load is not None
-            and previous_load not in (None, 0)
-            and len(current_records) >= comparison_gate(period_days)
-            and len(previous_records) >= comparison_gate(previous_period_days)
+            _rounded(_percent_change(current_load_average, previous_load_average))
+            if current_load_average is not None
+            and previous_load_average not in (None, 0)
+            and len(current_load_days) >= comparison_gate(period_days)
+            and len(previous_load_days) >= comparison_gate(previous_period_days)
             and coverage["current_complete"]
             and coverage["previous_complete"]
             else None
@@ -435,10 +449,17 @@ def _quality(
         default=0,
     )
     sufficient_gate = comparison_gate(period_days, period_mode)
-    sufficient = int(facts.sleep.available_days >= sufficient_gate) + int(hrv_days >= sufficient_gate)
-    if sufficient == 2:
+    sufficient = sum([
+        facts.sleep.available_days >= sufficient_gate,
+        hrv_days >= sufficient_gate,
+        facts.activity.available_days >= sufficient_gate,
+        facts.training.record_days >= sufficient_gate,
+    ])
+    if sufficient >= 2:
         status = QualityStatus.SUFFICIENT
-        confidence = ConfidenceBand.HIGH if min(facts.sleep.available_days, hrv_days) >= ceil(period_days * 0.90) else ConfidenceBand.MODERATE
+        confidence = ConfidenceBand.HIGH if max(
+            facts.sleep.available_days, facts.activity.available_days
+        ) >= ceil(period_days * 0.90) else ConfidenceBand.MODERATE
     elif sufficient == 1:
         status = QualityStatus.PARTIAL
         confidence = ConfidenceBand.LOW
@@ -487,6 +508,7 @@ def _key_changes(
         for stream in facts.recovery.streams:
             if stream.change_percent is not None:
                 changes.append((stream.metric_label, stream.change_percent))
+        changes = [item for item in changes if item[1] != 0]
         changes.sort(key=lambda item: (-abs(item[1]), item[0]))
         return [
             f"{label}{reference_label}{'上升' if change > 0 else '下降'} {abs(change):.1f}%。"
@@ -719,8 +741,9 @@ def _record_values(records, field, start, end) -> list[float]:
 
 
 def _optional_sum(items: list[dict], field: str, converter):
-    values = [converter(item[field]) for item in items if item.get(field) is not None]
-    return sum(values) if values else None
+    if not items or any(item.get(field) is None for item in items):
+        return None
+    return sum(converter(item[field]) for item in items)
 
 
 def _mean(values: list[float]) -> float | None:

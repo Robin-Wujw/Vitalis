@@ -1,60 +1,105 @@
-# 运行、诊断与恢复
+# 运维、备份与排障
 
-[文档导航](README.md) | [快速开始](quickstart.md) | [安全边界](../SECURITY.md)
+[文档中心](README.md) | [快速开始](quickstart.md) | [安全](../SECURITY.md) | [报告与渠道](reports.md)
 
-## 进程与配置
+本页说明当前预发布环境的配置、进程、备份和故障判断。敏感数据库、健康记录、凭据和投递目标必须使用真实部署的访问控制；示例只使用合成数据。
 
-安装包提供 `vitalis serve`（回环 API）、`vitalis worker`（调度器与到期同步分块）、`vitalis db init`（仅空库初始化或校验现有当前 schema）、`vitalis user create`、`vitalis token issue/revoke`、`vitalis doctor`、`vitalis demo` 及受显式确认保护的开发库 `db reset`；`python -m vitalis` 等效。API 与 worker 启动时只校验当前 schema；先显式运行 `vitalis db init`，它们不会自动建库、修复旧库或清理数据。当前预发布 schema 基线为 `2026-10-calendar-report-delivery`，包括分析输入 revision 列和周/月通知种类约束；旧开发库将被拒绝，需明确使用新的空库，不能自动清理真实用户库。API **不负责启动调度器**。保持一个 worker 作为计划任务所有者；夜间同步时间由 `SYNC_CRON_HOUR` / `SYNC_CRON_MINUTE` 定义，现有晨间单次 09:30、晚间单次 21:30，周报可用 `VITALIS_WEEKLY_REPORT_ENABLED` 在周一指定时间启用，同步补采上一完整周至当天的 8 个本地日期；月报可用 `VITALIS_MONTHLY_REPORT_ENABLED` 在每月 1 日指定时间启用。`VITALIS_WEEKLY_REPORT_HOUR` / `VITALIS_WEEKLY_REPORT_MINUTE` 默认 `10:00`，`VITALIS_MONTHLY_REPORT_HOUR` / `VITALIS_MONTHLY_REPORT_MINUTE` 默认 `10:30`，均按 `VITALIS_TIMEZONE` 解释；关闭相应 `ENABLED` 开关后，已排队的对应报告也会转为 `deferred/delivery_disabled`。`SYNC_DISPATCHER_INTERVAL_SECONDS` 控制到期分块检查。只安装 API 而不启动 worker 不会自动同步或投递。所附 [API](../deploy/systemd/vitalis-api.service) 和 [worker](../deploy/systemd/vitalis-worker.service) 单元共用安装路径与私有配置，部署前应验证这些路径、文件权限和服务账号。
+## 配置主责
 
-`src/vitalis/config.py` 是有效配置键/默认值的代码来源：`DATABASE_URL` 默认本地 SQLite，`VITALIS_TIMEZONE` 默认 `Asia/Shanghai`，`HOST` 默认 `127.0.0.1`，`PORT` 默认 `8000`；`ZEPP_MOCK` 默认 `true`。报告分析、数据覆盖和投递过期边界使用显式的 `VITALIS_TIMEZONE`，不会把服务器操作系统时区当作用户本地日边界。`.env.example` 仅作示例，不能视为验证过的公网配置；PostgreSQL URL 可由配置解析，但其当前部署一致性和恢复路径需单独验证。保存真实 Zepp 凭据必须从数据库外提供有效的 `VITALIS_TOKEN_ENCRYPTION_KEY`，没有密钥时 `ZEPP_MOCK=false` 会在启动时拒绝，已有明文凭据也不会被读取；密钥丢失会阻止解密。`ZEPP_MOCK=true` 时可省略该密钥，但模拟配对凭据仍以不含明文的 `mock-fernet:` 加密格式存储，且该格式只允许模拟模式读取；不能将该模拟密钥策略用于真实模式。内置推送仅在同一私有环境同时设置 `VITALIS_PUSH_USER` 与 `PUSHPLUS_TOKEN` 时才针对绑定用户启用；真实发送需另行授权，不能把测试推送当离线验收。
+默认值只在 `src/vitalis/config.py` 维护：
 
-### A27 durable delivery operations
+| 配置 | 默认值 | 作用 |
+| --- | --- | --- |
+| `ZEPP_MOCK` | `true` | 离线 mock；真实 Zepp 必须显式设 `false`。 |
+| `VITALIS_ENV` | `dev` | 运行环境标识；`test` 只用于测试。 |
+| `DATABASE_URL` | `sqlite:///./vitalis.db` | 当前数据库；演示请改到新路径。 |
+| `VITALIS_TIMEZONE` | `Asia/Shanghai` | 本地日历边界和调度时区。 |
+| `HOST` / `PORT` | `127.0.0.1` / `8000` | API 监听地址。 |
+| `SYNC_CRON_HOUR` / `SYNC_CRON_MINUTE` | `02:00` | worker 自动同步时间。 |
+| `VITALIS_WEEKLY_REPORT_ENABLED` | `false` | 周报自动投递开关。 |
+| `VITALIS_WEEKLY_REPORT_HOUR` / `MINUTE` | `10:00` | 周报投递本地时间。 |
+| `VITALIS_MONTHLY_REPORT_ENABLED` | `false` | 月报自动投递开关。 |
+| `VITALIS_MONTHLY_REPORT_HOUR` / `MINUTE` | `10:30` | 月报投递本地时间。 |
+| `VITALIS_PUSH_USER` / `PUSHPLUS_TOKEN` | 空 | 单向 PushPlus 目标和令牌；为空时不外发。 |
+| `PUSHPLUS_ACCESS_KEY` | 空 | 可选的 PushPlus 状态查询凭据；不参与发送，缺失时保留 `accepted`。 |
+| `PUSHPLUS_QUERY_MAX_ATTEMPTS` | `3` | 状态查询最多轮询次数；不会重发原消息。 |
+| `PUSHPLUS_QUERY_INTERVAL_SECONDS` | `60` | 状态查询间隔秒数；只影响状态查询。 |
 
-计划同步在终端事务中写入分析任务；worker 随后执行分析并在同一结果事务中写入通知意图。每轮 dispatcher 先处理分析和通知，再处理一批同步，避免同轮历史补采先更新输入而使刚生成的报告失效。并发输入变化仍按快照资格检查处理，不能强行发送过期结果。通知 worker 只读取意图指定的最新成功 run 的已保存日报、周报或月报快照，不会因投递而重新同步或重新分析。晨晚报的资格、日期、过期、睡眠和 coverage/facts-only 门禁由纯 `application/delivery_policy.py` 计算；周月报读取对应日历周期的保存快照。具体 `adapters/daily_push.py` 负责 PushPlus、直接手动分析和本地 marker。晨晚报调度路径通过 `scheduled_delivery=True` 禁用 marker，周月报也不使用 marker，只由 outbox 状态决定重试。`pending` 和有明确拒绝的 `failed` 只按有限次数重试；`succeeded` 表示收到 PushPlus 成功响应，`deferred` 表示投递配置关闭或报告资格/新鲜度门禁不满足，`uncertain` 表示请求超时、进程死亡、上游 5xx 或结果可能已到达 PushPlus，不能自动重发；只有明确且可分类的 4xx 才记为确定拒绝。worker 日志和数据库错误状态只使用有限错误代码，不记录令牌、异常正文或健康内容。
+晨报 `09:30`、晚报 `21:30` 的调度由当前 worker 任务定义；配置和时区不要在其它文档复制成另一套默认值。真实模式还需要有效的 `VITALIS_TOKEN_ENCRYPTION_KEY`，并将其与数据库分开保存。
 
-调度投递的幂等键是用户、报告周期结束日和报告种类；同一自然日、周或月的新分析不会制造第二次发送。未发送的 `pending` / 可重试 `failed` / 指定原因的 `deferred` 意图可通过条件更新改指向新 run，不能覆盖已认领租约。`running` 只能由持有效租约的 worker 在实际发送前核对该种类、该周期的最新合格快照并条件重指向；若刚判定快照不可用、尚未外发时新合格 run 到达，完成事务先锁用户并复查，再安全地恢复 `pending`；如果新 run 在该事务后才提交，分析事务（包括手动分析）会唤醒已有的 `deferred/snapshot_unavailable`、`sleep_incomplete` 或 `stored_data_incomplete` 意图，不为手动分析新建意图。dispatcher 只为当前本地日尚未发送的晨晚报检查缺口；输入或规则变化使快照失效时，按用户、日期、输入 revision 和策略摘要幂等地补排一次分析。相同输入不会每轮重复分析，既有成功或结果不确定的投递不会被重置。已经成功或结果不确定的意图不重置；发送前的最新检查仍无法保证远端 exactly-once。数据库备份包含分析任务、快照和通知意图；恢复后先检查 `pending`、`running` 和 `uncertain` 状态再决定是否启动 worker。外部 PushPlus 已接受但本地状态为 `uncertain` 时不得依靠数据库恢复推断 exactly-once，也不得用 `.sent` 文件替代数据库账本。
+## 初始化与进程
 
-### systemd 部署模板
+从仓库根目录、指向一个新数据库：
 
-两个单元都以非 root 的 `vitalis` 用户和组运行，要求已在 `/opt/vitalis/.venv/bin/vitalis` 安装当前包；`StateDirectory=vitalis` 创建 `/var/lib/vitalis`，工作目录就是该状态目录。管理员须先创建对应的系统账号，并把只对服务账号可读的环境文件放在 `/etc/vitalis/vitalis.env`；该文件至少指定当前 `DATABASE_URL`，真实接入还需提供 Zepp 凭据加密密钥。不要将 `.env.example` 连同空密钥直接作为部署环境，也不要让服务进程以 root 或公网 `HOST` 启动。
-
-把两个单元安装到系统的 systemd 单元目录并运行 `systemctl daemon-reload` 后，先用**同一环境**执行 `vitalis db init` 创建空库，再分别启动 `vitalis-api.service` 与 `vitalis-worker.service`。API 可独立启动，但只启动 API 不会有定时同步；worker 不依赖 HTTP 进程，`GET /live` 只表示进程可达，`GET /ready` 只确认当前 schema；两者都不能证明 worker 在运行或数据已更新。外网访问需要在回环 API 前配置 HTTPS 反向代理及访问控制；真实账号、设备与投递验收不包含在离线 CI 中。Windows 开发按[快速开始](quickstart.md)用 CLI 启动双进程，不使用 systemd。
-
-## 本地 API 令牌
-
-下面只用于**可信本机、已创建的 demo 用户**；先在与 `serve` 相同的私有环境设置 `DATABASE_URL=sqlite:///./demo.db`。CLI 将短期令牌写入**仓库外的全新私有文件**，只将文件路径和非秘密摘要打印到终端；重复使用同一路径会被拒绝。权限按操作选择，不默认授予管理权。
-
-```bash
-vitalis token issue --user demo --scope read --expires-days 1 \
-  --output "$HOME/.vitalis-demo-token"
-export VITALIS_ACCESS_TOKEN="$(< "$HOME/.vitalis-demo-token")"
+```powershell
+$env:DATABASE_URL = 'sqlite:///./vitalis.db'
+uv run --locked --extra dev vitalis db init
+uv run --locked --extra dev vitalis doctor
 ```
 
-不要将令牌文件、内容或终端环境发送给模型、加入版本库或粘贴到日志。PowerShell 下可用 `$env:VITALIS_ACCESS_TOKEN = (Get-Content -Raw "$HOME/.vitalis-demo-token").Trim()` 在私有终端读取。新建真实用户可执行 `vitalis user create --id <local-user-id>`；CLI 要求当前 schema。令牌仅在数据库存 SHA-256 摘要，操作员可通过 `vitalis token revoke --digest <issued-digest>` 撤销；`doctor` 不验证令牌本身；其 `worker` 字段依据最近心跳显示 `not_seen`、`alive` 或 `stale`，属于近期活动信号，不是实时进程或数据新鲜度保证。API 一般查询需 `read`；分析需 `analyze`，同步需 `sync`，用户反馈需 `feedback`，管理资料/配对需 `manage`。OpenAPI `/docs` 用于校对当前路由和请求参数。
+`db init` 建立当前 schema；`doctor` 输出 schema、数据库后端、时区和 worker 心跳状态，不输出秘密。启动 API 和 worker 应使用相同环境：
 
-## 同步故障与备份
-
-从有相应权限的客户端查询 `GET /api/data-status` 与 `GET /api/jobs/{job_id}`，分辨 `queued`、`retry_wait`、`partial`、`needs_reauth` 及每个数据流的获取/解析/写入和最近样本时间；同步只通过 `POST /api/sync-jobs` 入队，`days` 限制为 1..730，也可提交明确的 `from`/`to` 本地日期窗口。模拟源同样遵守 1..730 的边界，并按明确的日期窗口生成数据，不会把请求静默截断为固定的 14 天。必要时明确调用 `POST /api/jobs/{job_id}/cancel`；取消的存在性检查和状态变更在同一用户范围事务中完成，跨用户任务统一表现为不存在。`partial` 不表示历史已覆盖；认证拒绝要重新登录，暂时性故障可等待重试。调度器有界处理分块，详情回填按资源预算分批；不要用一次成功解释所有日期或详情已齐。旧日期分析可能与当前健康事件生命周期冲突，不直接批量倒序重算。
-
-晨晚报的核心睡眠和 `DailyHealth/summary` 按持久化时区逐个本地日查询，跨夏令时沿用该日真实 UTC 边界；其他流保持有界分块。非鉴权失败和退避等待不再中止其余日期/数据流。完成后，有成功写入的事实及失败分块时状态为 `partial`，调度分析继续读取这些事实；没有可用写入仍为 `failed`。鉴权失效、撤销、取消和失去租约不能按此方式继续。空响应必须有可识别的显式空列表；未知或错误响应不能当作已核验的空日。
-
-训练详情超出传输、JSON 或解析预算时仍保持未同步；调度报告允许这类可选明细不可用，手动任务保留具体失败。补采优先选择未尝试、随后最久未尝试的明细，跳过已有活动任务占用的候选，避免少数超限条目长期挡住其余训练。补采结束后应重新分析所需日期，确认快照在最后一次输入变化之后生成；任务幂等重放不会重新执行已终结的旧任务。分析计算中若输入变化，worker 保留失败 run，在同一任务身份下有限重试，最多执行三次；其它分析错误不自动按此重试。
-
-### 当前 SQLite 备份与恢复
-
-在私有目录中设置与 API/worker 相同的 `DATABASE_URL`，并选用**尚不存在**的输出文件。备份使用 SQLite 在线 backup API 取得一致快照，运行中的写入无需暂停；命令先校验源库的当前 schema、完整性和外键，再校验生成文件，绝不覆盖现有文件或符号链接。下例的 `private` 目录应预先创建且只允许可信操作员访问：
-
-```bash
-export DATABASE_URL="sqlite:///$HOME/private/vitalis.db"
-vitalis db backup --output "$HOME/private/vitalis-2026-09-26.sqlite"
+```powershell
+uv run --locked --extra dev vitalis serve
+uv run --locked --extra dev vitalis worker
 ```
 
-恢复仅接受现有、独立且符合**当前** schema 的 SQLite 备份；必须显式指定一个**全新**的目标库文件，不能把当前配置库作为目标，也不能将备份直接覆盖到运行中的库。恢复前先停止 API 和 worker，并保留原库及其可能存在的 `-wal`、`-shm` 文件。不要预建目标库；目标文件旁若已有同名 `-wal`、`-shm` 或 `-journal` 文件，命令会拒绝，以免读取旧日志。以下示例恢复到单独路径，人工验证后才修改 API/worker 的 `DATABASE_URL` 并重启：
+API 的 `/live` 只表示进程存活，`/ready` 检查当前 schema；`doctor` 的 `not_seen` 表示 worker 尚未写心跳，不等于 API 故障。调度器只在 `worker` 进程启动，不能从 API 应用或普通 GET 触发。
+
+## 发布到现有服务
+
+发布前固定提交 SHA，使用只包含 Git 跟踪文件的源码包，在 `/opt/vitalis/releases/<SHA>/source` 建立独立环境。运行服务的配置仍从 `/etc/vitalis/vitalis.env` 加载，用户数据留在 `/var/lib/vitalis`；发布包不携带数据库、凭据或用户提供的 APK/图片。
+
+先在新环境运行锁定依赖安装、合成报告和 `/live`、`/ready` 检查。切换时暂停 API 和 worker，保存原 service 配置与数据库备份，再将执行路径指向新环境。保留原代码和备份，验证失败时先停止新服务再回退；不覆盖私有环境配置。API 保持回环监听和关闭 access log。
+
+当前数据库版本为 `2026-10-durable-pushplus-delivery`。已部署的 `2026-10-calendar-report-delivery` 库可在服务停止后，从新源码目录显式执行：
 
 ```bash
-vitalis db restore --backup "$HOME/private/vitalis-2026-09-26.sqlite" \
-  --database "$HOME/private/vitalis-restored.sqlite"
-DATABASE_URL="sqlite:///$HOME/private/vitalis-restored.sqlite" vitalis doctor
+ZEPP_MOCK=true python tools/upgrade_deployment_db.py --database /var/lib/vitalis/EXISTING.sqlite --backup /var/backups/vitalis/NEW-backup.sqlite
+ZEPP_MOCK=true python tools/upgrade_deployment_db.py --database /var/lib/vitalis/EXISTING.sqlite --backup /var/backups/vitalis/NEW-backup.sqlite --apply
 ```
 
-`doctor` 校验 schema 并读取最近 worker 心跳，但不验证任务结果、厂商凭据可用性或实时进程存活；还应核对恢复库的数据和外部投递标记、同步账本的对应关系，再安全地恢复服务。备份和恢复只复制数据库，不触发实际通知。备份可能包含健康数据及供应商凭据（API 令牌只存摘要），应保持私有并按需要加密保存；启用供应商令牌加密时仍需妥善保管独立的 `VITALIS_TOKEN_ENCRYPTION_KEY`。不支持内存库、非 SQLite URL、未知 schema 或带 sidecar 的备份作为恢复源；这不是迁移工具，也不涵盖 PostgreSQL 恢复或当前基线之外的升级。`db reset` 仅针对明确指定的开发/测试 SQLite 文件，需确认参数，且拒绝当前配置数据库；绝不能拿它修复生产 schema。
+第一条仅核验已知结构；第二条创建新备份，在独立候选库升级，验证所有无关记录及原力量记录未改变、投递身份未丢失，再原子替换。未知版本、异常字段和已有备份路径会被拒绝。旧 `succeeded` 仅转为 `accepted`，不虚构流水号或最终送达；旧 `running` 转为 `uncertain`，避免重发未知结果。单位从原 `weight_kg` 保留为 kg，未知计重方式仍为空。运行时依旧只接受当前 schema。
+
+恢复服务后检查 `/ready`、worker 心跳、实际导入路径及服务状态。使用独立临时库运行报告与投递测试，测试配置清空 PushPlus 凭据；不向真实用户试发，不把真实健康内容打印到部署日志。
+
+## 备份与恢复
+
+SQLite 备份必须从当前配置库生成到不存在的新路径：
+
+```powershell
+uv run --locked --extra dev vitalis db backup --output C:\secure\vitalis-backup.db
+uv run --locked --extra dev vitalis db restore --backup C:\secure\vitalis-backup.db --database C:\secure\vitalis-restored.db
+```
+
+命令会检查 schema、完整性、外键和 sidecar；备份、恢复目标和凭据文件不要放入仓库。restore 不覆盖已有文件，也拒绝把备份直接写回当前配置库。恢复后把 `DATABASE_URL` 指向新库，先运行 `doctor`，再启动服务和 worker。不要用文件复制代替带 WAL/SHM 检查的备份。
+
+开发环境若明确要丢弃一个非当前配置的 `.db`/`.sqlite` 文件，必须使用 `db reset --database PATH --confirm-discard-local-data`；生产环境和当前配置库会被拒绝。
+
+## 令牌、同步和投递排障
+
+令牌签发到仓库外的新私密文件：
+
+```powershell
+uv run --locked --extra dev vitalis token issue --user demo --scope read --output C:\secure\demo-read.token
+```
+
+令牌值不打印到终端或快照。用最小 scope 读取报告；分析、同步、反馈和管理分别需要相应权限。撤销使用非秘密 digest，而不是把令牌放在命令行。
+
+同步排查顺序是：确认来源 token 状态，再查 `GET /api/data-status`，再查 `GET /api/jobs/{job_id}` 的 attempt/chunk，最后查看 worker 日志中的非敏感错误类别。需要重新认证、部分覆盖、超时、取消和未知状态不能互相替代；先保留 `uncertain`，不要盲目重试可能已送达的 PushPlus 请求。
+
+PushPlus 的 HTTP 200 只表示请求完成；只有业务 `code=200` 且有有效 provider message id 才记录 `accepted`。记录 `accepted`、provider message id、最终 `delivered`/`failed`/`uncertain` 分开；投递不会写目标完成或主观反馈。周报/月报开关默认关闭，开启前应使用合成目标做一次受理合同验证；真实渠道和 Hermes 联调当前未声称完成。
+
+## 常见故障
+
+| 现象 | 处理 |
+| --- | --- |
+| `/ready` 503 | 对照 `DATABASE_URL` 检查 schema；用新库 `db init`，不要自动迁移未知旧库。 |
+| worker 无心跳 | 确认独立 worker 进程、同一环境和数据库；查看进程退出原因。 |
+| 报告 404 | 指定日期没有已保存快照；创建分析任务并等待 worker，不要把 404 当零数据。 |
+| 同步需要认证 | 重新走官方 Zepp 配对；不要在日志或聊天中传 Cookie/apptoken。 |
+| 报告延期 | 查看数据覆盖和 required signals；可用已保存事实时只生成合资格内容。 |
+| 投递 uncertain | 保留不确定状态。响应丢失且没有流水号时无法自动查询，需在供应商侧人工核对；不创建新意图盲重发。 |
+| 投递 failed | 从 `/api/deliveries` 查看 `provider_status`、`send_attempt_count` 和 `next_attempt_at`，结合 worker 的非敏感错误类别排查凭据/模板/目标；明确拒绝的意图由 worker 按退避和最大次数重试。 |
+
+开发检查从仓库根目录运行 `uv run --locked --extra dev python tools/check.py docs`、目标 pytest 和 `git diff --check`。故障报告包含命令、退出码、非敏感状态和未验证项，不包含数据库、健康记录或令牌内容。

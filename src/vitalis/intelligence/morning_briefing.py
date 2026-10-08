@@ -8,6 +8,7 @@ from typing import Any
 from vitalis.time import local_day
 
 from .contracts import DailyProfile, MorningBriefing, ReportSection
+from .report_presentation import daily_display_sections, daily_presentation, internal_sections
 from .report_formatting import (
     baseline_text,
     clock_text,
@@ -48,6 +49,9 @@ class MorningBriefingEngine:
         report_context = dict(payload.get("report_context") or {})
         if delivery_metadata:
             report_context["delivery_metadata"] = dict(delivery_metadata)
+        presentation_payload = dict(payload)
+        presentation_payload["report_context"] = report_context
+        presentation = daily_presentation(presentation_payload, morning=True)
         observations = [fact for section in sections for fact in section["facts"]]
         reasons = self._reasons(payload)
         cautions = self._cautions(payload, delivery_metadata or {})
@@ -61,8 +65,9 @@ class MorningBriefingEngine:
             "action_label": (payload.get("decision") or {}).get("action_label", "暂不生成训练建议"),
             "action_plan": (payload.get("decision") or {}).get("action_plan") or {},
             "report_context": report_context,
+            **presentation,
             "summary": [],
-            "sections": sections,
+            "sections": internal_sections(sections),
             "observations": [{"text": item} for item in observations],
             "key_reasons": [{"text": item} for item in reasons],
             "cautions": cautions,
@@ -85,6 +90,10 @@ class MorningBriefingEngine:
              "interpretation": [], "limitations": []},
             *self._observed_sections(payload),
         ]
+        sections = internal_sections(sections)
+        for section in sections:
+            if section["key"] in {"yesterday_activity", "observed_training", "today_activity"}:
+                section["display"] = True
         observations = [fact for section in sections for fact in section["facts"]]
         report_context = self._facts_only_context(payload.get("report_context"), metadata)
         history_notice = "部分运动记录来源还未查全；已记录的训练照常展示，今天暂不生成训练安排。"
@@ -92,6 +101,9 @@ class MorningBriefingEngine:
         if metadata.get("sync_degraded"):
             cautions.append("本次同步未完整完成，仅使用已保存的数据。")
         summary = [history_notice]
+        presentation_payload = dict(payload)
+        presentation_payload["report_context"] = report_context
+        presentation = daily_presentation(presentation_payload, morning=True, facts_only=True)
         return {
             "schema_version": "4.0",
             "analysis_run_id": payload.get("analysis_run_id", ""),
@@ -101,6 +113,7 @@ class MorningBriefingEngine:
             "decision_action": "INSUFFICIENT_DATA",
             "action_label": "已记录数据回顾；暂不生成训练安排",
             "report_context": report_context,
+            **presentation,
             "summary": summary,
             "sections": sections,
             "observations": [{"text": item} for item in observations],

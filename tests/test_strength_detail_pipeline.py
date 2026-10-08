@@ -117,8 +117,8 @@ def test_strength_detail_accepts_json_or_list_and_only_uses_kg_weights():
             "trackid": 1_700_000_000,
             "strengthSets": [
                 {"exerciseName": "卧推", "repetitions": "8", "weight": 60},
-                {"exerciseName": "卧推", "reps": 8, "weight": "60", "weightUnit": "kg"},
-                {"exerciseName": "卧推", "reps": 8, "weightKg": "62.5"},
+                {"exerciseName": "卧推", "reps": 8, "weight": "60", "weightUnit": "kg", "weightBasis": "per_hand"},
+                {"exerciseName": "卧推", "reps": 8, "weightKg": "62.5", "weight_basis": "machine"},
             ],
         }
     }
@@ -128,6 +128,7 @@ def test_strength_detail_accepts_json_or_list_and_only_uses_kg_weights():
     assert detail is not None
     assert [item.repetitions for item in detail.strength_sets] == [8, 8, 8]
     assert [item.weight_kg for item in detail.strength_sets] == [None, 60, 62.5]
+    assert [item.weight_basis for item in detail.strength_sets] == [None, "per_hand", "machine"]
 
 
 def test_vendor_strength_sets_merge_identical_doses_and_preserve_variations():

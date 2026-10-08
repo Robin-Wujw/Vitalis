@@ -184,3 +184,34 @@ def test_monthly_recovery_change_requires_valid_days_in_both_windows():
     second = MonthlyProfileEngine().build("hrv-comparable", raw, [], [], [], period_mode="rolling")
     assert second.facts.recovery.streams[0].previous_available_days == 14
     assert second.facts.recovery.streams[0].change_percent == 10
+
+
+def test_calendar_month_training_load_compares_valid_day_averages():
+    target = date(2026, 10, 8)
+    raw = RawDailyProfile(user_id="month-lengths", day=target)
+    verified = []
+    day = date(2026, 8, 1)
+    while day <= date(2026, 9, 30):
+        verified.append(day.isoformat())
+        raw.training_by_day[day] = {
+            "date": day,
+            "workout_count": 1,
+            "total_duration": 30,
+            "total_load": 100,
+        }
+        day += timedelta(days=1)
+    raw.training_history_coverage = {
+        "status": "COMPLETE",
+        "verified_days": verified,
+    }
+
+    profile = MonthlyProfileEngine().build(
+        "month-lengths-run", raw, [], [], []
+    )
+
+    assert profile.period_start == date(2026, 9, 1)
+    assert profile.period_end == date(2026, 9, 30)
+    assert profile.facts.training.vendor_load == 3000
+    assert profile.facts.training.previous_vendor_load == 3100
+    assert profile.facts.training.load_change_percent == 0
+    assert not any("设备训练负荷" in item for item in profile.inferences.key_changes)

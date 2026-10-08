@@ -21,7 +21,7 @@ from vitalis.intelligence.contracts import (
     OpenHealthStatus,
 )
 
-from .common import OpenHealthObservation, sorted_observations
+from .common import OpenHealthObservation, distinct_observations, sorted_observations
 from .ewma import UPSTREAM_REVISION
 
 DIMENSIONS = ("ln_rmssd", "rhr", "resp")
@@ -37,6 +37,10 @@ def _components(row: OpenHealthObservation) -> dict[str, float]:
     if row.respiratory_rate is not None:
         values["resp"] = float(row.respiratory_rate)
     return values
+
+
+def _has_components(row: OpenHealthObservation) -> bool:
+    return bool(_components(row))
 
 
 def _center_scale(values: list[float]) -> tuple[float, float, str] | None:
@@ -141,7 +145,8 @@ def compute_anomaly(
 ) -> OpenHealthInsights:
     rows = sorted_observations(list(observations))
     target = target_date or (rows[-1].date if rows else date.today())
-    target_row = next((row for row in reversed(rows) if row.date == target), None)
+    valid_rows = distinct_observations(rows, valid=_has_components)
+    target_row = next((row for row in valid_rows if row.date == target), None)
     base = _base(target, target_row, profile_revision_used)
     empty = AnomalyInsight(target_date=target)
     if target_row is None:
@@ -157,7 +162,13 @@ def compute_anomaly(
             payload=empty,
         )
 
-    dated = [row for row in rows if row.date <= target and _components(row)]
+    stream_key = (target_row.source, target_row.source_scope, target_row.device_id)
+    dated = distinct_observations([
+        row for row in rows
+        if row.date <= target
+        and _has_components(row)
+        and (row.source, row.source_scope, row.device_id) == stream_key
+    ], valid=_has_components)
     suffix = [dated[-1]] if dated and dated[-1].date == target else []
     for row in reversed(dated[:-1]):
         if suffix and suffix[0].date - row.date == timedelta(days=1):

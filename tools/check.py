@@ -43,6 +43,9 @@ def check_environment(ci: bool = False) -> dict[str, str]:
         "ZEPP_APP_SECRET": "",
         "ZEPP_ACCESS_TOKEN": "",
         "PUSHPLUS_TOKEN": "",
+        "PUSHPLUS_ACCESS_KEY": "",
+        "PUSHPLUS_QUERY_MAX_ATTEMPTS": "3",
+        "PUSHPLUS_QUERY_INTERVAL_SECONDS": "60",
         "VITALIS_PUSH_USER": "",
         "PIP_NO_INDEX": "1",
         "PIP_DISABLE_PIP_VERSION_CHECK": "1",
@@ -186,10 +189,21 @@ def inspect_wheel(wheel: Path, expected: set[str]) -> None:
 def sdist_sources() -> set[str]:
     sources = {
         "pyproject.toml",
-        "README.md",
-        "THIRD_PARTY_NOTICES.md",
-        "THIRD_PARTY_NOTICES.en.md",
+        "README.md", "README.en.md", "AGENTS.md", "CONTRIBUTING.md", "SECURITY.md",
+        "uv.lock", ".env.example",
+        "docs/README.md", "docs/quickstart.md", "docs/reports.md",
+        "docs/architecture.md", "docs/data-contracts.md", "docs/zepp.md",
+        "docs/agents.md", "docs/operations.md",
+        "skills/vitalis/SKILL.md", "skills/vitalis/references/api.md",
+        "skills/vitalis/scripts/vitalis_api.py",
+        "tools/check.py", "tools/check_docs.py", "tools/generate_api_reference.py",
+        "tools/generate_report_examples.py", "tools/upgrade_deployment_db.py",
+        "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.en.md",
     }
+    for kind in ("morning", "daily", "weekly", "monthly", "insufficient-data"):
+        for suffix in (".md", ".fragment.html", ".html", ".markdown-preview.html", ".markdown.payload.json", ".html.payload.json"):
+            sources.add(f"docs/examples/reports/{kind}{suffix}")
+    sources.add("docs/examples/reports/manifest.json")
     package_dir = ROOT / "src" / "vitalis"
     sources.update(
         path.relative_to(ROOT).as_posix()

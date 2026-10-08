@@ -29,6 +29,8 @@ def test_load_settings_is_explicit_and_does_not_change_process_environment(monke
         ("VITALIS_TIMEZONE", "not/a/timezone"),
         ("VITALIS_PUBLIC_URL", "ftp://example.com"),
         ("ZEPP_PAIRING_TTL_MINUTES", "0"),
+        ("PUSHPLUS_QUERY_MAX_ATTEMPTS", "0"),
+        ("PUSHPLUS_QUERY_INTERVAL_SECONDS", "0"),
     ],
 )
 def test_invalid_configuration_fails_by_key(name, value):
@@ -52,9 +54,15 @@ def test_pairing_origins_require_exact_browser_origins():
 
 
 def test_settings_hold_server_delivery_config_without_leaking_secret():
-    values = load_settings({"PUSHPLUS_TOKEN": "secret", "VITALIS_PUSH_USER": "owner"})
+    values = load_settings({
+        "PUSHPLUS_TOKEN": "secret", "PUSHPLUS_ACCESS_KEY": "query-secret",
+        "VITALIS_PUSH_USER": "owner",
+    })
     assert values.push_user == "owner"
     assert values.pushplus_token == "secret"
+    assert values.pushplus_access_key == "query-secret"
+    assert values.pushplus_query_max_attempts == 3
+    assert values.pushplus_query_interval_seconds == 60
     assert values.weekly_report_enabled is False
     assert values.monthly_report_enabled is False
 

@@ -1,14 +1,19 @@
 from contextlib import contextmanager, nullcontext
 from datetime import date, datetime, timezone
-import os
-import stat
 
 import httpx
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from vitalis.adapters.zepp import ZeppAuthError
 from vitalis.adapters.zepp.sync_manager import StreamReport, SyncReport
 from vitalis.adapters import daily_push
+from vitalis.adapters.persistence.database import init_db
+from vitalis.adapters.persistence.models import AnalysisRun, NotificationDelivery, User
+from vitalis.adapters.persistence.repositories import _current_analysis_config_digest
+from vitalis.intelligence import contracts
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +37,8 @@ def offline_daily_push(monkeypatch):
 
 def _daily(*, wake_time="08:15:00", sleep_status="AVAILABLE"):
     return {
+        "analysis_run_id": "synthetic-analysis-run",
+        "user_id": "explicit-user",
         "date": "2026-08-29",
         "data_quality": {"status": "SUFFICIENT"},
         "report_context": {
@@ -52,8 +59,40 @@ def _daily(*, wake_time="08:15:00", sleep_status="AVAILABLE"):
 
 @pytest.fixture
 def workflow(monkeypatch):
-    calls = {"sync": [], "analyze": [], "sync_result": {"status": "synced", "success": True},
-             "profiles": [_daily()]}
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    init_db(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+
+    @contextmanager
+    def isolated_session_scope():
+        with factory.begin() as db:
+            yield db
+
+    monkeypatch.setattr(daily_push, "session_scope", isolated_session_scope)
+    with factory.begin() as db:
+        db.add(User(id="explicit-user"))
+        db.add(AnalysisRun(
+            id="synthetic-analysis-run",
+            user_id="explicit-user",
+            target_date=date(2026, 8, 29),
+            status="SUCCEEDED",
+            started_at=datetime(2026, 8, 29, 11, 0, 0),
+            completed_at=datetime(2026, 8, 29, 12, 0, 0),
+            intelligence_version=contracts.INTELLIGENCE_VERSION,
+            decision_policy_version=contracts.DECISION_POLICY_VERSION,
+            evidence_version=contracts.EVIDENCE_VERSION,
+            config_digest=_current_analysis_config_digest(),
+        ))
+
+    calls = {
+        "sync": [], "analyze": [],
+        "sync_result": {"status": "synced", "success": True},
+        "profiles": [_daily()], "factory": factory,
+    }
 
     def sync(user_id, days):
         calls["sync"].append((user_id, days))
@@ -61,24 +100,55 @@ def workflow(monkeypatch):
 
     def analyze(user_id, day):
         calls["analyze"].append((user_id, day))
-        return calls["profiles"].pop(0)
+        profile = calls["profiles"].pop(0)
+        run_id = f"synthetic-analysis-{len(calls['analyze'])}"
+        profile.update(analysis_run_id=run_id, user_id=user_id)
+        with factory.begin() as db:
+            db.add(AnalysisRun(
+                id=run_id,
+                user_id=user_id,
+                target_date=day,
+                status="SUCCEEDED",
+                started_at=datetime.combine(day, datetime.min.time()),
+                completed_at=datetime.combine(day, datetime.min.time()),
+                intelligence_version=contracts.INTELLIGENCE_VERSION,
+                decision_policy_version=contracts.DECISION_POLICY_VERSION,
+                evidence_version=contracts.EVIDENCE_VERSION,
+                config_digest=_current_analysis_config_digest(),
+            ))
+        return profile
 
     monkeypatch.setattr(daily_push, "_sync_health", sync)
     monkeypatch.setattr(daily_push, "_analyze", analyze)
-    return calls
+    yield calls
+    engine.dispose()
+
+
+def _delivery(workflow, period="morning"):
+    with workflow["factory"]() as db:
+        return db.query(NotificationDelivery).filter_by(
+            user_id="explicit-user", target_date=date(2026, 8, 29), period=period,
+        ).one_or_none()
 
 
 def _capture_push(monkeypatch, *, outcomes=None):
     sent = []
-    outcomes = outcomes or ["ok"]
+    default = {
+        "status": "accepted", "provider_id": "synthetic-code",
+        "send_attempt_id": "synthetic-send-attempt",
+    }
+    sequence = list(outcomes) if outcomes is not None else [default]
+    last = sequence[-1] if sequence else default
 
     class Service:
-        def __init__(self, pushplus_token):
+        def __init__(self, pushplus_token, **kwargs):
             assert pushplus_token == "private-token"
+            self.kwargs = kwargs
 
         def push_daily_profile(self, user_id, profile, period):
             sent.append((user_id, profile, period))
-            return {"_pushplus_handler": outcomes.pop(0) if len(outcomes) > 1 else outcomes[0]}
+            result = sequence.pop(0) if sequence else last
+            return {"_pushplus_result": dict(result)}
 
     monkeypatch.setattr(daily_push, "PushService", Service)
     return sent
@@ -112,52 +182,35 @@ def test_remote_or_nonlocal_api_fails_without_service_or_http(workflow, tmp_path
     assert workflow["sync"] == workflow["analyze"] == []
 
 
-def test_morning_push_syncs_current_day_and_sends_exactly_once(monkeypatch, workflow, tmp_path):
+def test_morning_test_delivery_returns_accepted_without_filesystem_state(monkeypatch, workflow, tmp_path):
     profile = workflow["profiles"][0]
     sent = _capture_push(monkeypatch)
-    chmod_calls = []
-    real_chmod = daily_push.os.chmod
-
-    def record_chmod(path, mode):
-        chmod_calls.append((os.fspath(path), mode))
-        real_chmod(path, mode)
-
-    monkeypatch.setattr(daily_push.os, "chmod", record_chmod)
-    result = _run(tmp_path, api="http://127.0.0.1:8000/", target_date=date(2026, 8, 29))
+    result = _run(
+        tmp_path, api="http://127.0.0.1:8000/", target_date=date(2026, 8, 29),
+        test_delivery=True,
+    )
 
     assert workflow["sync"] == [("explicit-user", 2)]
     assert workflow["analyze"] == [("explicit-user", date(2026, 8, 29))]
     assert sent == [("explicit-user", profile, "morning")]
     assert result == {
-        "status": "sent", "period": "morning", "date": "2026-08-29",
+        "status": "test_accepted", "period": "morning", "date": "2026-08-29",
         "quality": "SUFFICIENT", "sync_degraded": False, "sync_status": "synced",
+        "provider_id": "synthetic-code", "scheduled_delivery_unchanged": True,
     }
-    marker = next(tmp_path.glob("*.sent"))
-    assert "explicit-user" not in marker.name
-    assert (os.fspath(marker), 0o600) in chmod_calls
-    assert (os.fspath(tmp_path), 0o700) in chmod_calls
-    if os.name != "nt":
-        assert stat.S_IMODE(marker.stat().st_mode) == 0o600
-        assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
-
-    assert _run(tmp_path) == {"status": "already_sent", "period": "morning", "date": "2026-08-29"}
-    assert workflow["sync"] == [("explicit-user", 2)]
-    assert len(sent) == 1
+    assert not list(tmp_path.glob("*.sent"))
 
 
-def test_manual_test_push_ignores_and_preserves_scheduled_marker(monkeypatch, workflow, tmp_path):
-    marker = daily_push._delivery_marker(tmp_path, "explicit-user", date(2026, 8, 29), "evening")
-    marker.write_text("official delivery\n", encoding="utf-8")
+def test_manual_test_push_isolated_from_scheduled_intent(monkeypatch, workflow, tmp_path):
     sent = _capture_push(monkeypatch)
 
     result = _run(tmp_path, period="evening", test_delivery=True)
 
     assert workflow["sync"] == [("explicit-user", 1)]
     assert len(sent) == 1
-    assert result["status"] == "test_sent"
+    assert result["status"] == "test_accepted"
     assert result["scheduled_delivery_unchanged"] is True
-    assert marker.read_text(encoding="utf-8") == "official delivery\n"
-    assert list(tmp_path.glob("*.sent")) == [marker]
+    assert not list(tmp_path.glob("*.sent"))
 
 
 @pytest.mark.parametrize(("sleep_status", "wake_time"), [("INSUFFICIENT_DATA", None), ("AVAILABLE", None)])
@@ -183,12 +236,17 @@ def test_hourly_retry_sends_after_wake_then_skips_later_runs(monkeypatch, workfl
     third = _run(tmp_path)
 
     assert first["status"] == "deferred"
-    assert second["status"] == "sent"
-    assert third == {"status": "already_sent", "period": "morning", "date": "2026-08-29"}
+    assert second["status"] == "accepted"
+    assert third == {
+        "status": "accepted", "period": "morning", "date": "2026-08-29",
+        "provider_id": "synthetic-code",
+    }
     assert len(sent) == 1
     assert len(workflow["analyze"]) == 2
     assert workflow["sync"] == [("explicit-user", 2), ("explicit-user", 2)]
-    assert len(list(tmp_path.glob("*.sent"))) == 1
+    assert _delivery(workflow).status == "accepted"
+    assert _delivery(workflow).provider_id == "synthetic-code"
+    assert not list(tmp_path.glob("*.sent"))
 
 
 def test_evening_push_uses_one_day_and_ignores_morning_sleep_gate(monkeypatch, workflow, tmp_path):
@@ -198,19 +256,51 @@ def test_evening_push_uses_one_day_and_ignores_morning_sleep_gate(monkeypatch, w
 
     assert workflow["sync"] == [("explicit-user", 1)]
     assert [item[2] for item in sent] == ["evening"]
-    assert result["status"] == "sent"
+    assert result["status"] == "accepted"
+    assert _delivery(workflow, "evening").status == "accepted"
+
+
+def test_uncertain_delivery_is_not_resent_after_provider_may_have_accepted(
+    monkeypatch, workflow, tmp_path,
+):
+    workflow["profiles"] = [_daily(), _daily()]
+    sent = _capture_push(monkeypatch, outcomes=[{
+        "status": "uncertain", "provider_id": "synthetic-code",
+        "send_attempt_id": "attempt-uncertain",
+    }, {
+        "status": "accepted", "provider_id": "synthetic-code",
+        "send_attempt_id": "attempt-should-not-send",
+    }])
+
+    with pytest.raises(daily_push.DailyPushDeliveryError) as error:
+        _run(tmp_path)
+    assert error.value.ambiguous is True
+    assert _delivery(workflow).status == "uncertain"
+    second = _run(tmp_path)
+    assert second == {
+        "status": "uncertain", "period": "morning", "date": "2026-08-29",
+        "provider_id": "synthetic-code",
+    }
+    assert len(sent) == 1
+    assert len(workflow["analyze"]) == 1
+    assert not list(tmp_path.glob("*.sent"))
 
 
 def test_failed_delivery_is_not_marked_and_can_retry(monkeypatch, workflow, tmp_path):
     workflow["profiles"] = [_daily(), _daily()]
-    sent = _capture_push(monkeypatch, outcomes=["error: unavailable", "ok"])
+    sent = _capture_push(monkeypatch, outcomes=[
+        {"status": "failed", "provider_id": "synthetic-code", "send_attempt_id": "attempt-failed"},
+        {"status": "accepted", "provider_id": "synthetic-code", "send_attempt_id": "attempt-retry"},
+    ])
 
     with pytest.raises(RuntimeError, match="PushPlus delivery failed"):
         _run(tmp_path)
+    assert _delivery(workflow).status == "failed"
     assert not list(tmp_path.glob("*.sent"))
-    assert _run(tmp_path)["status"] == "sent"
+    assert _run(tmp_path)["status"] == "accepted"
     assert len(sent) == 2
-    assert len(list(tmp_path.glob("*.sent"))) == 1
+    assert _delivery(workflow).status == "accepted"
+    assert not list(tmp_path.glob("*.sent"))
 
 
 @pytest.mark.parametrize("sync", [
@@ -239,14 +329,15 @@ def test_retryable_sync_uses_complete_stored_profile(monkeypatch, workflow, tmp_
     sent = _capture_push(monkeypatch)
     result = _run(tmp_path)
 
-    assert result["status"] == "sent"
+    assert result["status"] == "accepted"
     assert result["sync_degraded"] is True
     assert result["sync_status"] == sync["status"]
     assert sent[0][1]["delivery_metadata"] == {
         "sync_degraded": True, "sync_status": sync["status"],
         "sync_detail": sync.get("detail") or sync.get("message"),
     }
-    assert len(list(tmp_path.glob("*.sent"))) == 1
+    assert _delivery(workflow).status == "accepted"
+    assert not list(tmp_path.glob("*.sent"))
 
 
 @pytest.mark.parametrize("profile", [
@@ -497,7 +588,7 @@ def test_delivery_rechecks_local_day_after_sync_wait(monkeypatch, workflow, tmp_
     assert result["reason"] == "stale_report_date"
 
 
-def test_evening_unknown_history_can_send_same_day_facts(monkeypatch, tmp_path):
+def test_evening_unknown_history_can_send_same_day_facts(monkeypatch, workflow, tmp_path):
     daily = _daily()
     daily["report_context"]["training_history"] = {
         "status": "UNKNOWN", "verified_days": [], "last_synced_at": None,
@@ -508,8 +599,9 @@ def test_evening_unknown_history_can_send_same_day_facts(monkeypatch, tmp_path):
         "explicit-user", "private-token", daily,
         period="evening", target_date=date(2026, 8, 29), state_dir=tmp_path,
     )
-    assert result["status"] == "sent"
+    assert result["status"] == "accepted"
     assert sent[0][2] == "evening"
+    assert _delivery(workflow, "evening").status == "accepted"
 
 
 def test_evening_unknown_history_without_same_day_facts_defers(tmp_path):
@@ -536,17 +628,21 @@ def test_morning_unverified_history_sends_facts_only_once(monkeypatch, workflow,
     first = _run(tmp_path)
     second = _run(tmp_path)
 
-    assert first["status"] == "sent"
+    assert first["status"] == "accepted"
     assert first["mode"] == "facts_only"
     assert first["facts_only"] is True
     assert first["coverage_reason"] == "prior_7d_unverified"
-    assert second["status"] == "already_sent"
+    assert second == {
+        "status": "accepted", "period": "morning", "date": "2026-08-29",
+        "provider_id": "synthetic-code",
+    }
     assert workflow["sync"] == [("explicit-user", 2)]
     assert sent[0][1]["delivery_metadata"] == {
         "facts_only": True, "coverage_reason": "prior_7d_unverified",
     }
     assert "delivery_metadata" not in profile
-    assert len(list(tmp_path.glob("*.sent"))) == 1
+    assert _delivery(workflow).status == "accepted"
+    assert not list(tmp_path.glob("*.sent"))
 
 
 @pytest.mark.parametrize(("target", "expected_days"), [
@@ -563,7 +659,7 @@ def test_retrospective_test_evening_extends_sync_and_excludes_decision(
                   target_date=target, retrospective=True, test_delivery=True)
     assert workflow["sync"] == [("explicit-user", expected_days)]
     assert workflow["analyze"] == [("explicit-user", target)]
-    assert result["status"] == "test_sent"
+    assert result["status"] == "test_accepted"
     assert result["retrospective"] is True
     assert result["scheduled_delivery_unchanged"] is True
     assert sent[0][1]["delivery_metadata"]["retrospective"] is True

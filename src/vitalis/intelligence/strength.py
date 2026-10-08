@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, timedelta
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from hashlib import sha256
 from statistics import median
 from uuid import uuid4
@@ -16,6 +17,7 @@ from .contracts import (
     ExerciseHypothesis,
     MuscleRecoveryStatus,
     StrengthAnalysis,
+    StrengthExerciseComparison,
     StrengthExerciseInput,
     StrengthExerciseRecord,
     StrengthSessionAnalysis,
@@ -88,6 +90,20 @@ EXERCISE_KNOWLEDGE = (
 )
 
 
+@dataclass(frozen=True)
+class _StrengthDose:
+    """Ordered set facts used only by the deterministic comparison pass."""
+
+    identity: tuple[str, str]
+    exercise_id: str | None
+    exercise_name: str
+    repetitions: tuple[int | None, ...]
+    weights: tuple[float | None, ...]
+    set_count: int | None
+    weight_unit: str | None
+    weight_basis: str | None
+
+
 def normalize_exercise(
     user_id: str,
     workout_id: str,
@@ -95,6 +111,7 @@ def normalize_exercise(
     value: StrengthExerciseInput,
     session_focus: str | None = None,
     workout_source: str = "zepp",
+    created_at: datetime | None = None,
 ) -> StrengthExerciseRecord:
     pattern, muscles = classify_exercise(value.exercise_id, value.exercise_name)
     return StrengthExerciseRecord(
@@ -113,12 +130,15 @@ def normalize_exercise(
         sets=value.sets,
         repetitions=value.repetitions,
         weight_kg=value.weight_kg,
+        weight_unit=value.weight_unit or ("kg" if value.weight_kg is not None else None),
+        weight_basis=value.weight_basis,
         rpe=value.rpe,
         rir=value.rir,
         rest_seconds=value.rest_seconds,
         source="user_confirmed",
         confidence=ConfidenceBand.HIGH,
         confidence_label=CONFIDENCE_LABELS[ConfidenceBand.HIGH.value],
+        created_at=created_at,
     )
 
 
@@ -160,6 +180,12 @@ class StrengthAnalyzer:
             self._session(raw, workout, threshold)
             for workout in sorted(workouts, key=RunningAnalyzer._workout_sort_key)
         ]
+        sessions = [
+            session.model_copy(update={
+                "comparisons": self._comparisons_for_session(session, sessions[:index]),
+            })
+            for index, session in enumerate(sessions)
+        ]
         explicit_count = sum(bool(item.explicit_exercises) for item in sessions)
         split, split_confidence = self._split(sessions)
         next_focus = self._next_focus(split, sessions)
@@ -191,7 +217,9 @@ class StrengthAnalyzer:
         explicit = (
             self._merge_exercises(confirmed)
             if confirmed
-            else self._vendor_exercises(raw.user_id, workout)
+            else self._vendor_exercises(
+                raw.user_id, workout, as_of=getattr(raw, "as_of", None)
+            )
         )
         patterns = sorted({item.movement_pattern for item in explicit if item.movement_pattern != "unknown"})
         muscles = sorted({muscle for item in explicit for muscle in item.muscle_groups})
@@ -324,12 +352,20 @@ class StrengthAnalyzer:
         return output
 
     @staticmethod
-    def _vendor_exercises(user_id: str, workout: dict) -> list[StrengthExerciseRecord]:
+    def _vendor_exercises(
+        user_id: str,
+        workout: dict,
+        *,
+        as_of: datetime | None = None,
+    ) -> list[StrengthExerciseRecord]:
         detail = workout.get("detail") or {}
         items = detail.get("strength_sets") or [] if isinstance(detail, dict) else getattr(detail, "strength_sets", []) or []
         output = []
         workout_source = str(workout.get("source") or "zepp")
         workout_id = str(workout.get("workout_id") or "")
+        source_time = workout.get("started_at")
+        if not isinstance(source_time, datetime):
+            source_time = as_of if isinstance(as_of, datetime) else None
         for order, item in enumerate(items, start=1):
             value = item.get if isinstance(item, dict) else getattr(item, "__dict__", {}).get
             if value("source") == "lap_62":
@@ -345,6 +381,14 @@ class StrengthAnalyzer:
             ).hexdigest()[:32]
             repetitions = value("repetitions")
             weight_kg = value("weight_kg")
+            weight_value = value("weight_value")
+            if isinstance(weight_kg, (int, float)) and weight_kg < 0:
+                weight_kg = None
+            if isinstance(weight_value, (int, float)) and weight_value < 0:
+                weight_value = None
+            weight_unit = value("weight_unit")
+            if weight_kg is None and weight_value is not None and str(weight_unit or "").lower() == "kg":
+                weight_kg = weight_value
             rest_seconds = value("rest_seconds")
             output.append(StrengthExerciseRecord(
                 id=stable_id,
@@ -362,10 +406,13 @@ class StrengthAnalyzer:
                 sets=1,
                 repetitions=repetitions,
                 weight_kg=float(weight_kg) if weight_kg is not None else None,
+                weight_unit=weight_unit or ("kg" if weight_kg is not None else None),
+                weight_basis=value("weight_basis"),
                 rest_seconds=int(rest_seconds) if rest_seconds is not None else None,
                 source="vendor_explicit",
                 confidence=confidence,
                 confidence_label=CONFIDENCE_LABELS[confidence.value],
+                created_at=source_time,
             ))
         return StrengthAnalyzer._merge_exercises(output)
 
@@ -379,6 +426,8 @@ class StrengthAnalyzer:
                 identity,
                 exercise.repetitions,
                 exercise.weight_kg,
+                exercise.weight_unit,
+                exercise.weight_basis,
                 exercise.rest_seconds,
                 exercise.rpe,
                 exercise.rir,
@@ -391,6 +440,151 @@ class StrengthAnalyzer:
                 "sets": (previous.sets or 0) + (exercise.sets or 0),
             })
         return sorted(merged.values(), key=lambda item: item.order)
+
+    @staticmethod
+    def _known_weight_unit(value: str | None, weight_kg: float | None = None) -> str | None:
+        if weight_kg is not None:
+            return "kg"
+        if not value or not str(value).strip():
+            return None
+        normalized = str(value).strip().lower().replace(" ", "_").replace("-", "_")
+        return {
+            "kg": "kg",
+            "kgs": "kg",
+            "kilogram": "kg",
+            "kilograms": "kg",
+            "公斤": "kg",
+            "千克": "kg",
+            "lb": "lb",
+            "lbs": "lb",
+            "pound": "lb",
+            "pounds": "lb",
+            "磅": "lb",
+        }.get(normalized)
+
+    @staticmethod
+    def _exercise_identity(
+        exercise_id: str | None, exercise_name: str | None
+    ) -> tuple[str, str] | None:
+        if exercise_id and str(exercise_id).strip():
+            return "id", str(exercise_id).strip().casefold()
+        if exercise_name and str(exercise_name).strip():
+            return "name", str(exercise_name).strip().casefold()
+        return None
+
+    @classmethod
+    def _session_doses(cls, session: StrengthSessionAnalysis) -> list[_StrengthDose]:
+        """Compare each action's full ordered dose once per workout."""
+        confirmed = [item for item in session.explicit_exercises if item.source == "user_confirmed"]
+        observed = [item for item in session.observed_sets if item.source == "strength_sets"]
+        records = sorted(confirmed, key=lambda item: item.order) if confirmed else observed or sorted(session.explicit_exercises, key=lambda item: item.order)
+        groups: dict[tuple[str, str], dict] = {}
+        for item in records:
+            identity = cls._exercise_identity(item.exercise_id, item.exercise_name)
+            if identity is None:
+                continue
+            is_observation = isinstance(item, StrengthSetObservation)
+            count = 1 if is_observation else item.sets
+            repetitions = [item.repetitions] * (count if count is not None else 1)
+            weight = item.weight_kg if item.weight_kg is not None else getattr(item, "weight_value", None)
+            unit = cls._known_weight_unit(item.weight_unit, item.weight_kg)
+            group = groups.setdefault(identity, {
+                "identity": identity, "exercise_id": item.exercise_id,
+                "exercise_name": item.exercise_name or item.exercise_id or "",
+                "repetitions": [], "weights": [], "set_count": 0,
+                "weight_unit": unit, "weight_basis": item.weight_basis,
+            })
+            group["repetitions"].extend(repetitions)
+            group["weights"].extend([weight] * len(repetitions))
+            group["set_count"] = group["set_count"] + count if group["set_count"] is not None and count is not None else None
+            if group["weight_unit"] != unit:
+                group["weight_unit"] = None
+            if group["weight_basis"] != item.weight_basis:
+                group["weight_basis"] = None
+        return [_StrengthDose(**group) for group in groups.values()]
+
+    @classmethod
+    def _comparisons_for_session(
+        cls,
+        session: StrengthSessionAnalysis,
+        previous_sessions: list[StrengthSessionAnalysis],
+    ) -> list[StrengthExerciseComparison]:
+        if not previous_sessions:
+            return []
+        comparisons = []
+        for current in cls._session_doses(session):
+            reference_session = None
+            reference = None
+            for candidate_session in reversed(previous_sessions):
+                candidates = cls._session_doses(candidate_session)
+                matches = [item for item in candidates if item.identity == current.identity]
+                if matches:
+                    reference_session = candidate_session
+                    reference = matches[-1]
+                    break
+
+            common = {
+                "exercise_id": current.exercise_id,
+                "exercise_name": current.exercise_name,
+                "reference_workout_source": reference_session.source if reference_session else None,
+                "reference_workout_id": reference_session.workout_id if reference_session else None,
+                "reference_workout_date": reference_session.date if reference_session else None,
+                "current_repetitions": list(current.repetitions),
+                "previous_repetitions": list(reference.repetitions) if reference else [],
+                "current_weights": list(current.weights),
+                "previous_weights": list(reference.weights) if reference else [],
+                "weight_unit": (
+                    current.weight_unit
+                    if reference is not None and current.weight_unit == reference.weight_unit
+                    else None
+                ),
+                "weight_basis": (
+                    current.weight_basis
+                    if reference is not None and current.weight_basis == reference.weight_basis
+                    else None
+                ),
+                "set_count": current.set_count,
+                "comparable": False,
+                "blocked_reason": None,
+                "delta_total_repetitions": None,
+            }
+            if reference is None:
+                common["blocked_reason"] = "no_reference_session"
+            elif session.source != reference_session.source:
+                common["blocked_reason"] = "source_mismatch"
+            elif current.set_count is None or reference.set_count is None:
+                common["blocked_reason"] = "set_count_unknown"
+            elif current.set_count != reference.set_count:
+                common["blocked_reason"] = "set_count_mismatch"
+            elif (
+                len(current.repetitions) != len(reference.repetitions)
+                or any(value is None for value in current.repetitions)
+                or any(value is None for value in reference.repetitions)
+            ):
+                common["blocked_reason"] = "repetitions_incomplete"
+            elif not current.weight_unit or not reference.weight_unit:
+                common["blocked_reason"] = "weight_unit_unknown"
+            elif current.weight_unit != reference.weight_unit:
+                common["blocked_reason"] = "weight_unit_mismatch"
+            elif not current.weight_basis or not reference.weight_basis:
+                common["blocked_reason"] = "weight_basis_unknown"
+            elif current.weight_basis != reference.weight_basis:
+                common["blocked_reason"] = "weight_basis_mismatch"
+            elif (
+                len(current.weights) != len(reference.weights)
+                or any(value is None for value in current.weights)
+                or any(value is None for value in reference.weights)
+            ):
+                common["blocked_reason"] = "weight_incomplete"
+            elif current.weights != reference.weights:
+                common["blocked_reason"] = "weight_mismatch"
+            else:
+                common["comparable"] = True
+                common["delta_total_repetitions"] = (
+                    sum(current.repetitions) - sum(reference.repetitions)
+                )
+            comparisons.append(StrengthExerciseComparison(**common))
+        return comparisons
 
     def _work_rest(self, workout: dict, heart_rate: list):
         detail = workout.get("detail") or {}

@@ -9,6 +9,7 @@ from vitalis.adapters.notifications import PushService
 from vitalis.application import delivery_policy
 from vitalis.intelligence.contracts import MorningBriefing
 from vitalis.intelligence.morning_briefing import MorningBriefingEngine
+from vitalis.intelligence.report_rendering import render_report
 
 TARGET_DATE = date(2026, 8, 29)
 
@@ -74,16 +75,17 @@ def test_facts_only_push_renders_sleep_body_and_no_training_sections():
     )
 
     message = received[0]
-    assert message.title == f"Vitalis 晨报 · {TARGET_DATE.isoformat()}"
-    assert "昨晚睡眠" in message.body
-    assert "今早恢复信号" in message.body
+    assert message.title.startswith("Vitalis 晨报 · ")
+    assert "已记录昨夜事实，今天暂不生成训练安排" in message.title
+    assert "睡眠时长" in message.body
+    assert "静息心率" in message.body or "HRV" in message.body
     assert "今天的安排" not in message.body
-    assert "部分运动记录来源还未查全" in message.body
+    assert message.extras["summary"] == ["部分运动记录来源还未查全；已记录的训练照常展示，今天暂不生成训练安排。"]
     assert "action_plan" not in repr(message.extras)
     assert "primary_session" not in repr(message.extras)
 
 
-def test_unverified_history_sends_once_and_marks_scheduled_delivery(monkeypatch, tmp_path):
+def test_unverified_history_test_delivery_isolated_from_scheduled_delivery(monkeypatch, tmp_path):
     monkeypatch.setattr(daily_push, "local_today", lambda: TARGET_DATE)
     payload = _daily()
     sent = []
@@ -104,12 +106,12 @@ def test_unverified_history_sends_once_and_marks_scheduled_delivery(monkeypatch,
         "period": "morning",
         "target_date": TARGET_DATE,
         "state_dir": tmp_path,
+        "test_delivery": True,
     }
 
     result = daily_push.deliver_daily_report(**kwargs)
-    second = daily_push.deliver_daily_report(**kwargs)
 
-    assert result["status"] == "sent"
+    assert result["status"] == "test_accepted"
     assert result["mode"] == "facts_only"
     assert result["facts_only"] is True
     assert result["coverage_reason"] == "prior_7d_unverified"
@@ -118,20 +120,11 @@ def test_unverified_history_sends_once_and_marks_scheduled_delivery(monkeypatch,
         "facts_only": True,
         "coverage_reason": "prior_7d_unverified",
     }
-    assert second == {
-        "status": "already_sent",
-        "period": "morning",
-        "date": TARGET_DATE.isoformat(),
-    }
-    assert len(list(tmp_path.glob("*.sent"))) == 1
 
 
-def test_facts_only_test_delivery_does_not_change_marker(monkeypatch, tmp_path):
+def test_facts_only_test_delivery_is_isolated(monkeypatch, tmp_path):
     monkeypatch.setattr(daily_push, "local_today", lambda: TARGET_DATE)
     payload = _daily()
-    marker = daily_push._delivery_marker(tmp_path, "synthetic-user", TARGET_DATE, "morning")
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text("scheduled\n", encoding="utf-8")
     sent = []
 
     class Service:
@@ -153,10 +146,10 @@ def test_facts_only_test_delivery_does_not_change_marker(monkeypatch, tmp_path):
         test_delivery=True,
     )
 
-    assert result["status"] == "test_sent"
+    assert result["status"] == "test_accepted"
     assert result["mode"] == "facts_only"
     assert result["scheduled_delivery_unchanged"] is True
-    assert marker.read_text(encoding="utf-8") == "scheduled\n"
+    assert not list(tmp_path.glob("*.sent"))
     assert len(sent) == 1
 
 
@@ -181,9 +174,10 @@ def test_verified_history_keeps_normal_morning_plan(monkeypatch, tmp_path):
         period="morning",
         target_date=TARGET_DATE,
         state_dir=tmp_path,
+        test_delivery=True,
     )
 
-    assert result["status"] == "sent"
+    assert result["status"] == "test_accepted"
     assert "mode" not in result
     assert "delivery_metadata" not in sent[0]
 
@@ -282,10 +276,19 @@ def test_facts_only_renders_dated_activity_and_observed_training_without_a_plan(
     for item in daily["features"]["activity"]["energy"]:
         item["observed_at"] = day
     daily["features"]["training"]["recent_workouts"].append({
-        "date": yesterday, "type_label": "力量训练", "sport_mode_label": "力量训练",
+        "date": yesterday, "source": "zepp", "workout_id": "fixture-yesterday-strength",
+        "type_label": "力量训练", "sport_mode_label": "力量训练",
         "training_family": "strength", "duration_minutes": 52, "distance_km": 0,
         "calories_kcal": 200, "heart_rate_avg_bpm": 112, "vendor_reported_sets": 8,
     })
+    # The generic and specialist rows are the same synthetic workout; identity
+    # matching must use source + workout_id rather than duration alone.
+    daily["features"]["training"]["strength"]["recent_sessions"] = [{
+        "date": yesterday, "source": "zepp", "workout_id": "fixture-yesterday-strength",
+        "duration_minutes": 52, "vendor_reported_sets": 8,
+        "focus": "UNKNOWN", "focus_label": "力量训练",
+        "explicit_exercises": [], "observed_sets": [],
+    }]
     marker = "UNSAFE-PRESCRIPTION"
     daily["features"]["recovery"].update({
         "state_label": marker, "positive_signal_labels": [marker],
@@ -294,10 +297,12 @@ def test_facts_only_renders_dated_activity_and_observed_training_without_a_plan(
     MorningBriefing.model_validate(report)
     keys = [section["key"] for section in report["sections"]]
     assert keys == ["sleep", "recovery", "yesterday_activity", "observed_training", "today_activity"]
-    text = str(report)
+    text = render_report(report, target="markdown").content
+    internal = str(report)
     assert "步数 8,200 步" in text
     assert "设备估算热量（统计范围待确认） 420 千卡" in text
-    assert "已记录力量训练" in text and "设备记录组数 8 组" in text
+    assert "已记录力量训练" in internal and "设备记录组数 8 组" in internal
+    assert "力量训练" in text and "设备记录组数 8 组" in text
     assert "平均心率 112 次/分钟" in text
     assert "距离 0 公里" not in text
     assert marker not in text
@@ -308,11 +313,13 @@ def test_facts_only_summarizes_yesterday_observed_sets_without_prescribing():
     daily = _daily()
     yesterday = (TARGET_DATE - timedelta(days=1)).isoformat()
     daily["features"]["training"]["recent_workouts"].append({
-        "date": yesterday, "type_label": "力量训练", "duration_minutes": 52,
+        "date": yesterday, "source": "zepp", "workout_id": "fixture-yesterday-observed",
+        "type_label": "力量训练", "duration_minutes": 52,
         "training_family": "strength", "vendor_reported_sets": 4,
     })
     daily["features"]["training"]["strength"]["recent_sessions"] = [{
-        "date": yesterday, "explicit_exercises": [],
+        "date": yesterday, "source": "zepp", "workout_id": "fixture-yesterday-observed",
+        "explicit_exercises": [],
         "observed_sets": [
             {"order": 1, "source": "lap_62", "exercise_name": "引体向上", "vendor_exercise_code": 64},
             {"order": 2, "source": "lap_62", "exercise_name": "引体向上", "vendor_exercise_code": 64},

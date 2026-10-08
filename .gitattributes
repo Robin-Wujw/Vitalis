@@ -1,0 +1,2 @@
+# Generated transport bodies and their hashes must retain identical UTF-8 bytes.
+/docs/examples/reports/* text eol=lf

@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from .contracts import ReportBriefing
+from .report_presentation import daily_display_sections, daily_presentation, internal_sections
 from .report_formatting import (
     baseline_text,
     date_text,
@@ -35,6 +36,9 @@ class EveningBriefingEngine:
         training = features.get("training") or {}
         sections = self._sections(payload, report_date)
         quality = payload.get("data_quality") or {}
+        presentation_payload = dict(payload)
+        presentation_payload["report_context"] = context
+        presentation = daily_presentation(presentation_payload)
         summary = []
         return ReportBriefing(
             period="evening",
@@ -46,8 +50,9 @@ class EveningBriefingEngine:
             generated_at=payload.get("generated_at"),
             report_context=context,
             data_quality=quality,
+            **presentation,
             summary=summary,
-            sections=[self._section(item) for item in sections],
+            sections=internal_sections([self._section(item) for item in sections]) + daily_display_sections(presentation_payload),
         ).model_dump(mode="json")
 
     def build(self, daily: Any, delivery_metadata: dict | None = None) -> ReportBriefing:

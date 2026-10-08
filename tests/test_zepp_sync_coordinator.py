@@ -534,8 +534,9 @@ def test_completed_chunk_is_committed_when_later_chunk_fails():
     connector.__class__ = FailingSleep
     report = coordinator.run_attempt(attempt.id)
     state = coordinator.status(attempt.id)
-    assert state["attempt"]["status"] == "failed"
+    assert state["attempt"]["status"] == "partial"
     assert state["chunks"][0]["status"] == "succeeded"
+    assert state["chunks"][1]["status"] == "failed"
     assert not report.success
 
 

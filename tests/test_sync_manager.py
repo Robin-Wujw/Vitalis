@@ -1072,3 +1072,118 @@ class TestSyncManager:
         assert report.parse_status == "unrecognized"
         assert report.write_status == "not_run"
         assert report.error_kind == "unrecognized_payload"
+
+
+def _validation_record(stream, payload):
+    start = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    return FetchedRecord(raw=RawRecord(
+        stream=stream,
+        source_key=f"validation:{stream}",
+        start_utc=start,
+        end_utc=start + timedelta(days=1),
+        payload=payload,
+    ))
+
+
+@pytest.mark.parametrize("stream", ["sleep", "hrv", "daily_summary"])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"items": []},
+        {"records": []},
+        {"results": []},
+        {"list": []},
+        {"data": []},
+        {"data": {"items": []}},
+        {"data": {"records": []}},
+        {"data": {"results": []}},
+        {"data": {"list": []}},
+        {"data": {"summary": []}},
+    ],
+)
+def test_persist_accepts_explicitly_empty_supported_envelopes(
+    stream, payload, mock_fetcher, setup_db
+):
+    user = User(id=f"recognized-empty-{stream}")
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user.id)
+        report = SyncManager(mock_fetcher)._persist_record(
+            _validation_record(stream, payload), repo, user
+        )
+
+    assert report.status == "success"
+    assert report.parse_status == "empty"
+    assert report.write_status == "not_run"
+    assert report.error_kind is None
+
+
+@pytest.mark.parametrize("stream", ["sleep", "hrv", "daily_summary"])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"code": 500, "data": {"items": []}},
+        {"data": {"error": "temporary failure", "items": []}},
+        {"data": "not-an-envelope"},
+    ],
+)
+def test_persist_rejects_error_or_malformed_empty_like_envelopes(
+    stream, payload, mock_fetcher, setup_db
+):
+    user = User(id=f"unrecognized-empty-{stream}")
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user.id)
+        report = SyncManager(mock_fetcher)._persist_record(
+            _validation_record(stream, payload), repo, user
+        )
+
+    assert report.status == "unverified"
+    assert report.parse_status == "unrecognized"
+    assert report.write_status == "not_run"
+    assert report.error_kind == "unrecognized_payload"
+
+
+@pytest.mark.parametrize(
+    ("stream", "payload"),
+    [
+        (
+            "sleep",
+            {"data": {"items": [{
+                "date_time": "2026-09-01",
+                "summary": json.dumps({
+                    "slp": {"st": "23:00", "ed": "07:00", "dp": 90, "rm": 100, "lt": 250, "wk": 10},
+                    "stp": {"ttl": 321},
+                }),
+            }]}},
+        ),
+        (
+            "hrv",
+            {"data": {"items": [{
+                "value": {
+                    "startTime": int(datetime(2026, 9, 1, tzinfo=timezone.utc).timestamp() * 1000),
+                    "samples": [{"s": 0, "sdnn": 42}],
+                },
+            }]}},
+        ),
+        (
+            "daily_summary",
+            {"data": {"items": [{"date": "2026-09-01", "steps": 123}]}},
+        ),
+    ],
+)
+def test_persist_keeps_regular_sparse_parsed_payloads_successful(
+    stream, payload, mock_fetcher, setup_db
+):
+    user = User(id=f"parsed-payload-{stream}")
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.upsert_user(user.id)
+        report = SyncManager(mock_fetcher)._persist_record(
+            _validation_record(stream, payload), repo, user
+        )
+
+    assert report.status == "success"
+    assert report.parse_status == "success"
+    assert report.write_status == "success"
+    assert report.records_written > 0

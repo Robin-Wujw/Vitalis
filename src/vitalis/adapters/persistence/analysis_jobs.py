@@ -9,8 +9,12 @@ from sqlalchemy import exists, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from vitalis.application.jobs import MAX_ANALYSIS_ATTEMPTS
 from vitalis.application.ports import AnalysisJobState, IdempotencyConflict, JobClaim
 from vitalis.adapters.persistence.models import AnalysisJob, AnalysisRun, User
+
+
+_INPUT_CHANGED_ERROR = "analysis_input_changed"
 
 
 def _now() -> datetime:
@@ -91,18 +95,70 @@ class SqlAnalysisJobRepository:
             AnalysisJob.status == "queued",
             (AnalysisJob.status == "running") & (AnalysisJob.lease_expires_at <= now),
         )
+        claimable = due & (AnalysisJob.attempt_count < MAX_ANALYSIS_ATTEMPTS)
         with self._sessions() as db:
+            exhausted_candidates = db.execute(
+                select(AnalysisJob.id).where(
+                    AnalysisJob.status == "running",
+                    AnalysisJob.lease_expires_at <= now,
+                    AnalysisJob.attempt_count >= MAX_ANALYSIS_ATTEMPTS,
+                ).order_by(AnalysisJob.created_at, AnalysisJob.id).limit(16)
+            ).scalars().all()
             candidates = db.execute(
-                select(AnalysisJob.id).where(due)
+                select(AnalysisJob.id).where(claimable)
                 .order_by(AnalysisJob.created_at, AnalysisJob.id).limit(16)
             ).scalars().all()
-        for job_id in candidates:
+        candidate_ids = tuple(dict.fromkeys((*exhausted_candidates, *candidates)))
+        for job_id in candidate_ids:
             token = uuid4().hex
             with self._sessions.begin() as db:
                 current = db.get(AnalysisJob, job_id)
                 previous_run_id = current.run_id if current is not None else None
+                if (
+                    current is not None
+                    and current.status == "running"
+                    and current.attempt_count >= MAX_ANALYSIS_ATTEMPTS
+                    and current.lease_expires_at is not None
+                    and current.lease_expires_at <= now
+                ):
+                    # Do not let an expired third attempt become a fourth execution.
+                    exhausted = db.execute(
+                        update(AnalysisJob).where(
+                            AnalysisJob.id == job_id,
+                            AnalysisJob.user_id == current.user_id,
+                            AnalysisJob.status == "running",
+                            AnalysisJob.lease_token == current.lease_token,
+                            AnalysisJob.lease_epoch == current.lease_epoch,
+                            AnalysisJob.lease_expires_at == current.lease_expires_at,
+                            AnalysisJob.lease_expires_at <= now,
+                            AnalysisJob.attempt_count == current.attempt_count,
+                            AnalysisJob.run_id == previous_run_id,
+                        ).values(
+                            status="failed",
+                            run_id=None,
+                            error="Analysis failed",
+                            lease_token=None,
+                            lease_expires_at=None,
+                            finished_at=now,
+                            updated_at=now,
+                        )
+                    ).rowcount
+                    if exhausted and previous_run_id:
+                        db.execute(
+                            update(AnalysisRun).where(
+                                AnalysisRun.id == previous_run_id,
+                                AnalysisRun.status == "RUNNING",
+                            ).values(
+                                status="FAILED",
+                                completed_at=now,
+                                error="analysis_attempt_limit",
+                            )
+                        )
+                    continue
                 changed = db.execute(
-                    update(AnalysisJob).where(AnalysisJob.id == job_id, due).values(
+                    update(AnalysisJob).where(
+                        AnalysisJob.id == job_id, claimable,
+                    ).values(
                         status="running",
                         lease_token=token,
                         lease_epoch=AnalysisJob.lease_epoch + 1,
@@ -214,6 +270,46 @@ class SqlAnalysisJobRepository:
                     lease_token=None,
                     lease_expires_at=None,
                     finished_at=now,
+                    updated_at=now,
+                )
+            ).rowcount
+        return bool(changed)
+
+    def requeue_input_changed(
+        self, claim: JobClaim, *, max_attempts: int = MAX_ANALYSIS_ATTEMPTS,
+    ) -> bool:
+        """Requeue only a fenced job whose persisted run has the stable race error."""
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be positive")
+        now = _now()
+        with self._sessions.begin() as db:
+            changed = db.execute(
+                update(AnalysisJob).where(
+                    AnalysisJob.id == claim.id,
+                    AnalysisJob.user_id == claim.user_id,
+                    AnalysisJob.target_date == claim.target_date,
+                    AnalysisJob.status == "running",
+                    AnalysisJob.lease_token == claim.token,
+                    AnalysisJob.lease_epoch == claim.epoch,
+                    AnalysisJob.lease_expires_at > now,
+                    AnalysisJob.attempt_count < max_attempts,
+                    AnalysisJob.run_id.is_not(None),
+                    exists(select(User.id).where(User.id == claim.user_id)),
+                    exists(select(AnalysisRun.id).where(
+                        AnalysisRun.id == AnalysisJob.run_id,
+                        AnalysisRun.user_id == claim.user_id,
+                        AnalysisRun.target_date == claim.target_date,
+                        AnalysisRun.status == "FAILED",
+                        AnalysisRun.error == _INPUT_CHANGED_ERROR,
+                    )),
+                ).values(
+                    status="queued",
+                    run_id=None,
+                    error=None,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    started_at=None,
+                    finished_at=None,
                     updated_at=now,
                 )
             ).rowcount

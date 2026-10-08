@@ -143,7 +143,7 @@ def test_detail_only_api_freezes_requested_workout_backlog(client, monkeypatch):
         assert attempt.options == {"decode_dense_files": False, "detail_only": True, "detail_limit": 1}
         assert len(repo.pending_workout_details(
             user_id, attempt.window_start, attempt.window_end, limit=10,
-        )) == 2
+        )) == 1
 
 
 def test_nonmanual_detail_backfill_is_rejected_before_scheduling():

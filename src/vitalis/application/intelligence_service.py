@@ -73,6 +73,10 @@ from vitalis.intelligence.timeline import HealthTimelineEngine
 from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
 
 
+class AnalysisInputChangedError(RuntimeError):
+    """The analysis snapshot became stale before its outputs could publish."""
+
+
 def _feedback_request_hash(feedback_input: SubjectiveFeedbackInput) -> str:
     """Hash the validated request body using the current idempotency contract."""
     payload = json.dumps(
@@ -235,7 +239,7 @@ class IntelligenceCommand:
                 if not repo.lock_analysis_input_revision(
                     user_id, run.input_revision_used
                 ):
-                    raise RuntimeError("分析输入在计算期间发生变化，请重新运行")
+                    raise AnalysisInputChangedError("分析输入在计算期间发生变化，请重新运行")
                 current_profile = repo.user_profile(user_id)
                 current_digest = analysis_policy_digest(
                     self._timezone,
@@ -249,7 +253,7 @@ class IntelligenceCommand:
                     current_profile.revision != run.profile_revision_used
                     or current_digest != run.config_digest
                 ):
-                    raise RuntimeError("分析输入在计算期间发生变化，请重新运行")
+                    raise AnalysisInputChangedError("分析输入在计算期间发生变化，请重新运行")
                 if job_claim is not None:
                     if not job_repository.succeed(uow.transaction, job_claim, run.id):
                         raise RuntimeError("analysis job claim is no longer current")
@@ -352,8 +356,7 @@ class IntelligenceCommand:
                 if prior_run is not None and prior_run.status == AnalysisRunStatus.RUNNING.value:
                     safe_error = (
                         "analysis_input_changed"
-                        if isinstance(exc, RuntimeError)
-                        and "分析输入在计算期间发生变化" in str(exc)
+                        if isinstance(exc, AnalysisInputChangedError)
                         else "analysis_failed"
                     )
                     repo.complete_analysis_run(

@@ -102,7 +102,9 @@ class SyncControl:
     def budget_for_days(days: int) -> int:
         """Return a non-decreasing budget for a local-date window."""
         days = max(1, int(days))
-        return max(90, min(45 + days * 3, 20 * 60))
+        # Core sleep and daily-summary streams are split at local-day boundaries;
+        # reserve enough wall time for the larger root manifest to drain fairly.
+        return max(90, min(90 + days * 15, 20 * 60))
 
     @classmethod
     def budget_for_root_chunks(cls, root_chunks: int) -> int:
@@ -378,11 +380,12 @@ class ZeppSyncCoordinator:
                 allow_unavailable=False, operation="fetch_heart_rate",
                 params={"cursor": start_ts, "end": end_ts, "limit": HEART_RATE_PAGE_LIMIT, "hr_type": 2},
             )); ordinal += 1
-            manifest.append(self._spec(
-                "sleep", "sleep", item, health_stream="sleep", ordinal=ordinal,
-                allow_unavailable=True, operation="fetch_band_data",
-                params={"from_date": item.start_day(timezone_name), "to_date": item.end_day(timezone_name), "query_type": "detail"},
-            )); ordinal += 1
+            for daily_window in self._local_windows(item, timezone_name, 1):
+                manifest.append(self._spec(
+                    "sleep", "sleep", daily_window, health_stream="sleep", ordinal=ordinal,
+                    allow_unavailable=True, operation="fetch_band_data",
+                    params={"from_date": daily_window.start_day(timezone_name), "to_date": daily_window.end_day(timezone_name), "query_type": "detail"},
+                )); ordinal += 1
             manifest.append(self._spec(
                 "hrv", "hrv", item, health_stream="hrv", ordinal=ordinal,
                 allow_unavailable=True, operation="fetch_hrv",
@@ -400,11 +403,19 @@ class ZeppSyncCoordinator:
                 ("readiness/watch_score", "readiness", "watch_score", "daily_summary/readiness"),
             )
             for partition, event_type, sub_type, health in daily_specs:
-                manifest.append(self._spec(
-                    "daily_summary", partition, item, health_stream=health, ordinal=ordinal,
-                    allow_unavailable=partition != "DailyHealth/summary", operation="fetch_events",
-                    params={"event_type": event_type, "sub_type": sub_type, "from_ms": start_ms, "to_ms": end_ms, "limit": 2000, "reverse": True},
-                )); ordinal += 1
+                daily_windows = (
+                    self._local_windows(item, timezone_name, 1)
+                    if partition == "DailyHealth/summary" else [item]
+                )
+                for daily_window in daily_windows:
+                    manifest.append(self._spec(
+                        "daily_summary", partition, daily_window, health_stream=health, ordinal=ordinal,
+                        allow_unavailable=partition != "DailyHealth/summary", operation="fetch_events",
+                        params={"event_type": event_type, "sub_type": sub_type,
+                                "from_ms": int(daily_window.start.timestamp() * 1000),
+                                "to_ms": int(daily_window.end.timestamp() * 1000),
+                                "limit": 2000, "reverse": True},
+                    )); ordinal += 1
 
             wellness_specs = (
                 ("all_day_stress", "user", "all_day_stress", None, "wellness/all_day_stress"),
@@ -1193,7 +1204,13 @@ class ZeppSyncCoordinator:
         kind = self._failure_kind(exc)
         chunk = claim.chunk
         now = self.wall_clock()
-        if chunk["stream"] == "devices" and kind != "auth":
+        optional_detail_limit = (
+            kind == "resource_limit" and chunk["stream"] == "workout_detail"
+            and attempt.get("trigger") in {
+                "nightly", "morning", "evening", "weekly", "monthly",
+            }
+        )
+        if optional_detail_limit or (chunk["stream"] == "devices" and kind != "auth"):
             status, retry_at = "unavailable", None
         elif kind in {"network", "service", "timeout"} and claim.chunk["attempt_count"] < MAX_CHUNK_ATTEMPTS:
             status = "retry_wait"
@@ -1210,7 +1227,12 @@ class ZeppSyncCoordinator:
         }
         with self._session() as db:
             repo = HealthRepository(db)
-            finalized = repo.finalize_chunk(claim.lease.entity_id, claim.lease.token, claim.lease.epoch, status, now=now, next_retry_at=retry_at, stages=stages, error_kind=kind, error=str(exc))
+            finalized = repo.finalize_chunk(
+                claim.lease.entity_id, claim.lease.token, claim.lease.epoch,
+                status, now=now, next_retry_at=retry_at, stages=stages,
+                error_kind=kind, error=str(exc),
+                optional_detail_limit=optional_detail_limit,
+            )
             if finalized:
                 repo.save_sync_stream_state(
                     attempt["user_id"], chunk["health_stream"] or chunk["stream"],
@@ -1219,7 +1241,7 @@ class ZeppSyncCoordinator:
                     parsed_at=None, written_at=None, raw_records=0, records_written=0,
                     error_kind=kind, message=str(exc), attempt_id=attempt["id"],
                 )
-        return status
+        return "needs_reauth" if status == "failed" and kind == "auth" else status
 
     def _run_chunk(
         self,
@@ -1334,32 +1356,13 @@ class ZeppSyncCoordinator:
                 return "cancelled" if repo.cancel_sync_attempt(
                     row.id, now=now, lease_token=token, lease_epoch=epoch
                 ) else "stale"
-            if any(item.status == "failed" for item in chunks):
-                auth = any(item.error_kind == "auth" for item in chunks)
-                status = "needs_reauth" if auth else "failed"
+            failed_chunks = [item for item in chunks if item.status == "failed"]
+            if any(item.error_kind == "auth" for item in failed_chunks):
                 ok = repo.finalize_attempt(
-                    row.id, token, epoch, status, now=now,
-                    error_kind="auth" if auth else next(
-                        (item.error_kind for item in chunks if item.error_kind), "unknown"
-                    ),
-                    error=next((item.error for item in chunks if item.error), None),
+                    row.id, token, epoch, "needs_reauth", now=now,
+                    error_kind="auth", error="Zepp 登录已失效，请重新登录",
                 )
-                return status if ok else "stale"
-            if any(item.status == "retry_wait" for item in chunks):
-                next_at = min(
-                    item.next_retry_at for item in chunks
-                    if item.status == "retry_wait" and item.next_retry_at
-                )
-                ok = repo.finalize_attempt(
-                    row.id, token, epoch, "retry_wait", now=now,
-                    next_retry_at=next_at,
-                    error_kind=next(
-                        (item.error_kind for item in chunks if item.status == "retry_wait"),
-                        "network",
-                    ),
-                    error="等待重试",
-                )
-                return "retry_wait" if ok else "stale"
+                return "needs_reauth" if ok else "stale"
             if timeout:
                 terminal_status = "partial" if aggregate.completed_count else "failed"
                 ok = repo.finalize_attempt(
@@ -1380,10 +1383,41 @@ class ZeppSyncCoordinator:
                     updated_at=self._naive(now),
                 ))
                 return terminal_status
+            # A failed or delayed endpoint cannot strand the other streams.
             if any(item.status in ("queued", "running") for item in chunks):
                 return "queued" if repo.release_attempt_lease(
                     row.id, token, epoch, now=now, status="queued"
                 ) else "stale"
+            if any(item.status == "retry_wait" for item in chunks):
+                next_at = min(
+                    item.next_retry_at for item in chunks
+                    if item.status == "retry_wait" and item.next_retry_at
+                )
+                ok = repo.finalize_attempt(
+                    row.id, token, epoch, "retry_wait", now=now,
+                    next_retry_at=next_at,
+                    error_kind=next(
+                        (item.error_kind for item in chunks if item.status == "retry_wait"),
+                        "network",
+                    ),
+                    error="等待重试",
+                )
+                return "retry_wait" if ok else "stale"
+            if failed_chunks:
+                has_saved_facts = any(
+                    item.status == "succeeded" and item.records_written > 0
+                    and item.stream not in {"devices", "dense_files"}
+                    for item in chunks
+                )
+                status = "partial" if has_saved_facts else "failed"
+                failed = failed_chunks[0]
+                ok = repo.finalize_attempt(
+                    row.id, token, epoch, status, now=now,
+                    error_kind=failed.error_kind or "unknown", error=failed.error,
+                )
+                if ok:
+                    self._enqueue_scheduled_analysis_job(db, attempt, status)
+                return status if ok else "stale"
 
             incomplete_chunks = [
                 item for item in chunks
@@ -1471,8 +1505,8 @@ class ZeppSyncCoordinator:
                     attempt, claim, control, connector, token, epoch
                 )
                 processed += 1
-                if outcome == "stale":
-                    terminal = "stale"
+                if outcome in {"stale", "needs_reauth"}:
+                    terminal = outcome
                     break
             if terminal != "stale":
                 try:

@@ -627,7 +627,10 @@ def test_unavailable_completion_locks_owner_before_delivery_update(tmp_path):
         engine.dispose()
 
 
-def test_manual_analysis_rearms_only_existing_unavailable_delivery(tmp_path, monkeypatch):
+@pytest.mark.parametrize("reason", [
+    "snapshot_unavailable", "sleep_incomplete", "stored_data_incomplete",
+])
+def test_manual_analysis_rearms_only_existing_unavailable_delivery(tmp_path, monkeypatch, reason):
     from vitalis.adapters.persistence import database
     from vitalis.bootstrap import get_intelligence_command
 
@@ -638,7 +641,7 @@ def test_manual_analysis_rearms_only_existing_unavailable_delivery(tmp_path, mon
             row = repo.claim_notification_delivery(now=datetime.utcnow())
             assert row is not None
             assert repo.complete_notification_delivery(
-                row.id, row.lease_token, "deferred", error="snapshot_unavailable"
+                row.id, row.lease_token, "deferred", error=reason
             )
         monkeypatch.setattr(database, "SessionLocal", factory)
         result = get_intelligence_command().analyze("owner", DAY)

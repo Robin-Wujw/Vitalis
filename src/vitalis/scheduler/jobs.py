@@ -223,6 +223,57 @@ def drain_notification_deliveries(*, max_deliveries: int = 1) -> int:
     return drained
 
 
+def reconcile_deferred_daily_reports() -> int:
+    """Recover an existing unsent daily intent once per changed input snapshot."""
+    import hashlib
+
+    from sqlalchemy import select
+
+    from vitalis.adapters.persistence import HealthRepository, session_scope
+    from vitalis.adapters.persistence.models import AnalysisJob, NotificationDelivery, User
+    from vitalis.adapters.persistence.repositories import _current_analysis_config_digest
+    from vitalis.application.delivery_policy import stored_profile_is_usable
+    from vitalis.application.jobs import create_analysis_job
+    from vitalis.time import local_today
+
+    if not settings.push_user or not settings.pushplus_token:
+        return 0
+    today = local_today()
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        owner = db.get(User, settings.push_user)
+        if owner is None:
+            return 0
+        rows = db.execute(select(NotificationDelivery).where(
+            NotificationDelivery.user_id == owner.id,
+            NotificationDelivery.target_date == today,
+            NotificationDelivery.period.in_(("morning", "evening")),
+            NotificationDelivery.status == "deferred",
+            NotificationDelivery.last_error.in_((
+                "snapshot_unavailable", "sleep_incomplete", "stored_data_incomplete",
+            )),
+        ).order_by(NotificationDelivery.created_at).limit(2)).scalars().all()
+        if not rows:
+            return 0
+        snapshot = repo.latest_analysis_snapshot(owner.id, "daily", today)
+        if snapshot is not None:
+            if any(stored_profile_is_usable(snapshot.payload, today, row.period) for row in rows):
+                return repo.rearm_unavailable_notification_deliveries(
+                    owner.id, snapshot.analysis_run_id, today
+                )
+            return 0
+        material = f"{owner.id}:{today}:{owner.analysis_input_revision}:{_current_analysis_config_digest()}"
+        key = "daily-recovery:" + hashlib.sha256(material.encode()).hexdigest()
+        if db.execute(select(AnalysisJob.id).where(
+            AnalysisJob.user_id == owner.id,
+            AnalysisJob.idempotency_key == key,
+        )).first() is not None:
+            return 0
+        user_id = owner.id
+    create_analysis_job(user_id, today, key)
+    return 1
+
+
 def dispatcher_job() -> int:
     """Drain due sync, analysis, and delivery work in one worker-owned pass."""
     from vitalis.adapters.zepp.sync_coordinator import ZeppSyncCoordinator
@@ -230,6 +281,7 @@ def dispatcher_job() -> int:
     from vitalis.bootstrap import configure_analysis_jobs, get_connector
 
     configure_analysis_jobs()
+    reconcile_deferred_daily_reports()
     analysis_drained = drain_analysis_jobs(max_jobs=1)
     if analysis_drained:
         log.info("analysis dispatcher drained jobs=%s", analysis_drained)

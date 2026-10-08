@@ -20,7 +20,6 @@ from vitalis.adapters.zepp.fetcher import (
     FetchedRecord,
     FetchWindow,
     PartialFetchError,
-    _payload_items,
 )
 from vitalis.adapters.zepp.parser import WorkoutDetailLimitError, ZeppParser
 from vitalis.adapters.zepp.parsers import ParseContext, ParseResult, parse_workout_detail
@@ -564,15 +563,16 @@ class SyncManager:
             elif self._is_recognized_empty_all_day_stress(record):
                 report.parse_status = "empty"
                 report.write_status = "not_run"
-            elif _payload_items(record.raw.payload):
+            elif self._is_recognized_empty_response(record):
+                report.parse_status = "empty"
+                report.write_status = "not_run"
+            else:
                 report.parse_status = "unrecognized"
                 report.write_status = "not_run"
                 report.status = "unverified"
+                report.capability = "unverified"
                 report.error_kind = "unrecognized_payload"
                 report.message = "云端返回了记录，但当前解析器没有产生结构化数据"
-            else:
-                report.parse_status = "empty"
-                report.write_status = "not_run"
         except SQLAlchemyError:
             raise
         except DenseArchiveFetchError as exc:
@@ -614,6 +614,60 @@ class SyncManager:
             report.write_status = "not_run"
             report.error_kind = self._error_kind(exc, "parse")
         return report
+
+    @staticmethod
+    def _is_recognized_empty_response(record: FetchedRecord) -> bool:
+        """Accept only a successful envelope with an explicit empty row list."""
+        payload = record.raw.payload
+        if not isinstance(payload, dict):
+            return False
+
+        def successful_envelope(value: dict) -> bool:
+            code = value.get("code")
+            if code is not None:
+                if isinstance(code, (int, float)) and not isinstance(code, bool):
+                    if code not in (0, 1, 200):
+                        return False
+                elif isinstance(code, str):
+                    normalized = code.strip().lower()
+                    if normalized not in {"0", "1", "200", "0000", "ok", "success"}:
+                        return False
+                else:
+                    return False
+            if value.get("success") is False:
+                return False
+            for key in ("error", "errorCode", "error_code", "errCode", "err_code"):
+                marker = value.get(key)
+                if marker not in (None, "", False, 0, "0", {}):
+                    return False
+            status = value.get("status")
+            if isinstance(status, str):
+                normalized = status.strip().lower()
+                if normalized in {"error", "failed", "failure"}:
+                    return False
+                if normalized.isdigit() and int(normalized) >= 400:
+                    return False
+            elif isinstance(status, (int, float)) and status >= 400:
+                return False
+            return True
+
+        if not successful_envelope(payload):
+            return False
+        nested_data = payload.get("data")
+        if isinstance(nested_data, dict) and not successful_envelope(nested_data):
+            return False
+
+        rows: list[list[object]] = []
+        for key in ("items", "records", "results", "list", "data"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                rows.append(value)
+            elif isinstance(value, dict):
+                for inner_key in ("items", "records", "results", "list", "summary"):
+                    inner = value.get(inner_key)
+                    if isinstance(inner, list):
+                        rows.append(inner)
+        return bool(rows) and all(not values for values in rows)
 
     @staticmethod
     def _is_recognized_empty_all_day_stress(record: FetchedRecord) -> bool:

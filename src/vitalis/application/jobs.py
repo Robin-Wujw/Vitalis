@@ -15,6 +15,7 @@ from vitalis.application.ports import (
 log = logging.getLogger("vitalis.analysis_jobs")
 DEFAULT_LEASE_SECONDS = 3600
 MAX_JOBS_PER_PASS = 4
+MAX_ANALYSIS_ATTEMPTS = 3
 _SAFE_FAILURE = "Analysis failed"
 
 _repository: AnalysisJobRepository | None = None
@@ -81,6 +82,16 @@ def _keep_lease(
             log.warning("analysis job lease renewal failed: job=%s", claim.id)
 
 
+def _requeue_input_changed(repository: AnalysisJobRepository, claim: JobClaim) -> bool:
+    """Ask persistence to retry only an explicitly classified input race."""
+    try:
+        return repository.requeue_input_changed(claim, max_attempts=MAX_ANALYSIS_ATTEMPTS)
+    except Exception:
+        # A retry decision must never turn an unrelated storage failure into a retry.
+        log.warning("analysis job input-race retry failed: job=%s", claim.id)
+        return False
+
+
 def drain_analysis_jobs(*, max_jobs: int = 1, lease_seconds: int = DEFAULT_LEASE_SECONDS) -> int:
     """Process a bounded batch of leased jobs.
 
@@ -108,14 +119,20 @@ def drain_analysis_jobs(*, max_jobs: int = 1, lease_seconds: int = DEFAULT_LEASE
         )
         renewer.start()
         error = None
+        failed = False
         try:
             runner(claim)
         except Exception:
-            error = _SAFE_FAILURE
-            log.warning("analysis job execution failed: job=%s", claim.id)
+            failed = True
         finally:
             stopped.set()
             renewer.join()
+        retry = failed and _requeue_input_changed(repository, claim)
+        if failed and not retry:
+            error = _SAFE_FAILURE
+            log.warning("analysis job execution failed: job=%s", claim.id)
+        if retry:
+            continue
         if error is not None and not repository.finish(claim, error=error):
             log.warning("analysis job lease lost before failure: job=%s", claim.id)
     return drained

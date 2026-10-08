@@ -131,6 +131,7 @@ ZeppErrorKind = Literal[
     "invalid_request",
     "identity_conflict",
     "partial_coverage",
+    "resource_limit",
     "vendor_response",
     "unknown",
 ]
@@ -251,7 +252,7 @@ class ZeppAPIClient:
                     resp.content.count(b"{") > MAX_WORKOUT_DETAIL_JSON_OBJECTS
                     or resp.content.count(b",") > MAX_WORKOUT_DETAIL_JSON_SEPARATORS
                 ):
-                    raise ZeppAuthError("运动明细 JSON 结构超过安全上限", kind="vendor_response")
+                    raise ZeppAuthError("运动明细 JSON 结构超过安全上限", kind="resource_limit")
                 return resp.json()
             except ValueError:
                 # band_data 等可能返回非 JSON，按文本返回
@@ -280,7 +281,7 @@ class ZeppAPIClient:
             if content_length is not None:
                 try:
                     if int(content_length) > max_bytes:
-                        raise ZeppAuthError("运动明细响应超过大小上限", kind="vendor_response")
+                        raise ZeppAuthError("运动明细响应超过大小上限", kind="resource_limit")
                 except ValueError:
                     pass
             encoding = response.headers.get("content-encoding", "").strip().lower()
@@ -299,7 +300,7 @@ class ZeppAPIClient:
                 self._check_request_budget()
                 wire_bytes += len(part)
                 if wire_bytes > max_bytes:
-                    raise ZeppAuthError("运动明细响应超过大小上限", kind="vendor_response")
+                    raise ZeppAuthError("运动明细响应超过大小上限", kind="resource_limit")
                 if decoder is None:
                     expanded = part
                 else:
@@ -307,10 +308,12 @@ class ZeppAPIClient:
                         expanded = decoder.decompress(part, max_bytes + 1 - len(body))
                     except zlib.error as exc:
                         raise ZeppAuthError("运动明细响应压缩内容无效", kind="vendor_response") from exc
-                    if decoder.unconsumed_tail or decoder.unused_data:
-                        raise ZeppAuthError("运动明细响应超过大小上限", kind="vendor_response")
+                    if decoder.unconsumed_tail:
+                        raise ZeppAuthError("运动明细响应超过大小上限", kind="resource_limit")
+                    if decoder.unused_data:
+                        raise ZeppAuthError("运动明细响应压缩内容无效", kind="vendor_response")
                 if len(body) + len(expanded) > max_bytes:
-                    raise ZeppAuthError("运动明细响应超过大小上限", kind="vendor_response")
+                    raise ZeppAuthError("运动明细响应超过大小上限", kind="resource_limit")
                 body.extend(expanded)
             if decoder is not None and not decoder.eof:
                 raise ZeppAuthError("运动明细响应压缩内容无效", kind="vendor_response")

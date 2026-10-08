@@ -1169,6 +1169,67 @@ class HealthRepository:
 
         schema_version = orm.Workout.detail["schema_version"].as_string()
         fetched_at = orm.Workout.detail["fetched_at"].as_string()
+
+        # Detail chunks carry the workout partition, while the parent attempt
+        # carries the user/source-account fence.  Restricting both prevents an
+        # old account (or another local user/source) from biasing this backlog.
+        from sqlalchemy import literal
+        account = self.source_account(user_id, source, active_only=True)
+        account_scope = (
+            and_(
+                orm.SyncAttempt.source_account_id == account.id,
+                orm.SyncAttempt.source_account_epoch == account.fence_epoch,
+            )
+            if account is not None
+            else orm.SyncAttempt.source_account_id.is_(None)
+        )
+        history_conditions = [
+            orm.SyncChunk.stream == "workout_detail",
+            orm.SyncChunk.partition == literal(f"{source}:") + orm.Workout.workout_id,
+            orm.SyncAttempt.user_id == user_id,
+            orm.SyncAttempt.source == source,
+            account_scope,
+        ]
+        history_attempted = exists(
+            select(orm.SyncChunk.id).join(
+                orm.SyncAttempt, orm.SyncAttempt.id == orm.SyncChunk.attempt_id
+            ).where(*history_conditions)
+        )
+        last_attempted = select(func.max(func.coalesce(
+            orm.SyncChunk.finished_at,
+            orm.SyncChunk.started_at,
+            orm.SyncAttempt.finished_at,
+            orm.SyncAttempt.started_at,
+            orm.SyncAttempt.created_at,
+        ))).join(
+            orm.SyncAttempt, orm.SyncAttempt.id == orm.SyncChunk.attempt_id
+        ).where(*history_conditions).correlate(orm.Workout).scalar_subquery()
+        active_detail = exists(
+            select(orm.SyncChunk.id).join(
+                orm.SyncAttempt, orm.SyncAttempt.id == orm.SyncChunk.attempt_id
+            ).where(
+                *history_conditions,
+                orm.SyncAttempt.status.in_(("queued", "running", "retry_wait")),
+                orm.SyncChunk.status.in_(("queued", "running", "retry_wait")),
+            )
+        )
+        conditions.append(~active_detail)
+        fair_order = (
+            case((history_attempted, 1), else_=0),
+            case((last_attempted.is_(None), 0), else_=1),
+            last_attempted.asc(),
+            orm.Workout.started_at.desc(),
+            orm.Workout.id.desc(),
+        )
+        refresh_order = (
+            case((history_attempted, 1), else_=0),
+            case((last_attempted.is_(None), 0), else_=1),
+            last_attempted.asc(),
+            fetched_at.asc().nulls_first(),
+            orm.Workout.started_at.desc(),
+            orm.Workout.id.desc(),
+        )
+
         backlog = or_(
             orm.Workout.detail_synced.is_(False),
             orm.Workout.detail_synced.is_(None),
@@ -1176,9 +1237,9 @@ class HealthRepository:
             schema_version.is_(None),
             schema_version != WORKOUT_DETAIL_SCHEMA_VERSION,
         )
-        order = (orm.Workout.started_at.desc(), orm.Workout.id.desc())
         backlog_rows = list(self.db.execute(
-            select(orm.Workout).where(*conditions, backlog).order_by(*order).limit(budget)
+            select(orm.Workout).where(*conditions, backlog)
+            .order_by(*fair_order).limit(budget)
         ).scalars().all())
         rows = list(backlog_rows)
 
@@ -1201,20 +1262,11 @@ class HealthRepository:
                     orm.Workout.detail_synced.is_(True),
                     schema_version == WORKOUT_DETAIL_SCHEMA_VERSION,
                     or_(fetched_at.is_(None), fetched_before),
-                ).order_by(fetched_at.asc().nulls_first(), *order).limit(remaining)
+                ).order_by(*refresh_order).limit(remaining)
             ).scalars().all())
             known_ids = {row.id for row in rows}
             rows.extend(row for row in refresh_rows if row.id not in known_ids)
 
-        rows.sort(key=lambda row: (
-            not (
-                not row.detail_synced
-                or not isinstance(row.detail, dict)
-                or row.detail.get("schema_version") != WORKOUT_DETAIL_SCHEMA_VERSION
-            ),
-            -(row.started_at.timestamp() if row.started_at else 0),
-            -row.id,
-        ))
         return rows[:budget]
 
     def save_workout_detail(
@@ -4483,7 +4535,9 @@ class HealthRepository:
             orm.NotificationDelivery.user_id == user_id,
             orm.NotificationDelivery.target_date == target_date,
             orm.NotificationDelivery.status == "deferred",
-            orm.NotificationDelivery.last_error == "snapshot_unavailable",
+            orm.NotificationDelivery.last_error.in_(
+                ("snapshot_unavailable", "sleep_incomplete", "stored_data_incomplete")
+            ),
         ).values(
             analysis_run_id=analysis_run_id,
             status="pending",

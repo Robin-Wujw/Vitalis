@@ -508,6 +508,8 @@ class AnalysisJobRepository(Protocol):
 
     def finish(self, claim: JobClaim, *, error: str) -> bool: ...
 
+    def requeue_input_changed(self, claim: JobClaim, *, max_attempts: int) -> bool: ...
+
 
 class AnalysisRunner(Protocol):
     """Commit analysis outputs and job success in one transaction."""

@@ -13,12 +13,14 @@ from sqlalchemy.orm import sessionmaker
 from vitalis.adapters.persistence.analysis_jobs import SqlAnalysisJobRepository
 from vitalis.application import jobs
 from vitalis import bootstrap
+from vitalis.application.intelligence_service import IntelligenceCommand
 from vitalis.adapters.persistence import HealthRepository, session_scope
 from vitalis.adapters.persistence import database
 from vitalis.adapters.persistence.database import init_db
 from vitalis.adapters.persistence.models import (
     AnalysisJob, AnalysisRun, AnalysisSnapshot, NotificationDelivery, User,
 )
+from vitalis.intelligence.contracts import SubjectiveFeedbackInput
 
 
 DAY = date(2026, 8, 29)
@@ -284,6 +286,121 @@ def test_real_analysis_command_creates_run_and_snapshots(job_database, monkeypat
     assert jobs.drain_analysis_jobs(max_jobs=1) == 0
     with session_scope() as db:
         assert db.query(AnalysisRun).filter_by(user_id=user_id).count() == 1
+
+
+def test_input_change_during_calculation_requeues_and_next_pass_succeeds(
+    job_database, monkeypatch,
+):
+    monkeypatch.setattr(database, "SessionLocal", job_database)
+    bootstrap.configure_analysis_jobs()
+    job_id = jobs.create_analysis_job("owner", DAY, "input-race-retry")
+    original_build = IntelligenceCommand._build_daily_from_raw
+    changed = Event()
+
+    def build_then_change(*args):
+        daily = original_build(*args)
+        if not changed.is_set():
+            changed.set()
+            bootstrap.get_intelligence_action().log_feedback(
+                "owner",
+                SubjectiveFeedbackInput(date=DAY, physical_fatigue=5),
+            )
+        return daily
+
+    monkeypatch.setattr(
+        IntelligenceCommand, "_build_daily_from_raw", staticmethod(build_then_change),
+    )
+    assert jobs.drain_analysis_jobs(max_jobs=1) == 1
+    queued = jobs.get_analysis_job("owner", job_id)
+    assert queued.status == "queued"
+    assert queued.attempt_count == 1 and queued.run_id is None
+    with job_database() as db:
+        failed = db.query(AnalysisRun).one()
+        assert failed.status == "FAILED"
+        assert failed.error == "analysis_input_changed"
+        assert db.query(AnalysisSnapshot).count() == 0
+        assert db.query(NotificationDelivery).count() == 0
+
+    assert jobs.drain_analysis_jobs(max_jobs=1) == 1
+    succeeded = jobs.get_analysis_job("owner", job_id)
+    assert succeeded.status == "succeeded"
+    assert succeeded.attempt_count == 2 and succeeded.run_id is not None
+    with job_database() as db:
+        assert db.query(AnalysisRun).count() == 2
+        assert db.query(AnalysisRun).filter_by(status="FAILED").count() == 1
+        assert db.query(AnalysisRun).filter_by(status="SUCCEEDED").count() == 1
+        assert db.query(AnalysisSnapshot).filter_by(
+            analysis_run_id=succeeded.run_id,
+        ).count() >= 3
+        assert db.query(AnalysisSnapshot).filter_by(
+            analysis_run_id=failed.id,
+        ).count() == 0
+
+
+def test_persistent_input_churn_fails_at_three_attempts(job_database, monkeypatch):
+    monkeypatch.setattr(database, "SessionLocal", job_database)
+    bootstrap.configure_analysis_jobs()
+    job_id = jobs.create_analysis_job("owner", DAY, "input-race-bound")
+    original_build = IntelligenceCommand._build_daily_from_raw
+    calls = []
+
+    def build_then_change(*args):
+        daily = original_build(*args)
+        calls.append(True)
+        bootstrap.get_intelligence_action().log_feedback(
+            "owner",
+            SubjectiveFeedbackInput(date=DAY, physical_fatigue=5),
+        )
+        return daily
+
+    monkeypatch.setattr(
+        IntelligenceCommand, "_build_daily_from_raw", staticmethod(build_then_change),
+    )
+    assert [jobs.drain_analysis_jobs(max_jobs=1) for _ in range(3)] == [1, 1, 1]
+    state = jobs.get_analysis_job("owner", job_id)
+    assert len(calls) == 3
+    assert state.status == "failed" and state.error == "Analysis failed"
+    assert state.attempt_count == 3 and state.run_id is None
+    assert jobs.drain_analysis_jobs(max_jobs=1) == 0
+    with job_database() as db:
+        runs = db.query(AnalysisRun).order_by(AnalysisRun.started_at).all()
+        assert len(runs) == 3
+        assert all(run.status == "FAILED" for run in runs)
+        assert all(run.error == "analysis_input_changed" for run in runs)
+        assert db.query(AnalysisSnapshot).count() == 0
+        assert db.query(NotificationDelivery).count() == 0
+
+
+def test_input_changed_retry_cannot_requeue_stale_lease(job_database):
+    job_id = jobs.create_analysis_job("owner", DAY, "input-race-stale")
+    repository = SqlAnalysisJobRepository(job_database)
+    claim = repository.claim(2)
+    run_id = _record_run(job_database)
+    with job_database.begin() as db:
+        run = db.get(AnalysisRun, run_id)
+        run.status = "FAILED"
+        run.error = "analysis_input_changed"
+        row = db.get(AnalysisJob, job_id)
+        row.run_id = run_id
+        row.lease_expires_at = _utc_now() - timedelta(seconds=1)
+
+    assert not repository.requeue_input_changed(claim)
+    assert repository.claim(2) is not None
+    state = jobs.get_analysis_job("owner", job_id)
+    assert state.status == "running" and state.attempt_count == 2
+
+
+def test_expired_third_attempt_is_not_reclaimed(job_database):
+    job_id = jobs.create_analysis_job("owner", DAY, "input-race-exhausted-lease")
+    repository = SqlAnalysisJobRepository(job_database)
+    for _ in range(3):
+        claim = repository.claim(2)
+        assert claim is not None
+        with job_database.begin() as db:
+            db.get(AnalysisJob, job_id).lease_expires_at = _utc_now() - timedelta(seconds=1)
+    assert repository.claim(2) is None
+    state = jobs.get_analysis_job("owner", job_id)
+    assert state.status == "failed" and state.attempt_count == 3
 
 
 @pytest.mark.parametrize("period", ("morning", "evening", "weekly", "monthly"))

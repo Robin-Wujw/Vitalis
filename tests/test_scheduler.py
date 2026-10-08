@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -133,6 +133,80 @@ def test_weekly_sync_covers_full_report_period(monkeypatch, target_day, timezone
     assert trigger == "weekly"
     assert window.start_day(timezone_name) == period_start.isoformat()
     assert window.end_day(timezone_name) == target_day.isoformat()
+
+
+@pytest.mark.parametrize("status,reason,offset,expected", [
+    ("deferred", "snapshot_unavailable", 0, 1),
+    ("deferred", "sleep_incomplete", 0, 1),
+    ("deferred", "stored_data_incomplete", 0, 1),
+    ("succeeded", None, 0, 0),
+    ("uncertain", "transport_ambiguous", 0, 0),
+    ("running", None, 0, 0),
+    ("deferred", "delivery_disabled", 0, 0),
+    ("deferred", "stale_report_date", 0, 0),
+    ("deferred", "snapshot_unavailable", -1, 0),
+    ("deferred", "snapshot_unavailable", 1, 0),
+])
+def test_reconcile_deferred_daily_reports_queues_one_idempotent_reanalysis(
+    tmp_path, monkeypatch, status, reason, offset, expected,
+):
+    from vitalis.adapters.persistence import database
+    from vitalis.adapters.persistence.analysis_jobs import SqlAnalysisJobRepository
+    from vitalis.adapters.persistence.models import AnalysisJob, AnalysisRun, NotificationDelivery, User
+    from vitalis.application.jobs import configure_analysis_jobs
+    from vitalis.adapters.persistence.repositories import _current_analysis_config_digest
+    from vitalis.intelligence import contracts
+
+    day = date(2026, 8, 29)
+    target_date = day + timedelta(days=offset)
+    engine = create_engine(
+        f"sqlite:///{(tmp_path / 'reconcile.db').as_posix()}",
+        connect_args={"check_same_thread": False},
+    )
+    init_db(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+    try:
+        with factory.begin() as db:
+            db.add(User(id="owner"))
+            db.add(AnalysisRun(
+                id="old-run", user_id="owner", target_date=target_date, status="SUCCEEDED",
+                started_at=datetime(2026, 8, 29, 12),
+                completed_at=datetime(2026, 8, 29, 12),
+                intelligence_version=contracts.INTELLIGENCE_VERSION,
+                decision_policy_version=contracts.DECISION_POLICY_VERSION,
+                evidence_version=contracts.EVIDENCE_VERSION,
+                config_digest=_current_analysis_config_digest(),
+            ))
+            db.add(NotificationDelivery(
+                id="deferred-daily", user_id="owner", analysis_run_id="old-run",
+                period="morning", target_date=target_date, status=status,
+                last_error=reason,
+                lease_token="existing-lease" if status == "running" else None,
+                lease_expires_at=(
+                    datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=5)
+                    if status == "running" else None
+                ),
+            ))
+        monkeypatch.setattr(database, "SessionLocal", factory)
+        monkeypatch.setattr(settings, "push_user", "owner")
+        monkeypatch.setattr(settings, "pushplus_token", "offline-token")
+        monkeypatch.setattr("vitalis.time.local_today", lambda: day)
+        configure_analysis_jobs(
+            repository=SqlAnalysisJobRepository(factory),
+            runner=lambda _claim: "unused",
+        )
+
+        assert jobs.reconcile_deferred_daily_reports() == expected
+        assert jobs.reconcile_deferred_daily_reports() == 0
+        with factory() as db:
+            rows = db.query(AnalysisJob).all()
+            assert len(rows) == expected
+            if rows:
+                assert rows[0].target_date == day
+                assert rows[0].delivery_period is None
+                assert rows[0].idempotency_key.startswith("daily-recovery:")
+    finally:
+        engine.dispose()
 
 
 def test_scheduled_sync_only_enqueues_attempt(monkeypatch):

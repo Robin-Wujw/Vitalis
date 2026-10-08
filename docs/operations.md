@@ -1,6 +1,6 @@
 # 运维、备份与排障
 
-[文档中心](README.md) | [快速开始](quickstart.md) | [安全](../SECURITY.md) | [报告与渠道](reports.md)
+[文档中心](README.md) | [快速开始](quickstart.md) | [发布与部署](deployment.md) | [安全](../SECURITY.md) | [报告与渠道](reports.md)
 
 本页说明当前预发布环境的配置、进程、备份和故障判断。敏感数据库、健康记录、凭据和投递目标必须使用真实部署的访问控制；示例只使用合成数据。
 
@@ -46,22 +46,9 @@ uv run --locked --extra dev vitalis worker
 
 API 的 `/live` 只表示进程存活，`/ready` 检查当前 schema；`doctor` 的 `not_seen` 表示 worker 尚未写心跳，不等于 API 故障。调度器只在 `worker` 进程启动，不能从 API 应用或普通 GET 触发。
 
-## 发布到现有服务
+## 发布入口
 
-发布前固定提交 SHA，使用只包含 Git 跟踪文件的源码包，在 `/opt/vitalis/releases/<SHA>/source` 建立独立环境。运行服务的配置仍从 `/etc/vitalis/vitalis.env` 加载，用户数据留在 `/var/lib/vitalis`；发布包不携带数据库、凭据或用户提供的 APK/图片。
-
-先在新环境运行锁定依赖安装、合成报告和 `/live`、`/ready` 检查。切换时暂停 API 和 worker，保存原 service 配置与数据库备份，再将执行路径指向新环境。保留原代码和备份，验证失败时先停止新服务再回退；不覆盖私有环境配置。API 保持回环监听和关闭 access log。
-
-当前数据库版本为 `2026-10-durable-pushplus-delivery`。已部署的 `2026-10-calendar-report-delivery` 库可在服务停止后，从新源码目录显式执行：
-
-```bash
-ZEPP_MOCK=true python tools/upgrade_deployment_db.py --database /var/lib/vitalis/EXISTING.sqlite --backup /var/backups/vitalis/NEW-backup.sqlite
-ZEPP_MOCK=true python tools/upgrade_deployment_db.py --database /var/lib/vitalis/EXISTING.sqlite --backup /var/backups/vitalis/NEW-backup.sqlite --apply
-```
-
-第一条仅核验已知结构；第二条创建新备份，在独立候选库升级，验证所有无关记录及原力量记录未改变、投递身份未丢失，再原子替换。未知版本、异常字段和已有备份路径会被拒绝。旧 `succeeded` 仅转为 `accepted`，不虚构流水号或最终送达；旧 `running` 转为 `uncertain`，避免重发未知结果。单位从原 `weight_kg` 保留为 kg，未知计重方式仍为空。运行时依旧只接受当前 schema。
-
-恢复服务后检查 `/ready`、worker 心跳、实际导入路径及服务状态。使用独立临时库运行报告与投递测试，测试配置清空 PushPlus 凭据；不向真实用户试发，不把真实健康内容打印到部署日志。
+本页只负责运行、备份和排障。完整的本地检查、合并 `main`、服务器拉取、候选数据库、systemd 切换、健康检查和失败回滚见[发布与部署 SOP](deployment.md)。预发布破坏性数据库更新遵循“备份旧库 → 新库测试 → 验收切换 → 保留回滚备份 → 明确授权后清理旧库”，不使用历史 schema 兼容迁移链。
 
 ## 备份与恢复
 

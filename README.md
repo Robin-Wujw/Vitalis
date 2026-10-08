@@ -53,11 +53,13 @@ Get-Content .\daily.md
 
 - 第一次运行和 API 读取：[快速开始](docs/quickstart.md)
 - 报告周期、PushPlus 与 Hermes：[报告与渠道](docs/reports.md)
+- 产品、数据和报告整改：[预发布整改计划](docs/plan.md)
 - 模块职责与数据流：[当前架构](docs/architecture.md)
 - 字段、单位、缺失和时间资格：[数据合同](docs/data-contracts.md)
 - Zepp 连接与协议边界：[Zepp](docs/zepp.md)
 - Skill、Bearer 和客户端边界：[智能体集成](docs/agents.md)
 - 配置、worker、备份和排障：[运维](docs/operations.md)
+- 本地合并、服务器发布和换库：[发布与部署 SOP](docs/deployment.md)
 - 仓库开发：[AGENTS.md](AGENTS.md) 与 [CONTRIBUTING.md](CONTRIBUTING.md)
 - 安全报告：[SECURITY.md](SECURITY.md)；第三方原文：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 

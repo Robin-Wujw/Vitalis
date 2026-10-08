@@ -1,25 +1,36 @@
-# Working on Vitalis
+# Vitalis Codex / Claude 仓库执行规范
 
-这是仓库开发入口，不是运行时健康助手的产品 Skill。产品调用规则见 [skills/vitalis/SKILL.md](skills/vitalis/SKILL.md)；客户端鉴权边界见 [docs/agents.md](docs/agents.md)。
+本文件是 Codex、Claude 和其他 coding agent 的唯一仓库开发与发布规范。`CLAUDE.md` 只负责入口跳转，不复制本文件；运行时产品 Skill 见 [skills/vitalis/SKILL.md](skills/vitalis/SKILL.md)。完整整改需求和阶段任务见 [docs/plan.md](docs/plan.md)。 本地依赖和检查见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-## 范围
+## 项目状态与破坏性变更
 
-项目处于预发布阶段。遵循当前源码和测试，不把设计目标当成已实现行为。共享工作区中的数据库、健康记录、凭据、APK、图片和他人改动必须保留，不自行删除、重置、发布、推送或发送真实消息。
+Vitalis 处于预发布阶段。当前任务明确允许破坏性更新，不需要旧版本 API、数据库 schema、报告格式、CLI 别名、双写、双读或迁移兼容层。修改前先检查 `git status`，只保留当前目标需要的源码、测试和文档；旧兼容代码、旧迁移脚本、重复 Markdown 和失效入口应删除，而不是继续包裹适配器。
 
-源码在 `src/vitalis/`。接口层不重复实现健康算法；新事实要有来源、单位和时间资格，缺失项不补零，不推断未知动作或用户反馈。HTTP 身份由 Bearer 令牌决定，`X-User-Id` 不能代替鉴权；调度器仅由独立 worker 启动。
+删除真实数据库、健康记录、凭据、APK、图片或他人改动前必须停止并获得明确的针对性授权。预发布数据库重建遵循 [docs/deployment.md](docs/deployment.md) 的备份、候选库、验收、切换流程，不能把 `rm` 当作备份。
 
-## 先读什么
+## 编码规范
 
-- 环境、检查和改动范围：[CONTRIBUTING.md](CONTRIBUTING.md)
-- 模块、数据流和信任边界：[docs/architecture.md](docs/architecture.md)
-- 数据资格、单位和纠错：[docs/data-contracts.md](docs/data-contracts.md)
-- Zepp 适配边界：[docs/zepp.md](docs/zepp.md)
-- 运行、备份和诊断：[docs/operations.md](docs/operations.md)
-- 文档职责：[docs/README.md](docs/README.md)
+- Python 3.11–3.13，依赖和命令使用锁定的 `uv` 环境。
+- 模块只依赖职责下游；API、Skill、PushPlus 不重新计算健康事实。
+- 新事实必须保留来源、单位、观测时间、获取时间和数据资格；缺失不补零，未知不推断。
+- 日期必须明确 `calendar_day`、`sleep_day`、`activity_day`；所有比较记录窗口、样本数和 coverage。
+- 原始数据、标准化事实、分析快照、公开报告投影和渠道排版分层保存，不让 Markdown renderer 访问数据库或重算。
+- 输入写入、用户反馈、手动同步和晚到数据必须创建有影响范围的分析任务；历史 last-good snapshot 不得因全局 revision 消失。
+- PushPlus 是单向输出，不提问、不把已读/沉默当反馈；Hermes 只有用户明确授权时才写入反馈、纠错或推荐完成。
+- 厂商 readiness/Charge 和 shadow-only 分析必须保留来源标签，不能替代 Vitalis 的可解释决策。
+- 接口错误要给出稳定的 `state`、`failure_code`、`retryable` 和 `next_action`，禁止用 200 加错误 body 冒充成功。
 
-## 验证
+## 工作流程
 
-先运行受影响的目标测试，再按范围运行：
+1. 读 [docs/README.md](docs/README.md)、[docs/plan.md](docs/plan.md) 和受影响模块；先写或更新失败测试，再实现。
+2. 本地修改只在 feature branch 完成；不直接在 `main` 上堆未验证改动。
+3. 运行目标测试、文档检查、`git diff --check` 和按范围的 `tools/check.py`；如缺依赖或无法运行，原样记录退出码和阻塞项。
+4. 检查 `git diff`、删除冗余文档/兼容代码、更新唯一主责文档和生成产物，再提交。
+5. 本地验证完成后合并到 `main`，推送当前 `main`；不得让服务器自行猜测分支或未提交改动。
+6. 连接服务器后固定到已验证的 `main` SHA，拉取代码、安装锁定依赖、停止旧服务、执行数据库备份和候选库测试，再重启并检查 `/live`、`/ready`、`doctor`、worker 心跳和合成报告。
+7. 生产部署失败先回滚代码/环境并保留备份；不要为了兼容旧库恢复已删除的迁移链。
+
+## 验证基线
 
 ```bash
 uv run --locked --extra dev python -m pytest tests/architecture/test_documentation_layout.py tests/test_bilingual_markdown.py -q
@@ -27,4 +38,4 @@ uv run --locked --extra dev python tools/check.py docs
 git diff --check
 ```
 
-源码或行为变更还应运行对应的 `python tools/check.py quick`、`backend`、`clients`、`package` 或 `all --ci`。说明实际命令、通过/失败/跳过和阻塞；不能把未运行的检查写成通过。生成文档要修改生成源并重新生成，第三方 notices 原文保留。测试样例只能使用合成或脱敏数据，不能把个人记录、凭据或 APK 放入仓库。
+源码或行为改动继续运行对应的 `quick`、`backend`、`clients`、`package` 或 `all --ci`。只有看到本次命令的退出码和完整结果后，才能声称通过。测试只使用合成或脱敏数据，绝不把个人记录、令牌、Cookie、APK 或真实 PushPlus 内容写入仓库、日志和样例。

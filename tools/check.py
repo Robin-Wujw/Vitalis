@@ -189,15 +189,15 @@ def inspect_wheel(wheel: Path, expected: set[str]) -> None:
 def sdist_sources() -> set[str]:
     sources = {
         "pyproject.toml",
-        "README.md", "README.en.md", "AGENTS.md", "CONTRIBUTING.md", "SECURITY.md",
+        "README.md", "README.en.md", "AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", "SECURITY.md",
         "uv.lock", ".env.example",
-        "docs/README.md", "docs/quickstart.md", "docs/reports.md",
+        "docs/README.md", "docs/plan.md", "docs/deployment.md", "docs/quickstart.md", "docs/reports.md",
         "docs/architecture.md", "docs/data-contracts.md", "docs/zepp.md",
         "docs/agents.md", "docs/operations.md",
         "skills/vitalis/SKILL.md", "skills/vitalis/references/api.md",
         "skills/vitalis/scripts/vitalis_api.py",
         "tools/check.py", "tools/check_docs.py", "tools/generate_api_reference.py",
-        "tools/generate_report_examples.py", "tools/upgrade_deployment_db.py",
+        "tools/generate_report_examples.py",
         "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.en.md",
     }
     for kind in ("morning", "daily", "weekly", "monthly", "insufficient-data"):

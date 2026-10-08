@@ -1661,8 +1661,8 @@ def test_browser_link_validation_network_failure_keeps_connection(client, monkey
             raise ZeppAuthError("网络错误: temporary failure", kind="network")
 
     class UnavailableConnector:
-        def _client_for(self, *_args, **_kwargs):
-            return UnavailableClient()
+        def verify_saved(self, _token):
+            return UnavailableClient().verify()
 
     monkeypatch.setattr(
         zepp_pairing, "get_connector", lambda _source: UnavailableConnector()

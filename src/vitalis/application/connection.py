@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import secrets
-from types import SimpleNamespace
 from typing import Any, Callable
 
 from .ports import (
@@ -611,23 +610,8 @@ class ConnectionService:
             unit_of_work.commit()
         return {"status": "needs_login", "message": reason}
 
-    def _verify_saved(self, claim: BrowserLinkClaim, token: Any) -> None:
-        verifier = getattr(self.provider, "verify_saved", None)
-        if verifier is not None:
-            verifier(token)
-            return
-        # Compatibility for lightweight provider doubles; production providers
-        # implement verify_saved and never receive a persistence object here.
-        legacy_client_factory = getattr(self.provider, "_client_for", None)
-        if legacy_client_factory is None:
-            raise AttributeError("credential provider lacks verify_saved")
-        with self._unit_of_work_factory() as unit_of_work:
-            client = legacy_client_factory(
-                unit_of_work.repository,
-                SimpleNamespace(id=claim.user_id),
-            )
-            unit_of_work.commit()
-        client.verify()
+    def _verify_saved(self, token: Any) -> None:
+        self.provider.verify_saved(token)
 
     def validate_link(self, raw_token: str) -> dict:
         digest, claim = self._claim_link(raw_token)
@@ -637,7 +621,7 @@ class ConnectionService:
         if token is None:
             raise ConnectionOperationError("Zepp 凭据不存在", kind="auth", needs_reauth=True)
         try:
-            self._verify_saved(claim, token)
+            self._verify_saved(token)
         except Exception as exc:
             error = self._provider_error(exc, fallback="Zepp 服务暂时不可用，已保留当前连接，请稍后重试")
             if error.needs_reauth:

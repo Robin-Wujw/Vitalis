@@ -127,7 +127,6 @@ def test_current_delete_releases_vendor_ownership_and_revokes_link(tmp_path):
             assert repo.get_token("owner", "zepp") is None
             assert repo.get_token("new-owner", "zepp") is not None
             assert repo.browser_link("synthetic-link") is None
-            assert db.get(orm.User, "owner").source_user_id is None
             assert db.get(orm.AccessToken, token_digest(api_token)) is None
             assert authenticate_access_token(db, api_token) is None
     finally:

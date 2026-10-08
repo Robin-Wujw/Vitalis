@@ -57,3 +57,8 @@ def test_old_duplicate_document_entrypoints_are_gone():
     ):
         assert relative not in present, relative
     assert "docs/architecture.md" in present
+
+
+def test_pre_release_compatibility_chain_is_removed():
+    assert not (ROOT / "tools" / "upgrade_deployment_db.py").exists()
+    assert not (ROOT / "tests" / "integration" / "test_deployment_upgrade.py").exists()

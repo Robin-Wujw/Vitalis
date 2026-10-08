@@ -1,6 +1,6 @@
 # 报告与渠道
 
-[文档中心](README.md) | [快速开始](quickstart.md) | [智能体集成](agents.md) | [运维](operations.md)
+[文档中心](README.md) | [整改计划](plan.md) | [快速开始](quickstart.md) | [智能体集成](agents.md) | [运维](operations.md) | [部署](deployment.md)
 
 Vitalis 报告从已保存快照读取事实、比较、分析和建议。缺失观测保持缺失；只有会改变当前结论的缺口才在对应位置提示。报告不要求用户回复，也不把投递状态当作健康反馈。
 

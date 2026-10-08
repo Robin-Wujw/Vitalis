@@ -34,17 +34,6 @@ class User(Base):
         passive_deletes=True,
     )
 
-    @property
-    def source(self) -> str:
-        """Compatibility projection; ownership lives on SourceAccount."""
-        return self.source_accounts[0].source if self.source_accounts else "zepp"
-
-    @property
-    def source_user_id(self) -> str | None:
-        """Compatibility projection; vendor identity is not stored on users."""
-        return self.source_accounts[0].vendor_id if self.source_accounts else None
-
-
 class SourceAccount(Base):
     """One vendor identity owned by one local user.
 
@@ -836,8 +825,7 @@ class AuthToken(Base):
 
     source_account: Mapped[SourceAccount] = relationship(back_populates="credential")
 
-    # These are read-only projections for vendor clients and old query consumers;
-    # they are association proxies, not persisted identity columns.
+    # These are read-only convenience accessors, not persisted identity columns.
     user_id = association_proxy("source_account", "user_id")
     source = association_proxy("source_account", "source")
     source_user_id = association_proxy("source_account", "vendor_id")

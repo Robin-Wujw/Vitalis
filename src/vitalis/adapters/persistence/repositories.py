@@ -1925,13 +1925,6 @@ class HealthRepository:
         self._ensure_sync_chunks(attempt, manifest)
         return attempt
 
-    def create_sync_attempt(self, *args, **kwargs) -> orm.SyncAttempt:
-        """Compatibility spelling for the coordinator-facing create operation."""
-        return self.create_or_reuse_sync_attempt(*args, **kwargs)
-
-    def create_or_reuse_attempt(self, *args, **kwargs) -> orm.SyncAttempt:
-        return self.create_or_reuse_sync_attempt(*args, **kwargs)
-
     def _ensure_reused_sync_chunks(
         self, attempt: orm.SyncAttempt, manifest: list[object] | None
     ) -> None:

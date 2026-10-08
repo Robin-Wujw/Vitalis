@@ -100,7 +100,7 @@ class SqlHealthReader(HealthReader):
         *,
         limit: int | None = None,
     ) -> tuple[HealthMetricRead, ...]:
-        """Read the half-open ``[start, end)`` window through the legacy repository."""
+        """Read the half-open ``[start, end)`` window through the repository adapter."""
         inclusive_end = end - timedelta(microseconds=1)
         if inclusive_end < start:
             return ()

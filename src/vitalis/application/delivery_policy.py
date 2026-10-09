@@ -8,7 +8,7 @@ comparison instant explicitly so manual and scheduled delivery share one gate.
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -16,6 +16,25 @@ ReportPeriod = Literal["morning", "evening"]
 
 
 _UNUSABLE_SYNC_STATES = {"needs_reauth", "token_required", "failed", "cancelled"}
+SCHEDULED_DELAY_SECONDS = {"morning": 3 * 3600, "evening": 6 * 3600}
+PARTIAL_FALLBACK_DELAY_SECONDS = 30 * 60
+
+
+def scheduled_report_window(target: date, period: ReportPeriod, timezone: str) -> dict:
+    """A local cutoff plus a finite amount of real elapsed time in UTC."""
+    cutoff = time(9, 30) if period == "morning" else time(21, 30)
+    scheduled = datetime.combine(target, cutoff, tzinfo=ZoneInfo(timezone)).astimezone(UTC)
+    deadline = scheduled + timedelta(seconds=SCHEDULED_DELAY_SECONDS[period])
+    return {
+        "scheduled_for": scheduled.isoformat().replace("+00:00", "Z"),
+        "cutoff": scheduled.isoformat().replace("+00:00", "Z"),
+        "deadline_at": deadline.isoformat().replace("+00:00", "Z"),
+        "allowed_delay_seconds": SCHEDULED_DELAY_SECONDS[period],
+        "partial_fallback_after": (scheduled + timedelta(seconds=PARTIAL_FALLBACK_DELAY_SECONDS)).isoformat().replace("+00:00", "Z"),
+        "timezone": timezone,
+        "required_signals": ["sleep_complete", "prior_7d_training_history"]
+        if period == "morning" else ["same_day_facts", "training_history"],
+    }
 
 
 def retrospective_age(
@@ -89,7 +108,7 @@ def stored_profile_is_usable(daily: dict, day: date, period: ReportPeriod) -> bo
 def has_same_day_facts(daily: dict) -> bool:
     features = daily.get("features") or {}
     sleep = features.get("sleep") or {}
-    if sleep.get("status") == "AVAILABLE" and any(
+    if sleep.get("status") in {"AVAILABLE", "PARTIAL"} and any(
         sleep.get(key) is not None
         for key in ("duration_minutes", "wake_time", "bedtime", "vendor_sleep_score")
     ):
@@ -142,6 +161,7 @@ def prepare_delivery(
     sync_detail: str | None = None,
     plan_expires_at: datetime | None = None,
     retrospective: bool = False,
+    scheduled_delivery: bool = False,
 ) -> dict:
     """Apply delivery gates and return either a deferred result or send payload.
 
@@ -156,6 +176,12 @@ def prepare_delivery(
             "period": period,
             "date": current_date.isoformat(),
         }
+    if scheduled_delivery and not retrospective:
+        return _prepare_scheduled_delivery(
+            daily, period=period, target=current_date, as_of=as_of, timezone=timezone,
+            test_delivery=test_delivery, sync_degraded=sync_degraded,
+            sync_status=sync_status, plan_expires_at=plan_expires_at,
+        )
     if retrospective:
         retrospective_age(target_date, today, period, test_delivery)
     elif current_date != today:
@@ -235,6 +261,76 @@ def prepare_delivery(
         "sync_status": sync_status,
         "retrospective": retrospective,
         "test_delivery": test_delivery,
+    }
+
+
+def _prepare_scheduled_delivery(
+    daily: dict, *, period: ReportPeriod, target: date, as_of: datetime,
+    timezone: str, test_delivery: bool, sync_degraded: bool,
+    sync_status: str | None, plan_expires_at: datetime | None,
+) -> dict:
+    window = scheduled_report_window(target, period, timezone)
+    now = _as_aware(as_of, timezone).astimezone(UTC)
+    scheduled = datetime.fromisoformat(window["scheduled_for"].replace("Z", "+00:00"))
+    deadline = datetime.fromisoformat(window["deadline_at"].replace("Z", "+00:00"))
+    fallback = datetime.fromisoformat(window["partial_fallback_after"].replace("Z", "+00:00"))
+    context = daily.get("report_context") or {}
+    metadata = {
+        **window, "as_of": context.get("as_of"),
+        "delivered_as_of": now.isoformat().replace("+00:00", "Z"),
+        "late": now >= fallback,
+        "delay_seconds": max(0, (now - scheduled).total_seconds()),
+    }
+    result = {"period": period, "date": target.isoformat(), "delivery_metadata": metadata}
+    if now >= deadline or _expiry_is_reached(plan_expires_at, as_of, timezone):
+        metadata["failure_code"] = "delivery_deadline_expired"
+        return {**result, "status": "deferred", "reason": "stale_plan_expired"}
+    if now < scheduled:
+        metadata["failure_code"] = "before_report_cutoff"
+        return {**result, "status": "deferred", "reason": "stored_data_incomplete"}
+    if sync_status in _UNUSABLE_SYNC_STATES:
+        return {**result, "status": "deferred", "reason": "unusable_sync_state", "sync_status": sync_status}
+    if daily.get("date") != target.isoformat():
+        return {**result, "status": "deferred", "reason": "stale_report_date", "report_date": daily.get("date")}
+    missing = []
+    history = training_history(daily)
+    if period == "morning":
+        if not sleep_is_complete(daily):
+            missing.append("sleep_complete")
+        if not history or history.get("prior_7d_verified") is not True:
+            missing.append("prior_7d_training_history")
+        if "sleep_complete" in missing and now < fallback:
+            metadata["missing_signals"] = missing
+            return {**result, "status": "deferred", "reason": "sleep_incomplete"}
+    else:
+        if not has_same_day_facts(daily):
+            missing.append("same_day_facts")
+        if not history or not (
+            history.get("prior_7d_verified") is True or history.get("status") == "COMPLETE"
+        ):
+            missing.append("training_history")
+    metadata["missing_signals"] = missing
+    if not has_same_day_facts(daily):
+        return {**result, "status": "deferred", "reason": "stored_data_incomplete"}
+    late = metadata["late"]
+    facts_only = bool(missing or sync_degraded or late)
+    reason = "late_report" if late else missing[0] if missing else "sync_degraded" if sync_degraded else None
+    metadata.update(
+        partial=bool(missing or sync_degraded or context.get("target_day_complete") is False),
+        facts_only=facts_only, coverage_reason=reason,
+        sync_degraded=sync_degraded, sync_status=sync_status,
+    )
+    payload = deepcopy(daily)
+    if facts_only:
+        for key in ("decision", "actions", "action_plan", "suggestions", "findings", "inferences"):
+            payload.pop(key, None)
+    payload["delivery_metadata"] = metadata
+    payload["report_context"] = {**context, "delivery_metadata": metadata}
+    return {
+        **result, "status": "ready", "payload": payload,
+        "facts_only": facts_only, "facts_only_reason": reason,
+        "sync_degraded": sync_degraded, "sync_status": sync_status,
+        "retrospective": False, "test_delivery": test_delivery,
     }
 
 

@@ -17,19 +17,19 @@ def test_missing_or_invalid_bearer_never_trusts_user_selector(client):
     missing = client.get(path)
     assert missing.status_code == 401
     assert missing.json() == {
-        "code": "unauthorized", "message": "Authentication required",
-        "retryable": False, "request_id": missing.headers["x-request-id"],
+        "state": "failed", "failure_code": "unauthorized", "message": "Authentication required",
+        "retryable": False, "next_action": "authenticate", "request_id": missing.headers["x-request-id"],
     }
     without_token = client.get(
         path, headers={"X-User-Id": "auth-without-token"}, authenticate=False
     )
     assert without_token.status_code == 401
-    assert without_token.json()["code"] == "unauthorized"
+    assert without_token.json()["failure_code"] == "unauthorized"
     for value in ("Basic xyz", "Bearer not-a-real-token", "Bearer "):
         response = client.get(path, headers={"Authorization": value})
         assert response.status_code == 401
         assert response.headers["www-authenticate"] == "Bearer"
-        assert response.json()["code"] == "unauthorized"
+        assert response.json()["failure_code"] == "unauthorized"
         assert response.json()["message"] == "Authentication required"
         assert value not in response.text
 
@@ -49,8 +49,8 @@ def test_token_owner_not_overridden_by_user_header(client, issue_token):
     )
     assert forged.status_code == 403
     assert forged.json() == {
-        "code": "forbidden", "message": "Access denied",
-        "retryable": False, "request_id": forged.headers["x-request-id"],
+        "state": "failed", "failure_code": "forbidden", "message": "Access denied",
+        "retryable": False, "next_action": "request_scope", "request_id": forged.headers["x-request-id"],
     }
     assert "auth-other" not in forged.text
 
@@ -95,7 +95,7 @@ def test_missing_scope_denies_route(client, issue_token, path, method, json_body
         **({"json": json_body} if json_body is not None else {}),
     )
     assert response.status_code == 403
-    assert response.json()["code"] == "forbidden"
+    assert response.json()["failure_code"] == "forbidden"
     assert response.json()["retryable"] is False
     assert token not in response.text
 
@@ -192,7 +192,7 @@ def test_pairing_scan_code_is_read_only_short_lived_capability(client, issue_tok
     with session_scope() as db:
         assert db.query(ZeppPairingSession).filter_by(user_id="auth-code-owner").count() == 1
         db.get(ZeppPairingSession, code).expires_at = datetime.utcnow() - timedelta(seconds=1)
-    assert client.get(scan_url).status_code == 404
+    assert client.get(scan_url).status_code == 410
     assert client.get(f"/api/connect/zepp/pair/{code}").status_code == 410
 
 

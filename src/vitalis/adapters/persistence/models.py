@@ -23,10 +23,17 @@ from .database import Base
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint(
+            "source_mode IS NULL OR source_mode IN ('real', 'mock', 'replay')",
+            name="ck_users_source_mode",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(128), default="")
     analysis_input_revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    source_mode: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     source_accounts: Mapped[list["SourceAccount"]] = relationship(
         back_populates="user",
@@ -636,6 +643,7 @@ class AnalysisJob(Base):
     status: Mapped[str] = mapped_column(String(16), default="queued")
     idempotency_key: Mapped[str] = mapped_column(String(128))
     request_hash: Mapped[str] = mapped_column(String(64))
+    priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     delivery_period: Mapped[str | None] = mapped_column(String(16), nullable=True)
     run_id: Mapped[str | None] = mapped_column(
         ForeignKey("analysis_runs.id"), nullable=True, index=True
@@ -645,6 +653,19 @@ class AnalysisJob(Base):
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Input-scope metadata makes each invalidation auditable without making the
+    # immutable report snapshot mutable or relying on the user's global revision.
+    event_type: Mapped[str | None] = mapped_column(String(48), nullable=True, index=True)
+    source: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    affected_dates: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    affected_streams: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    affected_start: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    affected_end: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    # Revision at the moment this scoped invalidation was recorded.  It is a
+    # fencing cursor, not a global freshness predicate.
+    input_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    stale_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -724,6 +745,8 @@ class AnalysisRun(Base):
     profile_revision_used: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
     input_revision_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     config_digest: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    input_manifest: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    input_manifest_hash: Mapped[str] = mapped_column(String(64), default="", nullable=False)
 
 
 class AnalysisSnapshot(Base):
@@ -835,10 +858,12 @@ class OAuthState(Base):
     """扫码授权临时 state（防 CSRF + 回调时定位用户）。"""
 
     __tablename__ = "oauth_states"
+    __table_args__ = (CheckConstraint("sync_days BETWEEN 1 AND 730", name="ck_oauth_sync_days"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, comment="state 值")
     user_id: Mapped[str] = mapped_column(String(64), index=True)
     source: Mapped[str] = mapped_column(String(32), default="zepp")
+    sync_days: Mapped[int] = mapped_column(Integer, default=180, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
@@ -852,7 +877,7 @@ class ZeppPairingSession(Base):
     user_id: Mapped[str] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(24), default="waiting", index=True)
     message: Mapped[str] = mapped_column(String(512), default="")
-    sync_days: Mapped[int] = mapped_column(Integer, default=30)
+    sync_days: Mapped[int] = mapped_column(Integer, default=180)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

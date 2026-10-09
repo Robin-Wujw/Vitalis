@@ -13,6 +13,7 @@ import hashlib
 import secrets
 from typing import Any, Callable
 
+from .connection_progress import INITIAL_SYNC_DAYS, connection_progress, iso_utc, utc
 from .ports import (
     BrowserLinkClaim,
     CredentialInput,
@@ -41,6 +42,18 @@ class ConnectionOperationError(RuntimeError):
         self.needs_reauth = self.kind == "auth"
         self.retry_after = retry_after
 
+    @property
+    def http_status(self) -> int:
+        """One classification shared by OAuth, pairing, and token import."""
+        if self.retry_after is not None or self.kind == "rate_limited":
+            return 429
+        return {
+            "auth": 401, "revoked": 401, "identity_conflict": 409,
+            "conflict": 409, "busy": 409, "not_found": 404, "expired": 410,
+            "network": 503, "service": 503, "timeout": 504,
+            "vendor_response": 502, "invalid_request": 400,
+        }.get(self.kind, 500)
+
 
 class PairingRateLimited(ConnectionOperationError):
     """The one-time pairing code has exhausted its bounded attempt window."""
@@ -62,6 +75,9 @@ class PairingStatus:
     expires_at: datetime
     sync_attempt_id: str | None
     sync_status: str | None
+    state: str = "waiting"
+    sync_days: int = INITIAL_SYNC_DAYS
+    progress: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -81,6 +97,7 @@ class ConnectionStatus:
     last_sync_at: datetime | None = None
     sync_attempt_id: str | None = None
     sync_status: str | None = None
+    progress: dict | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -89,6 +106,8 @@ class ConnectionStatus:
             "connection_status": self.connection_status,
             "source_account_status": self.source_account_status,
             "needs_login": self.needs_login,
+            "state": self.progress["state"] if self.progress else self.connection_status,
+            "progress": self.progress,
             **({
                 "source_user_id": self.source_user_id,
                 "region_host": self.region_host,
@@ -96,14 +115,8 @@ class ConnectionStatus:
                 "expires_at": self.expires_at.isoformat() if self.expires_at else None,
                 "expired": self.expired,
                 "connection_message": self.connection_message,
-                "last_verified_at": (
-                    self.last_verified_at.isoformat() + "Z"
-                    if self.last_verified_at else None
-                ),
-                "last_sync_at": (
-                    self.last_sync_at.isoformat() + "Z"
-                    if self.last_sync_at else None
-                ),
+                "last_verified_at": iso_utc(self.last_verified_at),
+                "last_sync_at": iso_utc(self.last_sync_at),
                 "sync_attempt_id": self.sync_attempt_id,
                 "sync_status": self.sync_status,
                 "attempt_status": self.sync_status,
@@ -204,6 +217,7 @@ class ConnectionService:
             fallback,
             kind=kind,
             needs_reauth=needs_reauth,
+            retry_after=getattr(error, "retry_after", None),
         )
 
     @staticmethod
@@ -218,19 +232,28 @@ class ConnectionService:
             )
         return None
 
-    def authorize(self, user_id: str) -> dict:
+    @staticmethod
+    def _sync_days(days: int) -> int:
+        if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= 730:
+            raise ConnectionOperationError("同步天数必须在 1..730 之间", kind="invalid_request")
+        return days
+
+    def authorize(self, user_id: str, sync_days: int = INITIAL_SYNC_DAYS) -> dict:
+        days = self._sync_days(sync_days)
         try:
             url, state = self.provider.authorize_url()
         except Exception as exc:
             raise self._provider_error(exc, fallback="无法发起 Zepp 授权") from exc
         with self._unit_of_work_factory() as unit_of_work:
-            unit_of_work.repository.save_oauth_state(state, user_id, self.source)
+            unit_of_work.repository.save_oauth_state(state, user_id, self.source, sync_days=days)
             unit_of_work.commit()
         return {
             "status": "scan_required",
             "user_id": user_id,
             "authorize_url": url,
             "state": state,
+            "sync_days": days,
+            "progress_url": "/api/connect/zepp/progress",
             "hint": "用 Zepp App 扫描二维码授权；或在浏览器打开该地址登录授权",
         }
 
@@ -247,11 +270,13 @@ class ConnectionService:
     def complete_oauth(self, code: str, state: str) -> tuple[str, Any, Any | None]:
         """Consume state, exchange outside SQL, then commit guarded credentials."""
         with self._unit_of_work_factory() as unit_of_work:
-            user_id = unit_of_work.repository.consume_oauth_state(state)
-            if user_id is None:
+            request = unit_of_work.repository.consume_oauth_state(state)
+            if request is None:
                 raise ConnectionOperationError(
                     "state 无效或已被使用，请重新发起扫码", kind="invalid_request"
                 )
+            user_id, requested_days = request
+            days = self._sync_days(requested_days)
             try:
                 claim = unit_of_work.repository.claim_source_account(user_id, self.source)
             except Exception as exc:
@@ -279,7 +304,7 @@ class ConnectionService:
                     expected_fence_epoch=claim.fence_epoch,
                 )
                 attempt = self._attempt(
-                    repository, user_id, days=7, trigger="oauth_callback", trigger_ref=state
+                    repository, user_id, days=days, trigger="oauth_callback", trigger_ref=state
                 )
                 unit_of_work.commit()
         except SourceConnectionConflict:
@@ -291,7 +316,8 @@ class ConnectionService:
             raise
         return user_id, token, attempt
 
-    def create_pairing(self, user_id: str, sync_days: int = 30) -> dict:
+    def create_pairing(self, user_id: str, sync_days: int = INITIAL_SYNC_DAYS) -> dict:
+        sync_days = self._sync_days(sync_days)
         pairing_id = secrets.token_urlsafe(24)
         expires_at = self._now() + timedelta(minutes=max(1, self.pairing_ttl_minutes))
         with self._unit_of_work_factory() as unit_of_work:
@@ -302,7 +328,10 @@ class ConnectionService:
         return {
             "status": "waiting",
             "pairing_code": pairing_id,
-            "expires_at": expires_at.isoformat() + "Z",
+            "expires_at": iso_utc(expires_at),
+            "sync_days": sync_days,
+            "connection_state": "waiting",
+            "progress_url": "/api/connect/zepp/progress",
             "scan_url": f"/api/connect/zepp/scan?code={pairing_id}",
             "submit_path": f"/api/connect/zepp/pair/{pairing_id}/credentials",
         }
@@ -312,7 +341,7 @@ class ConnectionService:
             row = unit_of_work.repository.pairing_session(pairing_id)
             if row is None or (user_id is not None and row.user_id != user_id):
                 raise ConnectionOperationError("配对会话不存在", kind="not_found")
-            now = self._now().replace(tzinfo=None)
+            now = utc(self._now()).replace(tzinfo=None)
             status = row.status
             message = row.message
             if user_id is None and row.expires_at <= now:
@@ -333,11 +362,20 @@ class ConnectionService:
                 expires_at=row.expires_at,
                 sync_attempt_id=row.sync_attempt_id,
                 sync_status=attempt_status,
+                state=("backfill_requested" if attempt_status == "queued" else "backfill_progress")
+                if row.sync_attempt_id else status,
+                sync_days=row.sync_days,
+                progress=self.progress(row.user_id) if user_id is not None and status == "connected" else None,
             )
 
     def claim_pairing(self, pairing_id: str) -> PairingClaim:
         with self._unit_of_work_factory() as unit_of_work:
             repository = unit_of_work.repository
+            row = repository.pairing_session(pairing_id)
+            if row is None:
+                raise ConnectionOperationError("配对会话不存在", kind="not_found")
+            if row.expires_at <= utc(self._now()).replace(tzinfo=None):
+                raise ConnectionOperationError("配对码已过期", kind="expired")
             token = repository.claim_pairing_session(
                 pairing_id,
                 self.pairing_processing_lease_seconds,
@@ -438,10 +476,13 @@ class ConnectionService:
             raise
         return {
             "status": "connected",
+            "connection_state": "backfill_requested" if attempt_id else "credential_verified",
             "message": "凭据已安全交给 Vitalis，云端同步已启动",
             "browser_link_token": browser_link_token,
             "sync_attempt_id": attempt_id,
+            "sync_days": claim.sync_days,
             "sync_status": "queued" if attempt_id else None,
+            "progress_url": "/api/connect/zepp/progress",
         }
 
     def import_token(
@@ -454,8 +495,9 @@ class ConnectionService:
         region_hint: str | None = None,
         saved_host: str | None = None,
         sync_history: bool = True,
-        sync_days: int = 14,
+        sync_days: int = INITIAL_SYNC_DAYS,
     ) -> tuple[Any, Any | None]:
+        sync_days = self._sync_days(sync_days)
         claim = self._claim_source(user_id)
         credentials = self.provider.parse_cookie(cookie) if cookie.strip() else None
         if credentials is None:
@@ -651,14 +693,21 @@ class ConnectionService:
                 if link and link.sync_attempt_id else None
             )
             status = getattr(attempt, "status", None) if attempt else None
+            expired = bool(token and getattr(token, "expired", False))
+            needs_login = bool(link and link.status == "needs_login") or expired
+            progress = connection_progress(
+                repository, user_id, source=self.source, as_of=self._now(),
+                authorized=token is not None, needs_login=needs_login,
+                verified_at=link.last_verified_at if link else None,
+            )
             if token is None:
                 return ConnectionStatus(
                     user_id=user_id,
                     authorized=False,
                     source_account_status=account["status"] if account else None,
                     connection_status=account["status"] if account else "disconnected",
+                    progress=progress,
                 )
-            expired = bool(getattr(token, "expired", False))
             connection_status = (
                 link.status if link else ("expired" if expired else "connected")
             )
@@ -678,7 +727,12 @@ class ConnectionService:
                 last_sync_at=link.last_sync_at if link else None,
                 sync_attempt_id=link.sync_attempt_id if link else None,
                 sync_status=status,
+                progress=progress,
             )
+
+    def progress(self, user_id: str) -> dict:
+        """Read durable onboarding evidence without creating any work."""
+        return self.token_status(user_id).progress or {}
 
 
 def _token_digest(token: str) -> str:

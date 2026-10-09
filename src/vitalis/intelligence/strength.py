@@ -162,7 +162,7 @@ class StrengthAnalyzer:
     def analyze(self, raw) -> StrengthAnalysis:
         start = raw.day - timedelta(days=27)
         workouts = [
-            item for item in raw.workouts
+            item for item in RunningAnalyzer._available_workouts(raw)
             if start <= self._date(item) <= raw.day
             and str((item.get("data") or {}).get("training_family") or "") == "strength"
         ]
@@ -210,6 +210,50 @@ class StrengthAnalyzer:
             muscle_recovery=self._muscle_recovery(raw.day, sessions),
             limitations=limitations,
         )
+
+    def trend_points(self, raw) -> list[dict]:
+        """Emit session doses only for explicit, source-qualified actions.
+
+        Ordered observations and user confirmations retain their existing
+        precedence. Lap-code observations remain display facts. Volume uses
+        sum(repetitions * observed weight) with a known unit and weight basis;
+        per-hand, total and machine values are never pooled or multiplied by
+        an inferred number of hands.
+        """
+        output = []
+        workouts = [
+            item for item in RunningAnalyzer._available_workouts(raw)
+            if str((item.get("data") or {}).get("training_family") or "") == "strength"
+            and raw.day - timedelta(days=179) <= self._date(item) <= raw.day
+        ]
+        for workout in sorted(workouts, key=RunningAnalyzer._workout_sort_key):
+            session = self._session(raw, workout, None)
+            confirmed = any(item.source == "user_confirmed" for item in session.explicit_exercises)
+            source_scope = "user_confirmed" if confirmed else "strength_sets"
+            for dose in self._session_doses(session):
+                repetitions_complete = bool(dose.repetitions) and all(value is not None for value in dose.repetitions)
+                weights_complete = bool(dose.weights) and all(value is not None for value in dose.weights)
+                volume = (
+                    float(sum(reps * weight for reps, weight in zip(dose.repetitions, dose.weights)))
+                    if dose.set_count is not None and repetitions_complete and weights_complete
+                    and dose.weight_unit is not None and dose.weight_basis is not None
+                    else None
+                )
+                common = {
+                    "source": session.source, "source_scope": source_scope,
+                    "device_id": workout.get("device_id"), "workout_id": session.workout_id,
+                    "day": session.date,
+                    "observed_at": workout.get("started_at") or session.date,
+                    "qualification": f"explicit_action:{dose.identity[0]}:{dose.identity[1]}",
+                    "exercise_id": dose.exercise_id or dose.exercise_name,
+                }
+                for metric, unit, value, basis in (
+                    ("strength_sets", "sets", float(dose.set_count) if dose.set_count is not None else None, None),
+                    ("strength_repetitions", "reps", float(sum(dose.repetitions)) if repetitions_complete and dose.set_count is not None else None, None),
+                    ("strength_volume", f"{dose.weight_unit or 'unknown'}*reps", volume, dose.weight_basis),
+                ):
+                    output.append({**common, "metric": metric, "unit": unit, "value": value, "weight_basis": basis})
+        return output
 
     def _session(self, raw, workout: dict, threshold: float | None) -> StrengthSessionAnalysis:
         confirmed = list(workout.get("confirmed_exercises") or [])

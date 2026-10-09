@@ -361,7 +361,8 @@ def test_persistent_input_churn_fails_at_three_attempts(job_database, monkeypatc
     assert len(calls) == 3
     assert state.status == "failed" and state.error == "Analysis failed"
     assert state.attempt_count == 3 and state.run_id is None
-    assert jobs.drain_analysis_jobs(max_jobs=1) == 0
+    # Each synthetic feedback write also queues its own scoped invalidation;
+    # the original request remains terminal after its three fenced attempts.
     with job_database() as db:
         runs = db.query(AnalysisRun).order_by(AnalysisRun.started_at).all()
         assert len(runs) == 3
@@ -401,6 +402,27 @@ def test_expired_third_attempt_is_not_reclaimed(job_database):
     assert repository.claim(2) is None
     state = jobs.get_analysis_job("owner", job_id)
     assert state.status == "failed" and state.attempt_count == 3
+
+
+def test_same_target_date_morning_and_evening_keep_distinct_jobs(
+    job_database, monkeypatch,
+):
+    monkeypatch.setattr(database, "SessionLocal", job_database)
+    bootstrap.configure_analysis_jobs()
+    morning = jobs.create_analysis_job(
+        "owner", DAY, "same-day-morning", delivery_period="morning"
+    )
+    evening = jobs.create_analysis_job(
+        "owner", DAY, "same-day-evening", delivery_period="evening"
+    )
+    assert morning != evening
+    assert jobs.drain_analysis_jobs(max_jobs=2) == 2
+    assert jobs.get_analysis_job("owner", morning).status == "succeeded"
+    assert jobs.get_analysis_job("owner", evening).status == "succeeded"
+    with job_database() as db:
+        deliveries = db.query(NotificationDelivery).order_by(NotificationDelivery.period).all()
+        assert {item.period for item in deliveries} == {"morning", "evening"}
+        assert {item.target_date for item in deliveries} == {DAY}
 
 
 @pytest.mark.parametrize("period", ("morning", "evening", "weekly", "monthly"))

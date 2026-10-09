@@ -101,6 +101,8 @@ class EventLifecycleEngine:
         target: date,
         detected: list[HealthEvent],
     ) -> list[HealthEvent]:
+        if repo.has_later_analysis(user_id, target):
+            return self.reconcile_state(repo.health_events_as_of(user_id, target), detected, target)
         active = repo.active_health_events(user_id)
         active_by_key = {(item.type, item.metric): item for item in active}
         detected_keys: set[tuple[str, str | None]] = set()

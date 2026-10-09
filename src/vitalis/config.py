@@ -116,7 +116,12 @@ def load_settings(environ: Mapping[str, str]) -> Settings:
     )))
     if public_origin and public_origin not in pairing_origins:
         pairing_origins = (*pairing_origins, public_origin)
-    zepp_mock = boolean("ZEPP_MOCK", True)
+    environment = environ.get("VITALIS_ENV", "dev").strip().lower()
+    if environment not in {"dev", "test", "prod", "production"}:
+        raise ValueError("VITALIS_ENV must be dev, test, prod or production")
+    zepp_mock = boolean("ZEPP_MOCK", environment in {"dev", "test"})
+    if zepp_mock and environment not in {"dev", "test"}:
+        raise ValueError("ZEPP_MOCK cannot be enabled in production")
     encryption_key = environ.get("VITALIS_TOKEN_ENCRYPTION_KEY", "")
     if not zepp_mock and not encryption_key:
         raise ValueError("VITALIS_TOKEN_ENCRYPTION_KEY is required for real Zepp credentials")
@@ -127,7 +132,7 @@ def load_settings(environ: Mapping[str, str]) -> Settings:
             raise ValueError("VITALIS_TOKEN_ENCRYPTION_KEY must be a Fernet key") from exc
 
     return Settings(
-        env=environ.get("VITALIS_ENV", "dev"),
+        env=environment,
         timezone=timezone,
         database_url=database_url,
         zepp_app_id=environ.get("ZEPP_APP_ID", ""),

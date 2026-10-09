@@ -20,6 +20,7 @@ from .routes import (
     current_router,
     health_router,
     intelligence_router,
+    product_router,
     zepp_pairing_router,
 )
 
@@ -31,6 +32,7 @@ api.include_router(connect_router)
 api.include_router(zepp_pairing_router)
 api.include_router(health_router)
 api.include_router(intelligence_router)
+api.include_router(product_router)
 
 
 @asynccontextmanager
@@ -75,7 +77,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=list(settings.pairing_allowed_origins),
         allow_credentials=False,
-        allow_methods=["GET", "POST", "PATCH", "DELETE"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-User-Id"],
         allow_private_network=True,
         expose_headers=["X-Request-ID", "Retry-After"],

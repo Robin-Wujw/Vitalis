@@ -54,6 +54,86 @@ def test_training_coverage_reaches_previous_calendar_month(monkeypatch):
     }
 
 
+def test_open_health_load_uses_only_persisted_verified_days(monkeypatch):
+    user_id = "open-health-coverage-wiring"
+    day = date(2026, 10, 8)
+    verified = [
+        (day - timedelta(days=offset)).isoformat()
+        for offset in range(42)
+    ]
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+        monkeypatch.setattr(
+            repo,
+            "training_history_coverage",
+            lambda *_args, **_kwargs: {
+                "status": "PARTIAL",
+                "verified_days": verified,
+                "truncated": False,
+                "budget_exhausted": False,
+            },
+        )
+        raw = ProfileLoader(repo).load(user_id, day)
+
+    assert raw.open_health_load_queried_days == sorted(
+        date.fromisoformat(value) for value in verified
+    )
+    assert raw.open_health_load_upstream_coverage_verified is True
+
+
+def test_open_health_coverage_flag_stays_false_when_ledger_is_truncated(monkeypatch):
+    user_id = "open-health-coverage-truncated"
+    day = date(2026, 10, 8)
+    verified = [
+        (day - timedelta(days=offset)).isoformat()
+        for offset in range(42)
+    ]
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+        monkeypatch.setattr(
+            repo,
+            "training_history_coverage",
+            lambda *_args, **_kwargs: {
+                "status": "COMPLETE",
+                "verified_days": verified,
+                "truncated": True,
+                "budget_exhausted": False,
+            },
+        )
+        raw = ProfileLoader(repo).load(user_id, day)
+
+    assert len(raw.open_health_load_queried_days) == 42
+    assert raw.open_health_load_upstream_coverage_verified is False
+
+
+def test_training_coverage_accepts_date_values_and_derives_prior_week_verification(monkeypatch):
+    user_id = "training-coverage-date-values"
+    day = date(2026, 10, 8)
+    verified = {day - timedelta(days=offset) for offset in range(42)}
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+        monkeypatch.setattr(
+            repo,
+            "training_history_coverage",
+            lambda *_args, **_kwargs: {
+                "status": "COMPLETE",
+                "verified_days": sorted(verified),
+                "truncated": False,
+                "budget_exhausted": False,
+            },
+        )
+        raw = ProfileLoader(repo).load(user_id, day)
+
+    assert raw.training_history_coverage["prior_7d_verified"] is True
+    assert raw.open_health_load_upstream_coverage_verified is True
+
+
 def test_missing_optional_hrv_does_not_block_activity_analysis():
     user_id = "activity-without-hrv"
     day = date(2026, 8, 28)

@@ -300,6 +300,8 @@ def test_event_acknowledged_during_analysis_is_consistent_across_snapshots(
         IntelligenceCommand, "_build_daily_from_raw",
         staticmethod(acknowledge_after_input_read),
     )
+    with pytest.raises(RuntimeError, match="输入在计算期间发生变化"):
+        get_intelligence_command().analyze("owner", DAY)
     result = get_intelligence_command().analyze("owner", DAY)
     assert result.daily.events[0].acknowledged
     assert result.weekly.inferences.events == []
@@ -314,3 +316,99 @@ def test_event_acknowledged_during_analysis_is_consistent_across_snapshots(
     assert rows["daily"]["events"][0]["acknowledged"] is True
     assert rows["weekly"]["inferences"]["events"] == []
     assert rows["monthly"]["inferences"]["events"] == []
+
+
+def test_historical_direct_analysis_resolves_only_covered_jobs_without_delivery(
+    isolated_jobs, monkeypatch,
+):
+    from vitalis.domain import NormalizedDaily, SleepRecord
+
+    factory, _ = isolated_jobs
+    with factory.begin() as db:
+        repo = HealthRepository(db)
+        repo.save_daily(NormalizedDaily(user_id="owner", date=DAY, sleep=SleepRecord(
+            user_id="owner", date=DAY, sleep_duration=440,
+        )))
+        failed = next(job for job in repo.analysis_jobs("owner") if job.target_date == DAY)
+        failed.status = "failed"
+        db.flush()
+        queued = repo.enqueue_analysis_job(
+            "owner", DAY, event_type="source_sync", source="zepp",
+        )
+        covered_ids = {failed.id, queued.id}
+        delivery_ids = {
+            repo.enqueue_analysis_job(
+                "owner", DAY, event_type="explicit_analysis", source="scheduler",
+                delivery_period=period,
+            ).id
+            for period in ("morning", "evening", "weekly", "monthly")
+        }
+
+    command = get_intelligence_command()
+    historical_at = datetime(2026, 8, 29, 20, tzinfo=timezone.utc)
+    monkeypatch.setattr(command, "_now_factory", lambda: historical_at)
+    result = command.analyze("owner", DAY)
+    with factory.begin() as db:
+        repo = HealthRepository(db)
+        for job_id in covered_ids:
+            job = db.get(AnalysisJob, job_id)
+            assert job.created_at > historical_at.replace(tzinfo=None)
+            assert job.status == "succeeded" and job.run_id == result.run.id
+            assert job.finished_at > historical_at.replace(tzinfo=None)
+        for job_id in delivery_ids:
+            job = db.get(AnalysisJob, job_id)
+            assert job.status == "queued" and job.run_id is None
+        assert db.query(NotificationDelivery).count() == 0
+
+        repo.save_daily(NormalizedDaily(user_id="owner", date=DAY, sleep=SleepRecord(
+            user_id="owner", date=DAY, sleep_duration=455,
+        )))
+        newer_failed = next(
+            job for job in repo.analysis_jobs("owner")
+            if job.target_date == DAY and job.delivery_period is None and job.status == "queued"
+        )
+        newer_failed.status = "failed"
+        db.flush()
+        newer_queued = repo.enqueue_analysis_job(
+            "owner", DAY, event_type="source_sync", source="zepp",
+        )
+        assert newer_failed.input_revision > result.run.input_revision_used
+        assert newer_queued.input_revision > result.run.input_revision_used
+        assert repo.resolve_analysis_jobs_for_run(
+            "owner", DAY, result.run.id, input_revision=result.run.input_revision_used,
+        ) == 0
+        assert newer_failed.status == "failed" and newer_failed.run_id is None
+        assert newer_queued.status == "queued" and newer_queued.run_id is None
+
+
+@pytest.mark.parametrize("event_type", ["event_acknowledgement", None])
+def test_consumed_acknowledgement_keeps_previous_run_and_snapshot_fenced(
+    isolated_jobs, event_type,
+):
+    factory, _ = isolated_jobs
+    event = HealthEvent(
+        id="synthetic-consumed-event", type="SLEEP_DEFICIT", type_label="持续睡眠不足",
+        severity=EventSeverity.MODERATE, severity_label="中等",
+        metric="sleep_duration", metric_label="睡眠时长",
+        start_date=DAY - timedelta(days=2), end_date=DAY - timedelta(days=1),
+        duration_days=2, confidence=ConfidenceBand.HIGH,
+        confidence_label="较高", summary="合成事件",
+    )
+    with factory.begin() as db:
+        HealthRepository(db).save_health_event("owner", event)
+    command = get_intelligence_command()
+    previous = command.analyze("owner", DAY)
+    with factory.begin() as db:
+        repo = HealthRepository(db)
+        assert repo.acknowledge_health_event("owner", event.id).acknowledged
+        job = next(job for job in repo.analysis_jobs("owner") if job.target_date == DAY)
+        job.event_type = event_type
+        job_id = job.id
+    refreshed = command.analyze("owner", DAY)
+    with factory() as db:
+        repo = HealthRepository(db)
+        assert db.get(AnalysisJob, job_id).status == "succeeded"
+        assert not repo.lock_analysis_scope("owner", previous.run.input_revision_used, DAY)
+        assert repo.lock_analysis_scope("owner", refreshed.run.input_revision_used, DAY)
+        assert repo.analysis_snapshot_for_run("owner", "daily", DAY, previous.run.id) is None
+        assert repo.latest_analysis_snapshot("owner", "daily", DAY).analysis_run_id == refreshed.run.id

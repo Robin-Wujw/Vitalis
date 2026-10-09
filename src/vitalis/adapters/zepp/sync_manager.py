@@ -511,7 +511,8 @@ class SyncManager:
         return aggregate
 
     def _persist_record(
-        self, record: FetchedRecord, repo: HealthRepository | None, user: User
+        self, record: FetchedRecord, repo: HealthRepository | None, user: User,
+        *, fetched_at: datetime | None = None,
     ) -> StreamReport:
         report = StreamReport(
             stream=record.raw.stream,
@@ -520,10 +521,18 @@ class SyncManager:
             raw_records=1,
             capability=record.raw.capability,
             diagnostic_stream=self._diagnostic_stream(record),
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=fetched_at or datetime.now(timezone.utc),
         )
         if repo is None:
             return report
+        from vitalis.adapters.persistence.source_journal import stage_sync_record
+
+        journal = stage_sync_record(repo, user, record, self.fetcher, fetched_at=report.fetched_at)
+        journal_context = getattr(getattr(repo, "db", None), "info", {})
+        had_source_record = "active_source_record_id" in journal_context
+        previous_source_record = journal_context.get("active_source_record_id")
+        if journal is not None:
+            journal_context["active_source_record_id"] = journal.id
         try:
             detail_result: ParseResult | None = None
             if record.raw.stream == "workout_detail":
@@ -613,6 +622,11 @@ class SyncManager:
             report.parse_status = "failed"
             report.write_status = "not_run"
             report.error_kind = self._error_kind(exc, "parse")
+        finally:
+            if had_source_record:
+                journal_context["active_source_record_id"] = previous_source_record
+            else:
+                journal_context.pop("active_source_record_id", None)
         return report
 
     @staticmethod

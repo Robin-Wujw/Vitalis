@@ -41,6 +41,12 @@ READ_OPERATIONS = {
     "timeline": "intelligence/timeline",
     "training-preferences": "intelligence/training-preferences",
     "feedback": "feedback",
+    "product-goals": "product/goals",
+    "product-feedback": "product/feedback",
+    "product-summary": "product/summary",
+    "product-metrics": "product/metrics",
+    "product-context": "product/context",
+    "connection-progress": "connect/zepp/progress",
 }
 WRITE_OPERATIONS = {
     "profile-patch": ("PATCH", "intelligence/profile"),
@@ -49,6 +55,9 @@ WRITE_OPERATIONS = {
     "strength-confirm": ("POST", "intelligence/workouts/{id}/strength-exercises"),
     "recommendation-complete": ("POST", "intelligence/recommendations/{id}/complete"),
     "event-acknowledge": ("POST", "intelligence/events/{id}/acknowledge"),
+    "goal-create": ("POST", "product/goals"),
+    "goal-patch": ("PATCH", "product/goals/{id}"),
+    "product-feedback": ("POST", "product/feedback"),
 }
 KEY_PATTERN = re.compile(r"[A-Za-z0-9._:-]{16,128}\Z")
 
@@ -152,8 +161,16 @@ def strict_json(value):
 
 
 def key_from_file(filename: str, operation: str, body: dict) -> str:
-    """Persist a key and request fingerprint before sending a queued write."""
-    digest = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    """Persist a key and method/path/body fingerprint before sending a write."""
+    method, separator, path = operation.partition(" ")
+    fingerprint = (
+        {"method": method, "path": path, "body": body}
+        if separator and method and path.startswith("/")
+        else {"operation": operation, "body": body}
+    )
+    digest = hashlib.sha256(
+        json.dumps(fingerprint, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     path = Path(filename)
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -287,6 +304,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     report = commands.add_parser("report")
     report.add_argument("kind", choices=REPORT_KINDS)
     report.add_argument("--day", type=iso_date)
+    report_views = report.add_mutually_exclusive_group()
+    report_views.add_argument("--state", action="store_true", help="Read freshness and last-good snapshot state")
+    report_views.add_argument("--view", action="store_true", help="Read the saved public report projection")
 
     analyze = commands.add_parser("analyze")
     analyze.add_argument("--day", type=iso_date, required=True)
@@ -307,6 +327,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     action.add_argument("operation", choices=tuple(WRITE_OPERATIONS))
     action.add_argument("--id")
     action.add_argument("--source")
+    action.add_argument("--key-file")
 
     feedback = commands.add_parser("feedback")
     feedback.add_argument("--key-file")
@@ -337,7 +358,9 @@ def run(args: argparse.Namespace):
     if args.command == "status":
         return request("GET", "data-status", token)
     if args.command == "report":
-        return request("GET", "reports/" + args.kind, token,
+        suffix = "/state" if args.state else "/view" if args.view else ""
+        path = "reports/" + args.kind + suffix
+        return request("GET", path, token,
                        params={"day": args.day} if args.day else None)
     if args.command == "job":
         return request("GET", "jobs/" + urllib.parse.quote(args.id, safe=""), token)
@@ -350,6 +373,12 @@ def run(args: argparse.Namespace):
             "events": {"start", "end", "event_type"},
             "timeline": {"start", "end", "limit"},
             "feedback": {"start", "end"},
+            "product-goals": set(),
+            "product-feedback": {"start", "end", "limit"},
+            "product-summary": {"start", "end"},
+            "product-metrics": {"start", "end"},
+            "product-context": {"day"},
+            "connection-progress": set(),
         }[args.operation]
         supplied = {
             "day": args.day, "start": args.start, "end": args.end,
@@ -368,10 +397,16 @@ def run(args: argparse.Namespace):
             raise ClientError("invalid_arguments")
         if args.id is not None and (not args.id or len(args.id) > 128):
             raise ClientError("invalid_arguments")
+        keyed_actions = {"goal-create", "goal-patch", "product-feedback"}
+        if (args.operation in keyed_actions) != (args.key_file is not None):
+            raise ClientError("invalid_arguments")
         if needs_id:
             path = path.replace("{id}", urllib.parse.quote(args.id, safe=""))
         body = None if args.operation == "event-acknowledge" else feedback_body()
-        return request(method, path, token, body=body,
+        key = None
+        if args.operation in keyed_actions:
+            key = key_from_file(args.key_file, f"{method} /api/{path}", body)
+        return request(method, path, token, body=body, key=key,
                        params={"source": args.source} if args.source else None)
     if args.command == "workouts":
         if args.id is not None:
@@ -386,11 +421,11 @@ def run(args: argparse.Namespace):
         return request("GET", "workouts", token, params=params)
     if args.command == "feedback":
         body = feedback_body()
-        key = key_from_file(args.key_file, "feedback", body) if args.key_file else None
+        key = key_from_file(args.key_file, "POST /api/feedback", body) if args.key_file else None
         return request("POST", "feedback", token, body=body, key=key)
     if args.command == "analyze":
         body = {"day": args.day}
-        key = key_from_file(args.key_file, "analysis-runs", body)
+        key = key_from_file(args.key_file, "POST /api/analysis-runs", body)
         return request("POST", "analysis-runs", token, body=body, key=key)
     body = {"days": args.days, "source": "zepp"}
     for field in ("decode_dense_files", "detail_backfill", "workout_only", "detail_only",
@@ -398,7 +433,7 @@ def run(args: argparse.Namespace):
         value = getattr(args, field)
         if value is not None:
             body[field] = value
-    key = key_from_file(args.key_file, "sync-jobs", body)
+    key = key_from_file(args.key_file, "POST /api/sync-jobs", body)
     return request("POST", "sync-jobs", token, body=body, key=key)
 
 

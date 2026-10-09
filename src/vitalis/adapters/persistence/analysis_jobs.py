@@ -53,6 +53,23 @@ class SqlAnalysisJobRepository:
         job_id = uuid4().hex
         try:
             with self._sessions.begin() as db:
+                owner = db.get(User, user_id)
+                if owner is None:
+                    raise ValueError("user not found")
+                existing = db.execute(select(AnalysisJob).where(
+                    AnalysisJob.user_id == user_id,
+                    AnalysisJob.idempotency_key == key,
+                )).scalar_one_or_none()
+                if existing is not None:
+                    if existing.request_hash != request_hash:
+                        raise IdempotencyConflict(
+                            "idempotency key belongs to another request"
+                        )
+                    if existing.delivery_period != delivery_period:
+                        raise IdempotencyConflict(
+                            "idempotency key belongs to another delivery period"
+                        )
+                    return existing.id
                 db.add(AnalysisJob(
                     id=job_id,
                     user_id=user_id,
@@ -60,11 +77,18 @@ class SqlAnalysisJobRepository:
                     status="queued",
                     idempotency_key=key,
                     request_hash=request_hash,
+                    priority=10,
                     delivery_period=delivery_period,
+                    event_type="explicit_analysis",
+                    source="api",
+                    reason="explicit analysis request",
+                    affected_dates=[day.isoformat()],
+                    affected_streams=[],
+                    affected_start=day,
+                    affected_end=day,
+                    input_revision=owner.analysis_input_revision,
                 ))
                 db.flush()
-                if db.get(User, user_id) is None:
-                    raise ValueError("user not found")
             return job_id
         except IntegrityError:
             # The unique constraint arbitrates concurrent requests, not a prior read.
@@ -106,7 +130,11 @@ class SqlAnalysisJobRepository:
             ).scalars().all()
             candidates = db.execute(
                 select(AnalysisJob.id).where(claimable)
-                .order_by(AnalysisJob.created_at, AnalysisJob.id).limit(16)
+                .order_by(
+                    AnalysisJob.priority.desc(),
+                    AnalysisJob.created_at.asc(),
+                    AnalysisJob.id.asc(),
+                ).limit(16)
             ).scalars().all()
         candidate_ids = tuple(dict.fromkeys((*exhausted_candidates, *candidates)))
         for job_id in candidate_ids:

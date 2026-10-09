@@ -18,6 +18,7 @@ from vitalis.intelligence.contracts import (
     DailyProfile, MonthlyProfile, MorningBriefing, ReportBriefing,
     SubjectiveFeedback, SubjectiveFeedbackInput, WeeklyProfile,
 )
+from vitalis.intelligence.public_reports import PublicReportView, to_public_report_view
 from vitalis.bootstrap import get_intelligence_action, get_intelligence_query
 from vitalis.application.ports import FeedbackIdempotencyConflict, SyncJobCommand
 from vitalis.application.sync_jobs import (
@@ -84,6 +85,45 @@ def get_report(
     if result is None:
         raise HTTPException(status_code=404, detail="指定日期尚未生成分析快照")
     return result
+
+
+@router.get("/reports/{kind}/view", response_model=PublicReportView, operation_id="get_public_report_view")
+def get_public_report_view(
+    kind: ReportKind,
+    day: date | None = None,
+    user_id: str = Depends(require_user_id),
+) -> PublicReportView:
+    query = get_intelligence_query()
+    selection = {
+        "daily": query.daily, "morning": query.morning_briefing,
+        "evening": query.evening_briefing, "weekly": query.weekly,
+        "monthly": query.monthly, "weekly-briefing": query.weekly_briefing,
+        "monthly-briefing": query.monthly_briefing,
+    }
+    result = selection[kind](user_id, day)
+    if result is None:
+        raise HTTPException(status_code=404, detail="指定日期尚未生成分析快照")
+    normalized = kind.removesuffix("-briefing")
+    return to_public_report_view(result, normalized)
+
+
+@router.get("/reports/{kind}/state", operation_id="get_report_state")
+def get_report_state(
+    kind: ReportKind,
+    day: date | None = None,
+    user_id: str = Depends(require_user_id),
+) -> dict:
+    """Return report freshness without replacing the existing report payload."""
+    profile_type = {
+        "daily": "daily",
+        "morning": "daily",
+        "evening": "daily",
+        "weekly": "weekly",
+        "weekly-briefing": "weekly",
+        "monthly": "monthly",
+        "monthly-briefing": "monthly",
+    }[kind]
+    return get_intelligence_query().report_state(user_id, profile_type, day)
 
 
 @router.post("/analysis-runs", status_code=202, operation_id="create_analysis_run")

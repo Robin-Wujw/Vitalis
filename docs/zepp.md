@@ -2,7 +2,7 @@
 
 [文档中心](README.md) | [快速开始](quickstart.md) | [数据合同](data-contracts.md) | [扩展指南](../clients/browser_extension/README.md)
 
-Vitalis 当前支持 Zepp 作为外部数据源。`ZEPP_MOCK=true` 是默认离线 mock；真实连接使用官方网页登录会话和区域云端接口。mock 验收不等于真实账户或真实 Hermes/PushPlus 联调。
+Vitalis 当前支持 Zepp 作为外部数据源。dev/test 环境默认使用离线 mock；prod/production 环境只允许真实连接，使用官方网页登录会话和区域云端接口。配置规则见[运维](operations.md)。mock 验收不等于真实账户或真实 Hermes/PushPlus 联调。
 
 ## Mock 路径
 

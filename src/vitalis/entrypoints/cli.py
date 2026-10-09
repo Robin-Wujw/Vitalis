@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import closing
+from datetime import date, datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 import json
 import os
@@ -233,7 +234,7 @@ def _write_report(report_kind: str, user_id: str, day: str | None, target: str, 
     query = bootstrap.get_intelligence_query()
     briefing = {
         "morning": query.morning_briefing,
-        "daily": query.evening_briefing,
+        "daily": query.daily,
         "evening": query.evening_briefing,
         "weekly": query.weekly_briefing,
         "monthly": query.monthly_briefing,
@@ -313,6 +314,78 @@ def _revoke_token(digest: str) -> None:
     print("access token revoked")
 
 
+_REPLAY_INPUT_LIMIT_BYTES = 128 * 1024 * 1024
+
+
+def _require_offline_replay_environment() -> None:
+    if settings.env not in {"dev", "test"}:
+        raise ValueError("offline replay is available only in dev/test environments")
+
+
+def _parse_replay_datetime(value: str) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError("replay timestamps must use an explicit timezone")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("replay timestamps must use ISO-8601 format") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("replay timestamps must use an explicit timezone")
+    return parsed.astimezone(timezone.utc)
+
+
+def _read_replay_fixture(path: Path) -> dict:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("replay fixture must be an existing regular file")
+    try:
+        if path.stat().st_size > _REPLAY_INPUT_LIMIT_BYTES:
+            raise ValueError("replay fixture exceeds its bounded size")
+        raw = path.read_bytes()
+        fixture = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        raise ValueError("replay fixture is not valid JSON") from None
+    except (OSError, UnicodeError):
+        raise ValueError("replay fixture could not be read") from None
+    if not isinstance(fixture, dict):
+        raise ValueError("replay fixture must contain a JSON object")
+    return fixture
+
+
+def _replay_fixture_command(path: Path, target_user_id: str, parser_version: str | None) -> None:
+    _require_offline_replay_environment()
+    from vitalis.adapters.replay import CURRENT_PARSER_VERSION, replay_fixture
+
+    fixture = _read_replay_fixture(path)
+    result = replay_fixture(
+        fixture, target_user_id,
+        parser_version=parser_version or CURRENT_PARSER_VERSION,
+    )
+    print(json.dumps(result.as_dict(), ensure_ascii=False))
+
+
+def _replay_source_journal_command(args: argparse.Namespace) -> None:
+    _require_offline_replay_environment()
+    from vitalis.adapters.replay import replay_source_records
+    from vitalis.adapters.persistence.source_journal import CURRENT_PARSER_VERSION
+
+    try:
+        start_date = date.fromisoformat(args.start_date)
+        end_date = date.fromisoformat(args.end_date)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("replay dates must use YYYY-MM-DD format") from exc
+    result = replay_source_records(
+        args.source_user_id,
+        args.target_user_id,
+        start_date=start_date,
+        end_date=end_date,
+        as_of=_parse_replay_datetime(args.as_of),
+        journal_ids=args.journal_ids,
+        parser_version=args.parser_version or CURRENT_PARSER_VERSION,
+        timezone_name=args.timezone,
+    )
+    print(json.dumps(result.as_dict(), ensure_ascii=False))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="vitalis", description="Vitalis health data service")
     try:
@@ -359,6 +432,27 @@ def main(argv: list[str] | None = None) -> int:
     report.add_argument("--day", help="Report date in YYYY-MM-DD format")
     report.add_argument("--format", dest="target", choices=("markdown", "html"), default="markdown")
     report.add_argument("--output", type=Path, required=True)
+    replay = subcommands.add_parser("replay", help="Replay local source input without network or delivery")
+    replay_commands = replay.add_subparsers(dest="replay_command", required=True)
+    fixture_replay = replay_commands.add_parser(
+        "fixture", help="Replay a synthetic JSON fixture into an independent user",
+    )
+    fixture_replay.add_argument("fixture_path", nargs="?", type=Path)
+    fixture_replay.add_argument("--input", "--fixture", dest="fixture_option", type=Path)
+    fixture_replay.add_argument("--target-user", "--user", dest="target_user_id", required=True)
+    fixture_replay.add_argument("--parser-version")
+    journal_replay = replay_commands.add_parser(
+        "source-journal", aliases=("journal",),
+        help="Replay encrypted source journal metadata into an independent user",
+    )
+    journal_replay.add_argument("--source-user", dest="source_user_id", required=True)
+    journal_replay.add_argument("--target-user", "--user", dest="target_user_id", required=True)
+    journal_replay.add_argument("--start-date", "--start", dest="start_date", required=True)
+    journal_replay.add_argument("--end-date", "--end", dest="end_date", required=True)
+    journal_replay.add_argument("--as-of", required=True)
+    journal_replay.add_argument("--timezone", default="UTC")
+    journal_replay.add_argument("--journal-id", "--journal-ids", dest="journal_ids", action="append")
+    journal_replay.add_argument("--parser-version")
     args = parser.parse_args(argv)
     try:
         if args.command == "serve":
@@ -399,6 +493,16 @@ def main(argv: list[str] | None = None) -> int:
             _demo(args.database, args.day)
         elif args.command == "report":
             _write_report(args.kind, args.user, args.day, args.target, args.output)
+        elif args.command == "replay":
+            if args.replay_command == "fixture":
+                path = args.fixture_option or args.fixture_path
+                if args.fixture_option is not None and args.fixture_path is not None:
+                    raise ValueError("replay fixture accepts one input path")
+                if path is None:
+                    raise ValueError("replay fixture requires --input PATH")
+                _replay_fixture_command(path, args.target_user_id, args.parser_version)
+            else:
+                _replay_source_journal_command(args)
     except (ValueError, RuntimeError, OSError) as exc:
         print(f"vitalis: {exc}", file=sys.stderr)
         return 1

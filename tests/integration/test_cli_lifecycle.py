@@ -145,8 +145,8 @@ def test_report_creation_race_preserves_the_other_writers_file(tmp_path, monkeyp
     }
     reader = lambda *_args: briefing
     monkeypatch.setattr(bootstrap, "get_intelligence_query", lambda: SimpleNamespace(
-        morning_briefing=reader, evening_briefing=reader, weekly_briefing=reader,
-        monthly_briefing=reader,
+        morning_briefing=reader, daily=reader, evening_briefing=reader,
+        weekly_briefing=reader, monthly_briefing=reader,
     ))
     output = tmp_path / "report.md"
 
@@ -159,3 +159,48 @@ def test_report_creation_race_preserves_the_other_writers_file(tmp_path, monkeyp
     with pytest.raises(FileExistsError):
         cli._write_report("daily", "demo", "2026-10-07", "markdown", output)
     assert output.read_text(encoding="utf-8") == "other writer's file"
+
+
+def test_report_export_uses_daily_profile_for_daily_and_briefing_for_evening(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from vitalis import bootstrap
+    from vitalis.entrypoints import cli
+
+    calls = []
+    daily_profile = {
+        "analysis_run_id": "daily-run", "user_id": "demo", "date": "2026-10-07",
+        "report_context": {"as_of": "2026-10-07T13:20:00+00:00", "timezone": "Asia/Shanghai"},
+        "data_quality": {"status": "SUFFICIENT", "status_label": "数据完整"},
+        "features": {"sleep": {"duration_minutes": 420}, "activity": {}, "training": {}},
+        "facts": {}, "events": [], "decision": {"action": "INSUFFICIENT_DATA", "action_plan": {}},
+    }
+    evening_briefing = {
+        "period": "evening", "analysis_run_id": "evening-run", "user_id": "demo",
+        "date": "2026-10-07", "period_start": "2026-10-07", "period_end": "2026-10-07",
+        "headline": "当日复盘", "metrics": [], "findings": [], "training": [],
+        "suggestions": [], "alerts": [], "sections": [],
+    }
+
+    def daily(*_args):
+        calls.append("daily")
+        return daily_profile
+
+    def evening(*_args):
+        calls.append("evening")
+        return evening_briefing
+
+    monkeypatch.setattr(bootstrap, "get_intelligence_query", lambda: SimpleNamespace(
+        morning_briefing=lambda *_args: None,
+        daily=daily,
+        evening_briefing=evening,
+        weekly_briefing=lambda *_args: None,
+        monthly_briefing=lambda *_args: None,
+    ))
+    daily_output = tmp_path / "daily.md"
+    evening_output = tmp_path / "evening.md"
+    cli._write_report("daily", "demo", "2026-10-07", "markdown", daily_output)
+    cli._write_report("evening", "demo", "2026-10-07", "markdown", evening_output)
+
+    assert calls == ["daily", "evening"]
+    assert daily_output.read_text(encoding="utf-8").startswith("# 日报 ·")
+    assert evening_output.read_text(encoding="utf-8").startswith("# 晚报 ·")

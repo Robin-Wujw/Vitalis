@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from vitalis.config import settings
 
-SCHEMA_REVISION = "2026-10-durable-pushplus-delivery"
+SCHEMA_REVISION = "2026-10-public-report-iteration"
 
 
 class SchemaMismatch(RuntimeError):
@@ -194,6 +194,10 @@ def _index_predicate(where: object, dialect: str) -> tuple[str, ...] | None:
 def check_schema(engine: Engine | None = None) -> None:
     """Validate a current database without DDL or an implicit upgrade."""
     from . import models as _  # noqa: F401
+    from . import source_journal as _source_journal  # noqa: F401
+    from . import input_events as _input_events  # noqa: F401
+    from .product_tracking import register_product_tracking_models
+    register_product_tracking_models(Base.metadata)
 
     target = engine or _engine
     database = target.url.database
@@ -267,6 +271,10 @@ def check_schema(engine: Engine | None = None) -> None:
 def init_db(engine: Engine | None = None) -> None:
     """Initialize an empty database or reject an existing non-current database."""
     from . import models as _  # noqa: F401
+    from . import source_journal as _source_journal  # noqa: F401
+    from . import input_events as _input_events  # noqa: F401
+    from .product_tracking import register_product_tracking_models
+    register_product_tracking_models(Base.metadata)
 
     target = engine or _engine
     if inspect(target).get_table_names():

@@ -13,6 +13,8 @@ from vitalis.adapters.persistence.intelligence_store import SqlIntelligenceStore
 from vitalis.adapters.persistence.analysis_jobs import SqlAnalysisJobRepository
 from vitalis.application.aggregation import RangeSummaryQuery
 from vitalis.application.health_query import HealthQuery
+from vitalis.application.product_tracking import ProductTrackingService
+from vitalis.adapters.persistence.product_tracking import SqlProductTrackingStore
 from vitalis.application.connector import HealthConnector
 from vitalis.application.jobs import configure_analysis_jobs as bind_analysis_jobs
 from vitalis.application.ports import (
@@ -50,6 +52,10 @@ def get_intelligence_command(
         catalog_revision=load_catalog().catalog_revision,
         today_factory=today_factory or local_today,
         now_factory=now_factory or (lambda: datetime.now(timezone.utc)),
+        product_context_factory=lambda user_id, day, as_of: get_product_tracking_service(
+            today_factory=today_factory or local_today,
+            now_factory=now_factory or (lambda: datetime.now(timezone.utc)),
+        ).analysis_context(user_id, day, as_of=as_of),
     )
 
 
@@ -59,6 +65,18 @@ def get_intelligence_query() -> IntelligenceQuery:
 
 def get_intelligence_action() -> IntelligenceAction:
     return IntelligenceAction(_intelligence_uow, today_factory=local_today)
+
+
+def get_product_tracking_service(
+    *, today_factory: Callable[[], date] | None = None,
+    now_factory: Callable[[], datetime] | None = None,
+) -> ProductTrackingService:
+    return ProductTrackingService(
+        SqlProductTrackingStore(database.SessionLocal, timezone_name=settings.timezone),
+        today_factory=today_factory or local_today,
+        now_factory=now_factory,
+        timezone_name=settings.timezone,
+    )
 
 
 def _run_analysis(claim: JobClaim, *, repository: AnalysisJobRepository) -> str:

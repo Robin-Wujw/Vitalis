@@ -594,7 +594,7 @@ def test_dynamic_workout_detail_is_bounded_and_report_hides_leases():
     with session_scope() as db:
         attempt = HealthRepository(db).create_or_reuse_sync_attempt(
             "coord-detail", window_start=start, window_end=end,
-            options={"mock_source": True}, manifest=[spec],
+            options={"source_mode": "mock"}, manifest=[spec],
         )
     report = coordinator.run_attempt(attempt.id)
     state = coordinator.status(attempt.id)
@@ -990,7 +990,7 @@ def test_coordinator_stalled_workout_cursor_is_partial_and_keeps_rows():
             user_id,
             window_start=WINDOW.start,
             window_end=WINDOW.end,
-            options={"mock_source": True},
+            options={"source_mode": "mock"},
             manifest=[spec],
         )
     coordinator = ZeppSyncCoordinator(
@@ -1189,9 +1189,13 @@ def test_scheduled_reports_continue_past_oversized_optional_workout_detail(perio
             workout = repo.workout(user_id, detail.stages["params"]["workout_id"])
             assert workout is not None and not workout.detail_synced
             assert workout.detail is None
-            jobs = db.query(orm.AnalysisJob).filter_by(user_id=user_id).all()
+            jobs = db.query(orm.AnalysisJob).filter_by(
+                user_id=user_id, target_date=date(2026, 8, 1),
+            ).all()
             if period == "manual":
-                assert not report.success and jobs == []
+                assert not report.success and len(jobs) == 1
+                assert jobs[0].target_date == date(2026, 8, 1)
+                assert jobs[0].delivery_period is None
             else:
                 assert report.progress["status"] in {"succeeded", "partial"}
                 assert len(jobs) == 1 and jobs[0].status == "queued"
@@ -1215,6 +1219,7 @@ def test_scheduled_sync_enqueues_analysis_without_inline_delivery(period):
         with session_scope() as db:
             jobs = db.query(orm.AnalysisJob).filter(
                 orm.AnalysisJob.user_id.in_(user_ids),
+                orm.AnalysisJob.target_date == date(2026, 8, 1),
             ).all()
             assert len(jobs) == 2
             assert {job.delivery_period for job in jobs} == {period}

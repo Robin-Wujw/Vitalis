@@ -288,6 +288,7 @@ def test_dispatcher_drains_until_no_due_attempt(monkeypatch):
         FakeCoordinator,
     )
     monkeypatch.setattr(jobs, "drain_notification_deliveries", lambda **_: 0)
+    monkeypatch.setattr("vitalis.application.jobs.drain_analysis_jobs", lambda **_: 0)
 
     assert jobs.dispatcher_job() == 1
 
@@ -380,6 +381,7 @@ def test_dispatcher_limits_each_pass_to_configured_chunk_batch(monkeypatch):
         FakeCoordinator,
     )
     monkeypatch.setattr(jobs, "drain_notification_deliveries", lambda **_: 0)
+    monkeypatch.setattr("vitalis.application.jobs.drain_analysis_jobs", lambda **_: 0)
 
     assert jobs.dispatcher_job() == 3
     assert len(calls) == 3

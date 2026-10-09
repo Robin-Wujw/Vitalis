@@ -200,7 +200,7 @@ def sdist_sources() -> set[str]:
         "tools/generate_report_examples.py",
         "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.en.md",
     }
-    for kind in ("morning", "daily", "weekly", "monthly", "insufficient-data"):
+    for kind in ("morning", "daily", "evening", "weekly", "monthly", "insufficient-data"):
         for suffix in (".md", ".fragment.html", ".html", ".markdown-preview.html", ".markdown.payload.json", ".html.payload.json"):
             sources.add(f"docs/examples/reports/{kind}{suffix}")
     sources.add("docs/examples/reports/manifest.json")

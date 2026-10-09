@@ -140,6 +140,15 @@ def synthetic_pipeline_example(*, morning=False, explicit_strength=True, history
         return get_intelligence_command().analyze(user, TARGET)
 
 
+def test_daily_renderer_accepts_the_real_daily_profile_and_coverage_list():
+    analyzed = synthetic_pipeline_example()
+    assert isinstance(analyzed.daily.data_quality.coverage, list)
+    rendered = render_report(analyzed.daily, target="markdown")
+    assert rendered.title.startswith("Vitalis 日报 ·")
+    assert "数据质量与覆盖" in rendered.content
+    assert "已保存事实" in rendered.content
+
+
 def test_stored_observations_reach_analysis_and_all_four_reports():
     analyzed = synthetic_pipeline_example()
     activity = analyzed.daily.features.activity

@@ -66,11 +66,11 @@ def test_failed_first_stream_still_fetches_daily_facts(factory, kind, trigger):
         chunks = repo.sync_chunks(attempt.id)
         assert chunks[0].status == "failed"
         assert all(chunk.status in {"succeeded", "unavailable", "failed"} for chunk in chunks)
-        jobs = db.query(orm.AnalysisJob).filter_by(user_id="owner").all()
-        assert len(jobs) == (0 if trigger == "manual" else 1)
+        jobs = db.query(orm.AnalysisJob).filter_by(user_id="owner", target_date=DAY).all()
+        assert len(jobs) == 1
         if jobs:
             assert jobs[0].target_date == DAY
-            assert jobs[0].delivery_period == trigger
+            assert jobs[0].delivery_period == (None if trigger == "manual" else trigger)
 
 
 def test_backoff_does_not_delay_other_available_streams(factory):
@@ -146,8 +146,8 @@ def test_wire_resource_limit_uses_optional_scheduled_detail_gate(factory, monkey
             assert detail.status == ("failed" if trigger == "manual" else "unavailable")
             assert not repo.workout("owner", detail.stages["params"]["workout_id"]).detail_synced
             assert len(repo.sleep_range("owner", DAY, DAY)) == 1
-            jobs = db.query(orm.AnalysisJob).all()
-            assert len(jobs) == (0 if trigger == "manual" else 1)
+            jobs = db.query(orm.AnalysisJob).filter_by(user_id="owner", target_date=DAY).all()
+            assert len(jobs) == 1
     finally:
         client.close()
 

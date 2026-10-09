@@ -12,7 +12,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "skills" / "vitalis" / "references" / "api.md"
 BASE_OPERATIONS = frozenset({
-    "get_data_status", "get_report", "create_analysis_run", "get_job",
+    "get_data_status", "get_report", "get_public_report_view", "get_report_state", "create_analysis_run", "get_job",
     "create_sync_job", "list_workouts", "get_workout", "create_feedback",
 })
 SKILL_SCRIPT = ROOT / "skills" / "vitalis" / "scripts" / "vitalis_api.py"

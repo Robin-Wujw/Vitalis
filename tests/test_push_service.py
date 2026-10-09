@@ -211,9 +211,9 @@ def test_evening_push_uses_top_metrics_and_actual_training_facts():
     message = _sent(lambda service: service.push_daily_profile("test-user", _daily_payload(), period="evening"))
     text = _visible_text(message.body)
     assert message.template == "markdown"
-    assert message.title.startswith("Vitalis 日报 ·")
+    assert message.title.startswith("Vitalis 晚报 ·")
     assert "2026-09-05" not in message.title
-    assert message.body.startswith("# 日报 ·")
+    assert message.body.startswith("# 晚报 ·")
     assert "2026-09-05 · 数据截至" in text
     assert "户外跑" in text and "45 分钟" in text and "7.10 公里" in text
     training_section = next(section for section in message.extras["sections"] if section["key"] == "training")
@@ -297,7 +297,7 @@ def test_html_report_escapes_user_controlled_values():
     assert '<img src="x"' not in message.body
     assert message.template == "html"
     assert message.extras["template"] == "html"
-    assert message.extras["renderer_version"] == "2.0"
+    assert message.extras["renderer_version"] == "4.0"
     assert message.extras["content_sha256"]
 
 
@@ -359,7 +359,7 @@ def test_weekly_push_renders_sections_coverage_changes_and_recommendations(role,
     message = received[0]
     text = _visible_text(message.body)
     assert message.extras["period"] == "weekly"
-    assert "关键记录" in text and "下周重点" in text
+    assert "睡眠" in text and "下周重点" in text
     internal = "\n".join(
         fact for section in message.extras["sections"] for fact in section["facts"]
     )
@@ -387,11 +387,11 @@ def test_monthly_push_uses_same_report_sections_and_noncausal_association():
     message = received[0]
     text = _visible_text(message.body)
     assert message.extras["period"] == "monthly"
-    assert "关键记录" in text and "下月重点" in text
+    assert "睡眠" in text and "下月重点" in text
     titles = [section["title"] for section in message.extras["sections"]]
     assert titles == ["训练与睡眠覆盖", "持续恢复变化", "训练结构、活动与能量", "个人数据关联", "下月建议"]
     assert "个人数据关联" in str(message.extras["sections"])
-    assert "不表示因果" not in text
+    assert "个人数据关联" in text and "不表示因果" in text
 
 
 def test_reports_group_data_notes_without_repeating_summary_or_generic_limits():
@@ -549,7 +549,7 @@ def test_retrospective_evening_has_no_current_or_future_prescription():
     rendered = render_report(EveningBriefingEngine().build(payload), target="markdown")
     text = rendered.content
     title = rendered.title
-    assert title.startswith("Vitalis 日报 ·")
+    assert title.startswith("Vitalis 晚报 ·")
     assert "2026-09-05" not in title
     assert "2026-09-05 · 数据截至" in text
     assert "## 今晚恢复" not in text and "## 明天衔接" not in text

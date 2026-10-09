@@ -73,9 +73,13 @@ TrainingLoadPause = PauseInterval
 class LoadWorkoutBatch(list[LoadWorkout]):
     """Bounded workout inputs with explicit truncation metadata."""
 
-    def __init__(self, values: Iterable[LoadWorkout] = (), *, truncated: bool = False):
+    def __init__(
+        self, values: Iterable[LoadWorkout] = (), *, truncated: bool = False,
+        summary_truncated: bool = False,
+    ):
         super().__init__(values)
-        self.truncated = truncated
+        self.truncated = truncated or summary_truncated
+        self.summary_truncated = summary_truncated
 
 
 @dataclass(frozen=True)

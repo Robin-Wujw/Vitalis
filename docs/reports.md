@@ -9,7 +9,8 @@ Vitalis 报告从已保存快照读取事实、比较、分析和建议。缺失
 | 类型 | 默认范围 | 重点 |
 | --- | --- | --- |
 | 晨报 | 目标日前一夜和可用晨间事实 | 先看睡眠，再说明当天重点；可选指标缺失不阻塞其它事实。 |
-| 日报 | 目标本地日 | 总览当天活动、睡眠和已记录训练；训练明细只展示真实组次和单位。 |
+| 日报 | 目标本地日 | 保存分析时的睡眠、活动、训练、恢复、覆盖和版本信息，可审计、可回看。 |
+| 晚报 | 目标本地日 | 面向阅读复盘当天活动和训练，给出明日重点；不替代日报完整快照。 |
 | 周报 | 目标日所在周之前的上一完整本地周 | 解释持续变化及其主要来源，不把缺失日当休息日。 |
 | 月报 | 目标日所在月之前的上一完整本地月 | 使用正确日均或频率比较方向，不只比较不同月长的总量。 |
 
@@ -21,18 +22,18 @@ Vitalis 报告从已保存快照读取事实、比较、分析和建议。缺失
 
 先看标题、日期和数据截止时刻，再看关键指标和变化。分析只解释数据支持的变化，建议只引用已有决策或事实。可选 HRV 缺失时省略 HRV，不添加全局限制段落；某一比较数据不足时只在该比较处说明，活动分析仍可继续。
 
-报告 JSON 保留版本、`analysis_run_id`、`data_quality`、事实、特征、趋势、事件和决策字段。Markdown 和保守的 inline HTML 由同一展示模型分别直接渲染；HTML 不是把 Markdown 再转换一遍，也不重新查数据库或计算健康指标。两种输出的事实、单位、日期和缺口应保持一致。数据不足的报告仍应直接可读，但不提供没有证据的训练建议。
+报告 JSON 保留版本、`analysis_run_id`、`data_quality`、事实、特征、趋势、事件和决策字段。普通报告的 `report_context.report_state` 还会说明 `current`、`stale`、`queued`、`running` 或 `failed`，并提供同日期的 `last_good_snapshot`、任务标识和下一步；上一版事实不会伪装成当前结果。需要只读状态时使用 `GET /api/reports/{kind}/state` 或 Skill 的 `report … --state`。Markdown 和保守的 inline HTML 由同一展示模型分别直接渲染；HTML 不是把 Markdown 再转换一遍，也不重新查数据库或计算健康指标。两种输出的事实、单位、日期和缺口应保持一致。数据不足的报告仍应直接可读，但不提供没有证据的训练建议。
 
 ## 本地导出与 API
 
 从仓库根目录、已有 demo 数据库执行：
 
 ```powershell
-uv run --locked --extra dev vitalis report morning --user demo --day 2026-10-07 --format markdown --output .\morning.md
-uv run --locked --extra dev vitalis report weekly --user demo --day 2026-10-07 --format html --output .\weekly.html
+uv run --locked --extra dev vitalis report daily --user demo --day 2026-10-07 --format markdown --output .\daily.md
+uv run --locked --extra dev vitalis report evening --user demo --day 2026-10-07 --format html --output .\evening.html
 ```
 
-导出是纯预览，要求输出路径不存在。HTTP 使用 `GET /api/reports/{kind}?day=YYYY-MM-DD` 和 Bearer 令牌读取已保存快照；GET 不启动同步或分析。没有快照返回 404。API 当前还提供 `evening`、`weekly-briefing` 和 `monthly-briefing` 的读取路径，字段以 `/openapi.json` 为准。
+导出是纯预览，要求输出路径不存在。HTTP 使用 `GET /api/reports/{kind}?day=YYYY-MM-DD` 和 Bearer 令牌读取已保存快照；GET 不启动同步或分析。没有快照返回 404。API 的 `daily` 返回完整 `DailyProfile` 事实快照，`evening` 返回面向阅读的晚报投影；还提供 `weekly-briefing` 和 `monthly-briefing` 的读取路径，字段以 `/openapi.json` 为准。
 
 ## PushPlus
 

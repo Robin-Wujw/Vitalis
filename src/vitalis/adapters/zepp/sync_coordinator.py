@@ -46,6 +46,9 @@ from vitalis.adapters.persistence.repositories import (
     SourceIdentityConflict,
     SyncIdempotencyConflict,
 )
+from vitalis.adapters.persistence.source_journal import (
+    stage_dense_archive, stage_sync_record, sync_journal_context,
+)
 from vitalis.time import local_day
 from vitalis.adapters.persistence.database import SessionLocal
 from vitalis.adapters.persistence import models as orm
@@ -185,6 +188,7 @@ class _ChunkResult:
     error: Exception | None = None
     incomplete: bool = False
     incomplete_reason: str | None = None
+    fetched_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -502,11 +506,10 @@ class ZeppSyncCoordinator:
         repository: HealthRepository | None = None,
     ) -> orm.SyncAttempt | None:
         options = dict(options or {})
-        # The offline connector is an explicit synthetic source; real mode still
-        # requires an active SourceAccount at repository attempt creation.
-        from vitalis.config import settings
-        if settings.zepp_mock:
-            options.setdefault("mock_source", True)
+        mode = self._source_mode()
+        if options.get("source_mode", mode) != mode:
+            raise ZeppAuthError("同步请求来源模式与连接器不一致", kind="invalid_request")
+        options["source_mode"] = mode
         for name in ("workout_only", "detail_only"):
             if not isinstance(options.get(name, False), bool):
                 raise ZeppAuthError(f"{name} 必须是布尔值", kind="invalid_request")
@@ -612,6 +615,18 @@ class ZeppSyncCoordinator:
             monotonic_clock=self.monotonic_clock,
             slice_seconds=30.0,
         )
+
+    def _source_mode(self) -> str:
+        from vitalis.config import settings
+
+        mode = getattr(self.connector, "source_mode", None)
+        if mode is None:
+            mode = "mock" if getattr(self.connector, "mock", settings.zepp_mock) else "real"
+        if mode not in {"real", "mock"} or (
+            settings.env not in {"dev", "test"} and mode != "real"
+        ):
+            raise ZeppAuthError("当前环境不允许该同步来源模式", kind="invalid_request")
+        return mode
 
     def _connector_for(self, user_id: str) -> tuple[Any, bool]:
         if self.connector is not None:
@@ -1067,6 +1082,7 @@ class ZeppSyncCoordinator:
     def _finalize_success(self, attempt: dict[str, Any], claim: _ClaimedChunk, result: _ChunkResult, connector: Any) -> bool:
         chunk = claim.chunk
         now = self.wall_clock()
+        fetched_at = result.fetched_at or now
         user = User(id=attempt["user_id"])
         report: StreamReport | None = None
         dense_written = 0
@@ -1074,19 +1090,32 @@ class ZeppSyncCoordinator:
             decoded = result.decoded
             with self._session() as db:
                 repo = HealthRepository(db)
+                journal = stage_dense_archive(repo, attempt["id"], chunk, result.archive, fetched_at=fetched_at)
+                if journal is not None:
+                    db.info["active_source_record_id"] = journal.id
                 dense_written = repo.save_dense_data_files(decoded.files) + repo.save_metric_samples(decoded.samples)
                 stages = {**chunk["stages"], "fetch_status": "success", "parse_status": "success", "write_status": "success"}
                 if not repo.finalize_chunk(claim.lease.entity_id, claim.lease.token, claim.lease.epoch, "succeeded", now=now, stages=stages, raw_records=result.raw_records, records_written=dense_written):
                     raise StaleSyncLease("dense archive chunk lease expired before finalize")
-                repo.save_sync_stream_state(attempt["user_id"], chunk["health_stream"] or "heart_rate/dense_archive", fetch_status="success", parse_status="success", write_status="success", fetched_at=now, parsed_at=now, written_at=now, raw_records=result.raw_records, records_written=dense_written, attempt_id=attempt["id"])
+                repo.save_sync_stream_state(attempt["user_id"], chunk["health_stream"] or "heart_rate/dense_archive", fetch_status="success", parse_status="success", write_status="success", fetched_at=fetched_at, parsed_at=now, written_at=now, raw_records=result.raw_records, records_written=dense_written, attempt_id=attempt["id"])
             return True
         if result.record is not None and chunk["stream"] == "devices":
             devices = ZeppParser().parse_devices(result.record.raw.payload)
             with self._session() as db:
                 repo = HealthRepository(db)
+                db.info["source_journal_context"] = sync_journal_context(repo, attempt["id"], fetched_at=fetched_at)
+                journal = stage_sync_record(repo, user, result.record, None, fetched_at=fetched_at)
+                if journal is not None:
+                    db.info["active_source_record_id"] = journal.id
                 for device in devices:
                     device.user_id = attempt["user_id"]
-                    repo.upsert_device(device)
+                    repo.upsert_device(
+                        device,
+                        target_date=(
+                            local_day(chunk["window_start"], attempt.get("timezone") or None)
+                            if chunk.get("window_start") is not None else None
+                        ),
+                    )
                 stages = {
                     **chunk["stages"], "fetch_status": "success",
                     "parse_status": "success", "write_status": "success",
@@ -1099,7 +1128,7 @@ class ZeppSyncCoordinator:
                     raise StaleSyncLease("device chunk lease expired before finalize")
                 repo.save_sync_stream_state(
                     attempt["user_id"], "devices", fetch_status="success",
-                    parse_status="success", write_status="success", fetched_at=now,
+                    parse_status="success", write_status="success", fetched_at=fetched_at,
                     parsed_at=now, written_at=now, raw_records=1,
                     records_written=len(devices), attempt_id=attempt["id"],
                 )
@@ -1111,7 +1140,8 @@ class ZeppSyncCoordinator:
             )
             with self._session() as db:
                 repo = HealthRepository(db)
-                report = manager._persist_record(result.record, repo, user)
+                db.info["source_journal_context"] = sync_journal_context(repo, attempt["id"], fetched_at=fetched_at)
+                report = manager._persist_record(result.record, repo, user, fetched_at=fetched_at)
                 if (
                     chunk["stream"] == "workout_detail"
                     and attempt.get("options", {}).get("detail_only") is True
@@ -1261,6 +1291,7 @@ class ZeppSyncCoordinator:
                     claim.chunk, control, connector,
                     attempt.get("timezone") or "UTC",
                 )
+                result.fetched_at = self.wall_clock()
                 control.check()
                 if claim.chunk["stream"] == "dense_archive" and result.archive is not None:
                     # Fetching is outside a transaction; decoding is also completed before write commit.
@@ -1294,49 +1325,78 @@ class ZeppSyncCoordinator:
     def _enqueue_scheduled_analysis_job(
         self, db, attempt: dict[str, Any], terminal_status: str
     ) -> None:
-        """Write the scheduled analysis request before terminal sync commit."""
-        if terminal_status not in {"succeeded", "partial"}:
+        """Write one scoped analysis request before terminal sync commit.
+
+        Manual and connection flows use the same durable queue as scheduled
+        reports.  The sync window and stream manifest are retained on the job so
+        partial/cancelled attempts remain auditable without mutating snapshots.
+        """
+        if terminal_status not in {
+            "succeeded", "partial", "failed", "needs_reauth", "cancelled",
+        }:
             return
         trigger = attempt.get("trigger")
         if trigger == "nightly":
             delivery_period = None
         elif trigger in {"morning", "evening", "weekly", "monthly"}:
             delivery_period = trigger
+        elif trigger in {"manual", "pairing_initial", "oauth_callback", "token_import"}:
+            delivery_period = None
         else:
             return
+        timezone_name = attempt.get("timezone") or None
+        window_start = attempt["window_start"]
         window_end = attempt["window_end"]
+        if window_start.tzinfo is None:
+            window_start = window_start.replace(tzinfo=timezone.utc)
         if window_end.tzinfo is None:
             window_end = window_end.replace(tzinfo=timezone.utc)
         target_date = local_day(
-            window_end - timedelta(microseconds=1),
-            attempt.get("timezone") or None,
+            window_end - timedelta(microseconds=1), timezone_name
         )
-        key = f"scheduled-sync:{attempt['id']}:{target_date.isoformat()}:{delivery_period or '-'}"
-        request_hash = hashlib.sha256(
-            f"analyze:v2:{target_date.isoformat()}:{delivery_period or '-'}".encode("ascii")
-        ).hexdigest()
-        existing = db.execute(select(orm.AnalysisJob).where(
-            orm.AnalysisJob.user_id == attempt["user_id"],
-            orm.AnalysisJob.idempotency_key == key,
-        )).scalar_one_or_none()
-        if existing is not None:
-            if (
-                existing.target_date != target_date
-                or existing.request_hash != request_hash
-                or existing.delivery_period != delivery_period
-            ):
-                raise RuntimeError("scheduled analysis request identity conflict")
+        affected_dates = {
+            local_day(window_start, timezone_name),
+            local_day(window_end - timedelta(microseconds=1), timezone_name),
+        }
+        affected_streams: set[str] = set()
+        chunks = HealthRepository(db).sync_chunks(attempt["id"])
+        if terminal_status in {"failed", "needs_reauth", "cancelled"} and not any(
+            (chunk.records_written or 0) > 0 for chunk in chunks
+        ):
             return
-        db.add(orm.AnalysisJob(
-            id=hashlib.sha256(key.encode("utf-8")).hexdigest(),
-            user_id=attempt["user_id"],
-            target_date=target_date,
-            status="queued",
+        for chunk in chunks:
+            affected_streams.add(chunk.health_stream or chunk.stream)
+            if chunk.window_start is not None:
+                start = chunk.window_start.replace(tzinfo=timezone.utc)
+                affected_dates.add(local_day(start, timezone_name))
+            if chunk.window_end is not None:
+                end = chunk.window_end.replace(tzinfo=timezone.utc)
+                affected_dates.add(local_day(end - timedelta(microseconds=1), timezone_name))
+        key = f"sync-analysis:{attempt['id']}:{target_date.isoformat()}:{delivery_period or '-'}"
+        event_type = {
+            "pairing_initial": "pairing_initial_sync",
+            "oauth_callback": "oauth_callback_sync",
+            "token_import": "token_import_sync",
+        }.get(trigger, "sync_completion")
+        repository = HealthRepository(db)
+        if delivery_period is not None and repository.promote_queued_sync_analysis_job(
+            attempt["user_id"],
+            target_date,
+            delivery_period,
+            reason=f"{trigger} sync reached {terminal_status}",
+        ) is not None:
+            return
+        repository.enqueue_analysis_job(
+            attempt["user_id"],
+            target_date,
+            event_type=event_type,
+            source="zepp",
+            affected_dates=affected_dates,
+            affected_streams=affected_streams,
+            reason=f"{trigger} sync reached {terminal_status}",
             idempotency_key=key,
-            request_hash=request_hash,
             delivery_period=delivery_period,
-        ))
-        db.flush()
+        )
 
     def _finish_attempt(self, attempt: dict[str, Any], token: str, epoch: int, *, timeout: bool = False) -> str:
         now = self.wall_clock()
@@ -1496,6 +1556,12 @@ class ZeppSyncCoordinator:
                     break
                 if connector is None:
                     try:
+                        if attempt["options"].get("source_mode") != self._source_mode():
+                            raise ZeppAuthError("排队任务来源模式与当前连接器不一致", kind="invalid_request")
+                        with self._session() as db:
+                            mode = HealthRepository(db).source_mode(attempt["user_id"])
+                        if mode != attempt["options"]["source_mode"]:
+                            raise ZeppAuthError("数据集来源模式与排队任务不一致", kind="invalid_request")
                         connector, owned_connector = self._connector_for(attempt["user_id"])
                     except Exception as exc:
                         terminal = self._finalize_error(attempt, claim, exc)

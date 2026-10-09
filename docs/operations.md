@@ -10,8 +10,8 @@
 
 | 配置 | 默认值 | 作用 |
 | --- | --- | --- |
-| `ZEPP_MOCK` | `true` | 离线 mock；真实 Zepp 必须显式设 `false`。 |
-| `VITALIS_ENV` | `dev` | 运行环境标识；`test` 只用于测试。 |
+| `ZEPP_MOCK` | dev/test 为 `true`，prod/production 为 `false` | 生产拒绝 `true`；真实模式需要有效加密密钥。 |
+| `VITALIS_ENV` | `dev` | 只接受 dev、test、prod、production；生产环境必须显式配置。 |
 | `DATABASE_URL` | `sqlite:///./vitalis.db` | 当前数据库；演示请改到新路径。 |
 | `VITALIS_TIMEZONE` | `Asia/Shanghai` | 本地日历边界和调度时区。 |
 | `HOST` / `PORT` | `127.0.0.1` / `8000` | API 监听地址。 |
@@ -37,7 +37,7 @@ uv run --locked --extra dev vitalis db init
 uv run --locked --extra dev vitalis doctor
 ```
 
-`db init` 建立当前 schema；`doctor` 输出 schema、数据库后端、时区和 worker 心跳状态，不输出秘密。启动 API 和 worker 应使用相同环境：
+`db init` 建立当前 `2026-10-scoped-analysis-inputs` schema；`doctor` 输出 schema、数据库后端、时区和 worker 心跳状态，不输出秘密。旧 schema 不自动迁移，候选库流程见[部署](deployment.md)。启动 API 和 worker 应使用相同环境：
 
 ```powershell
 uv run --locked --extra dev vitalis serve

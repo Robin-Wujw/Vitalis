@@ -53,6 +53,8 @@ class MockDataFetcher:
 
     def __init__(self):
         self.calls: list[str] = []
+        # Synthetic persistence must carry an explicit source mode.
+        self.connector = SimpleNamespace(source_mode="mock")
 
     def fetch_heart_rate_records(self, window: FetchWindow) -> list[FetchedRecord]:
         self.calls.append("heart_rate")
@@ -174,7 +176,7 @@ def test_mock_connector_honors_explicit_fetch_window(setup_db, monkeypatch):
     monkeypatch.setattr(connector, "_mock_fetch", fetch)
     window = FetchWindow.local_dates(date(2025, 1, 3), date(2025, 1, 21))
     report = connector.sync_with_report(
-        User(id="mock-window-user"), window=window, attempt_id="missing-mock-attempt"
+        User(id="mock-window-user"), window=window
     )
 
     assert report.success is True
@@ -193,7 +195,7 @@ def test_mock_connector_honors_requested_days_without_fourteen_day_cap(
 
     monkeypatch.setattr(connector, "_mock_fetch", fetch)
     connector.sync_with_report(
-        User(id="mock-days-user"), days=21, attempt_id="missing-mock-attempt-days"
+        User(id="mock-days-user"), days=21
     )
 
     assert (captured["end"] - captured["start"]).days + 1 == 21
@@ -275,6 +277,8 @@ class TestSyncManager:
         self, mock_fetcher, setup_db
     ):
         class InventoryClient:
+            source_mode = "mock"
+
             @staticmethod
             def fetch_devices():
                 return {"items": [{

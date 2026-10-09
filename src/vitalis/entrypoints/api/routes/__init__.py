@@ -4,5 +4,6 @@ from .current import router as current_router
 from .health import router as health_router
 from .intelligence import router as intelligence_router
 from .zepp_pairing import router as zepp_pairing_router
+from .product import router as product_router
 
-__all__ = ["connect_router", "current_router", "health_router", "intelligence_router", "zepp_pairing_router"]
+__all__ = ["connect_router", "current_router", "health_router", "intelligence_router", "zepp_pairing_router", "product_router"]

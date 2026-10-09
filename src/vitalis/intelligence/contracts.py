@@ -18,9 +18,9 @@ MONTHLY_SCHEMA_VERSION = "3.0"
 INTELLIGENCE_VERSION = "14.0"
 DECISION_POLICY_VERSION = "9.0"
 EVIDENCE_VERSION = "2026-09a"
-TRAINING_RESPONSE_SCHEMA_VERSION = "1.0"
-PERSONAL_MODEL_SCHEMA_VERSION = "2.0"
-ASSOCIATION_SCHEMA_VERSION = "1.0"
+TRAINING_RESPONSE_SCHEMA_VERSION = "2.0"
+PERSONAL_MODEL_SCHEMA_VERSION = "3.0"
+ASSOCIATION_SCHEMA_VERSION = "2.0"
 USER_PROFILE_SCHEMA_VERSION = "1.0"
 AGENT_CONTEXT_SCHEMA_VERSION = "6.0"
 DECISION_EXPLANATION_SCHEMA_VERSION = "1.0"
@@ -199,6 +199,13 @@ class MeasurementFact(BaseModel):
     observed_at: datetime | date
     provenance: Provenance
 
+    @field_validator("observed_at", mode="before")
+    @classmethod
+    def preserve_date_precision(cls, value: object) -> object:
+        if isinstance(value, str) and len(value) == 10:
+            return date.fromisoformat(value)
+        return value
+
 
 class Coverage(BaseModel):
     metric: str
@@ -278,7 +285,7 @@ class Deviation(BaseModel):
 class TrendFeature(BaseModel):
     metric: str
     metric_label: str
-    window_days: Literal[7, 28, 29, 30, 31, 90]
+    window_days: Literal[7, 28, 29, 30, 31, 60, 90]
     source: str
     source_scope: str
     device_id: str | None = None
@@ -289,11 +296,35 @@ class TrendFeature(BaseModel):
     previous_distinct_days: int = Field(ge=0)
     minimum_days: int = Field(ge=1)
     coverage_ratio: float = Field(ge=0, le=1)
+    period_start: DateValue | None = None
+    period_end: DateValue | None = None
+    reference_period_start: DateValue | None = None
+    reference_period_end: DateValue | None = None
+    expected_days: int = Field(default=0, ge=0)
+    previous_expected_days: int = Field(default=0, ge=0)
+    previous_coverage_ratio: float = Field(default=0, ge=0, le=1)
+    comparison_available: bool = False
+    comparison_basis: Literal["preceding_window", "unavailable"] = "unavailable"
+    current_value: float | None = None
     current_median: float | None = None
     previous_median: float | None = None
     change_percent: float | None = None
+    change_absolute: float | None = None
     slope_per_day: float | None = None
     variability_mad: float | None = None
+    current_sample_count: int = Field(default=0, ge=0)
+    previous_sample_count: int = Field(default=0, ge=0)
+    current_expected_samples: int = Field(default=0, ge=0)
+    previous_expected_samples: int = Field(default=0, ge=0)
+    sample_coverage_ratio: float = Field(default=0, ge=0, le=1)
+    previous_sample_coverage_ratio: float = Field(default=0, ge=0, le=1)
+    sample_unit: str | None = None
+    calendar_semantics: str = "calendar_day"
+    qualification: str | None = None
+    weight_basis: str | None = None
+    exercise_id: str | None = None
+    observed_at: datetime | date | None = None
+    as_of: datetime | None = None
     direction: TrendDirection
     direction_label: str
     confidence: ConfidenceBand
@@ -1382,20 +1413,56 @@ class PersonalAssociation(BaseModel):
     outcome_unit: str
     lag_days: Literal[0, 1]
     window_days: Literal[60, 90]
+    predictor_day_semantics: Literal["calendar_day", "sleep_day", "activity_day"] = "calendar_day"
+    outcome_day_semantics: Literal["calendar_day", "sleep_day", "activity_day"] = "calendar_day"
+    pairing_rule: Literal[
+        "same_calendar_day",
+        "same_sleep_day",
+        "same_activity_day",
+        "sleep_day_d_to_calendar_day_d_plus_1",
+        "activity_day_d_to_sleep_day_d_plus_1",
+        "activity_day_d_to_calendar_day_d_plus_1",
+        "calendar_day_d_to_sleep_day_d_plus_1",
+    ] = "same_calendar_day"
+    hypothesis_id: str = ""
+    hypothesis_rationale: str = ""
+    period_start: DateValue | None = None
+    period_end: DateValue | None = None
+    as_of: datetime | None = None
+    expected_days: int = Field(default=0, ge=0)
+    expected_pair_days: int = Field(default=0, ge=0)
     paired_days: int = Field(ge=0)
+    analyzed_pair_days: int = Field(default=0, ge=0)
+    sample_count: int = Field(default=0, ge=0)
     minimum_paired_days: int = Field(ge=1)
     coverage_ratio: float = Field(ge=0, le=1)
+    analyzed_coverage_ratio: float = Field(default=0, ge=0, le=1)
     method: Literal["SPEARMAN"] = "SPEARMAN"
     coefficient: float | None = Field(default=None, ge=-1, le=1)
+    confidence: ConfidenceBand
+    confidence_label: str
+    p_value: float | None = Field(default=None, ge=0, le=1)
+    q_value: float | None = Field(default=None, ge=0, le=1)
+    p_value_method: str | None = None
+    permutation_count: int = Field(default=0, ge=0)
+    permutation_block_days: int | None = Field(default=None, ge=1)
+    permutation_seed: int | None = Field(default=None, ge=0)
+    fdr_method: Literal["BENJAMINI_HOCHBERG"] = "BENJAMINI_HOCHBERG"
+    fdr_significant: bool = False
+    family_id: str = "personal_association_v1"
+    family_size: int = Field(default=0, ge=0)
+    tested_count: int = Field(default=0, ge=0)
     direction: Literal["POSITIVE", "NEGATIVE", "NEUTRAL", "INSUFFICIENT_DATA"]
     direction_label: str
     strength: Literal["WEAK", "MODEST", "MODERATE", "STRONG", "INSUFFICIENT_DATA"]
     strength_label: str
-    confidence: ConfidenceBand
-    confidence_label: str
     predictor_median: float | None = None
     outcome_median: float | None = None
     confounded_pair_days: int = Field(default=0, ge=0)
+    confounded_ratio: float = Field(default=0, ge=0, le=1)
+    confounding_unknown_pair_days: int = Field(default=0, ge=0)
+    confounding_policy: str = "exclude_known_training_overlap"
+    gate_reasons: list[str] = Field(default_factory=list)
     summary: str
     limitations: list[str] = Field(default_factory=list)
     association_only: Literal[True] = True
@@ -1410,6 +1477,13 @@ class PersonalAssociationProfile(BaseModel):
     user_id: str
     date: DateValue
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    period_start: DateValue | None = None
+    period_end: DateValue | None = None
+    as_of: datetime | None = None
+    family_id: str = "personal_association_v1"
+    family_size: int = Field(default=0, ge=0)
+    tested_count: int = Field(default=0, ge=0)
+    fdr_method: Literal["BENJAMINI_HOCHBERG"] = "BENJAMINI_HOCHBERG"
     associations: list[PersonalAssociation] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
 
@@ -1679,6 +1753,7 @@ class ExplanationSnapshotProvenance(BaseModel):
     decision_policy_version: str
     evidence_version: str
     data_quality: DataQuality
+    report_state: dict[str, Any] = Field(default_factory=dict)
 
 
 class DecisionExplanation(BaseModel):
@@ -1869,37 +1944,146 @@ class RecommendationInstance(BaseModel):
     completed_at: datetime | None = None
 
 
+TrainingWindowStatus = Literal["not_due", "missing", "partial", "available", "confounded"]
+
+
+class TrainingDoseMetric(BaseModel):
+    """A dose component with its own units and evidence denominator."""
+
+    metric: str
+    value: float | None = Field(default=None, allow_inf_nan=False)
+    unit: str
+    source: str
+    source_scope: str
+    device_id: str | None = None
+    source_field: str | None = None
+    observed_at: datetime | date | None = None
+    fetched_at: datetime | None = None
+    as_of: datetime | None = None
+    status: Literal["missing", "partial", "available"]
+    observed: int = Field(ge=0)
+    expected: int = Field(ge=0)
+    coverage: float | None = Field(default=None, ge=0, le=1)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class TrainingDoseQuality(BaseModel):
+    """Evidence coverage for a workout dose; absent fields remain unknown."""
+
+    status: Literal["missing", "partial", "available"]
+    status_label: str = ""
+    source: str | None = None
+    source_scope: str | None = None
+    as_of: datetime | date | None = None
+    observed_fields: list[str] = Field(default_factory=list)
+    expected_fields: list[str] = Field(default_factory=list)
+    observations: list[TrainingDoseMetric] = Field(default_factory=list)
+    observed: int = Field(ge=0)
+    expected: int = Field(ge=0)
+    coverage: float = Field(ge=0, le=1)
+    limitations: list[str] = Field(default_factory=list)
+
+
 class WorkoutExposure(BaseModel):
     workout_id: str
     source: str = "zepp"
+    source_scope: str = "workout_summary"
     date: DateValue
+    observed_at: datetime | date | None = None
+    as_of: datetime | date | None = None
     type: str
     sport_mode: str
     sport_mode_label: str
     training_family: str
     training_family_label: str
-    duration_minutes: int = Field(ge=0)
+    duration_minutes: int | None = Field(default=None, ge=0)
     vendor_load: float | None = Field(default=None, ge=0)
     heart_rate_avg_bpm: int | None = Field(default=None, ge=1)
     heart_rate_max_bpm: int | None = Field(default=None, ge=1)
+    sets: int | None = Field(default=None, ge=1)
+    repetitions_total: int | None = Field(default=None, ge=1)
+    repetitions_by_set: list[int | None] = Field(default_factory=list)
+    vendor_reported_sets: int | None = Field(default=None, ge=1)
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    fetched_at: datetime | None = None
+    observed_fields: list[str] = Field(default_factory=list)
+    dose_quality: TrainingDoseQuality | None = None
 
 
 class ResponseMetricObservation(BaseModel):
     metric: str
+    source: str | None = None
+    source_scope: str | None = None
     device_id: str | None = None
     unit: str
+    calendar_semantics: Literal["calendar_day", "sleep_day"] = "calendar_day"
+    as_of: datetime | None = None
+    observed_at: datetime | date | None = None
+    fetched_at: datetime | None = None
+    source_fields: list[str] = Field(default_factory=list)
     status: Availability
-    baseline_reference: float | None = None
-    value: float | None = None
-    deviation_percent: float | None = None
+    value: float | None = Field(default=None, allow_inf_nan=False)
+    baseline: float | None = Field(default=None, allow_inf_nan=False)
+    deviation: float | None = Field(default=None, allow_inf_nan=False)
+    coverage: float | None = Field(default=None, ge=0, le=1)
+    observed: int = Field(default=0, ge=0, le=1)
+    expected: int = Field(default=1, ge=0, le=1)
+    sample_count: int = Field(default=0, ge=0)
+    baseline_window_days: Literal[28] = 28
+    baseline_observed_days: int = Field(default=0, ge=0, le=28)
+    baseline_expected_days: Literal[28] = 28
+    baseline_coverage: float = Field(default=0, ge=0, le=1)
+    confidence: ConfidenceBand = ConfidenceBand.NONE
+    baseline_reference: float | None = Field(default=None, allow_inf_nan=False)
+    deviation_percent: float | None = Field(default=None, allow_inf_nan=False)
+    robust_z: float | None = Field(default=None, allow_inf_nan=False)
     direction: Literal["above", "near", "below", "unknown"] = "unknown"
+    limitations: list[str] = Field(default_factory=list)
+
+    @field_validator("observed_at", mode="before")
+    @classmethod
+    def preserve_observation_date(cls, value: object) -> object:
+        if isinstance(value, str) and len(value) == 10:
+            return date.fromisoformat(value)
+        return value
+
+    @model_validator(mode="after")
+    def validate_denominator(self):
+        if self.observed > self.expected:
+            raise ValueError("response observation exceeds its due denominator")
+        return self
 
 
 class TrainingResponseDay(BaseModel):
-    day_offset: Literal[1, 2, 3]
+    day_offset: Literal[0, 1, 2, 3]
     date: DateValue
+    calendar_semantics: Literal["activity_day"] = "activity_day"
+    status: TrainingWindowStatus = "missing"
+    status_label: str = ""
+    as_of: datetime | None = None
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+    coverage: float | None = Field(default=None, ge=0, le=1)
+    observed: int = Field(default=0, ge=0)
+    expected: int = Field(default=0, ge=0)
+    comparable_count: int = Field(default=0, ge=0)
     observations: list[ResponseMetricObservation] = Field(default_factory=list)
+    feedback: list[SubjectiveFeedback] = Field(default_factory=list)
     overlapping_workout_ids: list[str] = Field(default_factory=list)
+    confounding_reasons: list[str] = Field(default_factory=list)
+    training_history_verified: bool | None = None
+    confidence: ConfidenceBand = ConfidenceBand.NONE
+    dose_quality: TrainingDoseQuality | None = None
+    limitations: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_denominator(self):
+        if self.observed > self.expected or self.comparable_count > self.observed:
+            raise ValueError("training window counts exceed their denominator")
+        if self.status == "not_due" and (self.observed or self.expected):
+            raise ValueError("not_due windows have no due denominator")
+        return self
 
 
 class TrainingResponse(BaseModel):
@@ -1911,16 +2095,33 @@ class TrainingResponse(BaseModel):
     response_days: list[TrainingResponseDay] = Field(default_factory=list)
     missing_windows: list[str] = Field(default_factory=list)
     overlapping_workout_ids: list[str] = Field(default_factory=list)
+    confounding_reasons: list[str] = Field(default_factory=list)
     recovery_status: RecoveryOutcome
     recovery_status_label: str
     recovery_hours: int | None = Field(default=None, ge=0)
+    initial_recovery_offset: Literal[1, 2, 3] | None = None
+    initial_recovery_hours: int | None = Field(default=None, ge=0)
+    sustained_recovery_status: Literal[
+        "sustained", "not_sustained", "not_due", "insufficient_data", "confounded"
+    ] = "insufficient_data"
+    sustained_recovery_offset: Literal[1, 2, 3] | None = None
+    sustained_recovery_hours: int | None = Field(default=None, ge=0)
+    sustained_through_offset: Literal[2, 3] | None = None
+    recovery_time_basis: Literal["calendar_day_offset"] = "calendar_day_offset"
+    recovery_evaluable_windows: int = Field(default=0, ge=0, le=3)
+    recovery_expected_windows: int = Field(default=0, ge=0, le=3)
+    as_of: datetime | None = None
     confidence: ConfidenceBand
     confidence_label: str
+    coverage: float | None = Field(default=None, ge=0, le=1)
+    observed: int = Field(default=0, ge=0)
+    expected: int = Field(default=0, ge=0)
     limitations: list[str] = Field(default_factory=list)
+    association_only: Literal[True] = True
 
 
 class TrainingResponseProfile(BaseModel):
-    schema_version: str = TRAINING_RESPONSE_SCHEMA_VERSION
+    schema_version: Literal["2.0"] = TRAINING_RESPONSE_SCHEMA_VERSION
     analysis_run_id: str
     intelligence_version: str = INTELLIGENCE_VERSION
     decision_policy_version: str = DECISION_POLICY_VERSION
@@ -1933,13 +2134,50 @@ class TrainingResponseProfile(BaseModel):
 
 class PersonalMetricStats(BaseModel):
     metric: str
+    source: str | None = None
+    source_scope: str | None = None
     device_id: str | None = None
     unit: str
-    median: float | None = None
-    mad: float | None = None
+    input_unit: str | None = None
+    calendar_semantics: Literal["calendar_day", "sleep_day", "activity_day"] = "calendar_day"
+    day_offset: Literal[0, 1, 2, 3] | None = None
+    as_of: datetime | None = None
+    median: float | None = Field(default=None, allow_inf_nan=False)
+    mad: float | None = Field(default=None, allow_inf_nan=False)
+    percentile_25: float | None = Field(default=None, allow_inf_nan=False)
+    percentile_75: float | None = Field(default=None, allow_inf_nan=False)
+    minimum: float | None = Field(default=None, allow_inf_nan=False)
+    maximum: float | None = Field(default=None, allow_inf_nan=False)
     sample_count: int = Field(ge=0)
+    observed_count: int = Field(default=0, ge=0)
     eligible_count: int = Field(ge=0)
+    not_due_count: int = Field(default=0, ge=0)
     coverage_ratio: float = Field(ge=0, le=1)
+    distribution: dict[str, int] = Field(default_factory=dict)
+    confounded_count: int = Field(default=0, ge=0)
+    confidence: ConfidenceBand = ConfidenceBand.NONE
+    denominator_basis: Literal["due_stream_windows", "sessions", "due_feedback_contexts"] = "due_stream_windows"
+
+    @model_validator(mode="after")
+    def validate_denominator(self):
+        if self.sample_count > self.eligible_count or self.observed_count > self.eligible_count:
+            raise ValueError("personal samples exceed their eligible denominator")
+        return self
+
+
+class PersonalWindowSummary(BaseModel):
+    day_offset: Literal[0, 1, 2, 3]
+    response_count: int = Field(ge=0)
+    not_due_count: int = Field(default=0, ge=0)
+    missing_count: int = Field(default=0, ge=0)
+    partial_count: int = Field(default=0, ge=0)
+    available_count: int = Field(default=0, ge=0)
+    confounded_count: int = Field(default=0, ge=0)
+    observed: int = Field(default=0, ge=0)
+    expected: int = Field(default=0, ge=0)
+    comparable_count: int = Field(default=0, ge=0)
+    coverage: float | None = Field(default=None, ge=0, le=1)
+    as_of: datetime | None = None
 
 
 class PersonalResponsePattern(BaseModel):
@@ -1948,12 +2186,17 @@ class PersonalResponsePattern(BaseModel):
     group_label: str
     response_count: int = Field(ge=0)
     metrics: list[PersonalMetricStats] = Field(default_factory=list)
+    feedback_distributions: list[PersonalMetricStats] = Field(default_factory=list)
+    window_summaries: list[PersonalWindowSummary] = Field(default_factory=list)
+    confounded_response_count: int = Field(default=0, ge=0)
+    confounded_ratio: float = Field(default=0, ge=0, le=1)
     confidence: ConfidenceBand
     confidence_label: str
+    association_only: Literal[True] = True
 
 
 class PersonalModel(BaseModel):
-    schema_version: str = PERSONAL_MODEL_SCHEMA_VERSION
+    schema_version: Literal["3.0"] = PERSONAL_MODEL_SCHEMA_VERSION
     analysis_run_id: str
     user_id: str
     date: DateValue
@@ -1964,8 +2207,12 @@ class PersonalModel(BaseModel):
     baselines: list[BaselineStats] = Field(default_factory=list)
     long_term_trends: list[TrendFeature] = Field(default_factory=list)
     training_response_patterns: list[PersonalResponsePattern] = Field(default_factory=list)
+    response_window_summaries: list[PersonalWindowSummary] = Field(default_factory=list)
+    subjective_feedback_distributions: list[PersonalMetricStats] = Field(default_factory=list)
     personal_associations: list[PersonalAssociation] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
+
+    association_only: Literal[True] = True
 
 
 class LinkRecommendationInput(BaseModel):
@@ -1987,6 +2234,8 @@ class AnalysisRun(BaseModel):
     profile_revision_used: int | None = Field(default=0, ge=0)
     input_revision_used: int = Field(default=0, ge=0)
     config_digest: str = Field(default="", min_length=0, max_length=64)
+    input_manifest: dict[str, Any] = Field(default_factory=dict)
+    input_manifest_hash: str = Field(default="", max_length=64)
 
 
 class AnalysisResult(BaseModel):

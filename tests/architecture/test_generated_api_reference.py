@@ -10,7 +10,7 @@ def test_reference_covers_every_skill_allowlisted_operation():
     schema = app.openapi()
     selected = reference.skill_operations(schema)
     lines = reference.render_reference(schema).splitlines()
-    assert len(selected) == 17
+    assert len(selected) == 26
     assert len([line for line in lines if line.startswith("| `")]) == len(
         reference.BASE_OPERATIONS | selected
     )

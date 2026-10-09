@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Iterable
 
 from .period_activity import comparison_gate
-from .report_formatting import energy_label, metric_label, minutes_text, number, payload_of, unique, value_with_unit
+from .report_formatting import energy_label, metric_label, minutes_text, number, payload_of, timestamp_text, unique, value_with_unit
 
 
 def _number(value: Any) -> float | None:
@@ -809,4 +809,145 @@ def daily_display_sections(payload: Any, *, facts_only: bool = False) -> list[di
     return sections
 
 
-__all__ = ["daily_presentation", "period_presentation", "internal_sections", "daily_display_sections"]
+_DAILY_FACT_LABELS = {
+    "sleep_duration": "睡眠时长",
+    "sleep_score": "设备睡眠评分",
+    "training_load": "训练负荷",
+    "training_duration": "训练时长",
+}
+
+
+def _daily_fact_line(key: str, value: Any, timezone_name: str | None) -> str | None:
+    """Expose one saved measurement with its unit, observation time, and source."""
+    if not isinstance(value, dict):
+        return None
+    metric = value.get("metric") or key
+    label = _DAILY_FACT_LABELS.get(str(metric), metric_label(metric))
+    shown = value_with_unit(value.get("value"), value.get("unit"))
+    if value.get("unit") in {"min", "minutes"} and _number(value.get("value")) is not None:
+        shown = minutes_text(value["value"])
+    parts = [f"{label} {shown}" if shown is not None else f"{label} 未记录"]
+    if value.get("observed_at"):
+        observed_at = value["observed_at"]
+        if isinstance(observed_at, str) and len(observed_at) == 10:
+            parts.append(f"所属日期 {observed_at}")
+        else:
+            parts.append(f"观测于 {timestamp_text(observed_at, timezone_name)}")
+    provenance = value.get("provenance") or {}
+    source = provenance.get("source")
+    if source:
+        source_label = "Zepp" if source == "zepp" else str(source)
+        parts.append(f"来源 {source_label}")
+    return " · ".join(parts)
+
+
+def _daily_sleep_section(features: dict[str, Any]) -> dict[str, Any]:
+    sleep = features.get("sleep") or {}
+    facts = []
+    duration = minutes_text(sleep.get("duration_minutes"))
+    if duration:
+        facts.append(f"睡眠时长 {duration}")
+    for key, label in (("bedtime", "入睡"), ("wake_time", "醒来")):
+        if sleep.get(key):
+            facts.append(f"{label} {str(sleep[key])[:8]}")
+    for key, label in (("deep_minutes", "深睡"), ("light_minutes", "浅睡"), ("rem_minutes", "快速眼动睡眠"), ("awake_minutes", "夜间清醒")):
+        value = minutes_text(sleep.get(key))
+        if value:
+            facts.append(f"{label} {value}")
+    if sleep.get("wake_count") is not None:
+        facts.append(f"夜间醒来 {sleep['wake_count']} 次")
+    if sleep.get("vendor_sleep_score") is not None:
+        facts.append(f"设备睡眠评分 {number(sleep['vendor_sleep_score'], 0)}/100")
+    if sleep.get("regularity_minutes") is not None:
+        facts.append(f"近期入睡时刻离散度 {number(sleep['regularity_minutes'])} 分钟")
+    if not facts:
+        facts.append("昨夜睡眠尚未同步。")
+    return {"key": "daily_sleep", "title": "睡眠事实", "facts": facts, "interpretation": [], "limitations": [], "display": True}
+
+
+def _daily_quality_section(raw: dict[str, Any]) -> dict[str, Any] | None:
+    quality = raw.get("data_quality") or {}
+    context = _context(raw)
+    facts = []
+    status = quality.get("status_label") or quality.get("status")
+    if status:
+        facts.append(f"数据质量：{status}")
+    missing = quality.get("missing_required_signal_labels") or quality.get("missing_required_signals") or []
+    if missing:
+        facts.append("缺失必需信号：" + "、".join(str(item) for item in missing))
+    coverage = quality.get("coverage") or []
+    if isinstance(coverage, dict):
+        coverage = [coverage] if "metric" in coverage else list(coverage.values())
+    for item in coverage:
+        if not isinstance(item, dict):
+            continue
+        metric = metric_label(item.get("metric"))
+        sample_count = item.get("sample_count")
+        distinct_days = item.get("distinct_days")
+        detail = []
+        if sample_count is not None:
+            detail.append(f"{sample_count} 条样本")
+        if distinct_days is not None:
+            detail.append(f"{distinct_days} 个观测日")
+        if detail:
+            facts.append(f"{metric}：" + "，".join(detail))
+    if context.get("target_day_complete") is False:
+        facts.append("目标日仍可能有晚到记录。")
+    if not facts:
+        return None
+    return {"key": "daily_quality", "title": "数据质量与覆盖", "facts": unique(facts), "interpretation": [], "limitations": [], "display": True}
+
+
+def _daily_audit_section(raw: dict[str, Any]) -> dict[str, Any] | None:
+    facts = []
+    for key, label in (("schema_version", "日报 schema"), ("intelligence_version", "智能分析版本"),
+                       ("decision_policy_version", "决策策略版本"), ("evidence_version", "证据版本")):
+        if raw.get(key):
+            facts.append(f"{label} {raw[key]}")
+    metadata = raw.get("metadata") or {}
+    if isinstance(metadata, dict):
+        for key, label in (("profile_revision_used", "档案修订"), ("input_revision_used", "输入修订"),
+                           ("correction_chain", "修正链"), ("supersedes", "替代快照")):
+            value = metadata.get(key)
+            if value not in (None, "", []):
+                facts.append(f"{label} {value}")
+    if not facts:
+        return None
+    return {"key": "daily_audit", "title": "版本与修正记录", "facts": facts, "interpretation": [], "limitations": [], "display": True}
+
+
+def daily_profile_presentation(payload: Any) -> dict[str, Any]:
+    """Project a complete DailyProfile without borrowing the evening briefing."""
+    raw = payload_of(payload)
+    base = daily_presentation(raw)
+    context = _context(raw)
+    features = raw.get("features") or {}
+    timezone_name = context.get("timezone") or "UTC"
+    fact_lines = []
+    for key, values in (raw.get("facts") or {}).items():
+        if not isinstance(values, list):
+            continue
+        fact_lines.extend(
+            line for value in values
+            if (line := _daily_fact_line(key, value, timezone_name)) is not None
+        )
+    sections = [_daily_sleep_section(features)]
+    sections.extend(daily_display_sections(raw))
+    if fact_lines:
+        sections.append({"key": "daily_facts", "title": "已保存事实", "facts": unique(fact_lines), "interpretation": [], "limitations": [], "display": True})
+    quality = _daily_quality_section(raw)
+    if quality:
+        sections.append(quality)
+    audit = _daily_audit_section(raw)
+    if audit:
+        sections.append(audit)
+    return {
+        **base,
+        "headline": "本地日完整事实快照",
+        "findings": unique(base.get("findings") or []),
+        "suggestions": [],
+        "sections": sections,
+    }
+
+
+__all__ = ["daily_presentation", "daily_profile_presentation", "period_presentation", "internal_sections", "daily_display_sections"]

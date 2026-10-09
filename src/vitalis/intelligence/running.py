@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
+from math import isfinite
 from statistics import mean, median
 
 from .contracts import (
@@ -35,6 +36,19 @@ ZONE_LABELS = {
     4: "四区：阈值",
     5: "五区：无氧",
 }
+EXPECTED_SAMPLE_UNITS = {
+    "heart_rate": "bpm",
+    "speed": "m/s",
+    "equivalent_pace": "s/km",
+    "cadence": "spm",
+    "stride_length": "cm",
+    "distance": "m",
+    "altitude": "m",
+    "running_power": "W",
+    "ground_contact_time": "ms",
+    "vertical_oscillation": "mm",
+    "vertical_stride_ratio": "%",
+}
 
 
 class RunningAnalyzer:
@@ -43,10 +57,11 @@ class RunningAnalyzer:
     def analyze(self, raw) -> RunningAnalysis:
         current_start = raw.day - timedelta(days=27)
         previous_start = raw.day - timedelta(days=55)
-        current = self._runs(raw.workouts, current_start, raw.day)
-        history = self._runs(raw.workouts, raw.day - timedelta(days=179), raw.day)
+        workouts = self._available_workouts(raw)
+        current = self._runs(workouts, current_start, raw.day)
+        history = self._runs(workouts, raw.day - timedelta(days=179), raw.day)
         previous = self._runs(
-            raw.workouts, previous_start, current_start - timedelta(days=1)
+            workouts, previous_start, current_start - timedelta(days=1)
         )
         threshold = self._lactate_threshold(raw)
         if not current:
@@ -120,6 +135,81 @@ class RunningAnalyzer:
             recent_sessions=list(reversed(analyses[-8:])),
             limitations=limitations,
         )
+
+    def trend_points(self, raw) -> list[dict]:
+        """Return one value or explicit missing value per observed running session.
+
+        These are per-session descriptive facts, not a fitness or recovery
+        score.  Source/device/mode cohorts stay separate in TrendEngine. Heart
+        rate needs a single qualified sensor stream; drift additionally needs
+        a continuous, easy-run interval shared with speed.
+        """
+        runs = self._runs(
+            self._available_workouts(raw), raw.day - timedelta(days=179), raw.day
+        )
+        output = []
+        for workout in sorted(runs, key=self._workout_sort_key):
+            grouped = self._group_samples(workout.get("samples") or [], workout=workout)
+            heart_rate = grouped.get("heart_rate", [])
+            speed = [item for item in grouped.get("speed", []) if item.value > 0]
+            sample_devices = {item.device_id for items in grouped.values() for item in items}
+            device = workout.get("device_id") or (next(iter(sample_devices)) if len(sample_devices) == 1 else None)
+            threshold = self._lactate_threshold(raw, workout=workout)
+            zones = self._zones(heart_rate, threshold, self._device_zone_boundaries(workout))
+            classification, confidence, _ = self._classify(
+                self._duration(workout), zones, self._segments(speed, heart_rate), speed, []
+            )
+            drift, _ = self._cardiac_drift(speed, heart_rate, classification, confidence)
+            data = workout.get("data") or {}
+            mode = str(data.get("sport_mode") or "running")
+            observed = workout.get("started_at") or self._workout_date(workout)
+            summary_heart_rate = self._positive(data.get("heart_rate_avg"))
+            heart_rate_value = (
+                float(mean(item.value for item in heart_rate))
+                if heart_rate else summary_heart_rate
+            )
+            heart_rate_scope = "workout_detail" if heart_rate else "workout_summary"
+            common = {
+                "source": str(workout.get("source") or "zepp"),
+                "device_id": device, "workout_id": str(workout.get("workout_id") or ""),
+                "day": self._workout_date(workout), "observed_at": observed,
+                "qualification": f"running:{mode}; observed sessions only; terrain, weather and intensity unadjusted",
+            }
+            for metric, unit, value, scope in (
+                ("running_pace", "s/km", self._workout_pace(workout), "workout_summary"),
+                ("running_heart_rate", "bpm", heart_rate_value, heart_rate_scope),
+                ("running_cardiac_drift", "%", drift, "workout_detail"),
+            ):
+                output.append({**common, "metric": metric, "value": value, "unit": unit, "source_scope": scope})
+        return output
+
+    @staticmethod
+    def _available_workouts(raw) -> list[dict]:
+        """Honor the analysis cutoff without mutating the loaded profile."""
+        cutoff = getattr(raw, "as_of", None)
+        output = []
+        seen = set()
+        for workout in raw.workouts:
+            day = workout.get("local_day")
+            if type(day) is not date or day > raw.day:
+                continue
+            data = workout.get("data") or {}
+            started = workout.get("started_at")
+            if isinstance(cutoff, datetime) and isinstance(started, datetime) and _utc_seconds(started) > _utc_seconds(cutoff):
+                continue
+            fetched = _parse_datetime(workout.get("fetched_at") or data.get("fetched_at"))
+            if isinstance(cutoff, datetime) and fetched is not None and _utc_seconds(fetched) > _utc_seconds(cutoff):
+                continue
+            identity = (str(workout.get("source") or "zepp"), str(workout.get("workout_id") or ""), day)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            samples = [
+                sample for sample in workout.get("samples") or []
+                if not isinstance(cutoff, datetime) or _utc_seconds(sample.timestamp) <= _utc_seconds(cutoff)
+            ]
+            output.append({**workout, "samples": samples})
+        return output
 
     def _session(
         self,
@@ -268,6 +358,8 @@ class RunningAnalyzer:
             started = datetime.min
         elif started.tzinfo is not None:
             started = started.replace(tzinfo=None)
+        if started.tzinfo is not None:
+            started = started.astimezone(timezone.utc).replace(tzinfo=None)
         return RunningAnalyzer._workout_date(workout), started
 
     @staticmethod
@@ -292,10 +384,16 @@ class RunningAnalyzer:
         return round(sum(value or 0 for value in values), 3)
 
     @staticmethod
-    def _lactate_threshold(raw) -> float | None:
+    def _lactate_threshold(raw, *, workout: dict | None = None) -> float | None:
+        source = str((workout or {}).get("source") or "zepp")
+        cutoff = getattr(raw, "as_of", None)
         points = [
             item for item in raw.series.get("lactate_threshold_hr", [])
-            if item.day <= raw.day and 60 <= item.value <= 240
+            if item.day <= raw.day
+            and 60 <= item.value <= 240
+            and item.unit == "bpm"
+            and item.source == source
+            and (_observed_at_before(item.observed_at, cutoff) if cutoff is not None else True)
         ]
         if not points:
             return None
@@ -394,10 +492,26 @@ class RunningAnalyzer:
         return output
 
     @staticmethod
-    def _group_samples(samples: list) -> dict[str, list]:
+    def _group_samples(samples: list, *, workout: dict | None = None) -> dict[str, list]:
         output: dict[str, list] = defaultdict(list)
         for item in samples:
-            output[item.metric].append(item)
+            metric = getattr(item, "metric", None)
+            expected_unit = EXPECTED_SAMPLE_UNITS.get(metric)
+            unit = str(getattr(item, "unit", "") or "")
+            value = getattr(item, "value", None)
+            if metric not in EXPECTED_SAMPLE_UNITS:
+                continue
+            if expected_unit and unit != expected_unit:
+                continue
+            if not isinstance(value, (int, float)) or not isfinite(float(value)):
+                continue
+            if metric == "heart_rate" and not 30 <= value <= 250:
+                continue
+            if metric == "speed" and value <= 0:
+                continue
+            if metric == "distance" and value < 0:
+                continue
+            output[metric].append(item)
         for values in output.values():
             values.sort(key=lambda item: item.timestamp)
         return output
@@ -494,7 +608,9 @@ class RunningAnalyzer:
             return None
         comparable = [
             item for item in reversed(sorted(prior_runs, key=self._workout_sort_key))
-            if (candidate_distance := self._distance(item)) is not None
+            if str(item.get("source") or "zepp") == str(workout.get("source") or "zepp")
+            and item.get("device_id") == workout.get("device_id")
+            and (candidate_distance := self._distance(item)) is not None
             and distance * 0.8 <= candidate_distance <= distance * 1.2
             and self._workout_pace(item) is not None
         ][:10]
@@ -642,30 +758,83 @@ class RunningAnalyzer:
             or confidence not in {ConfidenceBand.MODERATE, ConfidenceBand.HIGH}
         ):
             return None, "本次不是明确识别的连续低强度跑，不解释心率漂移。"
-        speed_bins = self._bins(speed, 30)
-        hr_bins = self._bins(heart_rate, 30)
+        if not speed or not heart_rate or not self._same_sample_stream(speed, heart_rate):
+            return None, "速度与心率来源或设备不一致，未计算心率漂移。"
+        start = max(
+            min(item.timestamp for item in speed),
+            min(item.timestamp for item in heart_rate),
+        )
+        end = min(
+            max(item.timestamp for item in speed),
+            max(item.timestamp for item in heart_rate),
+        )
+        if end <= start:
+            return None, "速度与心率没有真实时间重叠，未计算心率漂移。"
+        speed_bins = self._bins(speed, 30, start=start)
+        hr_bins = self._bins(heart_rate, 30, start=start)
         common = [key for key in sorted(speed_bins) if key in hr_bins and speed_bins[key] > 0]
-        if len(common) < 40:
+        longest = self._longest_consecutive(common)
+        if longest < 40:
             return None, "连续速度与心率重叠不足 20 分钟，未计算心率漂移。"
+        # Select the longest continuous overlap so gaps cannot be bridged by
+        # sorting two independently anchored time axes.
+        common = self._longest_run(common)
         common = common[max(1, len(common) // 10):]
         midpoint = len(common) // 2
         first, second = common[:midpoint], common[midpoint:]
         first_speed = median(speed_bins[key] for key in first)
         second_speed = median(speed_bins[key] for key in second)
-        if abs(second_speed - first_speed) / first_speed > 0.15:
+        if first_speed <= 0 or abs(second_speed - first_speed) / first_speed > 0.15:
             return None, "前后半程速度差异超过 15%，不适合解释心率漂移。"
         first_ratio = median(hr_bins[key] for key in first) / first_speed
         second_ratio = median(hr_bins[key] for key in second) / second_speed
+        if first_ratio <= 0:
+            return None, "速度或心率比值无效，未计算心率漂移。"
         return round((second_ratio / first_ratio - 1) * 100, 1), None
 
     @staticmethod
-    def _bins(samples: list, seconds: int) -> dict[int, float]:
+    def _same_sample_stream(left: list, right: list) -> bool:
+        def identity(item):
+            return (
+                getattr(item, "source", "zepp"),
+                getattr(item, "source_scope", "workout_detail"),
+                getattr(item, "device_id", None),
+            )
+        left_ids = {identity(item) for item in left}
+        right_ids = {identity(item) for item in right}
+        if len(left_ids) != 1 or len(right_ids) != 1:
+            return False
+        return left_ids == right_ids
+
+    @staticmethod
+    def _longest_run(keys: list[int]) -> list[int]:
+        if not keys:
+            return []
+        best = current = [keys[0]]
+        for key in keys[1:]:
+            if key == current[-1] + 1:
+                current = current + [key]
+            else:
+                if len(current) > len(best):
+                    best = current
+                current = [key]
+        return current if len(current) > len(best) else best
+
+    @classmethod
+    def _longest_consecutive(cls, keys: list[int]) -> int:
+        return len(cls._longest_run(keys))
+
+    @staticmethod
+    def _bins(samples: list, seconds: int, *, start: datetime | None = None) -> dict[int, float]:
         if not samples:
             return {}
-        start = min(item.timestamp for item in samples)
+        start = start or min(item.timestamp for item in samples)
         grouped: dict[int, list[float]] = defaultdict(list)
         for item in samples:
-            elapsed = int((item.timestamp - start).total_seconds())
+            try:
+                elapsed = int((item.timestamp - start).total_seconds())
+            except TypeError:
+                continue
             if elapsed >= 0:
                 grouped[elapsed // seconds].append(item.value)
         return {key: float(median(values)) for key, values in grouped.items()}
@@ -677,4 +846,29 @@ class RunningAnalyzer:
 
     @staticmethod
     def _positive(value) -> float | None:
-        return float(value) if isinstance(value, (int, float)) and value > 0 else None
+        return float(value) if isinstance(value, (int, float)) and isfinite(float(value)) and value > 0 else None
+
+
+def _parse_datetime(value) -> datetime | None:
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return value if isinstance(value, datetime) else None
+
+
+def _utc_seconds(value: datetime) -> float:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).timestamp()
+
+
+def _observed_at_before(observed_at, cutoff: datetime | None) -> bool:
+    if cutoff is None:
+        return True
+    if isinstance(observed_at, datetime):
+        return _utc_seconds(observed_at) <= _utc_seconds(cutoff)
+    if type(observed_at) is date:
+        return observed_at <= cutoff.date()
+    return False

@@ -14,11 +14,18 @@ from vitalis.time import local_day_utc_bounds
 
 def assert_error(response, status, code, message, retryable=False):
     assert response.status_code == status
-    assert response.json() == {
-        "code": code,
+    payload = response.json()
+    assert payload == {
+        "state": "failed",
+        "failure_code": code,
         "message": message,
         "retryable": retryable,
+        "next_action": payload["next_action"],
         "request_id": response.headers["x-request-id"],
+    }
+    assert payload["next_action"] in {
+        "correct_request", "authenticate", "request_scope", "check_resource",
+        "refresh_and_retry", "retry_later", "check_service",
     }
     assert re.fullmatch(r"[0-9a-f]{32}", response.json()["request_id"])
 
@@ -78,8 +85,15 @@ def test_superseded_report_aliases_are_absent_from_current_api():
 def test_openapi_uses_one_error_schema_for_current_operations():
     schema = app.openapi()
     error_schema = schema["components"]["schemas"]["APIError"]
-    assert set(error_schema["required"]) == {"code", "message", "retryable", "request_id"}
+    assert set(error_schema["required"]) == {
+        "state", "failure_code", "message", "retryable", "next_action", "request_id",
+    }
     assert set(error_schema["properties"]) == set(error_schema["required"])
+    assert error_schema["properties"]["state"]["const"] == "failed"
+    assert set(error_schema["properties"]["next_action"]["enum"]) == {
+        "correct_request", "authenticate", "request_scope", "check_resource",
+        "refresh_and_retry", "retry_later", "check_service",
+    }
     for (method, path) in OPERATIONS:
         responses = schema["paths"][path][method]["responses"]
         for status in ("401", "403", "404", "409", "422", "500"):

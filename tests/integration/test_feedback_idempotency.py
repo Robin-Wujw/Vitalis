@@ -83,7 +83,7 @@ def test_feedback_key_replays_exact_result_after_new_connection_and_rejects_chan
     ):
         conflict = client.post("/api/feedback", json=changed, headers=headers)
         assert conflict.status_code == 409
-        assert conflict.json()["code"] == "conflict"
+        assert conflict.json()["failure_code"] == "conflict"
         assert "private note" not in conflict.text
     assert _counts(feedback_database, "feedback-key-owner") == (1, 1)
     with Session(feedback_database) as db:
@@ -139,7 +139,7 @@ def test_replay_skips_workout_validation_after_original_is_saved(
         "/api/feedback", json={**body, "session_rpe": 8}, headers=_headers(token),
     )
     assert conflict.status_code == 409
-    assert conflict.json()["code"] == "conflict"
+    assert conflict.json()["failure_code"] == "conflict"
     assert _counts(feedback_database, "feedback-workout-owner") == (1, 1)
 
 
@@ -163,7 +163,7 @@ def test_feedback_key_and_replayed_feedback_are_user_scoped(feedback_database, c
         headers=_headers(other),
     )
     assert conflict.status_code == 409
-    assert conflict.json()["code"] == "conflict"
+    assert conflict.json()["failure_code"] == "conflict"
     assert _counts(feedback_database, "feedback-scope-owner") == (1, 1)
     assert _counts(feedback_database, "feedback-scope-other") == (1, 1)
 
@@ -178,7 +178,7 @@ def test_invalid_reference_and_failed_write_leave_no_key_or_feedback(
         headers=_headers(token),
     )
     assert invalid.status_code == 422
-    assert invalid.json()["code"] == "validation_error"
+    assert invalid.json()["failure_code"] == "validation_error"
     assert _counts(feedback_database, "feedback-rollback-owner") == (0, 0)
 
     original = IntelligenceAction._save_feedback
@@ -192,7 +192,7 @@ def test_invalid_reference_and_failed_write_leave_no_key_or_feedback(
         patch.setattr(IntelligenceAction, "_save_feedback", fail_after_save)
         failed = client.post("/api/feedback", json=body, headers=_headers(token))
         assert failed.status_code == 500
-        assert failed.json()["code"] == "internal_error"
+        assert failed.json()["failure_code"] == "internal_error"
     assert _counts(feedback_database, "feedback-rollback-owner") == (0, 0)
     assert client.post("/api/feedback", json=body, headers=_headers(token)).status_code == 201
     assert _counts(feedback_database, "feedback-rollback-owner") == (1, 1)

@@ -46,6 +46,9 @@ from vitalis.intelligence.contracts import (
     DAILY_SCHEMA_VERSION,
     WEEKLY_SCHEMA_VERSION,
     MONTHLY_SCHEMA_VERSION,
+    TRAINING_RESPONSE_SCHEMA_VERSION,
+    PERSONAL_MODEL_SCHEMA_VERSION,
+    ASSOCIATION_SCHEMA_VERSION,
     INTELLIGENCE_VERSION,
     DECISION_POLICY_VERSION,
     EVIDENCE_VERSION,
@@ -105,9 +108,9 @@ _CURRENT_SNAPSHOT_SCHEMAS = {
     "daily": DAILY_SCHEMA_VERSION,
     "weekly": WEEKLY_SCHEMA_VERSION,
     "monthly": MONTHLY_SCHEMA_VERSION,
-    "training_responses": "1.0",
-    "personal_model": "2.0",
-    "personal_associations": "1.0",
+    "training_responses": TRAINING_RESPONSE_SCHEMA_VERSION,
+    "personal_model": PERSONAL_MODEL_SCHEMA_VERSION,
+    "personal_associations": ASSOCIATION_SCHEMA_VERSION,
 }
 
 
@@ -154,22 +157,374 @@ class HealthRepository:
         self.db.flush()
         return self.analysis_input_revision(user_id)
 
-    def lock_analysis_input_revision(self, user_id: str, revision: int) -> bool:
-        # The conditional write serializes input changes with result publication.
-        result = self.db.execute(
-            update(orm.User)
-            .where(
-                orm.User.id == user_id,
-                orm.User.analysis_input_revision == revision,
-            )
-            .values(analysis_input_revision=orm.User.analysis_input_revision)
-        )
-        return bool(result.rowcount)
+    def lock_analysis_scope(
+        self,
+        user_id: str,
+        revision: int,
+        target_date: date,
+        *,
+        lookback_days: int = 179,
+    ) -> bool:
+        """Fence only invalidations that can feed this analysis target.
+
+        The user revision remains a monotonic audit cursor.  It is not itself a
+        freshness predicate: a later write outside this target's dependency
+        window does not prevent publishing this immutable result.  The no-op
+        user UPDATE serializes publication with input writes on SQLite and
+        PostgreSQL; even completed jobs remain evidence of those writes.
+        """
+        locked = self.db.execute(update(orm.User).where(
+            orm.User.id == user_id,
+        ).values(analysis_input_revision=orm.User.analysis_input_revision))
+        if not locked.rowcount:
+            return False
+        start = target_date - timedelta(days=max(0, int(lookback_days)))
+        changed = self.db.execute(select(orm.AnalysisJob.id).where(
+            orm.AnalysisJob.user_id == user_id,
+            or_(
+                orm.AnalysisJob.event_type.is_(None),
+                orm.AnalysisJob.event_type != "explicit_analysis",
+            ),
+            orm.AnalysisJob.input_revision > revision,
+            orm.AnalysisJob.affected_end >= start,
+            orm.AnalysisJob.affected_start <= target_date,
+        ).limit(1)).scalar_one_or_none()
+        return changed is None
 
     def _bump_existing_input_revisions(self, user_ids: set[str]) -> None:
         for user_id in sorted(user_ids):
             if self.db.get(orm.User, user_id) is not None:
                 self.bump_analysis_input_revision(user_id)
+
+    def _analysis_targets(
+        self, user_id: str, dates: set[date], targets: set[date], event_type: str,
+    ) -> set[date]:
+        if event_type not in {
+            "source_sync", "feedback", "strength_confirmation",
+            "recommendation_completion", "event_acknowledgement", "training_coverage",
+        }:
+            return targets
+        candidates = set(self.db.execute(select(orm.AnalysisRun.target_date).where(
+            orm.AnalysisRun.user_id == user_id,
+            orm.AnalysisRun.target_date.between(min(dates), max(dates) + timedelta(days=179)),
+        )).scalars())
+        candidates.add(local_day(datetime.now(timezone.utc)))
+        direct_targets = set() if event_type == "training_coverage" else dates
+        return targets | direct_targets | {
+            target for target in candidates
+            if any(day <= target <= day + timedelta(days=179) for day in dates)
+        }
+
+    def enqueue_analysis_job(
+        self, user_id: str, target_date: date, *, event_type: str, source: str,
+        affected_dates: set[date] | list[date] | tuple[date, ...] | None = None,
+        affected_streams: set[str] | list[str] | tuple[str, ...] | None = None,
+        reason: str | None = None, idempotency_key: str | None = None,
+        delivery_period: str | None = None,
+        payload_ref: str | None = None, occurred_at: datetime | None = None,
+    ) -> orm.AnalysisJob | None:
+        if not self.user_exists(user_id):
+            return None
+        from .input_events import InputEventAuditRepository
+
+        dates = set(affected_dates or {target_date})
+        targets = self._analysis_targets(user_id, dates, {target_date}, event_type)
+        input_event = InputEventAuditRepository(self.db).append(
+            user_id, event_type=event_type, source=source,
+            affected_dates=dates, affected_streams=affected_streams or (),
+            input_revision=self.analysis_input_revision(user_id),
+            payload_ref=payload_ref, occurred_at=occurred_at,
+            request_key=idempotency_key,
+            request_context={
+                "target_date": target_date.isoformat(), "reason": reason or event_type,
+                "delivery_period": delivery_period,
+            },
+        )
+        primary = None
+        for target in sorted(targets):
+            key = idempotency_key
+            if key and target != target_date:
+                key = "invalidation:" + hashlib.sha256(f"{key}:{target}".encode()).hexdigest()
+            job = self._enqueue_analysis_job(
+                user_id, target, event_type=event_type, source=source,
+                affected_dates=dates, affected_streams=affected_streams,
+                reason=reason, idempotency_key=key,
+                delivery_period=delivery_period if target == target_date else None,
+                input_event_id=input_event.id,
+            )
+            if target == target_date:
+                primary = job
+        return primary
+
+    def _enqueue_analysis_job(
+        self,
+        user_id: str,
+        target_date: date,
+        *,
+        event_type: str,
+        source: str,
+        affected_dates: set[date] | list[date] | tuple[date, ...] | None = None,
+        affected_streams: set[str] | list[str] | tuple[str, ...] | None = None,
+        reason: str | None = None,
+        idempotency_key: str | None = None,
+        delivery_period: str | None = None,
+        payload_ref: str | None = None,
+        occurred_at: datetime | None = None,
+        input_event_id: str | None = None,
+    ) -> orm.AnalysisJob | None:
+        """Persist one scoped invalidation in the caller's transaction.
+
+        This deliberately does not open another session: input facts, the audit
+        metadata, and the durable analysis request either commit together or roll
+        back together.
+        """
+        if not self.user_exists(user_id):
+            # Source facts may be retained for an orphaned/deleted owner during
+            # fencing tests, but must not create a queue row or recreate identity.
+            return None
+        if not isinstance(target_date, date) or isinstance(target_date, datetime):
+            raise ValueError("分析任务 target_date 必须是日期")
+        if delivery_period not in (None, "morning", "evening", "weekly", "monthly"):
+            raise ValueError("分析任务 delivery_period 无效")
+        dates = sorted({
+            value.isoformat() if isinstance(value, date) else str(value)
+            for value in (affected_dates or {target_date})
+        })
+        priority = 5 if delivery_period or event_type in {
+            "sync_completion", "pairing_initial_sync", "oauth_callback_sync", "token_import_sync",
+        } else 0
+        streams = sorted({str(value) for value in (affected_streams or ()) if str(value)})
+        key = idempotency_key or f"invalidation:{uuid4().hex}"
+        payload = {
+            "target_date": target_date.isoformat(),
+            "event_type": event_type,
+            "source": source,
+            "affected_dates": dates,
+            "affected_streams": streams,
+            "reason": reason or event_type,
+            "delivery_period": delivery_period,
+        }
+        request_hash = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        existing = self.db.execute(select(orm.AnalysisJob).where(
+            orm.AnalysisJob.user_id == user_id,
+            orm.AnalysisJob.idempotency_key == key,
+        ).with_for_update()).scalar_one_or_none()
+        if existing is not None and existing.request_hash != request_hash:
+            raise ValueError("分析任务幂等键与此前请求不一致")
+        from .input_events import InputEventAuditError, InputEventAuditRepository
+
+        audit = InputEventAuditRepository(self.db)
+        input_event = (
+            audit.get(user_id, input_event_id) if input_event_id is not None
+            else audit.append(
+                user_id, event_type=event_type, source=source,
+                affected_dates=dates, affected_streams=streams,
+                input_revision=self.analysis_input_revision(user_id),
+                payload_ref=payload_ref, occurred_at=occurred_at,
+                request_key=idempotency_key,
+                request_context={
+                    "target_date": target_date.isoformat(), "reason": reason or event_type,
+                    "delivery_period": delivery_period,
+                },
+            )
+        )
+        if input_event is None:
+            raise InputEventAuditError("input event does not belong to this user")
+        if existing is not None:
+            audit.link(user_id, input_event.id, existing,
+                       reason=reason or event_type, delivery_period=delivery_period)
+            return existing
+        if idempotency_key:
+            # A coalesced job retains its first queue key.  The immutable event
+            # link preserves subsequent keys even after that job has finished.
+            previous = audit.linked_job(user_id, input_event.id, target_date, delivery_period)
+            if previous is not None:
+                return previous
+        # Coalesce an input write into the one active execution for this target.
+        # The scope is merged onto that durable row instead of creating a job
+        # that could run after the worker already fenced its input revision.
+        active = self.db.execute(select(orm.AnalysisJob).where(
+            orm.AnalysisJob.user_id == user_id,
+            orm.AnalysisJob.target_date == target_date,
+            orm.AnalysisJob.status.in_(("queued", "running")),
+            orm.AnalysisJob.event_type.is_not(None),
+            orm.AnalysisJob.delivery_period == delivery_period,
+        ).order_by(
+            case((orm.AnalysisJob.status == "running", 0), else_=1),
+            orm.AnalysisJob.created_at.desc(),
+            orm.AnalysisJob.id.desc(),
+        ).limit(1).with_for_update()).scalar_one_or_none()
+        if active is not None:
+            merged_dates = sorted(set(active.affected_dates or []) | set(dates))
+            merged_streams = sorted(set(active.affected_streams or []) | set(streams))
+            active.affected_dates = merged_dates
+            active.affected_streams = merged_streams
+            active.affected_start = date.fromisoformat(merged_dates[0]) if merged_dates else target_date
+            active.affected_end = date.fromisoformat(merged_dates[-1]) if merged_dates else target_date
+            active.input_revision = self.analysis_input_revision(user_id)
+            active.priority = max(active.priority, priority)
+            if delivery_period is not None:
+                active.delivery_period = delivery_period
+            if event_type:
+                active.event_type = event_type[:48]
+                active.source = source[:32]
+            active.reason = "; ".join(
+                item for item in (active.reason, reason or event_type) if item
+            )[:128]
+            active.updated_at = datetime.utcnow()
+            self.db.flush()
+            audit.link(user_id, input_event.id, active,
+                       reason=reason or event_type, delivery_period=delivery_period)
+            return active
+        now = datetime.utcnow()
+        row = orm.AnalysisJob(
+            id=uuid4().hex,
+            user_id=user_id,
+            target_date=target_date,
+            status="queued",
+            idempotency_key=key,
+            request_hash=request_hash,
+            priority=priority,
+            delivery_period=delivery_period,
+            event_type=event_type[:48],
+            source=source[:32],
+            reason=(reason or event_type)[:128],
+            affected_dates=dates,
+            affected_streams=streams,
+            affected_start=(date.fromisoformat(dates[0]) if dates else target_date),
+            affected_end=(date.fromisoformat(dates[-1]) if dates else target_date),
+            input_revision=self.analysis_input_revision(user_id),
+            stale_since=now,
+            created_at=now,
+            updated_at=now,
+        )
+        self.db.add(row)
+        self.db.flush()
+        audit.link(user_id, input_event.id, row,
+                   reason=reason or event_type, delivery_period=delivery_period)
+        return row
+
+    def promote_queued_sync_analysis_job(
+        self,
+        user_id: str,
+        target_date: date,
+        delivery_period: str,
+        *,
+        reason: str,
+    ) -> orm.AnalysisJob | None:
+        """Assign an unclaimed sync invalidation to one delivery period."""
+        row = self.db.execute(select(orm.AnalysisJob).where(
+            orm.AnalysisJob.user_id == user_id,
+            orm.AnalysisJob.target_date == target_date,
+            orm.AnalysisJob.status == "queued",
+            orm.AnalysisJob.event_type.in_(("source_sync", "sync_completion", "training_coverage")),
+            orm.AnalysisJob.delivery_period.is_(None),
+        ).order_by(
+            orm.AnalysisJob.created_at,
+            orm.AnalysisJob.id,
+        ).limit(1).with_for_update()).scalar_one_or_none()
+        if row is None:
+            return None
+        row.delivery_period = delivery_period
+        row.priority = max(row.priority, 5)
+        row.reason = "; ".join(item for item in (row.reason, reason) if item)[:128]
+        row.updated_at = datetime.utcnow()
+        self.db.flush()
+        return row
+
+    def enqueue_input_change(
+        self,
+        user_id: str,
+        *,
+        event_id: str,
+        event_type: str,
+        source: str,
+        affected_dates: set[date],
+        affected_streams: set[str],
+        target_dates: set[date],
+        reason: str,
+        payload_ref: str | None = None,
+        occurred_at: datetime | None = None,
+    ) -> list[orm.AnalysisJob]:
+        """Expand one input event only across existing dependent targets."""
+        if not self.user_exists(user_id):
+            return []
+        from .input_events import InputEventAuditRepository
+
+        targets = self._analysis_targets(user_id, affected_dates, target_dates, event_type)
+        input_event = InputEventAuditRepository(self.db).append(
+            user_id, event_type=event_type, source=source,
+            affected_dates=affected_dates, affected_streams=affected_streams,
+            input_revision=self.analysis_input_revision(user_id),
+            payload_ref=payload_ref, occurred_at=occurred_at,
+            request_key=f"input:{event_type}:{event_id}",
+            request_context={"reason": reason},
+        )
+        return [self._enqueue_analysis_job(
+            user_id, target, event_type=event_type, source=source,
+            affected_dates=affected_dates, affected_streams=affected_streams,
+            reason=reason, idempotency_key=f"invalidation:{event_id}:{target.isoformat()}",
+            input_event_id=input_event.id,
+        ) for target in sorted(targets)]
+
+    def resolve_analysis_jobs_for_run(
+        self,
+        user_id: str,
+        target_date: date,
+        run_id: str,
+        *,
+        input_revision: int,
+    ) -> int:
+        """Resolve non-delivery queued/failed requests captured by a direct run."""
+        now = _naive_utc(datetime.now(timezone.utc))
+        result = self.db.execute(update(orm.AnalysisJob).where(
+            orm.AnalysisJob.user_id == user_id,
+            orm.AnalysisJob.status.in_(("queued", "failed")),
+            orm.AnalysisJob.target_date == target_date,
+            orm.AnalysisJob.delivery_period.is_(None),
+            orm.AnalysisJob.input_revision <= input_revision,
+        ).values(
+            status="succeeded",
+            run_id=run_id,
+            error=None,
+            stale_since=None,
+            finished_at=now,
+            updated_at=now,
+        ))
+        self.db.flush()
+        return int(result.rowcount or 0)
+
+    def analysis_jobs(
+        self,
+        user_id: str,
+        *,
+        start: date | None = None,
+        end: date | None = None,
+        limit: int = 100,
+    ) -> list[orm.AnalysisJob]:
+        conditions = [orm.AnalysisJob.user_id == user_id]
+        if start is not None:
+            conditions.append(orm.AnalysisJob.target_date >= start)
+        if end is not None:
+            conditions.append(orm.AnalysisJob.target_date <= end)
+        return list(self.db.execute(
+            select(orm.AnalysisJob).where(*conditions).order_by(
+                orm.AnalysisJob.created_at.desc(), orm.AnalysisJob.id.desc()
+            ).limit(limit)
+        ).scalars().all())
+
+    def analysis_jobs_for_target(
+        self, user_id: str, target: date,
+    ) -> list[orm.AnalysisJob]:
+        return list(self.db.execute(select(orm.AnalysisJob).where(
+            orm.AnalysisJob.user_id == user_id,
+            orm.AnalysisJob.target_date == target,
+        ).order_by(
+            orm.AnalysisJob.input_revision.desc(),
+            orm.AnalysisJob.updated_at.desc(), orm.AnalysisJob.id.desc(),
+        ).limit(100)).scalars())
 
     def source_account(
         self,
@@ -251,7 +606,35 @@ class HealthRepository:
             raise SourceIdentityConflict("该厂商账号已绑定到其他本地用户") from exc
         if identity_changed:
             self.bump_analysis_input_revision(user_id)
+            self.enqueue_analysis_job(
+                user_id,
+                datetime.utcnow().date(),
+                event_type="source_identity",
+                source=source,
+                affected_streams={"identity"},
+                reason="source account identity changed",
+            )
         return account
+
+    def bind_source_mode(self, user_id: str, mode: str) -> None:
+        from vitalis.config import settings
+
+        if mode not in {"real", "mock", "replay"}:
+            raise SourceIdentityConflict("数据来源模式无效")
+        if settings.env not in {"dev", "test"} and mode != "real":
+            raise SourceIdentityConflict("生产环境只允许真实数据源")
+        self.db.flush()
+        result = self.db.execute(update(orm.User).where(
+            orm.User.id == user_id,
+            or_(orm.User.source_mode.is_(None), orm.User.source_mode == mode),
+        ).values(source_mode=mode))
+        if not result.rowcount:
+            raise SourceIdentityConflict("数据集来源模式冲突；请使用独立用户或数据库")
+        self.db.flush()
+
+    def source_mode(self, user_id: str) -> str:
+        row = self.db.get(orm.User, user_id)
+        return row.source_mode if row and row.source_mode else "unknown"
 
     def identity_context(self, user_id: str) -> dict:
         """Describe local/vendor identity mapping without merging any records."""
@@ -322,7 +705,9 @@ class HealthRepository:
         )
 
     # ---- 设备 ----
-    def upsert_device(self, device: Device) -> orm.Device:
+    def upsert_device(
+        self, device: Device, *, target_date: date | None = None
+    ) -> orm.Device:
         # Flush a caller's pending User before FK-enforced device insertion.
         self.db.flush()
         stable_id = hashlib.sha256(
@@ -373,6 +758,14 @@ class HealthRepository:
         self.db.flush()
         if changed:
             self._bump_existing_input_revisions({device.user_id})
+            self.enqueue_analysis_job(
+                device.user_id,
+                target_date or datetime.utcnow().date(),
+                event_type="source_sync",
+                source=device.source,
+                affected_streams={"devices"},
+                reason="device inventory changed",
+            )
         row = self.db.get(orm.Device, stable_id)
         assert row is not None
         return row
@@ -386,18 +779,23 @@ class HealthRepository:
 
     # ---- 每日健康 ----
     def save_daily(self, daily: NormalizedDaily) -> None:
-        """Persist normalized daily facts and invalidate changed analysis inputs."""
+        """Persist normalized daily facts and enqueue only changed input scope."""
         changed = False
+        streams: set[str] = set()
         if daily.sleep:
+            streams.add("sleep")
             changed |= self._upsert(orm.SleepRecord, daily.user_id, daily.date,
                                     daily.sleep.model_dump(mode="json", exclude_none=True))
         if daily.activity:
+            streams.add("activity")
             changed |= self._upsert(orm.ActivityRecord, daily.user_id, daily.date,
                                     daily.activity.model_dump(mode="json", exclude_none=True))
         if daily.training:
+            streams.add("training")
             changed |= self._upsert(orm.TrainingRecord, daily.user_id, daily.date,
                                     daily.training.model_dump(mode="json", exclude_none=True))
         if daily.metric_samples:
+            streams.update(sample.metric for sample in daily.metric_samples)
             for sample in daily.metric_samples:
                 sample.user_id = daily.user_id
             written, _changed_users = self._save_metric_samples(daily.metric_samples)
@@ -406,6 +804,15 @@ class HealthRepository:
         self.db.flush()
         if changed:
             self._bump_existing_input_revisions({daily.user_id})
+            self.enqueue_analysis_job(
+                daily.user_id,
+                daily.date,
+                event_type="source_sync",
+                source="zepp",
+                affected_dates={daily.date},
+                affected_streams=streams,
+                reason="normalized source facts changed",
+            )
 
     def _upsert(self, model, user_id: str, day, data: dict) -> bool:
         """Atomically upsert one current-contract daily row by ``(user_id, date)``."""
@@ -481,6 +888,24 @@ class HealthRepository:
         """Idempotently upsert timestamped measurements."""
         written, changed_users = self._save_metric_samples(samples)
         self._bump_existing_input_revisions(changed_users)
+        if changed_users:
+            by_user: dict[str, set[date]] = defaultdict(set)
+            streams: dict[str, set[str]] = defaultdict(set)
+            for sample in samples:
+                if sample.user_id in changed_users:
+                    by_user[sample.user_id].add(local_day(sample.timestamp))
+                    streams[sample.user_id].add(sample.metric)
+            for user_id, dates in by_user.items():
+                if dates:
+                    self.enqueue_analysis_job(
+                        user_id,
+                        max(dates),
+                        event_type="source_sync",
+                        source=sample.source if samples else "zepp",
+                        affected_dates=dates,
+                        affected_streams=streams[user_id],
+                        reason="metric samples changed",
+                    )
         return written
 
     def _save_metric_samples(self, samples: list[MetricSample]) -> tuple[int, set[str]]:
@@ -843,6 +1268,20 @@ class HealthRepository:
                 changed_users.update(row[0] for row in result.fetchall())
             self.db.flush()
             self._bump_existing_input_revisions(changed_users)
+            for user_id in changed_users:
+                dates = {
+                    values["date"] for values in rows if values["user_id"] == user_id
+                }
+                if dates:
+                    self.enqueue_analysis_job(
+                        user_id,
+                        max(dates),
+                        event_type="source_sync",
+                        source="zepp",
+                        affected_dates=dates,
+                        affected_streams={"daily_metrics"},
+                        reason="daily metric changed",
+                    )
             return len(rows)
 
         for values in rows:
@@ -864,6 +1303,18 @@ class HealthRepository:
                 changed_users.add(values["user_id"])
         self.db.flush()
         self._bump_existing_input_revisions(changed_users)
+        for user_id in changed_users:
+            dates = {values["date"] for values in rows if values["user_id"] == user_id}
+            if dates:
+                self.enqueue_analysis_job(
+                    user_id,
+                    max(dates),
+                    event_type="source_sync",
+                    source="zepp",
+                    affected_dates=dates,
+                    affected_streams={"daily_metrics"},
+                    reason="daily metric changed",
+                )
         return len(rows)
 
     def daily_metrics(self, user_id: str, start: date, end: date, metric: str | None = None) -> list[orm.DailyMetric]:
@@ -957,6 +1408,21 @@ class HealthRepository:
                 changed_users.update(row[0] for row in result.fetchall())
             self.db.flush()
             self._bump_existing_input_revisions(changed_users)
+            for user_id in changed_users:
+                dates = {
+                    values["date"] for values in rows
+                    if values["user_id"] == user_id and values["date"] is not None
+                }
+                if dates:
+                    self.enqueue_analysis_job(
+                        user_id,
+                        max(dates),
+                        event_type="source_sync",
+                        source="zepp",
+                        affected_dates=dates,
+                        affected_streams={"dense_files"},
+                        reason="dense data index changed",
+                    )
             return len(rows)
 
         changed_users: set[str] = set()
@@ -982,6 +1448,21 @@ class HealthRepository:
                 changed_users.add(values["user_id"])
         self.db.flush()
         self._bump_existing_input_revisions(changed_users)
+        for user_id in changed_users:
+            dates = {
+                values["date"] for values in rows
+                if values["user_id"] == user_id and values["date"] is not None
+            }
+            if dates:
+                self.enqueue_analysis_job(
+                    user_id,
+                    max(dates),
+                    event_type="source_sync",
+                    source="zepp",
+                    affected_dates=dates,
+                    affected_streams={"dense_files"},
+                    reason="dense data index changed",
+                )
         return len(rows)
 
     def dense_data_files(
@@ -1081,6 +1562,16 @@ class HealthRepository:
         self.db.flush()
         if changed:
             self._bump_existing_input_revisions({workout.user_id})
+            if affected:
+                self.enqueue_analysis_job(
+                    workout.user_id,
+                    max(affected),
+                    event_type="source_sync",
+                    source=workout.source,
+                    affected_dates=affected,
+                    affected_streams={"workouts"},
+                    reason="workout summary changed",
+                )
         return affected
 
     def rebuild_training_days(self, user_id: str, days: set[date]) -> int:
@@ -1130,6 +1621,16 @@ class HealthRepository:
         self.db.flush()
         if revision_changed:
             self._bump_existing_input_revisions({user_id})
+            if days:
+                self.enqueue_analysis_job(
+                    user_id,
+                    max(days),
+                    event_type="source_sync",
+                    source="canonical_workouts",
+                    affected_dates=set(days),
+                    affected_streams={"training"},
+                    reason="derived training days changed",
+                )
         return written
 
     def pending_workout_details(
@@ -1432,6 +1933,17 @@ class HealthRepository:
         self.db.flush()
         if detail_semantic_changed or samples_changed:
             self._bump_existing_input_revisions({user_id})
+            if row.started_at is not None:
+                affected_day = local_day(row.started_at)
+                self.enqueue_analysis_job(
+                    user_id,
+                    affected_day,
+                    event_type="source_sync",
+                    source=source,
+                    affected_dates={affected_day},
+                    affected_streams={"workout_detail"},
+                    reason="workout detail changed",
+                )
         return True
 
     def workout_metric_samples(
@@ -1604,6 +2116,7 @@ class HealthRepository:
         source: str | None = None,
         limit: int = 200,
         timezone_name: str | None = None,
+        as_of: datetime | None = None,
     ):
         """Return source-qualified workouts with only the requested metric samples.
 
@@ -1625,15 +2138,31 @@ class HealthRepository:
             orm.Workout.started_at >= _naive_utc(start_at),
             orm.Workout.started_at < _naive_utc(end_at),
         )
+        if limit < 1:
+            raise ValueError("workout limit must be positive")
         if source is not None:
             statement = statement.where(orm.Workout.source == source)
+        cutoff = _naive_utc(as_of) if as_of is not None else _naive_utc(end_at)
+        statement = statement.where(orm.Workout.started_at <= cutoff)
         workouts = list(self.db.execute(
-            statement.order_by(orm.Workout.started_at, orm.Workout.source, orm.Workout.workout_id).limit(limit)
+            statement.order_by(orm.Workout.started_at, orm.Workout.source, orm.Workout.workout_id).limit(limit + 1)
         ).scalars().all())
+        summary_truncated = len(workouts) > limit
+        workouts = workouts[:limit]
         if not workouts:
-            return []
+            return LoadWorkoutBatch()
         keys = [(row.source, row.workout_id) for row in workouts]
         max_points = 1_000_000
+        sample_filters = [
+            orm.WorkoutMetricSample.user_id == user_id,
+            orm.WorkoutMetricSample.metric == metric,
+            tuple_(
+                orm.WorkoutMetricSample.source,
+                orm.WorkoutMetricSample.workout_id,
+            ).in_(keys),
+        ]
+        if as_of is not None:
+            sample_filters.append(orm.WorkoutMetricSample.timestamp <= cutoff)
         dialect = self.db.get_bind().dialect.name
         if dialect == "sqlite":
             epoch = cast(func.strftime("%s", orm.WorkoutMetricSample.timestamp), Integer)
@@ -1653,14 +2182,7 @@ class HealthRepository:
                     orm.WorkoutMetricSample.source_scope,
                     orm.WorkoutMetricSample.device_id,
                 )
-                .where(
-                    orm.WorkoutMetricSample.user_id == user_id,
-                    orm.WorkoutMetricSample.metric == metric,
-                    tuple_(
-                        orm.WorkoutMetricSample.source,
-                        orm.WorkoutMetricSample.workout_id,
-                    ).in_(keys),
-                )
+                .where(*sample_filters)
                 .group_by(
                     orm.WorkoutMetricSample.source,
                     orm.WorkoutMetricSample.workout_id,
@@ -1687,14 +2209,7 @@ class HealthRepository:
                     orm.WorkoutMetricSample.unit,
                     orm.WorkoutMetricSample.source_scope,
                     orm.WorkoutMetricSample.device_id,
-                ).where(
-                    orm.WorkoutMetricSample.user_id == user_id,
-                    orm.WorkoutMetricSample.metric == metric,
-                    tuple_(
-                        orm.WorkoutMetricSample.source,
-                        orm.WorkoutMetricSample.workout_id,
-                    ).in_(keys),
-                ).order_by(
+                ).where(*sample_filters).order_by(
                     orm.WorkoutMetricSample.source,
                     orm.WorkoutMetricSample.workout_id,
                     orm.WorkoutMetricSample.timestamp,
@@ -1758,7 +2273,9 @@ class HealthRepository:
                 heart_rate=tuple(samples_by_key.get((row.source, row.workout_id), [])),
                 pauses=tuple(pauses),
             ))
-        return LoadWorkoutBatch(output, truncated=truncated)
+        return LoadWorkoutBatch(
+            output, truncated=truncated, summary_truncated=summary_truncated,
+        )
 
     def workout(
         self, user_id: str, workout_id: str, source: str = "zepp"
@@ -1787,7 +2304,6 @@ class HealthRepository:
         deadline_at: datetime | None = None,
         manifest: list[object] | None = None,
         attempt_id: str | None = None,
-        mock_source: bool = False,
     ) -> orm.SyncAttempt:
         """Create one active attempt, or return the user's existing active attempt."""
         now = datetime.utcnow()
@@ -1800,21 +2316,19 @@ class HealthRepository:
         deadline_at = _naive_utc(deadline_at) if deadline_at else None
         options = dict(options or {})
         from vitalis.config import settings
-        mock_source = bool(
-            mock_source
-            or options.get("mock_source") is True
-            or settings.zepp_mock
-        )
-        # This is a transaction gate, not durable request behavior.
-        options.pop("mock_source", None)
-        account = self.source_account(user_id, source, for_update=True, active_only=True)
-        if account is None and not mock_source:
-            raise SourceIdentityConflict("数据源账号不存在或已撤销")
-        if account is None:
-            # Mock sources are explicit and may create a synthetic local owner.
+        mode = options.get("source_mode", "mock" if settings.zepp_mock else "real")
+        if mode not in {"real", "mock"}:
+            raise SourceIdentityConflict("云端同步来源模式必须为 real 或 mock")
+        options["source_mode"] = mode
+        if mode == "mock":
             self.upsert_user(user_id)
+        self.bind_source_mode(user_id, mode)
+        account = self.source_account(user_id, source, for_update=True, active_only=True)
+        if account is None and mode == "real":
+            raise SourceIdentityConflict("数据源账号不存在或已撤销")
         request_payload = {
             "source": source,
+            "source_mode": mode,
             "trigger": trigger,
             "trigger_ref": trigger_ref,
             "plan_version": plan_version,
@@ -1974,10 +2488,10 @@ class HealthRepository:
                     from sqlalchemy.dialects.sqlite import insert
                 else:
                     from sqlalchemy.dialects.postgresql import insert
-                statement = insert(orm.SyncChunk).values(values)
-                self.db.execute(statement.on_conflict_do_nothing(
+                statement = insert(orm.SyncChunk).on_conflict_do_nothing(
                     index_elements=["attempt_id", "stable_key"]
-                ))
+                )
+                self.db.execute(statement, values)
             else:
                 for value in values:
                     exists = self.db.execute(select(orm.SyncChunk).where(
@@ -2774,10 +3288,18 @@ class HealthRepository:
             updated_at=now,
         ))
         finalized = bool(result.rowcount)
-        if finalized and workout_evidence and status in {
-            "succeeded", "partial", "failed"
-        }:
+        if finalized and workout_evidence and status in {"succeeded", "partial", "failed"}:
             self.bump_analysis_input_revision(user_id)
+            attempt = self.db.get(orm.SyncAttempt, attempt_id)
+            first = local_day(attempt.window_start, attempt.timezone)
+            last = local_day(attempt.window_end - timedelta(microseconds=1), attempt.timezone)
+            dates = {first + timedelta(days=offset) for offset in range((last - first).days + 1)}
+            self.enqueue_analysis_job(
+                user_id, last, event_type="training_coverage", source=attempt.source,
+                affected_dates=dates, affected_streams={"training_coverage"},
+                reason="workout coverage ledger changed",
+                idempotency_key=f"coverage:{attempt_id}",
+            )
         self.db.flush()
         return finalized
 
@@ -2981,6 +3503,8 @@ class HealthRepository:
         workout_id: str,
         exercises: list[StrengthExerciseRecord],
         workout_source: str = "zepp",
+        *,
+        target_date: date | None = None,
     ) -> list[StrengthExerciseRecord]:
         current = self.strength_exercises_for_workout_keys(
             user_id, [(workout_source, workout_id)]
@@ -3017,6 +3541,20 @@ class HealthRepository:
         ))
         self.db.flush()
         self.bump_analysis_input_revision(user_id)
+        workout = self.workout(user_id, workout_id, source=workout_source)
+        affected_day = target_date
+        if affected_day is None and workout is not None and workout.started_at is not None:
+            affected_day = local_day(workout.started_at)
+        if affected_day is not None:
+            self.enqueue_analysis_job(
+                user_id,
+                affected_day,
+                event_type="strength_confirmation",
+                source="user",
+                affected_dates={affected_day},
+                affected_streams={"strength"},
+                reason="strength exercise confirmation changed",
+            )
         return exercises
 
     def strength_exercises_for_workouts(
@@ -3403,16 +3941,58 @@ class HealthRepository:
         row = self.db.get(orm.HealthEventRecord, event_id)
         if row is None or row.user_id != user_id:
             return None
-        if row.acknowledged_at is None:
+        changed = row.acknowledged_at is None
+        if changed:
             row.acknowledged_at = datetime.now(timezone.utc).replace(tzinfo=None)
         payload = dict(row.payload or {})
         payload["acknowledged"] = True
         payload["acknowledged_at"] = row.acknowledged_at.isoformat()
         row.payload = payload
         self.db.flush()
-        return _event_from_row(row)
+        result = _event_from_row(row)
+        if changed:
+            self.bump_analysis_input_revision(user_id)
+            affected_dates = {result.start_date, result.end_date}
+            start = min(affected_dates)
+            end = max(affected_dates) + timedelta(days=179)
+            targets = set(self.db.execute(select(orm.AnalysisRun.target_date).where(
+                orm.AnalysisRun.user_id == user_id,
+                orm.AnalysisRun.target_date.between(start, end),
+            )).scalars().all()) or {max(affected_dates)}
+            self.enqueue_input_change(
+                user_id,
+                event_id=event_id,
+                event_type="event_acknowledgement",
+                source="user",
+                affected_dates=affected_dates,
+                affected_streams={"events"},
+                target_dates=targets,
+                reason="health event acknowledgement changed",
+            )
+        return result
 
     # ---- 分析运行、不可变快照与主观反馈 ----
+
+    def analysis_input_manifest(
+        self, user_id: str, target_date: date, as_of: datetime, *, timezone_name: str,
+    ) -> dict:
+        """Return the bounded, metadata-only source manifest for one analysis."""
+        from .source_journal import SourceJournalRepository
+
+        mode = self.source_mode(user_id)
+        journal = SourceJournalRepository(self.db)
+        if mode in {"real", "mock", "replay"}:
+            return journal.analysis_manifest(
+                user_id, target_date, as_of,
+                timezone_name=timezone_name, source="zepp", source_mode=mode,
+            )
+        return journal.input_manifest(
+            user_id,
+            start_date=target_date - timedelta(days=179),
+            end_date=target_date,
+            as_of=as_of,
+            source="zepp", source_mode=None, timezone_name=timezone_name,
+        )
 
     def create_analysis_run(self, run) -> orm.AnalysisRun:
         row = orm.AnalysisRun(
@@ -3429,6 +4009,8 @@ class HealthRepository:
             profile_revision_used=run.profile_revision_used,
             input_revision_used=run.input_revision_used,
             config_digest=run.config_digest,
+            input_manifest=run.input_manifest,
+            input_manifest_hash=run.input_manifest_hash,
         )
         self.db.add(row)
         self.db.flush()
@@ -3447,6 +4029,13 @@ class HealthRepository:
     def analysis_run(self, user_id: str, run_id: str):
         row = self.db.get(orm.AnalysisRun, run_id)
         return row if row is not None and row.user_id == user_id else None
+
+    def has_later_analysis(self, user_id: str, target: date) -> bool:
+        return bool(self.db.scalar(select(exists().where(
+            orm.AnalysisRun.user_id == user_id,
+            orm.AnalysisRun.status == "SUCCEEDED",
+            orm.AnalysisRun.target_date > target,
+        ))))
 
     def analysis_runs(self, user_id: str, start: date, end: date):
         return list(self.db.execute(select(orm.AnalysisRun).where(
@@ -3489,15 +4078,12 @@ class HealthRepository:
         return row
 
     @staticmethod
-    def _current_snapshot_conditions(user_id: str, profile_type: str):
+    def _snapshot_contract_conditions(user_id: str, profile_type: str):
         conditions = [
             orm.AnalysisSnapshot.user_id == user_id,
             orm.AnalysisSnapshot.profile_type == profile_type,
             orm.AnalysisRun.user_id == user_id,
             orm.AnalysisRun.status == "SUCCEEDED",
-            orm.AnalysisRun.profile_revision_used == func.coalesce(orm.UserProfile.revision, 0),
-            orm.AnalysisRun.input_revision_used == orm.User.analysis_input_revision,
-            orm.AnalysisRun.config_digest == _current_analysis_config_digest(),
             orm.AnalysisSnapshot.intelligence_version == INTELLIGENCE_VERSION,
             orm.AnalysisSnapshot.decision_policy_version == DECISION_POLICY_VERSION,
             orm.AnalysisSnapshot.evidence_version == EVIDENCE_VERSION,
@@ -3505,6 +4091,23 @@ class HealthRepository:
         schema = _CURRENT_SNAPSHOT_SCHEMAS.get(profile_type)
         if schema is not None:
             conditions.append(orm.AnalysisSnapshot.schema_version == schema)
+        return conditions
+
+    @staticmethod
+    def _current_snapshot_conditions(user_id: str, profile_type: str):
+        conditions = HealthRepository._snapshot_contract_conditions(user_id, profile_type)
+        conditions.extend([
+            orm.AnalysisRun.config_digest == _current_analysis_config_digest(),
+            ~exists(select(orm.AnalysisJob.id).where(
+                orm.AnalysisJob.user_id == user_id,
+                orm.AnalysisJob.target_date == orm.AnalysisRun.target_date,
+                or_(
+                    orm.AnalysisJob.event_type.is_(None),
+                    orm.AnalysisJob.event_type != "explicit_analysis",
+                ),
+                orm.AnalysisJob.input_revision > orm.AnalysisRun.input_revision_used,
+            )),
+        ])
         return conditions
 
     @staticmethod
@@ -3530,6 +4133,61 @@ class HealthRepository:
                 *self._current_snapshot_conditions(user_id, profile_type),
                 orm.AnalysisSnapshot.period_end == period_end,
             ).order_by(
+                orm.AnalysisRun.completed_at.desc().nulls_last(),
+                orm.AnalysisRun.id.desc(),
+                orm.AnalysisSnapshot.id.desc(),
+            )
+        ).scalars().first()
+
+    def latest_good_analysis_snapshot(
+        self,
+        user_id: str,
+        profile_type: str,
+        period_end: date,
+    ) -> orm.AnalysisSnapshot | None:
+        """Return the newest successful immutable snapshot, even when stale."""
+        return self.db.execute(
+            self._current_snapshot_query(user_id).where(
+                *self._snapshot_contract_conditions(user_id, profile_type),
+                orm.AnalysisSnapshot.period_end == period_end,
+            ).order_by(
+                orm.AnalysisRun.completed_at.desc().nulls_last(),
+                orm.AnalysisRun.id.desc(),
+                orm.AnalysisSnapshot.id.desc(),
+            )
+        ).scalars().first()
+
+    def latest_good_analysis_snapshot_for_target(
+        self,
+        user_id: str,
+        profile_type: str,
+        target_date: date,
+    ) -> orm.AnalysisSnapshot | None:
+        return self.db.execute(
+            self._current_snapshot_query(user_id).where(
+                *self._snapshot_contract_conditions(user_id, profile_type),
+                orm.AnalysisRun.target_date == target_date,
+                orm.AnalysisSnapshot.period_end <= target_date,
+            ).order_by(
+                orm.AnalysisSnapshot.period_end.desc(),
+                orm.AnalysisRun.completed_at.desc().nulls_last(),
+                orm.AnalysisRun.id.desc(),
+                orm.AnalysisSnapshot.id.desc(),
+            )
+        ).scalars().first()
+
+    def latest_good_analysis_snapshot_on_or_before(
+        self,
+        user_id: str,
+        profile_type: str,
+        period_end: date,
+    ) -> orm.AnalysisSnapshot | None:
+        return self.db.execute(
+            self._current_snapshot_query(user_id).where(
+                *self._snapshot_contract_conditions(user_id, profile_type),
+                orm.AnalysisSnapshot.period_end <= period_end,
+            ).order_by(
+                orm.AnalysisSnapshot.period_end.desc(),
                 orm.AnalysisRun.completed_at.desc().nulls_last(),
                 orm.AnalysisRun.id.desc(),
                 orm.AnalysisSnapshot.id.desc(),
@@ -3709,6 +4367,19 @@ class HealthRepository:
         self.db.flush()
         if changed:
             self._bump_existing_input_revisions({user_id})
+            affected_dates = {row.date}
+            workout = self.workout(user_id, workout_id, source=workout_source)
+            if workout is not None and workout.started_at is not None:
+                affected_dates.add(local_day(workout.started_at))
+            self.enqueue_analysis_job(
+                user_id,
+                max(affected_dates),
+                event_type="recommendation_completion",
+                source="user",
+                affected_dates=affected_dates,
+                affected_streams={"recommendation", "training_response"},
+                reason="recommendation completion changed",
+            )
         return _recommendation_from_row(row)
 
     def analysis_snapshots(
@@ -3741,6 +4412,31 @@ class HealthRepository:
         self.db.add(row)
         self.db.flush()
         self.bump_analysis_input_revision(feedback.user_id)
+        affected_dates = {feedback.date}
+        if feedback.workout_id and feedback.workout_source:
+            workout = self.workout(
+                feedback.user_id, feedback.workout_id, source=feedback.workout_source
+            )
+            if workout is not None and workout.started_at is not None:
+                affected_dates.add(local_day(workout.started_at))
+        start = min(affected_dates)
+        end = max(affected_dates) + timedelta(days=179)
+        targets = set(self.db.execute(select(orm.AnalysisRun.target_date).where(
+            orm.AnalysisRun.user_id == feedback.user_id,
+            orm.AnalysisRun.target_date.between(start, end),
+        )).scalars().all())
+        if not targets:
+            targets.add(max(affected_dates))
+        self.enqueue_input_change(
+            feedback.user_id,
+            event_id=feedback.id,
+            event_type="feedback",
+            source="user",
+            affected_dates=affected_dates,
+            affected_streams={"feedback"},
+            target_dates=targets,
+            reason="subjective feedback changed",
+        )
         return feedback
 
     def create_or_reuse_feedback_request(
@@ -3923,6 +4619,15 @@ class HealthRepository:
         credential_changed = row is None or previous != current
         if credential_changed and not account_was_new and not was_reactivated:
             account.fence_epoch = int(account.fence_epoch or 0) + 1
+            self.bump_analysis_input_revision(token.user_id)
+            self.enqueue_analysis_job(
+                token.user_id,
+                datetime.utcnow().date(),
+                event_type="source_credential",
+                source=token.source,
+                affected_streams={"identity"},
+                reason="source credential refreshed",
+            )
             self._cancel_source_account_attempts(
                 account.id, now=datetime.utcnow(), reason="source_credential_refreshed"
             )
@@ -3991,6 +4696,14 @@ class HealthRepository:
         account.fence_epoch = int(account.fence_epoch or 0) + 1
         account.updated_at = now
         self.bump_analysis_input_revision(user_id)
+        self.enqueue_analysis_job(
+            user_id,
+            now.date(),
+            event_type="source_identity",
+            source=source,
+            affected_streams={"identity"},
+            reason="source account revoked",
+        )
 
         # Credentials and all source-bound capability links become unusable in
         # this transaction; historical observations are intentionally untouched.
@@ -4050,8 +4763,10 @@ class HealthRepository:
 
     def save_oauth_state(
         self, state: str, user_id: str, source: str = "zepp",
-        *, expires_at: datetime | None = None,
+        *, expires_at: datetime | None = None, sync_days: int = 180,
     ) -> None:
+        if type(sync_days) is not int or not 1 <= sync_days <= 730:
+            raise ValueError("sync_days must be between 1 and 730")
         if expires_at is None:
             from vitalis.config import settings
             expires_at = datetime.now(timezone.utc) + timedelta(
@@ -4061,6 +4776,7 @@ class HealthRepository:
             id=state,
             user_id=user_id,
             source=source,
+            sync_days=sync_days,
             expires_at=_naive_utc(expires_at),
         ))
         self.db.flush()
@@ -4074,22 +4790,22 @@ class HealthRepository:
 
     def consume_oauth_state(
         self, state: str, *, now: datetime | None = None
-    ) -> str | None:
-        """Atomically consume a live one-time state and return its user id."""
+    ) -> tuple[str, int] | None:
+        """Atomically consume the identity and the server-stored backfill window."""
         current = _naive_utc(now or datetime.now(timezone.utc))
         result = self.db.execute(
             delete(orm.OAuthState).where(
                 orm.OAuthState.id == state,
                 orm.OAuthState.expires_at > current,
-            ).returning(orm.OAuthState.user_id)
+            ).returning(orm.OAuthState.user_id, orm.OAuthState.sync_days)
         )
         row = result.first()
         self.db.flush()
-        return row[0] if row is not None else None
+        return (row[0], row[1]) if row is not None else None
 
     # ---- Zepp 浏览器扩展配对 ----
 
-    def create_pairing_session(self, pairing_id: str, user_id: str, expires_at: datetime, sync_days: int = 30) -> orm.ZeppPairingSession:
+    def create_pairing_session(self, pairing_id: str, user_id: str, expires_at: datetime, sync_days: int = 180) -> orm.ZeppPairingSession:
         # Pairing creation is only reached after API authentication; the
         # submission path separately locks and validates the owner before save.
         self.upsert_user(user_id)

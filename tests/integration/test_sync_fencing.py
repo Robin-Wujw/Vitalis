@@ -42,7 +42,7 @@ def _claim(sessions, *, attempt_seconds=60, chunk_seconds=60):
         repo = HealthRepository(db)
         attempt = repo.create_or_reuse_sync_attempt(
             "owner", window_start=NOW - timedelta(days=1), window_end=NOW,
-            options={"mock_source": True},
+            options={"source_mode": "mock"},
             manifest=[{"stable_key": "hr:0", "stream": "heart_rate",
                        "stages": {"operation": "synthetic"}}],
         )

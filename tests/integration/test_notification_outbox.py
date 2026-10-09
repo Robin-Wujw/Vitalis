@@ -2,7 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -20,6 +20,34 @@ from vitalis.intelligence import contracts
 
 DAY = date(2026, 8, 29)
 NOW = datetime(2026, 8, 29, 12, 0, 0)
+DELIVERY_NOW = datetime(2026, 8, 29, 1, 45, 0, tzinfo=timezone.utc)
+
+
+def _expected_scheduled_morning_payload(payload):
+    metadata = {
+        "scheduled_for": "2026-08-29T01:30:00Z",
+        "cutoff": "2026-08-29T01:30:00Z",
+        "deadline_at": "2026-08-29T04:30:00Z",
+        "allowed_delay_seconds": 10800,
+        "partial_fallback_after": "2026-08-29T02:00:00Z",
+        "timezone": "Asia/Shanghai",
+        "required_signals": ["sleep_complete", "prior_7d_training_history"],
+        "as_of": None,
+        "delivered_as_of": "2026-08-29T01:45:00Z",
+        "late": False,
+        "delay_seconds": 900.0,
+        "missing_signals": [],
+        "partial": False,
+        "facts_only": False,
+        "coverage_reason": None,
+        "sync_degraded": False,
+        "sync_status": None,
+    }
+    return {
+        **payload,
+        "delivery_metadata": metadata,
+        "report_context": {**payload["report_context"], "delivery_metadata": metadata},
+    }
 
 
 def _database(tmp_path):
@@ -172,6 +200,7 @@ def test_scheduler_delivers_exact_saved_run_without_filesystem_marker(
         monkeypatch.setattr(settings, "push_user", "owner")
         monkeypatch.setattr(settings, "pushplus_token", "offline-token")
         monkeypatch.setattr(daily_push, "local_today", lambda: DAY)
+        monkeypatch.setattr(daily_push, "_delivery_now", lambda: DELIVERY_NOW)
         monkeypatch.setattr(
             "vitalis.adapters.daily_push.local_day_utc_bounds",
             lambda _day: (datetime(2026, 8, 29), datetime(2100, 1, 1)),
@@ -187,7 +216,7 @@ def test_scheduler_delivers_exact_saved_run_without_filesystem_marker(
 
         monkeypatch.setattr(daily_push, "PushService", OfflinePush)
         assert jobs.drain_notification_deliveries() == 1
-        assert sent == [("owner", payload, "morning")]
+        assert sent == [("owner", _expected_scheduled_morning_payload(payload), "morning")]
         with factory() as db:
             row = db.query(NotificationDelivery).one()
             assert row.status == "accepted"
@@ -227,6 +256,7 @@ def test_dispatcher_delivers_before_sync_invalidates_saved_snapshot(tmp_path, mo
         monkeypatch.setattr(settings, "push_user", "owner")
         monkeypatch.setattr(settings, "pushplus_token", "offline-token")
         monkeypatch.setattr(daily_push, "local_today", lambda: DAY)
+        monkeypatch.setattr(daily_push, "_delivery_now", lambda: DELIVERY_NOW)
         monkeypatch.setattr(
             "vitalis.adapters.daily_push.local_day_utc_bounds",
             lambda _day: (datetime(2026, 8, 29), datetime(2100, 1, 1)),
@@ -247,8 +277,12 @@ def test_dispatcher_delivers_before_sync_invalidates_saved_snapshot(tmp_path, mo
 
             def drain_once(self):
                 phases.append("sync")
+                from vitalis.domain import NormalizedDaily, SleepRecord
                 with factory.begin() as db:
-                    db.get(User, "owner").analysis_input_revision += 1
+                    HealthRepository(db).save_daily(NormalizedDaily(
+                        user_id="owner", date=DAY,
+                        sleep=SleepRecord(user_id="owner", date=DAY, sleep_duration=445),
+                    ))
                 return None
 
         def drain_analysis(*, max_jobs):
@@ -264,7 +298,7 @@ def test_dispatcher_delivers_before_sync_invalidates_saved_snapshot(tmp_path, mo
         monkeypatch.setattr("vitalis.application.jobs.drain_analysis_jobs", drain_analysis)
 
         assert jobs.dispatcher_job() == 1
-        assert sent == [("owner", payload, "morning")]
+        assert sent == [("owner", _expected_scheduled_morning_payload(payload), "morning")]
         assert phases == ["analysis", "delivery", "sync"]
         with factory() as db:
             assert db.query(NotificationDelivery).one().status == "accepted"
@@ -452,6 +486,7 @@ def test_claimed_delivery_uses_latest_eligible_run_before_sending(
         monkeypatch.setattr(settings, "push_user", "owner")
         monkeypatch.setattr(settings, "pushplus_token", "offline-token")
         monkeypatch.setattr(daily_push, "local_today", lambda: DAY)
+        monkeypatch.setattr(daily_push, "_delivery_now", lambda: DELIVERY_NOW)
         monkeypatch.setattr(
             "vitalis.adapters.daily_push.local_day_utc_bounds",
             lambda _day: (datetime(2026, 8, 29), datetime(2100, 1, 1)),
@@ -692,6 +727,7 @@ def test_http_5xx_marks_outbox_delivery_uncertain(tmp_path, monkeypatch):
         monkeypatch.setattr(settings, "push_user", "owner")
         monkeypatch.setattr(settings, "pushplus_token", "offline-token")
         monkeypatch.setattr(daily_push, "local_today", lambda: DAY)
+        monkeypatch.setattr(daily_push, "_delivery_now", lambda: DELIVERY_NOW)
         monkeypatch.setattr(
             "vitalis.adapters.daily_push.local_day_utc_bounds",
             lambda _day: (datetime(2026, 8, 29), datetime(2100, 1, 1)),

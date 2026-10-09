@@ -91,6 +91,7 @@ class RawDailyProfile:
     open_health_observations: list[OpenHealthObservation] = field(default_factory=list)
     open_health_load_workouts: list = field(default_factory=list)
     open_health_load_queried_days: list[date] = field(default_factory=list)
+    open_health_load_upstream_coverage_verified: bool = False
     open_health_load_truncated: bool = False
     open_health_rhr_by_day: dict[date, float] = field(default_factory=dict)
     open_health_input_failed: bool = False
@@ -133,9 +134,9 @@ class ProfileLoader:
         raw.training_history_coverage = self.repo.training_history_coverage(
             user_id, coverage_start, day, cutoff, timezone_name=zone_name
         )
-        verified = set(raw.training_history_coverage.get("verified_days", []))
+        verified = _coverage_dates(raw.training_history_coverage.get("verified_days", []))
         raw.training_history_coverage["prior_7d_verified"] = all(
-            (day - timedelta(days=offset)).isoformat() in verified
+            day - timedelta(days=offset) in verified
             for offset in range(1, 8)
         )
 
@@ -203,6 +204,7 @@ class ProfileLoader:
         raw.facts = facts_for_day(raw)
         raw.data_quality = self._quality(raw)
         raw.report_context = {
+            "source_mode": self.repo.source_mode(user_id),
             "as_of": cutoff.isoformat(),
             "timezone": raw.timezone_name,
             "target_date": day.isoformat(),
@@ -353,6 +355,7 @@ class ProfileLoader:
                 raw.day,
                 metric="heart_rate",
                 timezone_name=raw.timezone_name,
+                as_of=raw.as_of,
             )
             if load_profile_ready
             else []
@@ -360,9 +363,22 @@ class ProfileLoader:
         raw.open_health_load_truncated = bool(
             getattr(raw.open_health_load_workouts, "truncated", False)
         )
-        # A local database range query does not prove vendor coverage. The durable
-        # sync ledger will populate verified calendar days in a later task.
-        raw.open_health_load_queried_days = []
+        verified_days = _coverage_dates(
+            raw.training_history_coverage.get("verified_days", [])
+        )
+        target_days = {
+            load_start + timedelta(days=offset)
+            for offset in range((raw.day - load_start).days + 1)
+        }
+        raw.open_health_load_queried_days = sorted(verified_days & target_days)
+        raw.open_health_load_upstream_coverage_verified = (
+            target_days <= verified_days
+            and not raw.training_history_coverage.get("truncated", False)
+            and not raw.training_history_coverage.get("budget_exhausted", False)
+        )
+        if getattr(raw.open_health_load_workouts, "summary_truncated", False):
+            raw.open_health_load_queried_days = []
+            raw.open_health_load_upstream_coverage_verified = False
         raw.open_health_rhr_by_day = {}
         for metric in ("sleep_rhr", "resting_hr"):
             values = _canonical_daily_values(
@@ -448,9 +464,47 @@ class ProfileLoader:
 
     def _add_record_series(self, raw: RawDailyProfile) -> None:
         for day, record in raw.sleep_by_day.items():
-            _append(raw, "sleep_duration", record.get("sleep_duration"), "min", day, record.get("source", "zepp"), "normalized_daily_record")
-            _append(raw, "sleep_score", record.get("sleep_score"), "score", day, record.get("source", "zepp"), "normalized_daily_record")
-            _append(raw, "sleep_wake_count", record.get("wake_count"), "count", day, record.get("source", "zepp"), "normalized_daily_record")
+            source = record.get("source", "zepp")
+            scope = record.get("source_scope", "normalized_daily_record")
+            device_id = record.get("device_id") or None
+            for metric, field, unit in (
+                ("sleep_duration", "sleep_duration", "min"),
+                ("deep_sleep", "deep_sleep", "min"),
+                ("rem_sleep", "rem_sleep", "min"),
+                ("light_sleep", "light_sleep", "min"),
+                ("awake", "awake", "min"),
+                ("sleep_score", "sleep_score", "score"),
+                ("sleep_wake_count", "wake_count", "count"),
+            ):
+                # SleepRecord keeps an explicit zero distinct from an absent stage.
+                _append(
+                    raw,
+                    metric,
+                    record.get(field),
+                    unit,
+                    day,
+                    source,
+                    scope,
+                    device_id,
+                    source_field=f"sleep.{field}",
+                )
+            window = local_sleep_window(
+                day, record.get("bedtime"), record.get("wake_time"),
+                raw.timezone_name,
+            )
+            if window is not None:
+                bedtime, wake_time = window
+                bedtime_minutes = bedtime.hour * 60 + bedtime.minute
+                # A local midnight origin keeps 23:55 and 00:05 adjacent.
+                bedtime_offset = (bedtime_minutes + 720) % 1440 - 720
+                for metric, value, field in (
+                    ("sleep_bedtime_offset_minutes", bedtime_offset, "bedtime"),
+                    ("sleep_wake_time_minutes", wake_time.hour * 60 + wake_time.minute, "wake_time"),
+                ):
+                    _append(
+                        raw, metric, value, "min_from_midnight", day, source,
+                        scope, device_id, source_field=f"sleep.{field}",
+                    )
         for day, record in raw.activity_by_day.items():
             source = record.get("source", "zepp")
             scope = record.get("source_scope", "normalized_daily_record")
@@ -475,8 +529,30 @@ class ProfileLoader:
                 )
         for day, record in raw.training_by_day.items():
             source = record.get("source", "canonical_workouts")
-            _append(raw, "training_load", record.get("total_load"), "load", day, source, "normalized_daily_record")
-            _append(raw, "training_duration", record.get("total_duration"), "min", day, source, "normalized_daily_record")
+            scope = record.get("source_scope", "normalized_daily_record")
+            device_id = record.get("device_id") or None
+            _append(
+                raw,
+                "training_load",
+                record.get("total_load"),
+                "load",
+                day,
+                source,
+                scope,
+                device_id,
+                source_field="training.total_load",
+            )
+            _append(
+                raw,
+                "training_duration",
+                record.get("total_duration"),
+                "min",
+                day,
+                source,
+                scope,
+                device_id,
+                source_field="training.total_duration",
+            )
 
     def _add_daily_metrics(self, raw: RawDailyProfile, start: date) -> None:
         for row in self.repo.daily_metrics(raw.user_id, start, raw.day):
@@ -517,7 +593,27 @@ class ProfileLoader:
         end_at = min(end_at - timedelta(microseconds=1), raw.as_of)
         if end_at < start_at:
             return
-        for metric in SAMPLE_METRICS:
+        sample_metrics = SAMPLE_METRICS + (
+            "readiness",
+            "physical_readiness",
+            "mental_readiness",
+            "hrv_readiness",
+            "rhr_readiness",
+            "skin_temp_readiness",
+            "ahi_readiness",
+            "afib_readiness",
+            "skin_temp_delta",
+            "skin_temp_baseline_delta",
+            "sleep_hrv",
+            "sleep_rhr",
+            "hrv_baseline",
+            "rhr_baseline",
+            "hybrid_charge",
+            "physical_charge",
+            "mental_charge",
+            "stress",
+        )
+        for metric in sample_metrics:
             for row in self.repo.metric_samples(
                 raw.user_id, metric, start_at, end_at, limit=MAX_SAMPLES_PER_METRIC
             ):
@@ -532,6 +628,7 @@ class ProfileLoader:
                     row.device_id or None,
                     observed_at=row.timestamp,
                     positive=False,
+                    source_field=f"sample.{row.metric}",
                 )
 
     def _add_energy_observations(self, raw: RawDailyProfile) -> None:
@@ -904,6 +1001,20 @@ def _canonical_daily_values(
         day: float(median(item.value for item in values))
         for day, values in streams[key].items()
     }
+
+
+def _coverage_dates(values) -> set[date]:
+    """Normalize ledger dates before comparing them with local calendar days."""
+    output = set()
+    for value in values or []:
+        if type(value) is date:
+            output.add(value)
+            continue
+        try:
+            output.add(date.fromisoformat(str(value)[:10]))
+        except (TypeError, ValueError):
+            continue
+    return output
 
 
 def _records_by_day(records: list[dict]) -> dict[date, dict]:

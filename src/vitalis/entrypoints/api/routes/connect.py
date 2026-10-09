@@ -19,6 +19,7 @@ from vitalis.bootstrap import (
     get_source_account_service,
 )
 from vitalis.application.connection import ConnectionOperationError
+from vitalis.application.connection_progress import INITIAL_SYNC_DAYS, iso_utc
 from vitalis.application.ports import CredentialProvider
 from vitalis.entrypoints.api.deps import require_scope, require_user_id
 
@@ -30,29 +31,30 @@ def _connector() -> CredentialProvider:
 
 
 def _connection_status(error: ConnectionOperationError) -> int:
-    if error.retry_after is not None or error.kind == "rate_limited":
-        return 429
-    if error.kind in {"identity_conflict", "conflict", "busy"}:
-        return 409
-    if error.kind == "not_found":
-        return 404
-    if error.kind == "expired":
-        return 410
-    if error.kind in {"network", "service"}:
-        return 503
-    if error.kind == "timeout":
-        return 504
-    return 400
+    return error.http_status
+
+
+def connection_http_error(error: ConnectionOperationError) -> HTTPException:
+    return HTTPException(
+        status_code=error.http_status, detail="连接操作失败",
+        headers={"Retry-After": str(error.retry_after)} if error.retry_after else None,
+    )
 
 
 @router.post("/zepp/authorize", summary="扫码授权：创建 state 并返回二维码 URL")
-def zepp_authorize(user_id: str = Depends(require_scope("manage"))) -> dict:
+def zepp_authorize(
+    sync_days: int = Query(INITIAL_SYNC_DAYS, ge=1, le=730),
+    user_id: str = Depends(require_scope("manage")),
+) -> dict:
     """生成扫码授权地址（返回给前端/Agent 渲染二维码）。
 
     用户用 Zepp App 扫这个二维码并确认授权后，
     Zepp 会回调 /connect/zepp/callback?code=...&state=...
     """
-    return get_connection_service().authorize(user_id)
+    try:
+        return get_connection_service().authorize(user_id, sync_days)
+    except ConnectionOperationError as exc:
+        raise connection_http_error(exc) from exc
 
 
 @router.get("/zepp/scan", response_class=HTMLResponse, summary="显示现有 Zepp 配对会话")
@@ -62,20 +64,23 @@ def zepp_scan_page(request: Request, code: str = Query(..., min_length=1)) -> st
         status = get_connection_service().pairing_status(code)
     except ConnectionOperationError as exc:
         raise HTTPException(
-            status_code=404 if exc.kind in {"not_found", "expired"} else 400,
+            status_code=exc.http_status,
             detail="配对会话不存在或已过期",
         ) from exc
-    pairing = {"pairing_code": code, "expires_at": status.expires_at.isoformat() + "Z"}
+    pairing = {"pairing_code": code, "expires_at": iso_utc(status.expires_at), "sync_days": status.sync_days}
     return _cloud_pairing_html(status.user_id, _public_base_url(request), pairing)
 
 
 @router.post("/zepp/scan", response_class=HTMLResponse, summary="创建模拟扫码页")
-def zepp_mock_scan_page(user_id: str = Depends(require_scope("manage"))) -> str:
+def zepp_mock_scan_page(
+    sync_days: int = Query(INITIAL_SYNC_DAYS, ge=1, le=730),
+    user_id: str = Depends(require_scope("manage")),
+) -> str:
     """Start the explicit mock OAuth QR flow; real pairing uses POST /pair."""
     if not settings.zepp_mock:
         raise HTTPException(status_code=404, detail="真实 Zepp 配对请创建一次性配对码")
     try:
-        authorization = get_connection_service().authorize(user_id)
+        authorization = get_connection_service().authorize(user_id, sync_days)
     except ConnectionOperationError as exc:
         raise HTTPException(status_code=_connection_status(exc), detail="授权服务暂时不可用") from exc
     return _scan_page_html(user_id, authorization["state"], real_qr=False)
@@ -332,7 +337,7 @@ def zepp_callback(
     request: Request,
     code: str,
     state: str,
-    connector: ZeppConnector = Depends(_connector),
+    connector: CredentialProvider = Depends(_connector),
 ) -> Response:
     """Zepp 授权回调入口（redirect_uri）。
 
@@ -343,9 +348,7 @@ def zepp_callback(
         service = get_connection_service(provider=connector)
         user_id, auth, attempt = service.complete_oauth(code, state)
     except ConnectionOperationError as exc:
-        status_code = _connection_status(exc)
-        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
-        raise HTTPException(status_code=status_code, detail=str(exc), headers=headers) from exc
+        raise connection_http_error(exc) from exc
     if "text/html" in request.headers.get("accept", "*/*"):
         body = f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -363,6 +366,8 @@ a{{display:inline-block;margin-top:18px;color:#0072ff;text-decoration:none;font-
         return HTMLResponse(body)
     return JSONResponse({
         "status": "authorized",
+        "connection_state": "backfill_requested" if attempt else "credential_verified",
+        "progress_url": "/api/connect/zepp/progress",
         "user_id": user_id,
         "source": connector.source,
         "token_saved": True,
@@ -382,9 +387,8 @@ def zepp_token_status(user_id: str = Depends(require_user_id)) -> dict:
 class ImportTokenRequest(BaseModel):
     """导入 Zepp apptoken 凭据（来自网页登录 cookie hm-user-login-info）。
 
-    支持两种输入方式：
-      1. 粘贴完整的 cookie 值（推荐）：自动解析 userid/apptoken/region
-      2. 分别填写 user_id + app_token（兼容旧方式）
+    这是高级手工入口；常规连接先使用浏览器扩展配对。
+    可粘贴完整 cookie 或分别填写 user_id + app_token。
     """
 
     cookie: str = Field(default="", description="完整的 hm-user-login-info cookie 值（URL 编码或纯 JSON）")
@@ -392,10 +396,10 @@ class ImportTokenRequest(BaseModel):
     app_token: str = Field(default="", description="Zepp apptoken（cookie 中的 apptoken）")
     region_host: str = Field(default="", description="区域主机，如 api-mifitcn.zepp.com（缺省自动探测）")
     sync_history: bool = Field(default=True, description="导入后自动同步")
-    sync_days: int = Field(default=14, ge=1, le=730)
+    sync_days: int = Field(default=INITIAL_SYNC_DAYS, ge=1, le=730)
 
 
-@router.post("/zepp/token", summary="导入 Zepp 凭据（真实接入主入口）")
+@router.post("/zepp/token", summary="高级入口：手工导入 Zepp 凭据")
 def import_zepp_token(
     req: ImportTokenRequest,
     vitalis_user: str = Depends(require_scope("manage")),
@@ -407,7 +411,7 @@ def import_zepp_token(
     """
     connector = _connector()
     if getattr(connector, "mock", False):
-        return {"status": "error", "detail": "当前为 mock 模式（ZEPP_MOCK=true），无需导入；请设 ZEPP_MOCK=false 接真实 Zepp"}
+        raise HTTPException(status_code=409, detail="模拟模式不接受手工厂商凭据")
     try:
         auth, attempt = get_connection_service(provider=connector).import_token(
             vitalis_user,
@@ -419,11 +423,7 @@ def import_zepp_token(
             sync_days=req.sync_days,
         )
     except ConnectionOperationError as exc:
-        raise HTTPException(
-            status_code=_connection_status(exc),
-            detail=str(exc),
-            headers={"Retry-After": str(exc.retry_after)} if exc.retry_after else None,
-        ) from exc
+        raise connection_http_error(exc) from exc
 
     response = {
         "status": "connected",
@@ -432,6 +432,10 @@ def import_zepp_token(
         "vendor_user_id": auth.source_user_id,
         "region_host": auth.region_host,
         "auth_mode": "apptoken",
+        "entrypoint": "advanced_token_import",
+        "connection_state": "backfill_requested" if attempt else "credential_verified",
+        "sync_days": req.sync_days,
+        "progress_url": "/api/connect/zepp/progress",
         "token_saved": True,
     }
     if attempt is not None:
@@ -443,12 +447,18 @@ def import_zepp_token(
     return response
 
 
-@router.get("/zepp/import", response_class=HTMLResponse, summary="apptoken 导入引导页")
+@router.get("/zepp/progress", summary="读取首连回填、暖机和首报进度")
+def zepp_connection_progress(user_id: str = Depends(require_user_id)) -> dict:
+    """Read stored progress only; synchronization and analysis belong to worker."""
+    return get_connection_service().progress(user_id)
+
+
+@router.get("/zepp/import", response_class=HTMLResponse, summary="高级入口：apptoken 导入引导页")
 def zepp_import_page() -> str:
     """引导页：说明如何从浏览器 cookie 获取 user_id + apptoken 并提交。"""
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Vitalis · 导入 Zepp 凭据</title>
+<title>Vitalis · 高级手工导入 Zepp 凭据</title>
 <style>
 *{{box-sizing:border-box;margin:0}}body{{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#0f2027;min-height:100vh;display:flex;align-items:center;justify-content:center;color:#e8f1f5}}
 .card{{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:18px;padding:34px 36px;max-width:520px;width:92%}}
@@ -458,7 +468,8 @@ button{{margin-top:18px;width:100%;padding:12px;border:0;border-radius:8px;backg
 #msg{{margin-top:12px;font-size:13px;min-height:18px}}
 </style></head>
 <body><div class="card">
-<h1>导入 Zepp 凭据（apptoken）</h1>
+<h1>高级入口：手工导入 Zepp 凭据</h1>
+<p>常规连接请使用浏览器扩展配对；此入口适用于了解凭据导入操作的用户。</p>
 <ol>
 <li>在电脑浏览器打开 <b>watchface.zepp.com</b>（或备用 user.huami.com）并登录你的 Zepp 账号</li>
 <li>按 F12 打开开发者工具 → Application → Cookies → 找到 <b>hm-user-login-info</b></li>
@@ -470,7 +481,7 @@ button{{margin-top:18px;width:100%;padding:12px;border:0;border-radius:8px;backg
 <label>Zepp 用户 ID（userid）</label><input id="uid" placeholder="如 12345678"/>
 <label>apptoken</label><input id="tok" placeholder="粘贴 hm-user-login-info 中的 apptoken" style="font-family:monospace"/>
 <label>区域主机（可选）</label><input id="region" value="api-mifitcn.zepp.com"/>
-<label>同步天数（可选，1-730）</label><input id="days" type="number" value="14" min="1" max="730"/>
+<label>首次回填天数（1-730，默认 180）</label><input id="days" type="number" value="180" min="1" max="730"/>
 <button onclick="doImport()">验证并同步</button>
 <div id="msg"></div>
 </div>
@@ -481,8 +492,9 @@ async function doImport(){{
   const uid=document.getElementById('uid').value.trim();
   const tok=document.getElementById('tok').value.trim();
   const region=document.getElementById('region').value.trim();
-  const days=parseInt(document.getElementById('days').value)||14;
+  const days=Number(document.getElementById('days').value);
   const msg=document.getElementById('msg');
+  if(!Number.isInteger(days)||days<1||days>730){{msg.textContent='回填窗口需要 1-730 天';return;}}
   if(!localUser||!apiToken||!uid||!tok){{msg.textContent='请填写 Vitalis 令牌和 Zepp 凭据';msg.style.color='#f6c177';return;}}
   msg.textContent='正在验证登录凭据…';msg.style.color='#9fb8c4';
   try{{

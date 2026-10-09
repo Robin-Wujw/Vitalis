@@ -71,6 +71,7 @@ from vitalis.intelligence.profile import ProfileLoader
 from vitalis.intelligence.strength import normalize_exercise
 from vitalis.intelligence.timeline import HealthTimelineEngine
 from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
+from vitalis.time import local_day
 
 
 class AnalysisInputChangedError(RuntimeError):
@@ -100,12 +101,14 @@ class IntelligenceCommand:
         catalog_revision: str,
         today_factory: Callable[[], date],
         now_factory: Callable[[], datetime],
+        product_context_factory: Callable[[str, date, datetime], dict] | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._timezone = timezone_name
         self._catalog_revision = catalog_revision
         self._today_factory = today_factory
         self._now_factory = now_factory
+        self._product_context_factory = product_context_factory
 
     def analyze(
         self, user_id: str, day: date | None = None, *,
@@ -145,6 +148,10 @@ class IntelligenceCommand:
                     self._catalog_revision,
                     installed_analysis_rules_digest(),
                 )
+                run.input_manifest = repo.analysis_input_manifest(
+                    user_id, target, run.started_at, timezone_name=self._timezone,
+                )
+                run.input_manifest_hash = str(run.input_manifest.get("manifest_hash") or "")
                 repo.create_analysis_run(run)
                 if job_claim is not None and not job_repository.attach_run(
                     uow.transaction, job_claim, run.id
@@ -190,6 +197,11 @@ class IntelligenceCommand:
                     ],
                 )
                 prior_events = repo.health_events_as_of(user_id, target)
+                product_context = (
+                    self._product_context_factory(user_id, target, run.started_at)
+                    if self._product_context_factory is not None
+                    else {}
+                )
 
             trace = analyze_with_trace(
                 AnalysisDataset(
@@ -200,6 +212,11 @@ class IntelligenceCommand:
                     monthly_feedback=tuple(monthly_feedback),
                     recommendation_by_workout=recommendation_by_workout,
                     prior_events=tuple(prior_events),
+                    product_contexts={
+                        "daily": product_context,
+                        "weekly": product_context,
+                        "monthly": product_context,
+                    },
                 ),
                 AnalysisRequest(
                     user_id=user_id,
@@ -236,11 +253,10 @@ class IntelligenceCommand:
             )
             with self._uow_factory() as uow:
                 repo = uow.repository
-                if not repo.lock_analysis_input_revision(
-                    user_id, run.input_revision_used
+                if not repo.lock_analysis_scope(
+                    user_id, run.input_revision_used, target,
                 ):
                     raise AnalysisInputChangedError("分析输入在计算期间发生变化，请重新运行")
-                current_profile = repo.user_profile(user_id)
                 current_digest = analysis_policy_digest(
                     self._timezone,
                     run.intelligence_version,
@@ -249,11 +265,8 @@ class IntelligenceCommand:
                     self._catalog_revision,
                     installed_analysis_rules_digest(),
                 )
-                if (
-                    current_profile.revision != run.profile_revision_used
-                    or current_digest != run.config_digest
-                ):
-                    raise AnalysisInputChangedError("分析输入在计算期间发生变化，请重新运行")
+                if current_digest != run.config_digest:
+                    raise AnalysisInputChangedError("分析配置在计算期间发生变化，请重新运行")
                 if job_claim is not None:
                     if not job_repository.succeed(uow.transaction, job_claim, run.id):
                         raise RuntimeError("analysis job claim is no longer current")
@@ -318,6 +331,11 @@ class IntelligenceCommand:
                     target,
                     target,
                 )
+                if job_claim is None:
+                    repo.resolve_analysis_jobs_for_run(
+                        user_id, target, run.id,
+                        input_revision=run.input_revision_used,
+                    )
                 row = repo.complete_analysis_run(run.id, AnalysisRunStatus.SUCCEEDED.value)
                 repo.rearm_unavailable_notification_deliveries(user_id, run.id, target)
                 repo.refresh_existing_calendar_notification_deliveries(
@@ -398,15 +416,130 @@ class IntelligenceQuery:
         self._uow_factory = uow_factory
         self._today_factory = today_factory
 
+    @staticmethod
+    def _snapshot_metadata(row) -> dict:
+        return {
+            "analysis_run_id": row.analysis_run_id,
+            "profile_type": row.profile_type,
+            "period_start": row.period_start,
+            "period_end": row.period_end,
+            "generated_at": row.generated_at.replace(tzinfo=timezone.utc),
+            "schema_version": row.schema_version,
+            "intelligence_version": row.intelligence_version,
+            "decision_policy_version": row.decision_policy_version,
+            "evidence_version": row.evidence_version,
+        }
+
+    @staticmethod
+    def _payload_with_state(payload: dict, state: dict) -> dict:
+        # Keep the existing facts/sections at the top level while exposing a
+        # stable state envelope to API clients that opt into the state endpoint.
+        return {**payload, **state}
+
+    @staticmethod
+    def _attach_report_state(profile, state: dict):
+        context = dict(getattr(profile, "report_context", {}) or {})
+        context["report_state"] = {
+            "state": state.get("state"),
+            "failure_code": state.get("failure_code"),
+            "last_good_snapshot": state.get("last_good_snapshot"),
+            "stale_since": state.get("stale_since"),
+            "job_id": state.get("job_id"),
+            "next_action": state.get("next_action"),
+        }
+        return profile.model_copy(update={"report_context": context})
+
+    def report_state(
+        self, user_id: str, profile_type: str, day: date | None = None
+    ) -> dict:
+        target = day or self._today_factory()
+        if profile_type not in {"daily", "weekly", "monthly"}:
+            raise ValueError("report state only supports daily, weekly, or monthly")
+        with self._uow_factory() as uow:
+            repo = uow.repository
+            if profile_type == "daily":
+                current = repo.latest_analysis_snapshot(user_id, profile_type, target)
+                last_good = repo.latest_good_analysis_snapshot(user_id, profile_type, target)
+            else:
+                current = repo.latest_analysis_snapshot_for_target(user_id, profile_type, target)
+                last_good = repo.latest_good_analysis_snapshot_for_target(
+                    user_id, profile_type, target
+                )
+            selected = last_good or current
+            current_exists = (
+                current is not None
+                and selected is not None
+                and selected.analysis_run_id == current.analysis_run_id
+            )
+            good_meta = self._snapshot_metadata(selected) if selected else None
+            good_run = repo.analysis_run(user_id, selected.analysis_run_id) if selected else None
+            jobs = [
+                item for item in repo.analysis_jobs_for_target(user_id, target)
+                if item.status in {"queued", "running", "failed"} and (
+                    good_run is None
+                    or (
+                        item.input_revision is not None
+                        and item.input_revision > good_run.input_revision_used
+                    )
+                    or item.event_type == "explicit_analysis" and (
+                        item.created_at > (good_run.completed_at or good_run.started_at)
+                    )
+                )
+            ]
+            job = next((item for item in jobs if item.status == "running"), None)
+            job = job or next((item for item in jobs if item.status == "queued"), None)
+            job = job or next((item for item in jobs if item.status == "failed"), None)
+            stale_since = min(
+                (item.stale_since for item in jobs if item.stale_since is not None),
+                default=None,
+            )
+            payload = dict(selected.payload or {}) if selected else {}
+            failure_code = None
+            if job is not None and job.status == "failed":
+                failure_code = (
+                    "analysis_input_changed"
+                    if job.error == "analysis_input_changed"
+                    else "analysis_failed"
+                )
+            job_data = {"id": job.id, "status": job.status} if job is not None else None
+
+        if job_data is not None and job_data["status"] in {"queued", "running"}:
+            state_name = job_data["status"]
+            next_action = "wait_for_analysis"
+        elif job_data is not None and job_data["status"] == "failed":
+            state_name = "failed"
+            next_action = "retry_analysis"
+        elif current_exists:
+            state_name = "current"
+            next_action = "none"
+            stale_since = None
+        elif good_meta is not None:
+            state_name = "stale"
+            next_action = "retry_analysis"
+        else:
+            state_name = "missing"
+            next_action = "enqueue_analysis"
+        if stale_since is not None and stale_since.tzinfo is None:
+            stale_since = stale_since.replace(tzinfo=timezone.utc)
+        state = {
+            "state": state_name,
+            "failure_code": failure_code,
+            "last_good_snapshot": good_meta,
+            "stale_since": stale_since,
+            "job_id": job_data["id"] if job_data else None,
+            "next_action": next_action,
+        }
+        return self._payload_with_state(payload, state)
+
     def profile(self, user_id: str) -> UserProfile:
         with self._uow_factory() as uow:
             return uow.repository.user_profile(user_id)
 
     def daily(self, user_id: str, day: date | None = None) -> DailyProfile | None:
-        target = day or self._today_factory()
-        with self._uow_factory() as uow:
-            row = uow.repository.latest_analysis_snapshot(user_id, "daily", target)
-            return DailyProfile.model_validate(row.payload) if row else None
+        state = self.report_state(user_id, "daily", day)
+        if state["last_good_snapshot"] is None:
+            return None
+        return self._attach_report_state(DailyProfile.model_validate(state), state)
 
     def morning_briefing(
         self, user_id: str, day: date | None = None
@@ -439,16 +572,16 @@ class IntelligenceQuery:
         return MonthlyBriefingEngine().build(monthly) if monthly is not None else None
 
     def weekly(self, user_id: str, day: date | None = None) -> WeeklyProfile | None:
-        target = day or self._today_factory()
-        with self._uow_factory() as uow:
-            row = uow.repository.latest_analysis_snapshot_for_target(user_id, "weekly", target)
-            return WeeklyProfile.model_validate(row.payload) if row else None
+        state = self.report_state(user_id, "weekly", day)
+        if state["last_good_snapshot"] is None:
+            return None
+        return self._attach_report_state(WeeklyProfile.model_validate(state), state)
 
     def monthly(self, user_id: str, day: date | None = None) -> MonthlyProfile | None:
-        target = day or self._today_factory()
-        with self._uow_factory() as uow:
-            row = uow.repository.latest_analysis_snapshot_for_target(user_id, "monthly", target)
-            return MonthlyProfile.model_validate(row.payload) if row else None
+        state = self.report_state(user_id, "monthly", day)
+        if state["last_good_snapshot"] is None:
+            return None
+        return self._attach_report_state(MonthlyProfile.model_validate(state), state)
 
     def trends(self, user_id: str, day: date | None = None) -> TrendResponse | None:
         daily = self.daily(user_id, day)
@@ -495,6 +628,7 @@ class IntelligenceQuery:
                 decision_policy_version=profile.decision_policy_version,
                 evidence_version=profile.evidence_version,
                 data_quality=profile.data_quality,
+                report_state=profile.report_context.get("report_state", {}),
             ),
             facts=profile.decision.evidence.facts,
             gates=profile.decision.evidence.gates,
@@ -595,9 +729,9 @@ class IntelligenceQuery:
     ) -> TrainingResponseProfile | None:
         target = day or self._today_factory()
         with self._uow_factory() as uow:
-            row = uow.repository.latest_analysis_snapshot(
-                user_id, "training_responses", target
-            )
+            repo = uow.repository
+            row = repo.latest_analysis_snapshot(user_id, "training_responses", target)
+            row = row or repo.latest_good_analysis_snapshot(user_id, "training_responses", target)
             return TrainingResponseProfile.model_validate(row.payload) if row else None
 
     def personal_model(
@@ -605,9 +739,9 @@ class IntelligenceQuery:
     ) -> PersonalModel | None:
         target = day or self._today_factory()
         with self._uow_factory() as uow:
-            row = uow.repository.latest_analysis_snapshot(
-                user_id, "personal_model", target
-            )
+            repo = uow.repository
+            row = repo.latest_analysis_snapshot(user_id, "personal_model", target)
+            row = row or repo.latest_good_analysis_snapshot(user_id, "personal_model", target)
             return PersonalModel.model_validate(row.payload) if row else None
 
     def personal_associations(
@@ -615,7 +749,9 @@ class IntelligenceQuery:
     ) -> PersonalAssociationProfile | None:
         target = day or self._today_factory()
         with self._uow_factory() as uow:
-            row = uow.repository.latest_analysis_snapshot(
+            repo = uow.repository
+            row = repo.latest_analysis_snapshot(user_id, "personal_associations", target)
+            row = row or repo.latest_good_analysis_snapshot(
                 user_id, "personal_associations", target
             )
             return PersonalAssociationProfile.model_validate(row.payload) if row else None
@@ -660,13 +796,42 @@ class IntelligenceAction:
         self._uow_factory = uow_factory
         self._today_factory = today_factory
 
+    def _enqueue_input(
+        self,
+        repository,
+        user_id: str,
+        target_date: date,
+        *,
+        event_type: str,
+        streams: set[str],
+        affected_dates: set[date] | None = None,
+        reason: str,
+    ) -> None:
+        repository.enqueue_analysis_job(
+            user_id,
+            target_date,
+            event_type=event_type,
+            source="user",
+            affected_dates=affected_dates or {target_date},
+            affected_streams=streams,
+            reason=reason,
+        )
+
     def patch_profile(
         self, user_id: str, profile_patch: UserProfilePatch
     ) -> UserProfile:
         with self._uow_factory() as uow:
             repo = uow.repository
             repo.upsert_user(user_id)
+            before = repo.user_profile(user_id)
             result = repo.patch_user_profile(user_id, profile_patch)
+            if result.revision != before.revision:
+                target = self._today_factory()
+                self._enqueue_input(
+                    repo, user_id, target, event_type="profile",
+                    streams={"profile", "recommendation"},
+                    reason="user profile changed",
+                )
             uow.commit()
             return result
 
@@ -787,7 +952,16 @@ class IntelligenceAction:
         with self._uow_factory() as uow:
             repo = uow.repository
             repo.upsert_user(user_id)
+            before = repo.training_preferences(user_id)
             result = repo.save_training_preferences(user_id, preferences)
+            if result.model_dump(mode="json", exclude={"updated_at"}) != before.model_dump(
+                mode="json", exclude={"updated_at"}
+            ):
+                self._enqueue_input(
+                    repo, user_id, self._today_factory(), event_type="preferences",
+                    streams={"preferences", "recommendation"},
+                    reason="training preferences changed",
+                )
             uow.commit()
             return result
 
@@ -797,7 +971,16 @@ class IntelligenceAction:
         with self._uow_factory() as uow:
             repo = uow.repository
             repo.upsert_user(user_id)
+            before = repo.training_preferences(user_id)
             result = repo.patch_training_preferences(user_id, patch)
+            if result.model_dump(mode="json", exclude={"updated_at"}) != before.model_dump(
+                mode="json", exclude={"updated_at"}
+            ):
+                self._enqueue_input(
+                    repo, user_id, self._today_factory(), event_type="preferences",
+                    streams={"preferences", "recommendation"},
+                    reason="training preferences changed",
+                )
             uow.commit()
             return result
 
@@ -819,4 +1002,6 @@ def _run_from_row(row) -> AnalysisRun:
         profile_revision_used=row.profile_revision_used,
         input_revision_used=row.input_revision_used,
         config_digest=row.config_digest,
+        input_manifest=row.input_manifest or {},
+        input_manifest_hash=row.input_manifest_hash or "",
     )

@@ -142,6 +142,94 @@ def test_read_operations_and_bearer_only(installed):
         )
 
 
+def test_report_state_reads_saved_status_without_starting_analysis(installed):
+    with mock_api() as (base, calls, responses):
+        state = {
+            "state": "queued", "job_id": "job-1", "failure_code": None,
+            "last_good_snapshot": {"analysis_run_id": "saved-run"},
+            "stale_since": "2026-09-20T13:00:00Z", "next_action": "wait_for_analysis",
+        }
+        responses[("GET", "/api/reports/daily/state")] = [(200, state, {})]
+        assert invoke(installed, base, "report", "daily", "--day", "2026-09-20", "--state") == (0, state)
+        assert len(calls) == 1
+        assert calls[0][0] == "GET"
+        assert urlsplit(calls[0][1]).path == "/api/reports/daily/state"
+        assert parse_qs(urlsplit(calls[0][1]).query) == {"day": ["2026-09-20"]}
+
+
+def test_product_reads_public_view_progress_and_explicit_keyed_actions(installed, tmp_path):
+    with mock_api() as (base, calls, responses):
+        responses.update({
+            ("GET", "/api/product/goals"): [(200, {"goals": []}, {})],
+            ("GET", "/api/product/feedback"): [(200, [], {})],
+            ("GET", "/api/product/summary"): [(200, {"goals": []}, {})],
+            ("GET", "/api/product/metrics"): [(200, {"coverage": {}}, {})],
+            ("GET", "/api/product/context"): [(200, {"user_id": "synthetic"}, {})],
+            ("GET", "/api/connect/zepp/progress"): [(200, {"state": "connected"}, {})],
+            ("GET", "/api/reports/daily/view"): [(200, {"blocks": []}, {})],
+            ("POST", "/api/product/goals"): [
+                (201, {"goal": {"id": "goal-1"}}, {}),
+                (201, {"goal": {"id": "goal-1"}}, {}),
+            ],
+            ("PATCH", "/api/product/goals/goal-1"): [(200, {"goal": {"id": "goal-1"}}, {})],
+            ("POST", "/api/product/feedback"): [(201, {"feedback": {"id": "feedback-1"}}, {})],
+        })
+        assert invoke(installed, base, "query", "product-goals") == (0, {"goals": []})
+        assert invoke(installed, base, "query", "product-feedback", "--start", "2026-09-01", "--end", "2026-09-20", "--limit", "10") == (0, [])
+        assert invoke(installed, base, "query", "product-summary", "--start", "2026-09-01", "--end", "2026-09-20") == (0, {"goals": []})
+        assert invoke(installed, base, "query", "product-metrics", "--start", "2026-09-01", "--end", "2026-09-20") == (0, {"coverage": {}})
+        assert invoke(installed, base, "query", "product-context", "--day", "2026-09-20") == (0, {"user_id": "synthetic"})
+        assert invoke(installed, base, "query", "connection-progress") == (0, {"state": "connected"})
+        assert invoke(installed, base, "report", "daily", "--day", "2026-09-20", "--view") == (0, {"blocks": []})
+        assert invoke(installed, base, "report", "daily", "--state", "--view")[1] == {
+            "status": "error", "error": "invalid_arguments",
+        }
+
+        body = {
+            "confirmed": True, "goal_type": "sleep_duration", "target_value": 450,
+            "target_unit": "min", "target_date": "2026-10-20",
+        }
+        goal_key = tmp_path / "goal-create-key.json"
+        assert invoke(installed, base, "action", "goal-create", "--key-file", str(goal_key), body=json.dumps(body)) == (
+            0, {"goal": {"id": "goal-1"}},
+        )
+        assert calls[-1][0:2] == ("POST", "/api/product/goals")
+        assert json.loads(calls[-1][3]) == body
+        assert calls[-1][2]["Idempotency-Key"]
+        record = json.loads(goal_key.read_text(encoding="utf-8"))
+        assert record["operation"] == "POST /api/product/goals"
+        assert record["request_sha256"] == __import__("hashlib").sha256(json.dumps(
+            {"method": "POST", "path": "/api/product/goals", "body": body},
+            sort_keys=True, separators=(",", ":"),
+        ).encode()).hexdigest()
+        assert invoke(installed, base, "action", "goal-create", "--key-file", str(goal_key), body=json.dumps(body)) == (
+            0, {"goal": {"id": "goal-1"}},
+        )
+
+        patch_body = {"confirmed": True, "expected_revision": 1, "target_value": 460}
+        patch_key = tmp_path / "goal-patch-key.json"
+        assert invoke(installed, base, "action", "goal-patch", "--id", "goal-1", "--key-file", str(patch_key), body=json.dumps(patch_body))[0] == 0
+        assert calls[-1][0:2] == ("PATCH", "/api/product/goals/goal-1")
+        assert json.loads(calls[-1][3]) == patch_body
+
+        feedback_body = {"confirmed": True, "kind": "report_usefulness", "report_run_id": "run-1", "usefulness": "useful"}
+        feedback_key = tmp_path / "product-feedback-key.json"
+        assert invoke(installed, base, "action", "product-feedback", "--key-file", str(feedback_key), body=json.dumps(feedback_body))[0] == 0
+        assert calls[-1][0:2] == ("POST", "/api/product/feedback")
+        assert json.loads(calls[-1][3]) == feedback_body
+
+        responses[("POST", "/api/product/feedback")] = [(503, {"detail": "busy"}, {}), (201, {"feedback": {"id": "retry"}}, {})]
+        no_retry_key = tmp_path / "product-feedback-no-retry.json"
+        assert invoke(installed, base, "action", "product-feedback", "--key-file", str(no_retry_key), body=json.dumps(feedback_body)) == (
+            1, {"status": "error", "error": "http_error", "http_status": 503},
+        )
+        assert calls[-1][0:2] == ("POST", "/api/product/feedback")
+        assert len(responses[("POST", "/api/product/feedback")]) == 1
+        assert invoke(installed, base, "action", "goal-create", body=json.dumps(body))[1] == {
+            "status": "error", "error": "invalid_arguments",
+        }
+
+
 def test_allowlisted_extended_read_and_user_actions(installed):
     with mock_api() as (base, calls, responses):
         responses[("GET", "/api/intelligence/trends")] = [(200, {"trends": []}, {})]

@@ -25,6 +25,7 @@ class ConnectorSyncResult:
 
 class HealthConnector(ABC):
     source: str
+    source_mode: str
 
     def __init__(self, auth: ConnectorAuth | None = None) -> None:
         self.auth = auth or ConnectorAuth()

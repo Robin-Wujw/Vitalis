@@ -128,7 +128,7 @@ class MorningBriefingEngine:
         source = context if isinstance(context, dict) else {}
         safe = {
             key: deepcopy(source[key])
-            for key in ("as_of", "timezone", "target_date", "target_day_complete")
+            for key in ("source_mode", "as_of", "timezone", "target_date", "target_day_complete")
             if key in source
         }
         safe_metadata = {

@@ -9,6 +9,7 @@ from vitalis.domain import NormalizedDaily, User
 
 class _Connector(HealthConnector):
     source = "synthetic"
+    source_mode = "mock"
 
     def __init__(self, transaction_state):
         super().__init__(ConnectorAuth())
@@ -44,6 +45,10 @@ class _Repository:
     def upsert_user(self, user_id, name="", source="zepp"):
         assert self.transaction_state["active"] is True
         self.user = (user_id, name, source)
+
+    def bind_source_mode(self, user_id, mode):
+        assert self.transaction_state["active"] is True
+        self.mode = (user_id, mode)
 
     def save_daily(self, daily):
         assert self.transaction_state["active"] is True

@@ -154,22 +154,24 @@ def test_profile_revision_invalidates_saved_intelligence_until_rerun():
         UserProfilePatch(expected_revision=0, confirmed_hrmax_bpm=190),
     )
     assert updated.revision == 1
-    assert query.daily(user_id, TARGET) is None
-    assert query.weekly(user_id, TARGET) is None
-    assert query.monthly(user_id, TARGET) is None
-    assert query.training_responses(user_id, TARGET) is None
-    assert query.personal_model(user_id, TARGET) is None
-    assert query.personal_associations(user_id, TARGET) is None
+    # Historical last-good snapshots remain readable; the profile write is
+    # scoped to the current advice target rather than globally deleting history.
+    assert query.daily(user_id, TARGET).analysis_run_id == first.run.id
+    assert query.weekly(user_id, TARGET).analysis_run_id == first.run.id
+    assert query.monthly(user_id, TARGET).analysis_run_id == first.run.id
+    assert query.training_responses(user_id, TARGET).analysis_run_id == first.run.id
+    assert query.personal_model(user_id, TARGET).analysis_run_id == first.run.id
+    assert query.personal_associations(user_id, TARGET).analysis_run_id == first.run.id
     assert query.daily(other_user, TARGET).analysis_run_id == other.run.id
     with session_scope() as db:
         repo = HealthRepository(db)
         assert repo.latest_analysis_snapshot_on_or_before(
             user_id, "monthly", TARGET + timedelta(days=1)
-        ) is None
+        ).analysis_run_id == first.run.id
         assert repo.latest_analysis_snapshot_on_or_before(
             other_user, "monthly", TARGET + timedelta(days=1)
         ).analysis_run_id == other.run.id
-    assert not any(
+    assert any(
         item.type == "monthly_summary"
         for item in query.timeline(user_id, TARGET - timedelta(days=1), TARGET).items
     )

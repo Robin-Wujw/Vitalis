@@ -1,6 +1,6 @@
 # Vitalis 预发布整改计划
 
-> 状态：已确认方向，待按阶段执行
+> 状态：Phase 0–3 已实现，本地分项发布检查已通过；服务器验收待明确发布授权
 > 适用范围：报告产品、健康数据迭代、任务与快照、连接流程、文档、部署和 agent 协作
 > 当前原则：预发布阶段允许破坏性更新，不保留旧版兼容链
 
@@ -11,7 +11,7 @@
 - 已移除未使用的 repository 旧方法名、用户模型旧身份投影和连接验证旧 provider fallback，并补充回归测试。
 - 已更新文档导航、打包清单、发布说明和文档架构测试。
 
-以上内容只代表本次文档和冗余清理已完成；Phase 0–3 中的报告投影、范围化重算、coverage wiring 和连接状态机仍需按任务执行。
+以上内容是上轮文档和冗余清理的基线。本轮已完成 Phase 0–3：公开报告统一投影、来源/coverage/as_of、T+0/T+1/T+2/T+3 训练反应、个人模型和 FDR 关联、跑步/力量趋势、目标与反馈闭环、产品指标、原始输入清单和离线回放。本地分项检查、文档/生成物、客户端和打包验收已通过；服务器候选库部署仍需具备发布授权和实际服务器参数。
 
 ## 1. 目标
 
@@ -207,34 +207,38 @@ connected → credential_verified → backfill_requested → backfill_progress
 
 ### Phase 0：契约和可用性
 
-- [ ] 统一 `daily`、`morning`、`evening` 的 CLI/API/示例语义。
-- [ ] 反馈、手动同步、动作确认、偏好修改和首连同步自动排队分析。
-- [ ] 将全局输入版本改成受影响日期/域的 invalidation。
-- [ ] 保留 last-good snapshot，增加 report state 和 failure code。
-- [ ] 修复 verified days、`queried_days` 和 `upstream_coverage_verified` wiring。
-- [ ] 生产环境禁止默认 Mock，报告显示 `source_mode`。
+- [x] 统一 `daily`、`morning`、`evening` 的 CLI/API/示例语义。
+- [x] 反馈、手动同步、动作确认、偏好修改和首连同步自动排队分析。
+- [x] 将全局输入版本改成受影响日期/域的 invalidation。
+- [x] 保留 last-good snapshot，增加 report state 和 failure code。
+- [x] 修复 verified days、`queried_days` 和 `upstream_coverage_verified` wiring。
+- [x] 生产环境禁止默认 Mock，报告显示 `source_mode`。
+
+当前失效审计保存在持久 `AnalysisJob` 的输入 revision、实际影响日期、信号域和原因中；源事实修正覆盖直接日期、依赖这些输入的已保存目标以及合资格的当前日。worker 仍按一个目标日计算整套结果，不在接口层重算。不同投递周期保留独立意图，已消费任务继续作为旧快照不可重新发布的证据。历史重算不回退当前事件状态。
+
+来源模式绑定到用户数据集并冻结在同步请求和分析快照中；`replay` 目前只是显式离线输入标签，原始响应 journal 和通用回放入口仍属于第 4.3 节的后续工作。数据库使用新 schema，未提供旧库迁移。
 
 ### Phase 1：公开报告投影
 
-- [ ] 建立 `PublicReportView`/`ReportBlock`。
-- [ ] 展示晨报睡眠/恢复事实和决策 drivers。
-- [ ] 展示晚报活动、训练时间线、跑步/力量明细和跨域 findings。
-- [ ] 周报/月报展示 coverage、趋势和影子分析范围。
-- [ ] 为每个 section 输出 `value/baseline/deviation/source/coverage/as_of`。
+- [x] 建立 `PublicReportView`/`ReportBlock`。
+- [x] 展示晨报睡眠/恢复事实和决策 drivers。
+- [x] 展示晚报活动、训练时间线、跑步/力量明细和跨域 findings。
+- [x] 周报/月报展示 coverage、趋势和影子分析范围。
+- [x] 为每个 section 输出 `value/baseline/deviation/source/coverage/as_of`。
 
 ### Phase 2：健康数据迭代
 
-- [ ] 训练反应支持 T+0/T+1/T+2/T+3、剂量质量、逐指标 confidence 和持续恢复。
-- [ ] PersonalModel 使用完整窗口和主观反馈。
-- [ ] 个人关联明确日期语义、控制混杂并使用 FDR/q 值。
-- [ ] 加入跑步配速—心率—漂移、力量训练量和训练状态趋势。
+- [x] 训练反应支持 T+0/T+1/T+2/T+3、剂量质量、逐指标 confidence 和持续恢复。
+- [x] PersonalModel 使用完整窗口和主观反馈。
+- [x] 个人关联明确日期语义、控制混杂并使用 FDR/q 值。
+- [x] 加入跑步配速—心率—漂移、力量训练量和训练状态趋势。
 
 ### Phase 3：产品验证
 
-- [ ] 加入目标类型、目标值、目标日期、可用训练日和疼痛/伤病状态。
-- [ ] 记录报告 usefulness、数据纠错、建议完成和建议结果。
-- [ ] 建立覆盖、迟到、冲突、反馈率、报告延迟、采纳率和误报率指标。
-- [ ] 用回放 fixture 验证不同设备、缺失、部分覆盖、晚到和重复同步。
+- [x] 加入目标类型、目标值、目标日期、可用训练日和疼痛/伤病状态。
+- [x] 记录报告 usefulness、数据纠错、建议完成和建议结果。
+- [x] 建立覆盖、迟到、冲突、反馈率、报告延迟、采纳率和误报率指标。
+- [x] 用回放 fixture 验证不同设备、缺失、部分覆盖、晚到和重复同步。
 
 ## 7. 必须通过的测试
 

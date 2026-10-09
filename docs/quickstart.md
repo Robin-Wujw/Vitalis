@@ -31,7 +31,7 @@ uv run --locked --extra dev vitalis report daily --user demo --day 2026-10-07 --
 Get-Content .\daily.md
 ```
 
-`report` 只读取持久化分析，不同步、不重新计算、不发送通知，并拒绝覆盖已有输出文件。`morning`、`weekly`、`monthly` 可替换 `daily`；`--format html` 写保守的 inline HTML 片段。成功结果是指定路径存在且内容可直接阅读。
+`report` 只读取持久化分析，不同步、不重新计算、不发送通知，并拒绝覆盖已有输出文件。`morning`、`evening`、`weekly`、`monthly` 可替换 `daily`；`daily` 导出完整本地日事实快照，`evening` 导出面向阅读的当日复盘，二者不是同一语义。`--format html` 写保守的 inline HTML 片段。成功结果是指定路径存在且内容可直接阅读。
 
 ## 读取 API 快照
 

@@ -74,6 +74,30 @@ def test_complete_report_queries_are_user_scoped_read_only_projections(client, m
     assert other.status_code == 404
 
 
+def test_daily_api_returns_full_profile_while_evening_returns_briefing(client):
+    user = "report-read-daily-evening"
+    target = date(2026, 8, 28)
+    headers = {"X-User-Id": user, "Idempotency-Key": "report-read-daily-evening-request"}
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user)
+        repo.upsert_user(user)
+    queued = client.post(
+        "/api/analysis-runs", json={"day": target.isoformat()}, headers=headers,
+    )
+    assert queued.status_code == 202
+    assert drain_analysis_jobs(max_jobs=1) == 1
+    daily = client.get("/api/reports/daily", params={"day": target.isoformat()}, headers=headers)
+    evening = client.get("/api/reports/evening", params={"day": target.isoformat()}, headers=headers)
+    assert daily.status_code == 200 and evening.status_code == 200
+    daily_payload, evening_payload = daily.json(), evening.json()
+    assert {"features", "facts", "decision"}.issubset(daily_payload)
+    assert "period" not in daily_payload
+    assert evening_payload["period"] == "evening"
+    assert evening_payload["sections"]
+    assert daily_payload != evening_payload
+
+
 @pytest.mark.parametrize("period", ["evening", "weekly", "monthly"])
 def test_new_report_queries_require_bearer_identity(client, period):
     kind = f"{period}-briefing" if period in {"weekly", "monthly"} else period

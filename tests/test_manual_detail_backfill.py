@@ -91,7 +91,7 @@ def test_detail_only_api_reports_empty_backlog_without_creating_job(client):
     headers = {"X-User-Id": user_id, "Idempotency-Key": "manual-detail-empty-request"}
     response = client.post("/api/sync-jobs", json={"days": 730, "detail_only": True}, headers=headers)
     assert response.status_code == 409
-    assert response.json()["code"] == "conflict"
+    assert response.json()["failure_code"] == "conflict"
     assert response.json()["retryable"] is False
     with session_scope() as db:
         assert HealthRepository(db).sync_attempts(user_id) == []
@@ -140,7 +140,10 @@ def test_detail_only_api_freezes_requested_workout_backlog(client, monkeypatch):
     with session_scope() as db:
         repo = HealthRepository(db)
         attempt = repo.sync_attempt(job_id, user_id=user_id)
-        assert attempt.options == {"decode_dense_files": False, "detail_only": True, "detail_limit": 1}
+        assert attempt.options == {
+            "decode_dense_files": False, "detail_only": True, "detail_limit": 1,
+            "source_mode": "real",
+        }
         assert len(repo.pending_workout_details(
             user_id, attempt.window_start, attempt.window_end, limit=10,
         )) == 1
@@ -181,6 +184,7 @@ def test_connector_persists_workout_only_as_manual_attempt_option(monkeypatch):
     assert captured[0]["trigger"] == "manual"
     assert captured[0]["options"] == {
         "decode_dense_files": False, "detail_backfill": True, "workout_only": True,
+        "source_mode": "real",
     }
     assert connector.create_attempt(
         "owner", days=730, detail_only=True, detail_limit=1,
@@ -191,6 +195,7 @@ def test_connector_persists_workout_only_as_manual_attempt_option(monkeypatch):
         "detail_only": True,
         "detail_refresh_before": "2026-09-24T14:00:00Z",
         "detail_limit": 1,
+        "source_mode": "real",
     }
     with pytest.raises(ValueError, match="detail_limit requires detail_only"):
         connector.create_attempt("owner", detail_limit=1)

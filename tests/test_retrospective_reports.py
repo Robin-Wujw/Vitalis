@@ -96,7 +96,7 @@ def test_retrospective_evening_contains_no_current_or_tomorrow_prescription():
     payload["delivery_metadata"] = {"retrospective": True}
     rendered = render_report(EveningBriefingEngine().build(payload), target="markdown")
     title, text = rendered.title, rendered.content
-    assert title.startswith("Vitalis 日报")
+    assert title.startswith("Vitalis 晚报")
     assert "2026-08-28" in text
     assert "## 今晚恢复" not in text
     assert "## 明天衔接" not in text

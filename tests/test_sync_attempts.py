@@ -15,7 +15,7 @@ def _attempt(repo, user_id, *, manifest=None, trigger="manual"):
         window_start=NOW - timedelta(days=1),
         window_end=NOW,
         timezone_name="Asia/Shanghai",
-        options={"decode_dense_files": False, "mock_source": True},
+        options={"decode_dense_files": False, "source_mode": "mock"},
         manifest=manifest,
     )
 
@@ -152,7 +152,7 @@ def test_oauth_state_expires_and_consumes_atomically():
         repo.save_oauth_state(
             state, user_id, expires_at=now + timedelta(minutes=5)
         )
-        assert repo.consume_oauth_state(state, now=now) == user_id
+        assert repo.consume_oauth_state(state, now=now) == (user_id, 180)
         # A second callback observes the already-deleted row and cannot win.
         assert repo.consume_oauth_state(state, now=now) is None
 
@@ -187,7 +187,7 @@ def test_detail_only_reuse_does_not_append_a_new_manifest_chunk():
         repo.delete_for_user("ledger-detail-freeze")
         first = repo.create_or_reuse_sync_attempt(
             "ledger-detail-freeze", window_start=NOW - timedelta(days=1), window_end=NOW,
-            options={"detail_only": True, "detail_limit": 1, "mock_source": True}, manifest=manifest[:1],
+            options={"detail_only": True, "detail_limit": 1, "source_mode": "mock"}, manifest=manifest[:1],
         )
         first_chunk = repo.sync_chunks(first.id)[0]
         first_chunk.status = "succeeded"
@@ -196,18 +196,18 @@ def test_detail_only_reuse_does_not_append_a_new_manifest_chunk():
         first_chunk.write_status = "success"
         reused = repo.create_or_reuse_sync_attempt(
             "ledger-detail-freeze", window_start=NOW - timedelta(days=1), window_end=NOW,
-            options={"detail_only": True, "detail_limit": 1, "mock_source": True}, manifest=manifest[1:],
+            options={"detail_only": True, "detail_limit": 1, "source_mode": "mock"}, manifest=manifest[1:],
         )
         explicit = repo.create_or_reuse_sync_attempt(
             "ledger-detail-freeze", window_start=NOW - timedelta(days=1), window_end=NOW,
-            options={"detail_only": True, "detail_limit": 1, "mock_source": True},
+            options={"detail_only": True, "detail_limit": 1, "source_mode": "mock"},
             manifest=manifest[1:], attempt_id=first.id,
         )
         assert reused.id == explicit.id == first.id
         assert [chunk.stable_key for chunk in repo.sync_chunks(first.id)] == ["detail:one"]
         next_limit = repo.create_or_reuse_sync_attempt(
             "ledger-detail-freeze", window_start=NOW - timedelta(days=1), window_end=NOW,
-            options={"detail_only": True, "detail_limit": 2, "mock_source": True}, manifest=manifest[1:],
+            options={"detail_only": True, "detail_limit": 2, "source_mode": "mock"}, manifest=manifest[1:],
         )
         assert next_limit.id != first.id
         assert [chunk.stable_key for chunk in repo.sync_chunks(next_limit.id)] == ["detail:two"]
@@ -219,7 +219,7 @@ def test_detail_only_integrity_race_cannot_extend_manifest(monkeypatch):
     with session_scope() as db:
         repo = HealthRepository(db)
         repo.delete_for_user(user_id)
-        options = {"detail_only": True, "detail_limit": 1, "mock_source": True}
+        options = {"detail_only": True, "detail_limit": 1, "source_mode": "mock"}
         kwargs = dict(
             window_start=NOW - timedelta(days=1), window_end=NOW,
             options=options,

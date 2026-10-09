@@ -38,6 +38,36 @@ def test_invalid_configuration_fails_by_key(name, value):
         load_settings({name: value})
 
 
+@pytest.mark.parametrize("environment", ["prod", "production"])
+def test_production_requires_real_source_and_never_defaults_to_mock(environment):
+    from cryptography.fernet import Fernet
+
+    key = Fernet.generate_key().decode("ascii")
+    values = load_settings({
+        "VITALIS_ENV": environment, "VITALIS_TOKEN_ENCRYPTION_KEY": key,
+    })
+    assert values.zepp_mock is False
+    with pytest.raises(ValueError, match="ZEPP_MOCK"):
+        load_settings({"VITALIS_ENV": environment, "ZEPP_MOCK": "true"})
+    with pytest.raises(ValueError, match="VITALIS_TOKEN_ENCRYPTION_KEY"):
+        load_settings({"VITALIS_ENV": environment})
+
+
+def test_unknown_environment_cannot_silently_enable_mock():
+    with pytest.raises(ValueError, match="VITALIS_ENV"):
+        load_settings({"VITALIS_ENV": "produciton"})
+
+
+def test_explicit_mock_connector_cannot_bypass_production_policy(monkeypatch):
+    from vitalis.adapters.zepp import ZeppConnector
+    from vitalis.config import settings
+
+    monkeypatch.setattr(settings, "env", "prod")
+    monkeypatch.setattr(settings, "zepp_mock", False)
+    with pytest.raises(ValueError, match="ZEPP_MOCK"):
+        ZeppConnector(mock=True)
+
+
 def test_pairing_origins_require_exact_browser_origins():
     extension_origin = "chrome-extension://" + "a" * 32
     values = load_settings({

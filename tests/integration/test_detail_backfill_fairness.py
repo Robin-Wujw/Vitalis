@@ -61,7 +61,7 @@ def _record_detail_attempt(
         trigger_ref=f"synthetic:{user_id}:{source}:{workout_id}:{finished_at.isoformat()}",
         window_start=WINDOW_START,
         window_end=WINDOW_END,
-        options={"detail_only": True, "mock_source": True},
+        options={"detail_only": True, "source_mode": "mock"},
         manifest=[{
             "stable_key": f"detail:{partition}:{finished_at.isoformat()}",
             "stream": "workout_detail",

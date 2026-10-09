@@ -14,24 +14,35 @@ types and response schemas are available from `GET /openapi.json`.
 | `context_api_intelligence_context_get` | GET | `/api/intelligence/context` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `create_analysis_run` | POST | `/api/analysis-runs` | Idempotency-Key | 202, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `create_feedback` | POST | `/api/feedback` | - | 201, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `create_product_goal` | POST | `/api/product/goals` | Idempotency-Key | 201, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `create_sync_job` | POST | `/api/sync-jobs` | Idempotency-Key | 202, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `events_api_intelligence_events_get` | GET | `/api/intelligence/events` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `explain_api_intelligence_explain_get` | GET | `/api/intelligence/explain` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_data_status` | GET | `/api/data-status` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_job` | GET | `/api/jobs/{job_id}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_product_context` | GET | `/api/product/context` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_product_feedback` | GET | `/api/product/feedback` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_product_goals` | GET | `/api/product/goals` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_product_metrics` | GET | `/api/product/metrics` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_product_summary` | GET | `/api/product/summary` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_public_report_view` | GET | `/api/reports/{kind}/view` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_report` | GET | `/api/reports/{kind}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_report_state` | GET | `/api/reports/{kind}/state` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_workout` | GET | `/api/workouts/{workout_id}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `list_feedback` | GET | `/api/feedback` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `list_workouts` | GET | `/api/workouts` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `patch_product_goal` | PATCH | `/api/product/goals/{goal_id}` | Idempotency-Key | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `patch_profile_api_intelligence_profile_patch` | PATCH | `/api/intelligence/profile` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `patch_training_preferences_api_intelligence_training_preferences_patch` | PATCH | `/api/intelligence/training-preferences` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `personal_associations_api_intelligence_personal_associations_get` | GET | `/api/intelligence/personal-associations` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `personal_model_api_intelligence_personal_model_get` | GET | `/api/intelligence/personal-model` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `profile_api_intelligence_profile_get` | GET | `/api/intelligence/profile` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `record_product_feedback` | POST | `/api/product/feedback` | Idempotency-Key | 201, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `set_training_preferences_api_intelligence_training_preferences_put` | PUT | `/api/intelligence/training-preferences` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `timeline_api_intelligence_timeline_get` | GET | `/api/intelligence/timeline` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `training_preferences_api_intelligence_training_preferences_get` | GET | `/api/intelligence/training-preferences` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `training_responses_api_intelligence_training_responses_get` | GET | `/api/intelligence/training-responses` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `trends_api_intelligence_trends_get` | GET | `/api/intelligence/trends` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `zepp_connection_progress_api_connect_zepp_progress_get` | GET | `/api/connect/zepp/progress` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 
 Read requests do not start a sync or analysis job.

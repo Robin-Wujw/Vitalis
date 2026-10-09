@@ -477,7 +477,8 @@ def test_monthly_association_is_explicitly_non_causal():
     internal = str(result.model_dump(mode="json"))
     assert "个人数据关联" in internal
     assert "不表示因果" not in internal
-    assert "个人数据关联" not in visible
+    assert "个人数据关联" in visible
+    assert "不表示因果" in visible
 
 
 def test_html_escapes_untrusted_fact_text():

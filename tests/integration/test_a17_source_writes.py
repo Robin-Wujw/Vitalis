@@ -198,6 +198,10 @@ def test_terminal_empty_workout_coverage_bumps_and_stale_lease_does_not():
             now=START + timedelta(hours=3),
         )
         assert repo.analysis_input_revision(user_id) == 1
+        jobs = repo.analysis_jobs(user_id)
+        assert jobs
+        assert all("training_coverage" in job.affected_streams for job in jobs)
+        assert all(job.input_revision == 1 for job in jobs)
 
 
 def test_source_account_identity_changes_bump_revision_once():

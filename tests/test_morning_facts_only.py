@@ -76,7 +76,7 @@ def test_facts_only_push_renders_sleep_body_and_no_training_sections():
 
     message = received[0]
     assert message.title.startswith("Vitalis 晨报 · ")
-    assert "已记录昨夜事实，今天暂不生成训练安排" in message.title
+    assert "已记录昨夜事实" in message.title
     assert "睡眠时长" in message.body
     assert "静息心率" in message.body or "HRV" in message.body
     assert "今天的安排" not in message.body

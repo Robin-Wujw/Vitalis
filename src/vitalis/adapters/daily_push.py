@@ -129,16 +129,16 @@ def deliver_daily_report(
     retrospective: bool = False,
     scheduled_delivery: bool = False,
     send_attempt_id: str | None = None,
+    as_of: datetime | None = None,
 ) -> dict:
     """Deliver a saved report through the durable notification intent."""
     today = local_today()
     current_date = target_date or today
     timezone_name = (
-        (daily.get("report_context") or {}).get("timezone") or "UTC"
+        (daily.get("report_context") or {}).get("timezone") or settings.timezone
     )
-    if plan_expires_at is None and not retrospective and (
-        scheduled_delivery or target_date is None
-    ):
+    delivery_now = as_of or _delivery_now()
+    if plan_expires_at is None and not retrospective and not scheduled_delivery and target_date is None:
         _, plan_expires_at = local_day_utc_bounds(current_date)
 
     # A test delivery is intentionally isolated from the ordinary outbox.  It
@@ -146,10 +146,10 @@ def deliver_daily_report(
     if test_delivery:
         decision = prepare_delivery(
             daily, period=period, target_date=target_date, today=today,
-            as_of=datetime.now(UTC), timezone=timezone_name, test_delivery=True,
+            as_of=delivery_now, timezone=timezone_name, test_delivery=True,
             already_sent=False, sync_degraded=sync_degraded, sync_status=sync_status,
             sync_detail=sync_detail, plan_expires_at=plan_expires_at,
-            retrospective=retrospective,
+            retrospective=retrospective, scheduled_delivery=scheduled_delivery,
         )
         if decision["status"] != "ready":
             return decision
@@ -175,10 +175,10 @@ def deliver_daily_report(
 
     decision = prepare_delivery(
         daily, period=period, target_date=target_date, today=today,
-        as_of=datetime.now(UTC), timezone=timezone_name, test_delivery=False,
+        as_of=delivery_now, timezone=timezone_name, test_delivery=False,
         already_sent=False, sync_degraded=sync_degraded, sync_status=sync_status,
         sync_detail=sync_detail, plan_expires_at=plan_expires_at,
-        retrospective=retrospective,
+        retrospective=retrospective, scheduled_delivery=scheduled_delivery,
     )
     if decision["status"] != "ready":
         return decision
@@ -232,6 +232,10 @@ def deliver_daily_report(
         outcome["_pushplus_result"] = provider
         outcome["_render"] = results.get("_render") or {}
     return outcome
+
+
+def _delivery_now() -> datetime:
+    return datetime.now(UTC)
 
 
 def _existing_direct_delivery(

@@ -1,6 +1,6 @@
 """Current intelligence must not be presented after its user inputs change."""
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -32,9 +32,10 @@ def test_feedback_invalidates_saved_report_until_explicit_rerun():
         user_id,
         SubjectiveFeedbackInput(date=TARGET, physical_fatigue=4),
     )
-    assert query.daily(user_id, TARGET) is None
-    assert query.weekly(user_id, TARGET) is None
-    assert query.monthly(user_id, TARGET) is None
+    assert query.daily(user_id, TARGET).analysis_run_id == original.run.id
+    assert query.weekly(user_id, TARGET).analysis_run_id == original.run.id
+    assert query.monthly(user_id, TARGET).analysis_run_id == original.run.id
+    assert query.report_state(user_id, "daily", TARGET)["state"] == "queued"
 
     updated = get_intelligence_command().analyze(user_id, TARGET)
     assert query.weekly(user_id, TARGET).analysis_run_id == updated.run.id
@@ -65,8 +66,9 @@ def test_preference_change_invalidates_report_but_noop_patch_does_not():
         user_id,
         TrainingPreferencePatch(weekly_running_target=current.weekly_running_target + 1),
     )
-    assert query.daily(user_id, TARGET) is None
-    assert query.personal_model(user_id, TARGET) is None
+    assert query.daily(user_id, TARGET).analysis_run_id == original.run.id
+    assert query.personal_model(user_id, TARGET).analysis_run_id == original.run.id
+    assert query.report_state(user_id, "daily", TARGET)["state"] == "current"
     rerun = get_intelligence_command().analyze(user_id, TARGET)
     assert rerun.run.input_revision_used > original.run.input_revision_used
     assert query.daily(user_id, TARGET) is not None
@@ -88,7 +90,8 @@ def test_new_daily_fact_invalidates_report_but_identical_replay_does_not():
     )
     with session_scope() as db:
         HealthRepository(db).save_daily(daily)
-    assert query.daily(user_id, TARGET) is None
+    assert query.daily(user_id, TARGET).analysis_run_id == first.run.id
+    assert query.report_state(user_id, "daily", TARGET)["state"] == "queued"
 
     second = get_intelligence_command().analyze(user_id, TARGET)
     assert second.run.input_revision_used > first.run.input_revision_used
@@ -122,7 +125,8 @@ def test_same_sample_replay_does_not_invalidate_but_new_value_does():
     assert query.daily(user_id, TARGET).analysis_run_id == first.run.id
     with session_scope() as db:
         HealthRepository(db).save_metric_samples([sample.model_copy(update={"value": 75})])
-    assert query.daily(user_id, TARGET) is None
+    assert query.daily(user_id, TARGET).analysis_run_id == first.run.id
+    assert query.report_state(user_id, "daily", TARGET)["state"] == "queued"
 
 
 def test_workout_change_invalidates_report_without_noop_resync():
@@ -144,7 +148,8 @@ def test_workout_change_invalidates_report_without_noop_resync():
     assert query.daily(user_id, TARGET).analysis_run_id == first.run.id
     with session_scope() as db:
         HealthRepository(db).save_workout(workout.model_copy(update={"duration": 45}))
-    assert query.daily(user_id, TARGET) is None
+    assert query.daily(user_id, TARGET).analysis_run_id == first.run.id
+    assert query.report_state(user_id, "daily", TARGET)["state"] == "queued"
 
 
 def test_input_change_during_analysis_cannot_publish_old_result(monkeypatch):
@@ -189,7 +194,7 @@ def test_source_identity_creation_and_reactivation_invalidate_saved_reports():
 
     with session_scope() as db:
         HealthRepository(db).ensure_source_account(user_id, "zepp", "source-account-invalidation-vendor")
-    assert query.daily(user_id, TARGET) is None
+    assert query.daily(user_id, TARGET).analysis_run_id == first.run.id
     second = command.analyze(user_id, TARGET)
     assert second.daily.metadata["identity"]["source_account_status"] == "active"
 
@@ -200,7 +205,8 @@ def test_source_identity_creation_and_reactivation_invalidate_saved_reports():
 
     with session_scope() as db:
         HealthRepository(db).ensure_source_account(user_id, "zepp", "source-account-invalidation-vendor")
-    assert query.daily(user_id, TARGET) is None
+    assert query.daily(user_id, TARGET).analysis_run_id == revoked.run.id
+    assert query.report_state(user_id, "daily", TARGET)["state"] == "current"
     assert command.analyze(user_id, TARGET).daily.metadata["identity"]["source_account_status"] == "active"
 
 
@@ -220,6 +226,56 @@ def test_source_identity_created_during_analysis_cannot_publish_old_result(monke
         return daily
 
     monkeypatch.setattr(IntelligenceCommand, "_build_daily_from_raw", staticmethod(build_then_bind))
-    with pytest.raises(RuntimeError, match="输入在计算期间发生变化"):
-        get_intelligence_command().analyze(user_id, TARGET)
-    assert get_intelligence_query().daily(user_id, TARGET) is None
+    result = get_intelligence_command().analyze(user_id, TARGET)
+    assert result.run.status.value == "SUCCEEDED"
+    assert get_intelligence_query().report_state(user_id, "daily", TARGET)["state"] == "current"
+
+
+def test_stale_read_returns_last_good_payload_and_a_stable_state():
+    user_id = "scoped-report-state-user"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+
+    first = get_intelligence_command().analyze(user_id, TARGET)
+    get_intelligence_action().log_feedback(
+        user_id,
+        SubjectiveFeedbackInput(date=TARGET, physical_fatigue=4),
+    )
+
+    query = get_intelligence_query()
+    stale = query.daily(user_id, TARGET)
+    assert stale is not None
+    assert stale.analysis_run_id == first.run.id
+    state = query.report_state(user_id, "daily", TARGET)
+    assert state["state"] == "queued"
+    assert state["job_id"]
+    assert state["last_good_snapshot"]["analysis_run_id"] == first.run.id
+    assert state["stale_since"] is not None
+    assert state["next_action"] == "wait_for_analysis"
+    assert state["facts"] == stale.facts
+
+
+def test_input_write_and_analysis_job_are_one_transaction():
+    user_id = "scoped-input-atomic-user"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+
+    def fail_enqueue(*args, **kwargs):
+        raise RuntimeError("synthetic enqueue failure")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(HealthRepository, "_enqueue_analysis_job", fail_enqueue)
+        with pytest.raises(RuntimeError, match="synthetic enqueue failure"):
+            get_intelligence_action().log_feedback(
+                user_id,
+                SubjectiveFeedbackInput(date=TARGET, notes="synthetic"),
+            )
+
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        assert repo.subjective_feedback(user_id, TARGET, TARGET) == []
+        assert repo.analysis_jobs(user_id) == []

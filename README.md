@@ -8,17 +8,15 @@ Vitalis 把 Zepp 的睡眠、活动和训练记录整理为可追溯的个人分
 
 以下摘录来自程序生成的[合成日报](docs/examples/reports/daily.md)，没有使用真实健康记录：
 
-> **二头肌弯举总次数增加**
+> **本地日完整事实快照**
 >
-> 2026-10-07 · 数据截至 21:20
+> 2026-10-07 · 数据截至 21:20 · 合成数据
 >
-> 昨夜睡眠：7 小时 26 分钟；今日步数：6,076 步。
+> 睡眠时长：7 小时 26 分钟；步数：6,076 步；力量训练时长：45 分钟。
 >
-> 弯举：每手 10 kg，3 组，12 / 10 / 8 次；较 10 月 4 日同样重量和组数下多 6 次。
->
-> 下次训练重点观察同样重量下的组次记录。
+> 日报同时保留已保存事实、数据质量与覆盖、版本和修正记录；力量动作明细保留 12 / 10 / 8 次的真实组次分布。
 
-完整示例：[晨报](docs/examples/reports/morning.md)、[日报](docs/examples/reports/daily.md)、[周报](docs/examples/reports/weekly.md)、[月报](docs/examples/reports/monthly.md)；也可打开[日报 HTML 预览](docs/examples/reports/daily.html)。
+完整示例：[晨报](docs/examples/reports/morning.md)、[日报](docs/examples/reports/daily.md)、[晚报](docs/examples/reports/evening.md)、[周报](docs/examples/reports/weekly.md)、[月报](docs/examples/reports/monthly.md)；也可打开[日报 HTML 预览](docs/examples/reports/daily.html)。
 
 ## 最短演示
 
@@ -40,7 +38,7 @@ uv run --locked --extra dev vitalis report daily --user demo --day 2026-10-07 --
 Get-Content .\daily.md
 ```
 
-`demo` 只接受不存在的 `.db`/`.sqlite` 文件；`report` 从已保存分析读取，写入新文件并拒绝覆盖，不启动同步、不发送 PushPlus。`Get-Content` 会显示刚生成的可读 Markdown。晨报、周报和月报把 `daily` 替换为相应 kind。完整 API 读取、令牌和真实连接步骤见[快速开始](docs/quickstart.md)。
+`demo` 只接受不存在的 `.db`/`.sqlite` 文件；`report` 从已保存分析读取，写入新文件并拒绝覆盖，不启动同步、不发送 PushPlus。`Get-Content` 会显示刚生成的可读 Markdown。晨报、晚报、周报和月报把 `daily` 替换为相应 kind；日报保留完整本地日事实快照，晚报是面向阅读的当日复盘。完整 API 读取、令牌和真实连接步骤见[快速开始](docs/quickstart.md)。
 
 ## 产品边界
 

@@ -1,0 +1,116 @@
+{
+  "schema_version": "vitalis.source-replay-fixture.v1",
+  "synthetic": true,
+  "dataset_id": "phase3-multi-device-missing-partial-late-duplicate",
+  "source": "zepp",
+  "timezone": "UTC",
+  "start_date": "2026-09-01",
+  "end_date": "2026-09-04",
+  "as_of": "2026-09-05T00:00:00Z",
+  "records": [
+    {
+      "stream": "devices",
+      "record_id": "device_inventory",
+      "observed_start": "2026-09-01T00:00:00Z",
+      "observed_end": "2026-09-02T00:00:00Z",
+      "fetched_at": "2026-09-02T01:00:00Z",
+      "payload": {"items": [
+        {"deviceId": "SYNTHBALANCE2", "additionalInfo": {"productId": "146"}},
+        {"deviceId": "SYNTHHELIO157", "additionalInfo": {"productId": "157"}}
+      ]}
+    },
+    {
+      "stream": "heart_rate",
+      "record_id": "heart_rate:1788220800:1788307200",
+      "observed_start": "2026-09-01T00:00:00Z",
+      "observed_end": "2026-09-02T00:00:00Z",
+      "fetched_at": "2026-09-02T01:00:00Z",
+      "payload": {"items": [
+        {"sample_id": "synthetic-balance-hr", "timestamp": "2026-09-01T08:00:00Z", "value": 72, "deviceId": "SYNTHBALANCE2"},
+        {"sample_id": "synthetic-helio-hr", "timestamp": "2026-09-01T08:00:00Z", "value": 76, "deviceId": "SYNTHHELIO157"},
+        {"sample_id": "synthetic-fused-hr", "timestamp": "2026-09-01T08:00:00Z", "value": 74}
+      ]}
+    },
+    {
+      "stream": "heart_rate",
+      "record_id": "heart_rate:1788220800:1788307200",
+      "observed_start": "2026-09-01T00:00:00Z",
+      "observed_end": "2026-09-02T00:00:00Z",
+      "fetched_at": "2026-09-02T01:01:00Z",
+      "payload": {"items": [
+        {"sample_id": "synthetic-balance-hr", "timestamp": "2026-09-01T08:00:00Z", "value": 72, "deviceId": "SYNTHBALANCE2"},
+        {"sample_id": "synthetic-helio-hr", "timestamp": "2026-09-01T08:00:00Z", "value": 76, "deviceId": "SYNTHHELIO157"},
+        {"sample_id": "synthetic-fused-hr", "timestamp": "2026-09-01T08:00:00Z", "value": 74}
+      ]}
+    },
+    {
+      "stream": "hrv",
+      "record_id": "events:hrv_sdnn:2026-09-01:2026-09-01",
+      "observed_start": "2026-09-01T00:00:00Z",
+      "observed_end": "2026-09-02T00:00:00Z",
+      "fetched_at": "2026-09-02T01:00:00Z",
+      "payload": {"items": [{"value": {
+        "startTime": "2026-09-01T06:00:00Z",
+        "deviceId": "1,SYNTHBALANCE2;1,SYNTHHELIO157",
+        "samples": [{"s": 0, "sdnn": 42}, {"s": 1000, "sdnn": 48}]
+      }}]}
+    },
+    {
+      "stream": "sleep",
+      "record_id": "band_data:detail:2026-09-01:2026-09-01",
+      "observed_start": "2026-09-01T00:00:00Z",
+      "observed_end": "2026-09-02T00:00:00Z",
+      "fetched_at": "2026-09-02T01:00:00Z",
+      "payload": {"data": {"items": [{
+        "date_time": "2026-09-01",
+        "deviceId": "SYNTHBALANCE2",
+        "summary": "{\"tz\":0,\"slp\":{\"st\":\"23:00\",\"ed\":\"07:00\"},\"stp\":{\"ttl\":4200,\"dis\":3200}}"
+      }]}}
+    },
+    {
+      "stream": "daily_summary",
+      "record_id": "events:readiness:watch_score:2026-09-01",
+      "observed_start": "2026-09-01T00:00:00Z",
+      "observed_end": "2026-09-02T00:00:00Z",
+      "fetched_at": "2026-09-02T01:00:00Z",
+      "payload": {"items": [{"date": "2026-09-01", "readiness": 45, "deviceId": "SYNTHBALANCE2"}]}
+    },
+    {
+      "stream": "workouts",
+      "record_id": "sport_history:run:1788220800:1788307200",
+      "observed_start": "2026-09-01T00:00:00Z",
+      "observed_end": "2026-09-02T00:00:00Z",
+      "fetched_at": "2026-09-02T01:00:00Z",
+      "capability": "unverified",
+      "incomplete": true,
+      "payload": {"code": 1, "data": {"summary": [{
+        "trackid": "1788253200", "start_time": 1788253200,
+        "end_time": 1788255000, "type": 1, "source": "synthetic-watch"
+      }]}}
+    },
+    {
+      "stream": "wellness",
+      "record_id": "wellness:spo2:user:2026-09-02:2026-09-02",
+      "observed_start": "2026-09-02T00:00:00Z",
+      "observed_end": "2026-09-03T00:00:00Z",
+      "fetched_at": "2026-09-03T01:00:00Z",
+      "payload": {"items": []}
+    },
+    {
+      "stream": "daily_summary",
+      "record_id": "events:readiness:watch_score:2026-09-01",
+      "observed_start": "2026-09-01T00:00:00Z",
+      "observed_end": "2026-09-02T00:00:00Z",
+      "fetched_at": "2026-09-04T01:00:00Z",
+      "payload": {"items": [{"date": "2026-09-01", "readiness": 68, "deviceId": "SYNTHBALANCE2"}]}
+    },
+    {
+      "stream": "workout_detail",
+      "record_id": "workout_detail:1788253200:synthetic-watch",
+      "observed_start": "2026-09-01T00:00:00Z",
+      "observed_end": "2026-09-02T00:00:00Z",
+      "fetched_at": "2026-09-04T01:00:00Z",
+      "payload": {"data": {"trackid": "1788253200", "time": "1800"}}
+    }
+  ]
+}

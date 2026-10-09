@@ -7,8 +7,8 @@ from vitalis.application.analysis import (
     AnalysisDataset, AnalysisPolicy, AnalysisRequest, analyze, build_report_projections,
 )
 from vitalis.intelligence.contracts import (
-    DAILY_SCHEMA_VERSION, WEEKLY_SCHEMA_VERSION, DECISION_POLICY_VERSION,
-    EVIDENCE_VERSION, INTELLIGENCE_VERSION, ConfidenceBand, DataQuality,
+    DAILY_SCHEMA_VERSION, WEEKLY_SCHEMA_VERSION, PERSONAL_MODEL_SCHEMA_VERSION,
+    DECISION_POLICY_VERSION, EVIDENCE_VERSION, INTELLIGENCE_VERSION, ConfidenceBand, DataQuality,
     EventSeverity, HealthEvent, QualityStatus, TrainingPreferences,
 )
 from vitalis.intelligence.profile import RawDailyProfile, SeriesPoint
@@ -156,7 +156,7 @@ def test_latest_snapshots_with_tied_generation_time_select_one_completed_run():
         db.flush()
         for profile_type, schema in (
             ("daily", DAILY_SCHEMA_VERSION), ("weekly", WEEKLY_SCHEMA_VERSION),
-            ("personal_model", "2.0"),
+            ("personal_model", PERSONAL_MODEL_SCHEMA_VERSION),
         ):
             for run_id, snapshot_id in (
                 ("run-tie-a", "z" if profile_type == "daily" else "a"),

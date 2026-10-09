@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Mapping
 from zoneinfo import ZoneInfo
 
+from vitalis.application.report_context import attach_report_context
 from vitalis.intelligence.analyzers import (
     HrvAnalyzer,
     OvernightVitalsAnalyzer,
@@ -99,6 +100,7 @@ class AnalysisDataset:
         default_factory=dict
     )
     prior_events: tuple[HealthEvent, ...] = ()
+    product_contexts: Mapping[str, dict] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -170,6 +172,7 @@ def analyze_with_trace(
                 period_start=request.target_date - timedelta(days=41),
                 queried_days=raw.open_health_load_queried_days,
                 rhr_by_day=raw.open_health_rhr_by_day,
+                upstream_coverage_verified=raw.open_health_load_upstream_coverage_verified,
                 input_truncated=raw.open_health_load_truncated,
                 timezone_name=policy.timezone,
             )
@@ -203,7 +206,13 @@ def analyze_with_trace(
         daily,
         training_responses,
         association_profile.associations,
+        feedback=response_feedback,
         generated_at=raw.as_of,
+    )
+    daily = attach_report_context(
+        daily, raw, responses=training_responses, feedback=response_feedback,
+        associations=association_profile.associations,
+        product_context=dataset.product_contexts.get("daily", {}),
     )
     recommendation = RecommendationInstance(
         id=daily.decision.recommendation_id,
@@ -239,6 +248,9 @@ def analyze_with_trace(
         monthly_feedback,
         policy.evidence_refs,
         open_health_bundle,
+        training_responses=training_responses,
+        response_feedback=response_feedback,
+        product_contexts=dataset.product_contexts,
     )
     run = AnalysisRun(
         id=request.analysis_run_id,
@@ -281,8 +293,21 @@ def build_report_projections(
     monthly_feedback: list[dict],
     evidence_refs: tuple[EvidenceRef, ...],
     open_health_insights: OpenHealthBundle | None,
+    *,
+    training_responses: list | None = None,
+    response_feedback: list[SubjectiveFeedback] | None = None,
+    product_contexts: Mapping[str, dict] | None = None,
 ) -> tuple[WeeklyProfile, MonthlyProfile, MorningBriefing]:
     """Build every report view that depends on the finalized daily events."""
+    responses = training_responses or []
+    feedback = response_feedback or []
+    products = product_contexts or {}
+    period_associations = {}
+    for kind, period in (("weekly", resolve_week_period(raw.day)), ("monthly", resolve_month_period(raw.day))):
+        period_raw = replace(raw, day=period.end)
+        period_associations[kind] = PersonalAssociationEngine().build(
+            analysis_run_id, period_raw, generated_at=raw.as_of,
+        ).associations
     weekly = WeeklyProfileEngine().build(
         analysis_run_id,
         raw,
@@ -292,17 +317,30 @@ def build_report_projections(
         evidence_refs=list(evidence_refs),
         open_health_insights=open_health_insights,
         generated_at=raw.as_of,
+        period_mode="calendar",
+    )
+    weekly = attach_report_context(
+        weekly, raw, responses=[item for item in responses if weekly.period_start <= item.exposure.date <= weekly.period_end],
+        feedback=[item for item in feedback if weekly.period_start <= item.date <= weekly.period_end],
+        associations=period_associations["weekly"], product_context=products.get("weekly", products.get("daily", {})),
     )
     monthly = MonthlyProfileEngine().build(
         analysis_run_id,
         raw,
         daily.trends,
         daily.events,
-        associations,
+        period_associations["monthly"],
         feedback=monthly_feedback,
         evidence_refs=list(evidence_refs),
         open_health_insights=open_health_insights,
         generated_at=raw.as_of,
+    )
+    monthly = attach_report_context(
+        monthly, raw,
+        responses=[item for item in responses if monthly.period_start <= item.exposure.date <= monthly.period_end],
+        feedback=[item for item in feedback if monthly.period_start <= item.date <= monthly.period_end],
+        associations=period_associations["monthly"],
+        product_context=products.get("monthly", products.get("daily", {})),
     )
     return weekly, monthly, MorningBriefingEngine().build(daily)
 

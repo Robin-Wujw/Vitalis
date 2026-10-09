@@ -172,6 +172,7 @@ def test_decision_explanation_projects_persisted_snapshot(client):
         "decision_policy_version": daily["decision_policy_version"],
         "evidence_version": daily["evidence_version"],
         "data_quality": daily["data_quality"],
+        "report_state": daily["report_context"]["report_state"],
     }
     assert explanation["action"] == daily["decision"]
     assert explanation["facts"] == daily["decision"]["evidence"]["facts"]
@@ -202,7 +203,9 @@ def test_decision_explanation_requires_rerun_after_preferences_change(client):
     stale = client.get("/api/intelligence/explain", headers=headers)
 
     assert changed.status_code == 200
-    assert stale.status_code == 404
+    assert stale.status_code == 200
+    assert stale.json()["snapshot"]["analysis_run_id"] == before["snapshot"]["analysis_run_id"]
+    assert stale.json()["snapshot"]["report_state"]["state"] == "queued"
     _run_analysis_job(client, user_id, key="after-preference")
     refreshed = client.get("/api/intelligence/explain", headers=headers)
     assert refreshed.status_code == 200
@@ -311,7 +314,7 @@ def test_unknown_source(client):
         headers={"X-User-Id": "001"},
     )
     assert resp.status_code == 404
-    assert resp.json()["code"] == "not_found"
+    assert resp.json()["failure_code"] == "not_found"
 
 
 def test_root_lists_sources(client):
@@ -951,7 +954,7 @@ def test_health_range_rejects_over_2years(client):
         headers={"X-User-Id": "001"},
     )
     assert resp.status_code == 400
-    assert resp.json()["code"] == "bad_request"
+    assert resp.json()["failure_code"] == "bad_request"
     assert resp.json()["request_id"] == resp.headers["x-request-id"]
 
 
@@ -1306,7 +1309,7 @@ def test_pairing_credentials_reject_untrusted_browser_origins(client):
 
     rejected = client.post(path, json=payload, headers={"Origin": "https://evil.example"})
     assert rejected.status_code == 403
-    assert rejected.json()["code"] == "forbidden"
+    assert rejected.json()["failure_code"] == "forbidden"
     assert client.get(f"/api/connect/zepp/pair/{code}", headers={"X-User-Id": user_id}).json()["status"] == "waiting"
 
     allowed = client.post(path, json=payload, headers={"Origin": "https://watchface.zepp.com"})
@@ -1325,7 +1328,7 @@ def test_raw_pairing_credentials_reject_wrong_origin_before_cookie_read(client):
         headers={"Origin": "null", "Content-Type": "text/plain"},
     )
     assert response.status_code == 403
-    assert response.json()["code"] == "forbidden"
+    assert response.json()["failure_code"] == "forbidden"
 
 
 def test_raw_pairing_body_limit_preserves_unused_code(client):
@@ -1339,7 +1342,7 @@ def test_raw_pairing_body_limit_preserves_unused_code(client):
         headers={"Origin": "https://watchface.zepp.com", "Content-Type": "text/plain"},
     )
     assert response.status_code == 413
-    assert response.json()["code"] == "payload_too_large"
+    assert response.json()["failure_code"] == "payload_too_large"
     assert client.get(f"/api/connect/zepp/pair/{code}", headers={"X-User-Id": user_id}).json()["status"] == "waiting"
 
 
@@ -1357,7 +1360,7 @@ def test_pairing_rate_limit_survives_failure_and_resets(client, monkeypatch):
         path, json={"cookie": '{"userid":"vendor-rate","apptoken":"token"}'},
     )
     assert blocked.status_code == 429
-    assert blocked.json()["code"] == "rate_limited"
+    assert blocked.json()["failure_code"] == "rate_limited"
     assert int(blocked.headers["Retry-After"]) > 0
     with session_scope() as db:
         row = HealthRepository(db).pairing_session(code)
@@ -1671,8 +1674,9 @@ def test_browser_link_validation_network_failure_keeps_connection(client, monkey
 
     assert response.status_code == 503
     assert response.json() == {
-        "code": "service_unavailable", "message": "Service temporarily unavailable",
-        "retryable": True, "request_id": response.headers["x-request-id"],
+        "state": "failed", "failure_code": "service_unavailable",
+        "message": "Service temporarily unavailable", "retryable": True,
+        "next_action": "retry_later", "request_id": response.headers["x-request-id"],
     }
     status = client.get(
         "/api/connect/zepp/token",

@@ -19,6 +19,8 @@ class SyncRepository(Protocol):
         self, user_id: str, name: str = "", source: str = "zepp"
     ) -> object: ...
 
+    def bind_source_mode(self, user_id: str, mode: str) -> None: ...
+
     def save_daily(self, daily: NormalizedDaily) -> None: ...
 
 
@@ -90,6 +92,9 @@ class SyncService:
                 command.user_id,
                 name=command.name,
                 source=self.connector.source,
+            )
+            unit_of_work.repository.bind_source_mode(
+                command.user_id, self.connector.source_mode,
             )
             for daily in dailies:
                 unit_of_work.repository.save_daily(daily)

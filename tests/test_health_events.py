@@ -107,6 +107,14 @@ def test_health_event_persistence_and_acknowledgement_are_user_scoped():
         assert repo.acknowledge_health_event("another-user", event.id) is None
         acknowledged = repo.acknowledge_health_event("event-storage", event.id)
         assert acknowledged is not None and acknowledged.acknowledged is True
+        assert repo.analysis_input_revision("event-storage") == 1
+        jobs = repo.analysis_jobs("event-storage")
+        assert {event.start_date, event.end_date} <= {job.target_date for job in jobs}
+        assert all(job.event_type == "event_acknowledgement" for job in jobs)
+        replay = repo.acknowledge_health_event("event-storage", event.id)
+        assert replay is not None and replay.acknowledged is True
+        assert repo.analysis_input_revision("event-storage") == 1
+        assert {job.id for job in repo.analysis_jobs("event-storage")} == {job.id for job in jobs}
         stored = repo.health_events("event-storage", TARGET - timedelta(days=7), TARGET)
 
     assert stored[0].id == event.id

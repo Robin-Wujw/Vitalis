@@ -46,12 +46,13 @@ def _render_examples(day: date):
     query = bootstrap.get_intelligence_query()
     documents = {
         "morning": query.morning_briefing("demo", day),
-        "daily": query.evening_briefing("demo", day),
+        "daily": query.daily("demo", day),
+        "evening": query.evening_briefing("demo", day),
         "weekly": query.weekly_briefing("demo", day),
         "monthly": query.monthly_briefing("demo", day),
     }
     if any(document is None for document in documents.values()):
-        raise RuntimeError("synthetic analysis did not produce all four reports")
+        raise RuntimeError("synthetic analysis did not produce all five reports")
     # A second synthetic user demonstrates a local sleep gap with complete
     # activity observations, using the same repository and analysis use case.
     user = "synthetic-insufficient"
@@ -61,6 +62,7 @@ def _render_examples(day: date):
     with session_scope() as db:
         repository = HealthRepository(db)
         repository.upsert_user(user)
+        repository.bind_source_mode(user, "mock")
         current = start
         while current <= day:
             sleep = SleepRecord(

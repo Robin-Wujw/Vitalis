@@ -82,6 +82,7 @@ def test_oversized_detail_does_not_persist_or_mark_workout_synced():
     with session_scope() as db:
         repo = HealthRepository(db)
         repo.upsert_user(user.id)
+        repo.bind_source_mode(user.id, "mock")
         repo.save_workout(Workout(
             user_id=user.id,
             workout_id=workout_id,

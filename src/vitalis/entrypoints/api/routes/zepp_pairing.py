@@ -13,6 +13,8 @@ from vitalis.entrypoints.api.deps import authenticated_user, require_scope
 from vitalis.config import settings
 from vitalis.bootstrap import get_connector, get_connection_service
 from vitalis.application.connection import ConnectionOperationError
+from vitalis.application.connection_progress import INITIAL_SYNC_DAYS, iso_utc
+from .connect import connection_http_error
 
 router = APIRouter(prefix="/connect/zepp", tags=["connect"])
 
@@ -31,14 +33,14 @@ def _require_pairing_origin(request: Request) -> None:
         raise HTTPException(status_code=403, detail="不允许此浏览器来源提交凭据")
 
 
-def create_pairing(user_id: str, sync_days: int = 30) -> dict:
+def create_pairing(user_id: str, sync_days: int = INITIAL_SYNC_DAYS) -> dict:
     """Create a pairing session for API callers and the server-rendered page."""
     return get_connection_service().create_pairing(user_id, sync_days)
 
 
 @router.post("/pair", summary="创建 Zepp 云端配对会话")
 def create_zepp_pairing(
-    sync_days: int = Query(30, ge=1, le=730),
+    sync_days: int = Query(INITIAL_SYNC_DAYS, ge=1, le=730),
     user_id: str = Depends(require_scope("manage")),
 ) -> dict:
     return {"user_id": user_id, **create_pairing(user_id, sync_days)}
@@ -59,14 +61,17 @@ def zepp_pairing_status(
     try:
         status = get_connection_service().pairing_status(pairing_id, user_id)
     except ConnectionOperationError as exc:
-        raise HTTPException(status_code=410 if exc.kind == "expired" else 404, detail=str(exc)) from exc
+        raise HTTPException(status_code=exc.http_status, detail="配对状态不可用") from exc
     return {
         "status": status.status,
         "message": status.message,
-        "expires_at": status.expires_at.isoformat() + "Z",
+        "expires_at": iso_utc(status.expires_at),
         "sync_attempt_id": status.sync_attempt_id,
         "sync_status": status.sync_status,
         "attempt_status": status.sync_status,
+        "connection_state": status.progress["state"] if status.progress else status.state,
+        "sync_days": status.sync_days,
+        "progress": status.progress,
     }
 
 
@@ -85,14 +90,7 @@ def submit_zepp_pairing_credentials(
     try:
         return get_connection_service(provider=get_connector("zepp")).submit_pairing(pairing_id, body.cookie)
     except ConnectionOperationError as exc:
-        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
-        status = 429 if exc.retry_after else (
-            409 if exc.kind in {"conflict", "identity_conflict", "busy"}
-            else 504 if exc.kind == "timeout"
-            else 503 if exc.kind in {"network", "service"}
-            else 400
-        )
-        raise HTTPException(status_code=status, detail=str(exc), headers=headers) from exc
+        raise connection_http_error(exc) from exc
 
 
 @router.post("/pair/{pairing_id}/credentials/raw", summary="一键书签提交 Zepp 登录凭据", include_in_schema=False)
@@ -129,13 +127,7 @@ def update_linked_credentials(
     try:
         return get_connection_service(provider=get_connector("zepp")).update_link(authorization, body.cookie)
     except ConnectionOperationError as exc:
-        status = (
-            401 if exc.kind == "revoked" else
-            409 if exc.kind in {"conflict", "identity_conflict"} else
-            504 if exc.kind == "timeout" else
-            503 if exc.kind in {"network", "service"} else 400
-        )
-        raise HTTPException(status_code=status, detail=str(exc)) from exc
+        raise HTTPException(status_code=exc.http_status, detail="浏览器凭据更新失败") from exc
 
 
 @router.post("/link/disconnected", summary="报告 Zepp 浏览器登录断开")
@@ -146,10 +138,7 @@ def report_link_disconnected(
     try:
         return get_connection_service(provider=get_connector("zepp")).disconnect_link(authorization, body.reason)
     except ConnectionOperationError as exc:
-        raise HTTPException(
-            status_code=401 if exc.kind == "revoked" else 409,
-            detail=str(exc),
-        ) from exc
+        raise HTTPException(status_code=exc.http_status, detail="浏览器连接不可用") from exc
 
 
 @router.post("/link/validate", summary="验证云端已保存的 Zepp 凭据")
@@ -160,10 +149,4 @@ def validate_linked_credentials(
     try:
         return get_connection_service(provider=get_connector("zepp")).validate_link(authorization)
     except ConnectionOperationError as exc:
-        status = (
-            401 if exc.kind == "revoked" else
-            400 if exc.needs_reauth else
-            504 if exc.kind == "timeout" else
-            503 if exc.kind in {"network", "service"} else 409
-        )
-        raise HTTPException(status_code=status, detail=str(exc)) from exc
+        raise HTTPException(status_code=exc.http_status, detail="云端凭据验证失败") from exc

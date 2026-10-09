@@ -50,6 +50,9 @@ class ZeppConnector(HealthConnector):
     def __init__(self, auth: ConnectorAuth | None = None, mock: bool | None = None):
         super().__init__(auth)
         self.mock = settings.zepp_mock if mock is None else mock
+        if self.mock and settings.env not in {"dev", "test"}:
+            raise ValueError("ZEPP_MOCK cannot be enabled in production")
+        self.source_mode = "mock" if self.mock else "real"
         self._mock_client = MockZeppClient(timezone_name=settings.timezone) if self.mock else None
         from .parser import ZeppParser
 
@@ -351,7 +354,7 @@ class ZeppConnector(HealthConnector):
                 **({"detail_only": True} if detail_only else {}),
                 **({"detail_refresh_before": detail_refresh_before} if detail_refresh_before is not None else {}),
                 **({"detail_limit": detail_limit} if detail_limit is not None else {}),
-                **({"mock_source": True} if self.mock else {}),
+                "source_mode": self.source_mode,
             },
         )
 
@@ -400,6 +403,13 @@ class ZeppConnector(HealthConnector):
                     workout_only=workout_only,
                 )
                 attempt_id = attempt.id
+            from vitalis.adapters.persistence import HealthRepository, session_scope
+            with session_scope() as db:
+                stored = HealthRepository(db).sync_attempt(attempt_id, user_id=user.id)
+                if stored is None or (stored.options or {}).get("source_mode") != self.source_mode:
+                    raise ZeppAuthError("排队任务来源模式与当前连接器不一致", kind="invalid_request")
+            if repo:
+                repo.bind_source_mode(user.id, self.source_mode)
             dailies = self._mock_fetch(user, start, end)
             if repo:
                 for d in dailies:
@@ -407,7 +417,6 @@ class ZeppConnector(HealthConnector):
             progress = {"attempt_id": attempt_id, "status": "succeeded", "retry": 0}
             if attempt_id:
                 from uuid import uuid4
-                from vitalis.adapters.persistence import HealthRepository, session_scope
                 now = datetime.now(timezone.utc)
                 with session_scope() as db:
                     ledger = HealthRepository(db)

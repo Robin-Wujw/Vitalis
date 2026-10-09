@@ -8,7 +8,7 @@ from typing import Any
 from .contracts import ReportBriefing
 from .period_activity import comparison_gate
 from .report_presentation import internal_sections, period_presentation
-from .report_formatting import as_of_line, coverage_text, date_text, energy_label, metric_label, number, payload_of, percent, running_class_label, unique, value_with_unit
+from .report_formatting import as_of_line, coverage_text, energy_label, metric_label, number, payload_of, percent, running_class_label, unique, value_with_unit
 
 
 _ACTIVITY_UNIT_LABELS = {
@@ -62,7 +62,6 @@ class MonthlyBriefingEngine:
     def build_payload(self, profile: Any) -> dict[str, Any]:
         payload = payload_of(profile)
         facts = payload.get("facts") or {}
-        inferences = payload.get("inferences") or {}
         period_days = _period_days(payload)
         comparison_days = _comparison_days(payload, period_days)
         previous_period_days = period_days

@@ -15,7 +15,6 @@ from .contracts import (
     EnergyObservation,
     MeasurementFact,
     Provenance,
-    SampleWindowSummary,
 )
 from .profile import RawDailyProfile, SeriesPoint
 

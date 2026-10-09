@@ -8,7 +8,6 @@ from .report_presentation import internal_sections, period_presentation
 from .report_formatting import (
     as_of_line,
     coverage_text,
-    date_text,
     energy_label,
     metric_label,
     number,

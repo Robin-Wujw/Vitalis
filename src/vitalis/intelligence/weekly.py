@@ -317,7 +317,6 @@ def _training_facts(
     ]
     record_days = coverage["record_days"]
     unknown_days = coverage["unknown_days"]
-    complete = coverage["coverage_status"] == "COMPLETE" and unknown_days == 0
     training_days_from_records = {
         day for day, item in raw.training_by_day.items()
         if period_start <= day <= raw.day

@@ -16,7 +16,6 @@ from vitalis.config import settings
 from vitalis.bootstrap import (
     get_connector,
     get_connection_service,
-    get_source_account_service,
 )
 from vitalis.application.connection import ConnectionOperationError
 from vitalis.application.connection_progress import INITIAL_SYNC_DAYS, iso_utc

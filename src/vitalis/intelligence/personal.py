@@ -1,7 +1,7 @@
 """Descriptive personal patterns over qualified windows and explicit feedback."""
 
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from math import isfinite
 from statistics import median
 

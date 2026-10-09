@@ -350,7 +350,6 @@ def _score(
             ),
         )
 
-    interval_seconds = max((workout.ended_at - workout.started_at).total_seconds(), 0.0)
     declared_seconds = workout.duration_minutes * 60.0
     active_seconds = max(
         0.0,

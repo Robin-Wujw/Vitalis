@@ -91,8 +91,6 @@ class ZeppParser:
           stp: 步数 {ttl, cal, dis(米)}
           tz:  时区偏移（秒）
         """
-        import base64
-        import json
 
         sleeps: dict[date, SleepRecord] = {}
         activities: dict[date, ActivityRecord] = {}

@@ -508,7 +508,6 @@ class ProfileLoader:
         for day, record in raw.activity_by_day.items():
             source = record.get("source", "zepp")
             scope = record.get("source_scope", "normalized_daily_record")
-            observed = record.get("observed_fields")
             for metric, field, unit in (
                 ("steps", "steps", "steps"),
                 ("distance_km", "distance_km", "km"),

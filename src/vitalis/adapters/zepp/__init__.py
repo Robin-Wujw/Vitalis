@@ -39,6 +39,11 @@ from .sync_manager import (
 
 DEFAULT_REGION = "api-mifitcn.zepp.com"  # 中国区缺省（其它区按账号区域）
 
+__all__ = [
+    "AuthRequired", "ZeppConnector", "MAX_SYNC_DAYS", "DataFetcher", "FetchWindow",
+    "DENSE_ARCHIVE_BATCH_SIZE", "SyncManager", "SyncReport", "StreamReport",
+]
+
 
 class AuthRequired(RuntimeError):
     """尚未导入 apptoken：数据获取前需完成凭证导入。"""

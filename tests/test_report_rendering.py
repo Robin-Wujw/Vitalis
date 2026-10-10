@@ -10,7 +10,7 @@ import pytest
 from vitalis.intelligence.contracts import ReportBriefing
 from vitalis.intelligence.public_reports import PublicReportView
 from vitalis.intelligence.report_rendering import (
-    RenderedReport, provider_text_length, render_report, validate_report_content,
+    RenderedReport, markdown_html_length, provider_text_length, render_report, validate_report_content,
 )
 
 
@@ -334,39 +334,51 @@ def large_report_view(*, measured=120, unobserved=0):
     })
 
 
+_BUDGET_MEASURES = [
+    ("markdown", markdown_html_length), ("markdown", provider_text_length), ("html", provider_text_length),
+]
+
+
 def test_provider_text_length_counts_utf16_code_units():
     assert provider_text_length("晚报") == 2
     assert provider_text_length("\U0001F600") == 2
 
 
-@pytest.mark.parametrize("target", ["markdown", "html"])
-def test_channel_budget_leaves_reports_within_budget_unchanged(target):
+def test_markdown_html_length_matches_the_converted_markdown():
+    for content in (render_report(_briefing()).content, render_report(large_report_view(measured=40)).content):
+        # The estimate counts a newline after every block, including the last one.
+        assert markdown_html_length(content) - provider_text_length(markdown(content)) in (0, 1)
+
+
+@pytest.mark.parametrize(("target", "measure"), _BUDGET_MEASURES)
+def test_channel_budget_leaves_reports_within_budget_unchanged(target, measure):
     briefing = _briefing()
-    assert render_report(briefing, target, max_characters=19_000).content == render_report(briefing, target).content
+    budgeted = render_report(briefing, target, max_length=18_000, measure=measure)
+    assert budgeted.content == render_report(briefing, target).content
 
 
-@pytest.mark.parametrize("target", ["markdown", "html"])
-def test_channel_budget_collapses_unobserved_facts_before_dropping_measured_facts(target):
-    view = large_report_view(measured=10, unobserved=100)
-    assert provider_text_length(render_report(view, target).content) > 19_000
+@pytest.mark.parametrize(("target", "measure"), _BUDGET_MEASURES)
+def test_channel_budget_collapses_unobserved_facts_before_dropping_measured_facts(target, measure):
+    view = large_report_view(measured=6, unobserved=100)
+    assert measure(render_report(view, target).content) > 18_000
 
-    content = render_report(view, target, max_characters=19_000).content
+    content = render_report(view, target, max_length=18_000, measure=measure).content
 
-    assert provider_text_length(content) <= 19_000
+    assert measure(content) <= 18_000
     assert "记录未取得" not in content
     for section_id in ("activity", "training", "recovery", "next"):
-        assert f"{section_id}指标9" in content
+        assert f"{section_id}指标5" in content
         assert f"暂无可用记录：{section_id}缺失0、{section_id}缺失1" in content
     assert "本节另有" not in content
 
 
-@pytest.mark.parametrize("target", ["markdown", "html"])
-def test_channel_budget_keeps_every_section_plan_and_whole_facts(target):
+@pytest.mark.parametrize(("target", "measure"), _BUDGET_MEASURES)
+def test_channel_budget_keeps_every_section_plan_and_whole_facts(target, measure):
     view = large_report_view(measured=120)
-    content = render_report(view, target, max_characters=19_000).content
+    content = render_report(view, target, max_length=18_000, measure=measure).content
 
-    assert provider_text_length(content) <= 19_000
-    assert content == render_report(view, target, max_characters=19_000).content
+    assert measure(content) <= 18_000
+    assert content == render_report(view, target, max_length=18_000, measure=measure).content
     text = _text(content)[0] if target == "html" else content
     for section_id, title in (("activity", "活动"), ("training", "训练记录"), ("recovery", "昨夜恢复背景"), ("next", "变化、反馈与下一步")):
         assert title in text

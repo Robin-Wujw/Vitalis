@@ -13,7 +13,7 @@ from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
 from vitalis.adapters.notifications import (
     PUSHPLUS_CONTENT_BUDGET, PUSHPLUS_CONTENT_LIMIT, PUSHPLUS_QUERY_URL, PUSHPLUS_URL, PushMessage, PushService,
 )
-from vitalis.intelligence.report_rendering import provider_text_length, render_report
+from vitalis.intelligence.report_rendering import markdown_html_length, provider_text_length, render_report
 from tests.test_report_content import synthetic_daily_fixture, synthetic_period_fixture
 from tests.test_report_rendering import large_report_view
 
@@ -858,23 +858,27 @@ def test_pushplus_report_is_budgeted_below_the_provider_limit(monkeypatch):
     requests = []
     monkeypatch.setattr("vitalis.adapters.notifications.httpx.Client", _accepting_pushplus_client(requests))
     view = large_report_view(measured=120)
-    assert provider_text_length(render_report(view, "markdown").content) > PUSHPLUS_CONTENT_LIMIT
+    assert markdown_html_length(render_report(view, "markdown").content) > PUSHPLUS_CONTENT_LIMIT
 
     result = PushService(pushplus_token="private-token").push_morning_briefing("user", view)
 
     assert result["_pushplus_handler"] == "accepted"
     content = requests[0][1]["json"]["content"]
-    assert provider_text_length(content) <= PUSHPLUS_CONTENT_BUDGET < PUSHPLUS_CONTENT_LIMIT
+    # PushPlus counts Markdown as the HTML it converts to, which is longer than the source.
+    assert provider_text_length(markdown.markdown(content)) <= PUSHPLUS_CONTENT_BUDGET < PUSHPLUS_CONTENT_LIMIT
     assert "本节另有" in content
 
 
-def test_pushplus_refuses_content_above_provider_limit_without_request(monkeypatch):
+@pytest.mark.parametrize("body", [
+    "数" * (PUSHPLUS_CONTENT_LIMIT + 1),
+    # Under the limit as Markdown source, over it once every paragraph becomes <p>…</p>.
+    "\n\n".join(["数据"] * 2500),
+], ids=["one-long-paragraph", "short-paragraphs-converted"])
+def test_pushplus_refuses_content_above_provider_limit_without_request(monkeypatch, body):
     requests = []
     monkeypatch.setattr("vitalis.adapters.notifications.httpx.Client", _accepting_pushplus_client(requests))
 
-    result = PushService(pushplus_token="private-token").push(PushMessage(
-        title="晚报", body="数" * (PUSHPLUS_CONTENT_LIMIT + 1), user_id="user",
-    ))
+    result = PushService(pushplus_token="private-token").push(PushMessage(title="晚报", body=body, user_id="user"))
 
     assert requests == []
     assert result["_pushplus_handler"] == "error: delivery failed"

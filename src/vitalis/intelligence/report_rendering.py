@@ -351,6 +351,30 @@ def provider_text_length(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2
 
 
+_MARKDOWN_ESCAPE = re.compile(r"\\([`*_{}\[\]#|!])")
+
+
+def markdown_html_length(content: str) -> int:
+    """Length of the HTML a provider stores after converting this renderer's Markdown.
+
+    Every block is one heading, bold paragraph, or plain paragraph, so the
+    conversion adds a fixed tag per block and resolves Markdown escapes.
+    """
+    total = 0
+    for block in content.strip().split("\n\n"):
+        line, tags = block.strip(), len("<p></p>")
+        for prefix in ("### ", "## ", "# "):
+            if line.startswith(prefix):
+                line, tags = line[len(prefix):], len("<h2></h2>")
+                break
+        else:
+            if len(line) >= 4 and line.startswith("**") and line.endswith("**"):
+                line, tags = line[2:-2], len("<p><strong></strong></p>")
+        text = html.unescape(_MARKDOWN_ESCAPE.sub(r"\1", line))
+        total += provider_text_length(html.escape(text, quote=True)) + tags + 1
+    return total
+
+
 def _water_fill(room: int, needs: list[int]) -> list[int]:
     """Share room so small sections keep everything and large ones split the rest."""
     caps = [0] * len(needs)
@@ -476,18 +500,21 @@ def _html_report(payload: dict[str, Any], label: str, headline: str, items: list
     return "\n".join(output)
 
 
-def _fit_report(payload: dict[str, Any], label: str, headline: str, target: ReportTarget, limit: int) -> str:
-    """Render within a channel limit; each item's cost is exact because output is line-joined."""
+def _fit_report(
+    payload: dict[str, Any], label: str, headline: str, target: ReportTarget,
+    limit: int, measure: Callable[[str], int],
+) -> str:
+    """Render within a channel limit; output is block-joined, so item costs add up exactly."""
     if target == "markdown":
         def cost(items: list[Item]) -> int:
-            return sum(2 + provider_text_length(line) for kind, text in items
+            return sum(measure("\n\n" + line) for kind, text in items
                        if (line := _markdown_line(kind, text)) is not None)
         render = _markdown_report
     else:
         def cost(items: list[Item]) -> int:
-            return sum(1 + provider_text_length(_html_line(kind, text)) for kind, text in items)
+            return sum(measure("\n" + _html_line(kind, text)) for kind, text in items)
         render = _html_report
-    room = limit - provider_text_length(render(payload, label, headline, []))
+    room = limit - measure(render(payload, label, headline, []))
     return render(payload, label, headline, _budgeted_items(payload, cost, room))
 
 
@@ -540,9 +567,10 @@ def validate_rendered_report(report: RenderedReport) -> None:
 
 
 def render_report(
-    report: Any, target: ReportTarget = "markdown", *, max_characters: int | None = None,
+    report: Any, target: ReportTarget = "markdown", *,
+    max_length: int | None = None, measure: Callable[[str], int] = provider_text_length,
 ) -> RenderedReport:
-    """Render one report; ``max_characters`` fits a channel limit in UTF-16 code units."""
+    """Render one report; ``max_length`` fits a channel limit counted by ``measure``."""
     if target not in _MEDIA_TYPES:
         raise ValueError("report target must be markdown or html")
     # Every channel enters through the same public projection, regardless of
@@ -554,8 +582,8 @@ def render_report(
     label = _LABELS[report.kind]
     headline = _plain(report.title)
     content = _markdown_report(payload, label, headline) if target == "markdown" else _html_report(payload, label, headline)
-    if max_characters is not None and provider_text_length(content) > max_characters:
-        content = _fit_report(payload, label, headline, target, max_characters)
+    if max_length is not None and measure(content) > max_length:
+        content = _fit_report(payload, label, headline, target, max_length, measure)
     return RenderedReport(
         title=f"Vitalis {label} · {headline}", content=content,
         media_type=_MEDIA_TYPES[target],

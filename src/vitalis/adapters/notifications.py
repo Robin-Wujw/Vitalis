@@ -23,11 +23,18 @@ PUSHPLUS_URL = "https://www.pushplus.plus/send"
 PUSHPLUS_QUERY_URL = (
     "https://www.pushplus.plus/api/open/message/sendMessageResult"
 )
-# PushPlus rejects a message body above 20,000 characters with code 999; reports
-# are rendered to a lower budget so the request never reaches that rejection.
+# PushPlus rejects a body above 20,000 characters (code 999); Markdown counts as
+# the HTML it converts to. Reports render to a lower budget to stay clear of it.
 PUSHPLUS_CONTENT_LIMIT = 20_000
-PUSHPLUS_CONTENT_BUDGET = 19_000
+PUSHPLUS_CONTENT_BUDGET = 18_000
 _ALLOWED_TEMPLATES = {"markdown", "html"}
+
+
+def pushplus_content_length(template: str) -> Callable[[str], int]:
+    """How PushPlus counts a body of this template against its content limit."""
+    from vitalis.intelligence.report_rendering import markdown_html_length, provider_text_length
+
+    return markdown_html_length if template == "markdown" else provider_text_length
 
 
 class NotificationSendError(RuntimeError):
@@ -247,7 +254,8 @@ class PushService:
 
         rendered = render_report(
             briefing, target=self.template,
-            max_characters=PUSHPLUS_CONTENT_BUDGET if self.pushplus_token else None,
+            max_length=PUSHPLUS_CONTENT_BUDGET if self.pushplus_token else None,
+            measure=pushplus_content_length(self.template),
         )
         metadata = _render_metadata(rendered)
         payload = _payload_for_extras(briefing)
@@ -312,13 +320,11 @@ class PushService:
             raise NotificationSendError("notification transport failed", ambiguous=True) from exc
 
     def _pushplus_handler(self, msg: PushMessage) -> dict[str, Any]:
-        from vitalis.intelligence.report_rendering import provider_text_length
-
         send_attempt_id = str(
             msg.extras.get("send_attempt_id") or self.send_attempt_id or uuid4().hex
         )
         try:
-            if provider_text_length(msg.body) > PUSHPLUS_CONTENT_LIMIT:
+            if pushplus_content_length(msg.template)(msg.body) > PUSHPLUS_CONTENT_LIMIT:
                 raise NotificationSendError(
                     "notification content exceeds provider limit", ambiguous=False, retryable=False
                 )

@@ -1,6 +1,6 @@
 # Vitalis Codex / Claude 仓库执行规范
 
-本文件是 Codex、Claude 和其他 coding agent 的唯一仓库开发与发布规范。`CLAUDE.md` 只负责入口跳转，不复制本文件；运行时产品 Skill 见 [skills/vitalis/SKILL.md](skills/vitalis/SKILL.md)。完整整改需求和阶段任务见 [docs/plan.md](docs/plan.md)。 本地依赖和检查见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+本文件是 Codex、Claude 和其他 coding agent 的唯一仓库开发与发布规范。`CLAUDE.md` 只负责入口跳转，不复制本文件；运行时产品 Skill 见 [skills/vitalis/SKILL.md](skills/vitalis/SKILL.md)。未完成的改动和优先级见 [docs/plan/README.md](docs/plan/README.md)。本地依赖和检查见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 项目状态与破坏性变更
 
@@ -22,10 +22,10 @@ Vitalis 处于预发布阶段。当前任务明确允许破坏性更新，不需
 
 ## 工作流程
 
-1. 读 [docs/README.md](docs/README.md)、[docs/plan.md](docs/plan.md) 和受影响模块；先写或更新失败测试，再实现。
+1. 读 [docs/README.md](docs/README.md)、[docs/plan/README.md](docs/plan/README.md)（改动对应某个计划条目时再读该条目）和受影响模块；先写或更新失败测试，再实现。
 2. 本地修改只在 feature branch 完成；不直接在 `main` 上堆未验证改动。
 3. 运行目标测试、文档检查、`git diff --check` 和按范围的 `tools/check.py`；如缺依赖或无法运行，原样记录退出码和阻塞项。
-4. 检查 `git diff`、删除冗余文档/兼容代码、更新唯一主责文档和生成产物，再提交。
+4. 检查 `git diff`、删除冗余文档/兼容代码、更新唯一主责文档和生成产物，再提交。完成 `docs/plan/` 的条目时，删除该条目文件和索引行，把仍有效的规则写进主责文档，新发现的后续工作写成新条目。
 5. 固定 feature branch 的候选 commit SHA，推送候选分支或传输可校验的提交到服务器；先在隔离环境运行锁定依赖、目标测试、schema 和合成报告验收，不提前合并 `main`。
 6. 按 [docs/deployment.md](docs/deployment.md) 备份数据库，按实际 schema 差异决定保留、加字段或破坏性迁移；把所有 Vitalis 服务切到同一个候选 SHA 和虚拟环境，验证 `/live`、`/ready`、`doctor`、worker 心跳、合成报告和实际加载路径。
 7. 服务器验收通过后才合并并推送 `main`；核对最终 `main` 与已验收候选的源码树一致，服务器仓库同步到最终 SHA，所有服务和发布记录对齐，删除已合并的临时本地/远端分支后结束。任何本地或服务器校验失败都先修复并重验，部署失败回滚代码/环境并保留备份，不恢复旧兼容迁移链。

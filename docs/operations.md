@@ -25,7 +25,7 @@
 | `PUSHPLUS_QUERY_MAX_ATTEMPTS` | `3` | 状态查询最多轮询次数；不会重发原消息。 |
 | `PUSHPLUS_QUERY_INTERVAL_SECONDS` | `60` | 状态查询间隔秒数；只影响状态查询。 |
 
-晨报 `09:30`、晚报 `21:30` 的调度由当前 worker 任务定义；配置和时区不要在其它文档复制成另一套默认值。真实模式还需要有效的 `VITALIS_TOKEN_ENCRYPTION_KEY`，并将其与数据库分开保存。
+晨报 `09:30`、晚报 `21:30` 的调度由当前 worker 任务定义；配置和时区不要在其它文档复制成另一套默认值。晨报需要完整睡眠和已核实的前 7 天训练记录，睡眠未到齐时最多再等 30 分钟；晚报需要当天事实和训练记录。必需数据缺失、同步降级或发送比调度时刻晚 30 分钟以上时，只发仅事实版本（不带训练安排、建议和变化）；没有当天事实时不发。调度时刻后晨报 3 小时、晚报 6 小时内仍未发出的，本次投递作废（`delivery_deadline_expired`）。这些规则在 `src/vitalis/application/delivery_policy.py`。真实模式还需要有效的 `VITALIS_TOKEN_ENCRYPTION_KEY`，并将其与数据库分开保存。
 
 ## 初始化与进程
 
@@ -37,7 +37,7 @@ uv run --locked --extra dev vitalis db init
 uv run --locked --extra dev vitalis doctor
 ```
 
-`db init` 建立当前 `2026-10-scoped-analysis-inputs` schema；`doctor` 输出 schema、数据库后端、时区和 worker 心跳状态，不输出秘密。旧 schema 不自动迁移，候选库流程见[部署](deployment.md)。启动 API 和 worker 应使用相同环境：
+`db init` 建立当前 schema，版本号以 `src/vitalis/adapters/persistence/database.py` 的 `SCHEMA_REVISION` 为准，不在文档里抄写；`doctor` 输出 schema 版本、数据库后端、时区和 worker 心跳状态，不输出秘密。旧 schema 不自动迁移，候选库流程见[部署](deployment.md)。启动 API 和 worker 应使用相同环境：
 
 ```powershell
 uv run --locked --extra dev vitalis serve
@@ -77,7 +77,7 @@ uv run --locked --extra dev vitalis token issue --user demo --scope read --outpu
 
 同步排查顺序是：确认来源 token 状态，再查 `GET /api/data-status`，再查 `GET /api/jobs/{job_id}` 的 attempt/chunk，最后查看 worker 日志中的非敏感错误类别。需要重新认证、部分覆盖、超时、取消和未知状态不能互相替代；先保留 `uncertain`，不要盲目重试可能已送达的 PushPlus 请求。
 
-PushPlus 的 HTTP 200 只表示请求完成；只有业务 `code=200` 且有有效 provider message id 才记录 `accepted`。记录 `accepted`、provider message id、最终 `delivered`/`failed`/`uncertain` 分开；投递不会写目标完成或主观反馈。周报/月报开关默认关闭，开启前应使用合成目标做一次受理合同验证；真实渠道和 Hermes 联调当前未声称完成。
+PushPlus 的 HTTP 200 只表示请求完成；只有业务 `code=200` 且有有效 provider message id 才记录 `accepted`。记录 `accepted`、provider message id、最终 `delivered`/`failed`/`uncertain` 分开；投递不会写目标完成或主观反馈。周报/月报开关默认关闭，开启前应使用合成目标做一次受理合同验证；真实 PushPlus 受理已在 2026-10-10 用测试补发验证，Hermes 联调尚未完成。报告的排队、计算和投递耗时等产品指标用 `GET /api/product/metrics` 查看。
 
 ## 常见故障
 

@@ -57,7 +57,7 @@ only-include = [
     "uv.lock",
     ".env.example",
     "docs/README.md",
-    "docs/plan.md",
+    "docs/plan",
     "docs/deployment.md",
     "docs/quickstart.md",
     "docs/reports.md",

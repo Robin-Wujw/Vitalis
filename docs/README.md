@@ -8,14 +8,14 @@
 - 想理解报告周期和 PushPlus：读[报告与渠道](reports.md)。
 - 想改代码或接口：先读[当前架构](architecture.md)，再看[数据合同](data-contracts.md)和测试。
 - 想连接 Zepp：读[Zepp](zepp.md)；想接入 Skill 或 Hermes：读[智能体集成](agents.md)。
-- 想执行整改：读[预发布整改计划](plan.md)。
+- 想知道接下来要做什么：读[改动计划](plan/README.md)。
 - 想发布到服务器：读[发布与部署 SOP](deployment.md)；想运行、备份或排障：读[运维](operations.md)。
 
 ## 主题归属
 
 | 主题 | 唯一当前指南 |
 | --- | --- |
-| 产品、数据和报告整改计划 | [预发布整改计划](plan.md) |
+| 未完成的改动与优先级 | [改动计划](plan/README.md) |
 | 第一次运行与 API 读取 | [快速开始](quickstart.md) |
 | 报告周期与 PushPlus | [报告与渠道](reports.md) |
 | 模块职责与数据流 | [当前架构](architecture.md) |

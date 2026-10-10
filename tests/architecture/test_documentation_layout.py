@@ -8,7 +8,7 @@ from vitalis.entrypoints.api.app import app
 
 ROOT = Path(__file__).parents[2]
 CANONICAL = {
-    "docs/plan.md", "docs/deployment.md",
+    "docs/plan/README.md", "docs/deployment.md",
     "docs/quickstart.md", "docs/architecture.md", "docs/data-contracts.md",
     "docs/zepp.md", "docs/agents.md", "docs/operations.md", "docs/reports.md",
     "AGENTS.md", "CONTRIBUTING.md", "SECURITY.md",
@@ -68,9 +68,17 @@ def test_repository_rules_and_product_skill_have_distinct_roles():
     assert not rules.startswith("---\n")
     assert skill.startswith("---\nname: vitalis\n")
     assert "tools/check.py" in rules
-    assert "docs/plan.md" in rules
+    assert "docs/plan/README.md" in rules
     assert "docs/deployment.md" in rules
     assert "tools/check.py" not in skill
     assert "../../" not in skill
     assert "仓库开发" in rules
     assert "根" in integration and "Skill" in integration
+
+
+def test_plan_folder_indexes_exactly_its_open_items():
+    index = _read("docs/plan/README.md")
+    listed = set(re.findall(r"\]\(([a-z0-9-]+\.md)\)", index))
+    present = {path.name for path in (ROOT / "docs" / "plan").glob("*.md")} - {"README.md"}
+    assert listed == present
+    assert not (ROOT / "docs" / "plan.md").exists()

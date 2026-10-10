@@ -191,7 +191,7 @@ def sdist_sources() -> set[str]:
         "pyproject.toml",
         "README.md", "README.en.md", "AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", "SECURITY.md",
         "uv.lock", ".env.example",
-        "docs/README.md", "docs/plan.md", "docs/deployment.md", "docs/quickstart.md", "docs/reports.md",
+        "docs/README.md", "docs/deployment.md", "docs/quickstart.md", "docs/reports.md",
         "docs/architecture.md", "docs/data-contracts.md", "docs/zepp.md",
         "docs/agents.md", "docs/operations.md",
         "skills/vitalis/SKILL.md", "skills/vitalis/references/api.md",
@@ -204,6 +204,7 @@ def sdist_sources() -> set[str]:
         for suffix in (".md", ".fragment.html", ".html", ".markdown-preview.html", ".markdown.payload.json", ".html.payload.json"):
             sources.add(f"docs/examples/reports/{kind}{suffix}")
     sources.add("docs/examples/reports/manifest.json")
+    sources.update(path.relative_to(ROOT).as_posix() for path in (ROOT / "docs" / "plan").glob("*.md"))
     package_dir = ROOT / "src" / "vitalis"
     sources.update(
         path.relative_to(ROOT).as_posix()

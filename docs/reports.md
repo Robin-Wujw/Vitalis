@@ -1,6 +1,6 @@
 # 报告与渠道
 
-[文档中心](README.md) | [整改计划](plan.md) | [快速开始](quickstart.md) | [智能体集成](agents.md) | [运维](operations.md) | [部署](deployment.md)
+[文档中心](README.md) | [改动计划](plan/README.md) | [快速开始](quickstart.md) | [智能体集成](agents.md) | [运维](operations.md) | [部署](deployment.md)
 
 Vitalis 报告从已保存快照读取事实、比较、分析和建议。缺失观测保持缺失；只有会改变当前结论的缺口才在对应位置提示。报告不要求用户回复，也不把投递状态当作健康反馈。
 
@@ -22,7 +22,7 @@ Vitalis 报告从已保存快照读取事实、比较、分析和建议。缺失
 
 先看标题、日期和数据截止时刻，再看关键指标和变化。晨报、晚报和日报只展示昨夜与当天的关键记录（各带一句个人基线对比）、重点、变化和训练明细；28/60/90 天窗口、训练反应和个人关联只在周报/月报和 API 中提供，逐信号的来源、覆盖和版本清单只在 API 中提供。分析只解释数据支持的变化，建议只引用已有决策或事实。可选 HRV 缺失时省略 HRV，不添加全局限制段落；某一比较数据不足时只在该比较处说明，活动分析仍可继续。
 
-报告 JSON 保留版本、`analysis_run_id`、`data_quality`、事实、特征、趋势、事件和决策字段。普通报告的 `report_context.report_state` 还会说明 `current`、`stale`、`queued`、`running` 或 `failed`，并提供同日期的 `last_good_snapshot`、任务标识和下一步；上一版事实不会伪装成当前结果。需要只读状态时使用 `GET /api/reports/{kind}/state` 或 Skill 的 `report … --state`。Markdown 和保守的 inline HTML 由同一展示模型分别直接渲染；HTML 不是把 Markdown 再转换一遍，也不重新查数据库或计算健康指标。两种输出的事实、单位、日期和缺口应保持一致。数据不足的报告仍应直接可读，但不提供没有证据的训练建议。
+报告 JSON 保留版本、`analysis_run_id`、`data_quality`、事实、特征、趋势、事件和决策字段。普通报告的 `report_context.report_state` 还会说明 `current`、`stale`、`queued`、`running` 或 `failed`，并提供同日期的 `last_good_snapshot`、任务标识和下一步；上一版事实不会伪装成当前结果。需要只读状态时使用 `GET /api/reports/{kind}/state` 或 Skill 的 `report … --state`。Markdown 和保守的 inline HTML 由同一展示模型分别直接渲染；HTML 不是把 Markdown 再转换一遍，也不重新查数据库或计算健康指标。两种输出的事实、单位、日期和缺口应保持一致。数据不足的报告仍应直接可读，但不提供没有证据的训练建议。各类报告的合成样例在 [docs/examples/reports](examples/reports/)，由 `tools/generate_report_examples.py` 生成，不手改。
 
 ## 本地导出与 API
 

@@ -1,6 +1,6 @@
 # 发布与部署 SOP
 
-[文档中心](README.md) | [仓库规则](../AGENTS.md) | [运维与排障](operations.md) | [整改计划](plan.md)
+[文档中心](README.md) | [仓库规则](../AGENTS.md) | [运维与排障](operations.md) | [改动计划](plan/README.md)
 
 本页是预发布环境的唯一发布主责。发布顺序是：**feature branch 改代码 → 本地校验 → 固定候选 SHA 并传到服务器验证 → 更新所有服务并验收 → 合并、推送 main → 核对最终版本并清理已合并分支**。服务器地址、用户、私钥和环境文件中的秘密不写入仓库。每次发布从实际 systemd 配置和进程加载路径确定运行版本，不能把服务器 checkout 的 HEAD 当成正在运行的版本。
 

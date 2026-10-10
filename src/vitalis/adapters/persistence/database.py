@@ -40,10 +40,16 @@ def _create_engine(database_url: str) -> Engine:
     )
     if engine.dialect.name == "sqlite":
         @event.listens_for(engine, "connect")
-        def _enable_foreign_keys(connection, _record):
+        def _configure_sqlite(connection, _record):
             cursor = connection.cursor()
             try:
                 cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.execute("PRAGMA busy_timeout=30000")
+                if not memory_sqlite:
+                    # WAL lets API reads and a long analysis read coexist with
+                    # the worker heartbeat and short durable writes.
+                    cursor.execute("PRAGMA journal_mode=WAL")
+                    cursor.execute("PRAGMA synchronous=NORMAL")
             finally:
                 cursor.close()
     return engine

@@ -52,6 +52,8 @@ API 的 `/live` 只表示进程存活，`/ready` 检查当前 schema；`doctor` 
 
 ## 备份与恢复
 
+生产 SQLite 运行库启用 WAL，长分析读取不会阻塞 heartbeat 和短事务写入；备份命令仍必须从当前配置库生成到不存在的新路径，并检查 WAL/SHM sidecar。
+
 SQLite 备份必须从当前配置库生成到不存在的新路径：
 
 ```powershell

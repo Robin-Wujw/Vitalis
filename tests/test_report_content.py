@@ -497,7 +497,7 @@ def test_push_monthly_profile_uses_same_sections_without_scheduling():
     service.push_monthly_profile("fixture-user", synthetic_period_fixture("monthly", "complete"))
     assert received
     message = received[0]
-    assert message.template == "markdown"
+    assert message.template == "html"
     assert "本月睡眠与训练结构" in message.body
     assert "平均睡眠" in message.body
     assert message.extras["period"] == "monthly"

@@ -352,3 +352,43 @@ def test_channel_budget_keeps_records_plan_and_whole_exercises(target, measure):
             if line.startswith("**动作"):
                 assert "3 组" in lines[index + 1]
                 assert lines[index + 2].startswith("对照 2026-10-04")
+
+
+def test_html_key_records_pair_tone_colors_with_arrow_text():
+    briefing = _briefing(metrics=[
+        {"key": "rhr", "label": "静息心率", "value": 61, "unit": "bpm",
+         "comparison": {"label": "个人参照（近 28 日）", "reference_value": 55.5, "change_percent": 9.9}},
+        {"key": "hrv", "label": "HRV", "value": 59, "unit": "ms",
+         "comparison": {"label": "个人参照（近 28 日）", "reference_value": 53.5, "change_percent": 10.3}},
+        {"key": "sleep", "label": "睡眠时长", "value": 446, "unit": "min",
+         "comparison": {"label": "个人参照（近 28 日）", "reference_value": 447.5, "change_percent": -0.3}},
+    ])
+    content = render_report(briefing, "html").content
+    text = _text(content)[0]
+
+    # A higher resting heart rate reads as "watch", a higher HRV as "good"; both carry the arrow as text.
+    assert "↑ 9.9%" in text and "↑ 10.3%" in text and "↓ 0.3%" in text
+    assert "color:#a8431f;font-weight:600\">↑ 9.9%" in content
+    assert "color:#127a3e;font-weight:600\">↑ 10.3%" in content
+    assert "color:#4a5964;font-weight:600\">↓ 0.3%" in content
+    assert "变化 +9.9%" in render_report(briefing, "markdown").content
+
+
+def test_stress_zone_shares_become_one_labelled_bar_in_html_only():
+    zones = ["放松区间 21%", "正常区间 51%", "中等压力区间 25%", "高压力区间 3%"]
+    briefing = _briefing(sections=[{
+        "key": "display_signals", "title": "日内记录", "display": True,
+        "facts": ["平均压力评分 51", *zones, "心率记录均值 70.3 次/分钟"],
+    }])
+    html_content = render_report(briefing, "html").content
+    html_text = _text(html_content)[0]
+    markdown_content = render_report(briefing, "markdown").content
+
+    assert "压力分区占比" in html_text
+    for label in ("放松 21%", "正常 51%", "中等压力 25%", "高压力 3%"):
+        assert label in html_text
+    assert html_text.count("区间") == 0
+    assert "平均压力评分" in html_text and "70.3 次/分钟" in html_text
+    for line in zones:
+        assert line in markdown_content
+    assert "压力分区占比" not in markdown_content

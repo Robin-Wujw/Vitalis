@@ -166,7 +166,7 @@ class PushService:
         pushplus_token: str | None = None,
         *,
         pushplus_access_key: str | None = None,
-        template: str = "markdown",
+        template: str = "html",
         query_max_attempts: int | None = None,
         query_interval_seconds: float | None = None,
         send_attempt_id: str | None = None,

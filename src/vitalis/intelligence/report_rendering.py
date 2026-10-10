@@ -79,7 +79,7 @@ def _value(value: Any, unit: str, digits: int = 0) -> str:
     return f"{shown} {label}".strip()
 
 
-def _comparison(metric: dict[str, Any]) -> str | None:
+def _comparison(metric: dict[str, Any], *, with_change: bool = True) -> str | None:
     comparison = metric.get("comparison")
     if not comparison:
         return None
@@ -96,8 +96,33 @@ def _comparison(metric: dict[str, Any]) -> str | None:
     if change is not None:
         if not math.isfinite(change):
             raise ValueError("report comparison must be finite")
-        parts.append("持平" if change == 0 else f"变化 {change:+.1f}%")
+        if with_change:
+            parts.append("持平" if change == 0 else f"变化 {change:+.1f}%")
     return " · ".join(part for part in parts if part) or None
+
+
+# Which way is better for each key record; unknown metrics stay neutral.
+_BETTER_WHEN = {"sleep": 1, "hrv": 1, "rhr": -1, "resting_hr": -1, "steps": 1, "distance": 1, "active": 1, "stress": -1}
+_STEADY_PERCENT = 3.0
+
+
+def _delta(metric: dict[str, Any]) -> dict[str, str] | None:
+    """Signed change against the personal reference, with an arrow so tone never relies on color."""
+    change = (metric.get("comparison") or {}).get("change_percent")
+    if not isinstance(change, (int, float)) or isinstance(change, bool) or not math.isfinite(change):
+        return None
+    key = str(metric.get("key") or "")
+    better = next((sign for prefix, sign in _BETTER_WHEN.items() if key == prefix or key.startswith(prefix + "_")), 0)
+    if change == 0:
+        return {"text": "持平", "tone": "steady"}
+    arrow = "↑" if change > 0 else "↓"
+    if abs(change) < _STEADY_PERCENT:
+        tone = "steady"
+    elif better == 0:
+        tone = "neutral"
+    else:
+        tone = "good" if change * better > 0 else "watch"
+    return {"text": f"{arrow} {abs(change):.1f}%", "tone": tone}
 
 
 def _subtitle(payload: dict[str, Any]) -> str:
@@ -175,7 +200,10 @@ def _exercise_lines(exercise: dict[str, Any]) -> list[str]:
     return lines
 
 
-Item = tuple[str, str]
+# (kind, payload): most kinds carry text; "record" carries a key-record dict and
+# "zones" an ordered list of (zone, percent, original text). Block markers carry
+# the card variant for HTML and render nothing in Markdown.
+Item = tuple[str, Any]
 # Selection order when a channel budget applies: key records and changes first,
 # then training and section facts in reading order, caveats last.
 _UNIT_RANKS = {"record": 0, "finding": 0, "fact": 1, "limitation": 2}
@@ -214,19 +242,45 @@ class _Section:
     tail: list[Item]
 
 
-def _block(title: str, units: list[tuple[int, list[Item]]], tail: list[Item] | None = None) -> _Section:
-    return _Section([("block_start", ""), ("h2", title)], units, [*(tail or []), ("block_end", "")])
+def _block(
+    title: str, units: list[tuple[int, list[Item]]], tail: list[Item] | None = None, *, variant: str = "",
+) -> _Section:
+    return _Section([("block_start", variant), ("h2", title)], units, [*(tail or []), ("block_end", "")])
 
 
 def _record_units(metrics: list[dict[str, Any]], *, facts_only: bool) -> list[tuple[int, list[Item]]]:
     units = []
     for metric in metrics:
-        heading = str(metric.get("label") or "已保存记录")
-        if metric.get("value") is not None:
-            heading += "｜" + _value(metric["value"], metric.get("unit", ""), metric.get("digits", 0))
-        notes = [None if facts_only else _comparison(metric), metric.get("detail"), metric.get("gap")]
-        units.append((_UNIT_RANKS["record"], [("strong", heading), *(("note", str(note)) for note in notes if note)]))
+        label = str(metric.get("label") or "已保存记录")
+        value = None if metric.get("value") is None else _value(metric["value"], metric.get("unit", ""), metric.get("digits", 0))
+        extras = [str(note) for note in (metric.get("detail"), metric.get("gap")) if note]
+        comparison = None if facts_only else _comparison(metric)
+        record = {
+            "heading": label if value is None else f"{label}｜{value}", "label": label, "value": value,
+            "notes": [*([comparison] if comparison else []), *extras], "extras": extras,
+            "delta": None if facts_only else _delta(metric),
+            "reference": None if facts_only else _comparison(metric, with_change=False),
+        }
+        units.append((_UNIT_RANKS["record"], [("record", record)]))
     return units
+
+
+_ZONE_LINE = re.compile(r"^(放松|正常|中等压力|高压力)区间 (\d+(?:\.\d+)?)%$")
+
+
+def _fact_items(lines: list[str]) -> list[Item]:
+    """Section facts as rows; the four stress-zone shares become one proportion bar."""
+    zones = [(match.group(1), float(match.group(2)), line) for line in lines if (match := _ZONE_LINE.match(line))]
+    if len(zones) < 3:
+        return [("row", line) for line in lines]
+    items: list[Item] = []
+    for line in lines:
+        if _ZONE_LINE.match(line):
+            if line == zones[0][2]:
+                items.append(("zones", zones))
+            continue
+        items.append(("row", line))
+    return items
 
 
 def _workout_units(workout: dict[str, Any], zone: str, *, facts_only: bool) -> list[tuple[int, list[Item]]]:
@@ -235,8 +289,8 @@ def _workout_units(workout: dict[str, Any], zone: str, *, facts_only: bool) -> l
         info.append(timestamp_text(workout["started_at"], zone, short=True))
     if workout.get("duration_minutes") is not None:
         info.append(_value(workout["duration_minutes"], "min"))
-    summary = [("paragraph", " · ".join(part for part in info if part))]
-    summary.extend(("paragraph", str(item)) for item in workout.get("facts") or [])
+    summary = [("note", " · ".join(part for part in info if part))]
+    summary.extend(("row", str(item)) for item in workout.get("facts") or [])
     units = [(_UNIT_RANKS["fact"], summary)]
     for exercise in workout.get("exercises") or []:
         items = [("strong", str(exercise.get("name") or "未识别动作"))]
@@ -258,18 +312,24 @@ def _report_sections(view: dict[str, Any], presentation: dict[str, Any]) -> tupl
     kind = view["kind"]
     facts_only = bool(view.get("facts_only"))
     zone = (view.get("report_context") or {}).get("timezone") or "UTC"
-    preamble = [("paragraph", str(item)) for item in [*(view.get("summary") or []), *(view.get("alerts") or [])]]
+    notices = [str(item) for item in [*(view.get("summary") or []), *(view.get("alerts") or [])]]
     quality = view.get("data_quality") or {}
     if kind == "daily" and quality.get("status"):
         label = quality.get("status_label") or _QUALITY_LABELS.get(quality["status"], "资格未确认")
-        preamble.append(("paragraph", f"数据质量：{label}"))
+        notices.append(f"数据质量：{label}")
     suggestions = [("paragraph", str(item)) for item in view.get("suggestions") or []]
     sections = []
+    if notices:
+        variant = "alert" if view.get("summary") or view.get("alerts") else "status"
+        sections.append(_Section([("block_start", variant)],
+                                 [(_UNIT_RANKS["finding"], [("paragraph", line)]) for line in notices],
+                                 [("block_end", "")]))
     records = _record_units(presentation.get("metrics") or [], facts_only=facts_only)
     if records:
-        sections.append(_block("关键记录", records))
+        sections.append(_Section([("block_start", "bare"), ("h2", "关键记录"), ("tiles_start", "")], records,
+                                 [("tiles_end", ""), ("block_end", "")]))
     if kind == "morning" and suggestions:
-        sections.append(_block("今天的重点", [], suggestions))
+        sections.append(_block("今天的重点", [], suggestions, variant="plan"))
     findings = [] if facts_only else list(dict.fromkeys(str(item) for item in presentation.get("findings") or []))
     if findings:
         sections.append(_block(_FINDING_HEADINGS[kind], [(_UNIT_RANKS["finding"], [("paragraph", item)]) for item in findings]))
@@ -279,20 +339,22 @@ def _report_sections(view: dict[str, Any], presentation: dict[str, Any]) -> tupl
     for section in presentation.get("sections") or []:
         if not _shown_section(section, kind):
             continue
-        units = []
-        for key, rank, style in (("facts", "fact", "paragraph"), ("interpretation", "finding", "paragraph"),
-                                 ("limitations", "limitation", "note")):
+        lines = {key: [] for key in ("facts", "interpretation", "limitations")}
+        for key in lines:
             for item in section.get(key) or []:
                 text = _section_line(str(section.get("key")), str(item))
                 # Engines repeat a period's main change inside several sections.
                 if text is not None and text not in shown:
                     shown.add(text)
-                    units.append((_UNIT_RANKS[rank], [(style, text)]))
+                    lines[key].append(text)
+        units = [(_UNIT_RANKS["fact"], [item]) for item in _fact_items(lines["facts"])]
+        units += [(_UNIT_RANKS["finding"], [("paragraph", text)]) for text in lines["interpretation"]]
+        units += [(_UNIT_RANKS["limitation"], [("note", text)]) for text in lines["limitations"]]
         if units:
             sections.append(_block(str(section.get("title") or "记录"), units))
     if kind != "morning" and suggestions:
-        sections.append(_block(_NEXT_HEADINGS[kind], [], suggestions))
-    return preamble, sections
+        sections.append(_block(_NEXT_HEADINGS[kind], [], suggestions, variant="plan"))
+    return [], sections
 
 
 def _assemble(preamble: list[Item], sections: list[_Section], selected: list[set[int]], closing: list[Item]) -> list[Item]:
@@ -400,10 +462,17 @@ def _budgeted_items(
     return items
 
 
-def _markdown_line(kind: str, text: str) -> str | None:
-    if kind in {"block_start", "block_end"}:
+_MARKERS = {"block_start", "block_end", "tiles_start", "tiles_end"}
+
+
+def _markdown_line(kind: str, payload: Any) -> str | None:
+    if kind in _MARKERS:
         return None
-    shown = _markdown(text)
+    if kind == "record":
+        return "\n\n".join([f"**{_markdown(payload['heading'])}**", *(_markdown(note) for note in payload["notes"])])
+    if kind == "zones":
+        return "\n\n".join(_markdown(text) for _, _, text in payload)
+    shown = _markdown(payload)
     if kind in {"h2", "h3"}:
         return f"{'##' if kind == 'h2' else '###'} {shown}"
     if kind == "strong":
@@ -411,7 +480,9 @@ def _markdown_line(kind: str, text: str) -> str | None:
     return shown
 
 
-def _markdown_report(payload: dict[str, Any], label: str, headline: str, items: list[Item]) -> str:
+def _markdown_report(
+    payload: dict[str, Any], label: str, headline: str, items: list[Item], status: tuple[str, str] | None = None,
+) -> str:
     lines = [f"# {_markdown(label)} · {_markdown(headline)}", "", _markdown(_subtitle(payload))]
     for kind, text in items:
         line = _markdown_line(kind, text)
@@ -431,34 +502,131 @@ def _html_text(value: Any) -> str:
     return "".join(output)
 
 
-def _html_line(kind: str, text: str) -> str:
+# The HTML page is read inside a phone push viewer that accepts no stylesheet, so
+# every color is explicit: cards on a quiet plane, and every tone is paired with text.
+_INK, _INK_SOFT, _SUB, _MUTED = "#14202b", "#2b3a45", "#55636f", "#7a8892"
+_PLANE, _CARD, _RULE, _HAIR = "#eef3f3", "#ffffff", "#dde6e9", "#edf2f4"
+_HERO, _HERO_SOFT, _HERO_FAINT = "#0f3d3a", "#c5e3dd", "#9fd3c9"
+_TONES = {  # text color, background
+    "good": ("#127a3e", "#e6f4ec"), "watch": ("#a8431f", "#fbede6"),
+    "neutral": ("#4a5964", "#eef2f4"), "steady": ("#4a5964", "#eef2f4"),
+}
+_ACTION_TONES = {"TRAIN_HARD": "good", "TRAIN_NORMAL": "good", "TRAIN_LIGHT": "caution",
+                 "RECOVERY": "caution", "REST": "rest", "INSUFFICIENT_DATA": "neutral"}
+_CHIPS = {"good": ("#0b5a33", "#d8f0e4"), "caution": ("#7a4a00", "#fbe7c6"),
+          "rest": ("#8a2f12", "#f8d6ca"), "neutral": ("#3b4852", "#e4e9ec")}
+# Ordinal one-hue ramp, relaxed to high stress, light to dark; the lightest step clears 2:1 on white.
+_ZONE_COLORS = {"放松": "#86b6ef", "正常": "#5598e7", "中等压力": "#256abf", "高压力": "#104281"}
+_CARD_STYLES = {
+    "": f"margin:12px 0 0;padding:14px 16px;background:{_CARD};border:1px solid {_RULE};border-radius:12px",
+    "plan": "margin:12px 0 0;padding:14px 16px;background:#e2f1ee;border-radius:12px",
+    "alert": "margin:12px 0 0;padding:10px 16px;background:#fff6e5;border:1px solid #f1dfb6;border-radius:12px",
+    "status": f"margin:12px 0 0;padding:10px 16px;background:{_CARD};border:1px solid {_RULE};border-radius:12px",
+    "bare": "margin:16px 0 0",
+}
+_ROW = re.compile(r"^(?P<label>[^：；:;。]{1,24}?)\s+(?P<value>[-+]?\d[\d,.:/]*\s?[%A-Za-z/一-鿿]{0,6})。?$")
+
+
+def _html_record(record: dict[str, Any]) -> str:
+    escape = _html_text
+    parts = [f'<p style="margin:0;font-size:12.5px;color:{_SUB}">{escape(record["label"])}</p>']
+    if record.get("value") is not None:
+        parts.append(f'<p style="margin:2px 0 0;font-size:20px;font-weight:600;line-height:1.35;color:{_INK};'
+                     f'word-break:keep-all">{escape(record["value"])}</p>')
+    comparison = []
+    if record.get("delta"):
+        color, background = _TONES[record["delta"]["tone"]]
+        comparison.append(f'<span style="display:inline-block;padding:0 7px;border-radius:999px;background:{background};'
+                          f'color:{color};font-weight:600">{escape(record["delta"]["text"])}</span>')
+    if record.get("reference"):
+        comparison.append(f'<span style="color:{_MUTED}">{escape(record["reference"])}</span>')
+    if comparison:
+        parts.append(f'<p style="margin:6px 0 0;font-size:12px;line-height:1.6">{" ".join(comparison)}</p>')
+    parts.extend(f'<p style="margin:4px 0 0;font-size:12px;line-height:1.5;color:{_MUTED}">{escape(note)}</p>'
+                 for note in record["extras"])
+    return (f'<div style="flex:1 1 140px;box-sizing:border-box;padding:12px;background:{_CARD};'
+            f'border:1px solid {_RULE};border-radius:12px">' + "".join(parts) + "</div>")
+
+
+def _html_row(text: str) -> str:
+    match = _ROW.match(_plain(text))
+    if match is None:
+        return (f'<p style="margin:0;padding:7px 0;border-bottom:1px solid {_HAIR};font-size:14px;line-height:1.6;'
+                f'color:{_INK_SOFT}">{_html_text(text)}</p>')
+    return (f'<p style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin:0;padding:7px 0;'
+            f'border-bottom:1px solid {_HAIR};font-size:14px;line-height:1.5">'
+            f'<span style="color:{_SUB}">{_html_text(match["label"])}</span> '
+            f'<span style="color:{_INK};font-weight:600;text-align:right;white-space:nowrap">'
+            f'{_html_text(match["value"])}</span></p>')
+
+
+def _html_zones(zones: list[tuple[str, float, str]]) -> str:
+    total = sum(share for _, share, _ in zones) or 1.0
+    present = [(name, share) for name, share, _ in zones if share > 0]
+    segments = []
+    for index, (name, share) in enumerate(present):
+        first, last = index == 0, index == len(present) - 1
+        radius = "4px" if first and last else "4px 0 0 4px" if first else "0 4px 4px 0" if last else "0"
+        gap = "0" if last else f"2px solid {_CARD}"
+        segments.append(f'<span style="display:inline-block;box-sizing:border-box;height:10px;width:{share / total * 100:.2f}%;'
+                        f'background:{_ZONE_COLORS[name]};border-right:{gap};border-radius:{radius}"></span>')
+    legend = " ".join(
+        f'<span style="display:inline-block;margin:0 12px 2px 0;white-space:nowrap">'
+        f'<span style="display:inline-block;width:8px;height:8px;margin-right:4px;border-radius:2px;'
+        f'background:{_ZONE_COLORS[name]}"></span>{_html_text(name)} {share:g}%</span>'
+        for name, share, _ in zones
+    )
+    return (f'<div style="margin:8px 0 6px"><p style="margin:0 0 6px;font-size:13px;color:{_SUB}">压力分区占比</p>'
+            f'<div style="font-size:0;line-height:0;white-space:nowrap">{"".join(segments)}</div>'
+            f'<p style="margin:8px 0 0;font-size:12.5px;line-height:1.6;color:{_SUB}">{legend}</p></div>')
+
+
+def _html_line(kind: str, payload: Any) -> str:
     escape = _html_text
     if kind == "block_start":
-        return '<div style="margin:16px 0;padding:14px 16px;border:1px solid #dfe7ed;border-radius:8px;background:#f5f7fa">'
-    if kind == "block_end":
+        return f'<div style="{_CARD_STYLES.get(payload, _CARD_STYLES[""])}">'
+    if kind in {"block_end", "tiles_end"}:
         return "</div>"
+    if kind == "tiles_start":
+        return '<div style="display:flex;flex-wrap:wrap;gap:8px">'
+    if kind == "record":
+        return _html_record(payload)
+    if kind == "row":
+        return _html_row(payload)
+    if kind == "zones":
+        return _html_zones(payload)
     if kind == "h2":
-        return f'<h2 style="margin:0 0 12px;color:#111827;font-size:18px;line-height:1.45">{escape(text)}</h2>'
+        return f'<h2 style="margin:0 0 8px;font-size:16px;line-height:1.4;color:{_INK}">{escape(payload)}</h2>'
     if kind == "h3":
-        return f'<h3 style="margin:18px 0 6px;color:#111827;font-size:17px;line-height:1.5">{escape(text)}</h3>'
+        return f'<h3 style="margin:14px 0 4px;font-size:15px;line-height:1.5;color:{_INK}">{escape(payload)}</h3>'
     if kind == "strong":
-        return f'<p style="margin:14px 0 6px;color:#111827;font-size:17px;font-weight:700;line-height:1.5">{escape(text)}</p>'
+        return f'<p style="margin:12px 0 2px;font-size:15px;font-weight:600;line-height:1.5;color:{_INK}">{escape(payload)}</p>'
     if kind == "note":
-        return f'<p style="margin:4px 0 10px;color:#475569;font-size:14px;line-height:1.65">{escape(text)}</p>'
-    return f'<p style="margin:8px 0;color:#334155;line-height:1.65">{escape(text)}</p>'
+        return f'<p style="margin:2px 0 6px;font-size:12.5px;line-height:1.6;color:{_MUTED}">{escape(payload)}</p>'
+    return f'<p style="margin:6px 0;font-size:14.5px;line-height:1.7;color:{_INK_SOFT}">{escape(payload)}</p>'
 
 
-def _html_report(payload: dict[str, Any], label: str, headline: str, items: list[Item]) -> str:
+def _html_report(
+    payload: dict[str, Any], label: str, headline: str, items: list[Item], status: tuple[str, str] | None = None,
+) -> str:
     escape = _html_text
-    output = [
-        '<div style="max-width:680px;margin:0 auto;padding:16px;box-sizing:border-box;'
-        'background:#ffffff;color:#111827;font-family:Arial,sans-serif;font-size:16px;'
-        'line-height:1.65;overflow-wrap:anywhere;word-break:break-word">',
-        f'<p style="margin:0 0 8px;font-size:14px;color:#475569">Vitalis · {escape(label)}</p>',
-        f'<h1 style="margin:0 0 10px;font-size:24px;line-height:1.35">{escape(headline)}</h1>',
-        f'<p style="margin:0 0 24px;font-size:14px;color:#475569">{escape(_subtitle(payload))}</p>',
+    hero = [
+        f'<p style="margin:0;font-size:12px;letter-spacing:1px;color:{_HERO_FAINT}">VITALIS · {escape(label)}</p>',
+        f'<h1 style="margin:6px 0;font-size:21px;line-height:1.35;color:#ffffff">{escape(headline)}</h1>',
+        f'<p style="margin:0;font-size:12.5px;line-height:1.6;color:{_HERO_SOFT}">{escape(_subtitle(payload))}</p>',
     ]
-    output.extend(_html_line(kind, text) for kind, text in items)
+    if status:
+        color, background = _CHIPS[_ACTION_TONES.get(status[0], "neutral")]
+        hero.append(f'<p style="margin:10px 0 0"><span style="display:inline-block;padding:2px 10px;border-radius:999px;'
+                    f'background:{background};color:{color};font-size:13px;font-weight:600">{escape(status[1])}</span></p>')
+    output = [
+        f'<div style="max-width:680px;margin:0 auto;padding:12px 12px 18px;box-sizing:border-box;background:{_PLANE};'
+        f"color:{_INK};font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',"
+        'sans-serif;font-size:15px;line-height:1.6;overflow-wrap:anywhere;word-break:break-word">',
+        f'<div style="padding:16px 18px;border-radius:14px;background:{_HERO};color:#ffffff">' + "".join(hero) + "</div>",
+    ]
+    output.extend(_html_line(kind, item) for kind, item in items)
+    output.append(f'<p style="margin:16px 0 0;font-size:12px;color:{_MUTED};text-align:center">由 Vitalis 根据已保存数据生成，无需回复</p>')
     output.append("</div>")
     return "\n".join(output)
 
@@ -466,6 +634,7 @@ def _html_report(payload: dict[str, Any], label: str, headline: str, items: list
 def _fit_report(
     payload: dict[str, Any], label: str, headline: str, target: ReportTarget,
     content: tuple[list[Item], list[_Section]], limit: int, measure: Callable[[str], int],
+    status: tuple[str, str] | None = None,
 ) -> str:
     """Render within a channel limit; output is block-joined, so item costs add up exactly."""
     if target == "markdown":
@@ -477,8 +646,8 @@ def _fit_report(
         def cost(items: list[Item]) -> int:
             return sum(measure("\n" + _html_line(kind, text)) for kind, text in items)
         render = _html_report
-    room = limit - measure(render(payload, label, headline, []))
-    return render(payload, label, headline, _budgeted_items(*content, cost, room))
+    room = limit - measure(render(payload, label, headline, [], status))
+    return render(payload, label, headline, _budgeted_items(*content, cost, room), status)
 
 
 class _HTMLContract(HTMLParser):
@@ -547,13 +716,17 @@ def render_report(
     view = to_public_report_view(report)
     # Revalidate mutable nested fields before producing transport bytes.
     payload = PublicReportView.model_validate(view.model_dump(mode="json")).model_dump(mode="json")
-    content = _report_sections(payload, report_presentation(report, view.kind))
+    presentation = report_presentation(report, view.kind)
+    content = _report_sections(payload, presentation)
+    status = None
+    if view.kind == "morning" and not view.facts_only and presentation.get("decision_action") and presentation.get("action_label"):
+        status = (str(presentation["decision_action"]), str(presentation["action_label"]))
     label = _LABELS[view.kind]
     headline = _plain(view.title)
     render = _markdown_report if target == "markdown" else _html_report
-    body = render(payload, label, headline, _all_items(*content))
+    body = render(payload, label, headline, _all_items(*content), status)
     if max_length is not None and measure(body) > max_length:
-        body = _fit_report(payload, label, headline, target, content, max_length, measure)
+        body = _fit_report(payload, label, headline, target, content, max_length, measure, status)
     return RenderedReport(
         title=f"Vitalis {label} · {headline}", content=body,
         media_type=_MEDIA_TYPES[target],

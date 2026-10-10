@@ -11,14 +11,14 @@
         "media_type": "text/markdown",
         "template": "markdown",
         "renderer_version": "4.0",
-        "content_sha256": "f196c500994162ce4c189e61d65cf810e64f498006a0aa664aa0b61e26cee7bf"
+        "content_sha256": "792c6bb0246f99db9a1e5dc3999896ccab4691c77f301a8f9e6b073df92a8588"
       },
       "html": {
         "title": "Vitalis 晨报 · 今天安排：正常训练",
         "media_type": "text/html",
         "template": "html",
         "renderer_version": "4.0",
-        "content_sha256": "69878c5d9efe965d13caac6716199775761e47d03ddb4fdaae312ae485597ac1"
+        "content_sha256": "6281702b9fd45cbd8d09afa71d8fbfde4e683e2aa0f7c071ba2ea9a44801f565"
       }
     },
     "daily": {
@@ -27,14 +27,14 @@
         "media_type": "text/markdown",
         "template": "markdown",
         "renderer_version": "4.0",
-        "content_sha256": "6c0e344111ff25640d20794bca66e9f668c370c3adadabaf4e8f775e4f606947"
+        "content_sha256": "c3add7b292921cd297afc0b2d01d6807e8d6ec0362463414461335dd9d5f65d7"
       },
       "html": {
         "title": "Vitalis 日报 · 本地日完整事实快照",
         "media_type": "text/html",
         "template": "html",
         "renderer_version": "4.0",
-        "content_sha256": "0d0f1aedcab7b69c6d53c49fe14ccce9531f3cd4aa076dcf5691191f24df936f"
+        "content_sha256": "808f3f7b46910d73b85edbcb776f23377f2d6f7e2337131ce4d4146a545a6fc8"
       }
     },
     "evening": {
@@ -43,14 +43,14 @@
         "media_type": "text/markdown",
         "template": "markdown",
         "renderer_version": "4.0",
-        "content_sha256": "094aaaec50289ce49d7e6f3cb72ac8dbcb6fc8b7538082b152f14ad6d2090da5"
+        "content_sha256": "5e0bb260477e5cbec28e3d9aea78de49ec598f64866047ae7cd5d49f55189030"
       },
       "html": {
         "title": "Vitalis 晚报 · 二头肌弯举总次数增加",
         "media_type": "text/html",
         "template": "html",
         "renderer_version": "4.0",
-        "content_sha256": "5cb4e47d9396f988094569f5bf71c3d7449d7524ce9527fd9076da4a2f59043e"
+        "content_sha256": "ca17bdf17922c387d0c5d78b01d49ff576bc43ad6660af55b5f48dbf514833ea"
       }
     },
     "weekly": {
@@ -59,14 +59,14 @@
         "media_type": "text/markdown",
         "template": "markdown",
         "renderer_version": "4.0",
-        "content_sha256": "ae2337d657e9519d292685cfa3d6b01ee2ee442b460c52287578477a9ce549a7"
+        "content_sha256": "f72f7b077921dd7185170e5a027c1952b5d138d8c690042dc012e8c7bbc38e52"
       },
       "html": {
         "title": "Vitalis 周报 · 本周睡眠与训练结构",
         "media_type": "text/html",
         "template": "html",
         "renderer_version": "4.0",
-        "content_sha256": "e190143f44ce79c70523750beaeca9bbbea883f5690453cc04f13557dcada3f6"
+        "content_sha256": "59bfd5b366a6ae3c539342dd488d2afd3889f1603ed49d404873f4169886830a"
       }
     },
     "monthly": {
@@ -75,14 +75,14 @@
         "media_type": "text/markdown",
         "template": "markdown",
         "renderer_version": "4.0",
-        "content_sha256": "17ddafdf1d6278b55c820198f9a4bbbf760aa71c0872a19a552a068af6c309d2"
+        "content_sha256": "05463b2124f1a9107d2021290aba07315d9addb46a834fd5e4048d46e48b7b15"
       },
       "html": {
         "title": "Vitalis 月报 · 本月睡眠与训练结构",
         "media_type": "text/html",
         "template": "html",
         "renderer_version": "4.0",
-        "content_sha256": "d13d81c36cf45139718ed1c362586aee64c0447d1adc0e1e6406c8a51ec5a265"
+        "content_sha256": "9382dac5280c93c2aa928873d91f90e541b9578e2b2eb5147448633e60e7f350"
       }
     },
     "insufficient-data": {
@@ -91,14 +91,14 @@
         "media_type": "text/markdown",
         "template": "markdown",
         "renderer_version": "4.0",
-        "content_sha256": "c5d29a001d936b8f02d4c1dc4d69030501d480d31c2dccbe4a08f3113570072e"
+        "content_sha256": "808f82b8d82d0f95923c369d861f751fb433ee608a1a651166499ec1a530b2d1"
       },
       "html": {
         "title": "Vitalis 周报 · 本周睡眠与训练结构",
         "media_type": "text/html",
         "template": "html",
         "renderer_version": "4.0",
-        "content_sha256": "b6214566bc0a4f026bd36f18e9b36917c66584b72bece5a67db64fe372c7779c"
+        "content_sha256": "9113fa93d0ede446b27d4c6e656d83d6e7d2690449b85e51843e481c126a0d47"
       }
     }
   }

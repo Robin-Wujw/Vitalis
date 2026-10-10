@@ -23,7 +23,18 @@ PUSHPLUS_URL = "https://www.pushplus.plus/send"
 PUSHPLUS_QUERY_URL = (
     "https://www.pushplus.plus/api/open/message/sendMessageResult"
 )
+# PushPlus rejects a body above 20,000 characters (code 999); Markdown counts as
+# the HTML it converts to. Reports render to a lower budget to stay clear of it.
+PUSHPLUS_CONTENT_LIMIT = 20_000
+PUSHPLUS_CONTENT_BUDGET = 18_000
 _ALLOWED_TEMPLATES = {"markdown", "html"}
+
+
+def pushplus_content_length(template: str) -> Callable[[str], int]:
+    """How PushPlus counts a body of this template against its content limit."""
+    from vitalis.intelligence.report_rendering import markdown_html_length, provider_text_length
+
+    return markdown_html_length if template == "markdown" else provider_text_length
 
 
 class NotificationSendError(RuntimeError):
@@ -241,7 +252,11 @@ class PushService:
     def _render_and_push(self, user_id: str, briefing: object) -> dict[str, Any]:
         from vitalis.intelligence.report_rendering import render_report
 
-        rendered = render_report(briefing, target=self.template)
+        rendered = render_report(
+            briefing, target=self.template,
+            max_length=PUSHPLUS_CONTENT_BUDGET if self.pushplus_token else None,
+            measure=pushplus_content_length(self.template),
+        )
         metadata = _render_metadata(rendered)
         payload = _payload_for_extras(briefing)
         payload.update(metadata)
@@ -309,6 +324,10 @@ class PushService:
             msg.extras.get("send_attempt_id") or self.send_attempt_id or uuid4().hex
         )
         try:
+            if pushplus_content_length(msg.template)(msg.body) > PUSHPLUS_CONTENT_LIMIT:
+                raise NotificationSendError(
+                    "notification content exceeds provider limit", ambiguous=False, retryable=False
+                )
             with httpx.Client(timeout=10.0, trust_env=False) as client:
                 response = client.post(PUSHPLUS_URL, json={
                     "token": self.pushplus_token,

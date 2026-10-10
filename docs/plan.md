@@ -41,9 +41,9 @@ PushPlus 只负责单向推送已生成的结果，不能提问，也不能把�
 
 `daily` 不得在 CLI、API 或示例生成器中偷偷映射成 `evening`。如果保留某个别名，必须在 API contract 中明确并禁止生成第二套语义。
 
-### 2.2 统一公开投影
+### 2.2 阅读报告与公开投影
 
-内部分析可以保存完整 facts、features、trends、events、decision 和 shadow 结果，但渠道只能消费统一的 `PublicReportView`/`ReportBlock` 投影。每个 block 至少包含：
+内部分析可以保存完整 facts、features、trends、events、decision 和 shadow 结果。人读的报告（Markdown、HTML、PushPlus、CLI 导出）只渲染报告引擎为该周期挑选的内容：关键记录及一句个人基线对比、今天的重点、变化、训练明细和本周期的少量小节。晨报、晚报和日报只讲昨夜与当天；28/60/90 天窗口、T+N 训练反应、个人关联、逐信号覆盖和来源清单不进入日常报告，周期趋势只出现在周报/月报。完整结构化事实由 API/Hermes 通过 `PublicReportView`/`ReportBlock` 读取，每个 block 至少包含：
 
 ```text
 section_id
@@ -61,7 +61,7 @@ as_of
 coverage
 ```
 
-Markdown、HTML、API、PushPlus 和 Hermes 只负责不同排版，不得重新查库、重新计算趋势或各自决定健康资格。不要把所有 internal sections 直接改成公开；公共投影应按周期选择 3–5 个高价值区块，详细内部事实留给 API/Hermes。
+Markdown、HTML、API、PushPlus 和 Hermes 只负责不同排版，不得重新查库、重新计算趋势或各自决定健康资格。阅读报告不把公开投影的全部事实逐条铺开；页眉的日期、数据截至、来源模式、状态和仅事实/补发资格仍取自公开投影。
 
 ### 2.3 晨报要求
 

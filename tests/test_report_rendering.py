@@ -9,7 +9,7 @@ import pytest
 
 from vitalis.intelligence.contracts import ReportBriefing
 from vitalis.intelligence.report_rendering import (
-    RenderedReport, render_report, validate_report_content,
+    RenderedReport, markdown_html_length, provider_text_length, render_report, validate_report_content,
 )
 
 
@@ -78,7 +78,7 @@ def test_markdown_and_html_keep_values_units_cutoff_and_ordered_sets():
         assert "3 × 10" not in text
         assert "synthetic-only-debug" not in text
         assert "请回复" not in text
-    assert {"h1", "h2", "h3"}.issubset(tags)
+    assert {"h1", "h2"}.issubset(tags)
     assert md.template == "markdown" and md.media_type == "text/markdown"
     assert html.template == "html" and html.media_type == "text/html"
     for report in (md, html):
@@ -295,3 +295,60 @@ def test_generated_daily_and_evening_examples_are_distinct_named_reports():
     assert daily.startswith("# 日报 ·")
     assert evening.startswith("# 晚报 ·")
     assert daily != evening
+
+
+def large_briefing(exercises=300):
+    """An evening report with far more training detail than one push can carry."""
+    return _briefing(training=[{
+        "title": "力量训练", "date": "2026-10-07", "duration_minutes": 95,
+        "exercises": [{
+            "name": f"动作{index}", "exercise_id": f"exercise_{index}", "set_count": 3,
+            "sets": [{"order": order, "repetitions": 9 + order, "weight_value": 20,
+                      "weight_unit": "kg", "weight_basis": "total"} for order in (1, 2, 3)],
+            "reference_date": "2026-10-04", "comparison": f"同样重量与组数下，总次数增加 {index % 5 + 1} 次。",
+        } for index in range(exercises)],
+    }])
+
+
+_BUDGET_MEASURES = [
+    ("markdown", markdown_html_length), ("markdown", provider_text_length), ("html", provider_text_length),
+]
+
+
+def test_provider_text_length_counts_utf16_code_units():
+    assert provider_text_length("晚报") == 2
+    assert provider_text_length("\U0001F600") == 2
+
+
+def test_markdown_html_length_matches_the_converted_markdown():
+    for content in (render_report(_briefing()).content, render_report(large_briefing(40)).content):
+        # The estimate counts a newline after every block, including the last one.
+        assert markdown_html_length(content) - provider_text_length(markdown(content)) in (0, 1)
+
+
+@pytest.mark.parametrize(("target", "measure"), _BUDGET_MEASURES)
+def test_channel_budget_leaves_reports_within_budget_unchanged(target, measure):
+    briefing = _briefing()
+    budgeted = render_report(briefing, target, max_length=18_000, measure=measure)
+    assert budgeted.content == render_report(briefing, target).content
+
+
+@pytest.mark.parametrize(("target", "measure"), _BUDGET_MEASURES)
+def test_channel_budget_keeps_records_plan_and_whole_exercises(target, measure):
+    briefing = large_briefing()
+    assert measure(render_report(briefing, target).content) > 18_000
+
+    content = render_report(briefing, target, max_length=18_000, measure=measure).content
+
+    assert measure(content) <= 18_000
+    assert content == render_report(briefing, target, max_length=18_000, measure=measure).content
+    text = _text(content)[0] if target == "html" else content
+    for expected in ("关键记录", "6 小时 42 分钟", "7,460 步", "明日重点", "沿用现有计划，给今晚的睡眠留出时间。",
+                     "动作0", "本节另有", "完整报告可通过 Vitalis API 或 Hermes 查看。"):
+        assert expected in text
+    if target == "markdown":
+        lines = [line for line in content.splitlines() if line]
+        for index, line in enumerate(lines):
+            if line.startswith("**动作"):
+                assert "3 组" in lines[index + 1]
+                assert lines[index + 2].startswith("对照 2026-10-04")

@@ -168,9 +168,9 @@ def test_facts_only_clears_metric_and_exercise_comparisons_and_factual_headline(
     assert all(fact.get("baseline") is None and fact.get("deviation") is None for block in report.blocks for fact in block.facts)
     assert all(not exercise.get("comparison") for block in report.blocks for workout in block.workouts for exercise in workout.get("exercises", []))
     for target in ("markdown", "html"):
-        content = render_report(report, target).content
+        content = render_report(briefing, target).content
         assert "延迟" in content and "部分" in content
-        assert "总次数增加" not in content and "较个人" not in content
+        assert "总次数增加" not in content and "较个人" not in content and "个人参照" not in content
         assert "主要安排" not in content and "下次训练重点" not in content
 
 
@@ -247,9 +247,9 @@ def test_period_training_windows_and_associations_keep_denominators_and_q():
     }]
     report = to_public_report_view(payload, "monthly")
     assert any(item.get("q_value") == 0.04 for block in report.blocks for item in block.comparisons)
+    # The window bookkeeping and test statistics stay in the API view; the
+    # readable monthly report does not print training-response windows or q.
     for target in ("markdown", "html"):
-        content = render_report(report, target).content
-        assert all(f"T+{offset}" in content for offset in range(4))
-        assert "2/3" in content and "尚未到达" in content and "混杂" in content
-        assert "42" in content and "59" in content and "0.04" in content
-        assert "不表示因果" in content
+        content = render_report(payload, target).content
+        assert not any(f"T+{offset}" in content for offset in range(4))
+        assert "BH q" not in content and "q=" not in content

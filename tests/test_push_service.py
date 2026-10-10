@@ -15,7 +15,7 @@ from vitalis.adapters.notifications import (
 )
 from vitalis.intelligence.report_rendering import markdown_html_length, provider_text_length, render_report
 from tests.test_report_content import synthetic_daily_fixture, synthetic_period_fixture
-from tests.test_report_rendering import large_report_view
+from tests.test_report_rendering import large_briefing
 
 
 class _VisibleTextParser(HTMLParser):
@@ -857,10 +857,10 @@ def _accepting_pushplus_client(requests):
 def test_pushplus_report_is_budgeted_below_the_provider_limit(monkeypatch):
     requests = []
     monkeypatch.setattr("vitalis.adapters.notifications.httpx.Client", _accepting_pushplus_client(requests))
-    view = large_report_view(measured=120)
-    assert markdown_html_length(render_report(view, "markdown").content) > PUSHPLUS_CONTENT_LIMIT
+    briefing = large_briefing()
+    assert markdown_html_length(render_report(briefing, "markdown").content) > PUSHPLUS_CONTENT_LIMIT
 
-    result = PushService(pushplus_token="private-token").push_morning_briefing("user", view)
+    result = PushService(pushplus_token="private-token").push_morning_briefing("user", briefing)
 
     assert result["_pushplus_handler"] == "accepted"
     content = requests[0][1]["json"]["content"]

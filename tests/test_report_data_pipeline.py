@@ -145,8 +145,9 @@ def test_daily_renderer_accepts_the_real_daily_profile_and_coverage_list():
     assert isinstance(analyzed.daily.data_quality.coverage, list)
     rendered = render_report(analyzed.daily, target="markdown")
     assert rendered.title.startswith("Vitalis 日报 ·")
-    assert "数据质量与覆盖" in rendered.content
-    assert "已保存事实" in rendered.content
+    assert "关键记录" in rendered.content and "数据质量：" in rendered.content
+    # Audit listings (every saved fact, sample counts, versions) stay in the API payload.
+    assert "已保存事实" not in rendered.content and "版本与修正记录" not in rendered.content
 
 
 def test_stored_observations_reach_analysis_and_all_four_reports():

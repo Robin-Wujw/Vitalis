@@ -598,6 +598,11 @@ def _presentation(raw: dict[str, Any], kind: PublicKind) -> dict[str, Any]:
     return MonthlyBriefingEngine().build_payload(raw)
 
 
+def report_presentation(value: Any, kind: PublicKind) -> dict[str, Any]:
+    """The curated reading content a report engine built for one saved report."""
+    return _presentation(payload_of(value), kind)
+
+
 def _public_context(context: dict[str, Any], *, facts_only: bool) -> dict[str, Any]:
     result = {key: deepcopy(value) for key, value in context.items() if key in _CONTEXT_FIELDS}
     if facts_only:

@@ -962,3 +962,41 @@ def test_explicit_failure_retries_with_backoff_until_max_attempts(tmp_path):
             assert row.status == "failed"
     finally:
         engine.dispose()
+
+
+def test_provider_failure_from_status_poll_schedules_a_backoff_resend(tmp_path, monkeypatch):
+    from vitalis.adapters import notifications
+    from vitalis.adapters.persistence import database
+    from vitalis.config import settings
+    from vitalis.scheduler import jobs
+
+    engine, factory = _database(tmp_path)
+    try:
+        with factory.begin() as db:
+            repo = HealthRepository(db)
+            send = repo.claim_notification_delivery(now=NOW)
+            assert repo.complete_notification_delivery(
+                send.id, send.lease_token, "accepted", provider_id="short-code",
+                provider_status="accepted", next_poll_at=NOW, now=NOW,
+            )
+        monkeypatch.setattr(database, "SessionLocal", factory)
+        monkeypatch.setattr(settings, "push_user", "owner")
+        monkeypatch.setattr(settings, "pushplus_token", "offline-token")
+        monkeypatch.setattr(settings, "pushplus_access_key", "offline-key")
+        queried = []
+
+        def query(self, provider_id, *, poll_attempt_id=None):
+            queried.append(provider_id)
+            return {"status": "failed", "provider_status": "3"}
+
+        monkeypatch.setattr(notifications.PushService, "query_pushplus", query)
+        assert jobs.drain_notification_polls() == 1
+        assert queried == ["short-code"]
+        with factory() as db:
+            row = db.query(NotificationDelivery).one()
+            assert row.status == "failed"
+            assert row.provider_status == "3"
+            assert row.send_attempt_count == 1
+            assert row.next_attempt_at is not None
+    finally:
+        engine.dispose()

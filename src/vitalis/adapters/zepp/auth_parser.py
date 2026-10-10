@@ -127,34 +127,6 @@ def extract_from_login_info(raw: str) -> ExtractedAuth | None:
     return ExtractedAuth(user_id=user_id, app_token=app_token, region_hint=region_hint)
 
 
-def extract_from_cookie_pairs(pairs: dict[str, str]) -> ExtractedAuth | None:
-    """从 cookie 名值对中提取认证信息。"""
-    # 优先尝试 hm-user-login-info（包含最完整信息）
-    for key in ("hm-user-login-info", "hm_user_login_info"):
-        if key in pairs:
-            if (extracted := extract_from_login_info(pairs[key])) is not None:
-                return extracted
-
-    # 兜底：独立的 userid + apptoken
-    user_id = None
-    for key in ("userid", "user_id", "userId"):
-        if key in pairs:
-            user_id = _sanitize_user_id(percent_decode(pairs[key]))
-            if user_id:
-                break
-
-    app_token = None
-    for key in ("apptoken", "app_token", "app-token", "appToken"):
-        if key in pairs:
-            app_token = _sanitize_app_token(percent_decode(pairs[key]))
-            if app_token:
-                break
-
-    if user_id and app_token:
-        return ExtractedAuth(user_id=user_id, app_token=app_token)
-    return None
-
-
 def hosts_from_region_hint(hint: str | None) -> list[str]:
     """从 region hint 映射到允许的区域主机列表。"""
     if not hint:

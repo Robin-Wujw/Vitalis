@@ -120,19 +120,6 @@ class BaselineEngine:
         )
 
 
-def preferred_baseline(
-    baselines: dict[str, list[BaselineStats]],
-    metric: str,
-    device_id: str | None,
-    window_days: int = 28,
-) -> BaselineStats | None:
-    candidates = [
-        item for item in baselines.get(metric, [])
-        if item.device_id == device_id and item.window_days == window_days
-    ]
-    return candidates[0] if candidates else None
-
-
 def daily_stream_values(points: list[SeriesPoint], day: date) -> dict[tuple[str, str, str | None], float]:
     grouped: dict[tuple[str, str, str | None], list[float]] = defaultdict(list)
     for point in points:

@@ -125,10 +125,7 @@ def documentation_files(root: Path) -> list[Path]:
         # Authored examples are checked before they are staged or committed.
         examples = root / "docs" / "examples" / "reports"
         candidates = set(tracked) | set(examples.glob("*.md"))
-    excluded = {
-        root / "docs" / "Vitalis_Experience_Review_2026-10-08",
-        root / ".git",
-    }
+    excluded = {root / ".git"}
     external_parts = {
         ".venv", "node_modules", ".codex_pydeps", "__pycache__", ".cache",
         "vendor", "third_party", "third-party", "site-packages",

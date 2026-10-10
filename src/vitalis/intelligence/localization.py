@@ -61,16 +61,6 @@ LOAD_LABELS = {
     "INSUFFICIENT_DATA": "负荷数据不足",
 }
 
-SUGGESTED_TYPE_LABELS = {
-    "resistance": "力量训练",
-    "zone2": "二区有氧跑或等效有氧",
-    "walking": "轻松步行",
-    "mobility": "关节活动与拉伸",
-    "gentle_mobility": "轻柔活动与拉伸",
-    "rest": "完全休息",
-    "planned_session": "按原计划训练",
-}
-
 DRIVER_LABELS = {
     "HRV_ABOVE_BASELINE": "HRV 高于个人基线",
     "HRV_BELOW_BASELINE": "HRV 低于个人基线",

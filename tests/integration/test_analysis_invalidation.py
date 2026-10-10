@@ -1,6 +1,6 @@
 """Current intelligence must not be presented after its user inputs change."""
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -10,7 +10,7 @@ from vitalis.intelligence.contracts import (
     SubjectiveFeedbackInput,
     TrainingPreferencePatch,
 )
-from vitalis.application.intelligence_service import IntelligenceAction, IntelligenceCommand, IntelligenceQuery
+from vitalis.application.intelligence_service import IntelligenceCommand
 from vitalis.bootstrap import get_intelligence_action, get_intelligence_command, get_intelligence_query
 
 

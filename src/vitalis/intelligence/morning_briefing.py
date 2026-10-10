@@ -543,11 +543,3 @@ class MorningBriefingEngine:
         if labels:
             return unique(labels)
         return unique([item for item in value.get("limitations") or [] if "_" not in item])
-
-    @staticmethod
-    def safety_lines(briefing: dict[str, Any]) -> list[str]:
-        plan = briefing.get("action_plan") or {}
-        output = [plan.get("safety_status_label", "")] if plan.get("safety_status") == "LIMITED" else []
-        for session_key in ("primary_session", "optional_session"):
-            output.extend((plan.get(session_key) or {}).get("stop_conditions", []))
-        return unique(output)

@@ -202,12 +202,6 @@ class ConnectionService:
         return attempt.get("id") if isinstance(attempt, dict) else getattr(attempt, "id", None)
 
     @staticmethod
-    def _attempt_status(attempt: Any) -> str | None:
-        if attempt is None:
-            return None
-        return attempt.get("status") if isinstance(attempt, dict) else getattr(attempt, "status", None)
-
-    @staticmethod
     def _provider_error(error: Exception, *, fallback: str) -> ConnectionOperationError:
         kind = getattr(error, "kind", "unknown")
         if kind == "unknown" and error.__class__.__name__ == "SourceIdentityConflict":
@@ -558,15 +552,6 @@ class ConnectionService:
         if len(raw_token) < 32 or raw_token.strip() != raw_token or " " in raw_token:
             raise ConnectionOperationError("浏览器链接令牌无效", kind="revoked")
         return raw_token
-
-    def resolve_link(self, raw_token: str) -> tuple[str, str]:
-        raw_token = self._normalize_link_token(raw_token)
-        digest = _token_digest(raw_token)
-        with self._unit_of_work_factory() as unit_of_work:
-            row = unit_of_work.repository.browser_link(digest)
-            if row is None or row.revoked_at is not None:
-                raise ConnectionOperationError("浏览器链接令牌无效或已撤销", kind="revoked")
-            return digest, row.user_id
 
     def _claim_link(self, raw_token: str) -> tuple[str, BrowserLinkClaim]:
         raw_token = self._normalize_link_token(raw_token)

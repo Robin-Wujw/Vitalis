@@ -7,7 +7,6 @@ import importlib
 
 import httpx
 import pytest
-from sqlalchemy import delete, update
 from starlette.requests import Request
 
 from vitalis.application.jobs import drain_analysis_jobs

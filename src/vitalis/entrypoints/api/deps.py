@@ -1,15 +1,11 @@
 """API dependencies for scoped user requests."""
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 
 from fastapi import Header, HTTPException
 
-from vitalis.adapters.persistence import get_session, session_scope
+from vitalis.adapters.persistence import session_scope
 from vitalis.adapters.persistence.access_tokens import ACCESS_SCOPES, authenticate_access_token
-
-
-def get_db() -> Iterator:
-    yield from get_session()
 
 
 def authenticated_user(authorization: str, x_user_id: str | None, scope: str) -> str:

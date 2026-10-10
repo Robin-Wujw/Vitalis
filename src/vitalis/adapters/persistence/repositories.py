@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from sqlalchemy import DateTime, Integer, Text, and_, case, cast, delete, exists, func, or_, select, text, tuple_, update
@@ -20,6 +21,9 @@ from vitalis.application.ports import (
     PairingClaim,
     SourceClaim,
 )
+
+if TYPE_CHECKING:
+    from vitalis.application.sync_types import SyncAttemptAggregate
 from vitalis.domain import (
     AuthToken,
     Device,
@@ -2512,9 +2516,6 @@ class HealthRepository:
             return None
         return row
 
-    def get_sync_attempt(self, attempt_id: str, user_id: str | None = None) -> orm.SyncAttempt | None:
-        return self.sync_attempt(attempt_id, user_id=user_id)
-
     def sync_attempts(
         self, user_id: str, source: str | None = None, statuses: tuple[str, ...] | None = None,
         limit: int = 100,
@@ -2541,11 +2542,6 @@ class HealthRepository:
         return list(self.db.execute(
             statement.order_by(orm.SyncChunk.ordinal, orm.SyncChunk.stable_key)
         ).scalars().all())
-
-    def get_sync_chunks(
-        self, attempt_id: str, user_id: str | None = None, status: str | None = None
-    ) -> list[orm.SyncChunk]:
-        return self.sync_chunks(attempt_id, user_id=user_id, status=status)
 
     def training_history_coverage(
         self,
@@ -2865,22 +2861,6 @@ class HealthRepository:
     def claim_attempt(self, *args, **kwargs) -> bool:
         return self.claim_sync_attempt(*args, **kwargs)
 
-    def takeover_expired_attempt(self, *args, **kwargs) -> bool:
-        return self.claim_sync_attempt(*args, **kwargs)
-
-    def acquire_sync_attempt_lease(
-        self, attempt_id: str, *, now: datetime | None = None, lease_seconds: int = 60
-    ) -> SyncLease | None:
-        token = uuid4().hex
-        if not self.claim_sync_attempt(
-            attempt_id, token, now=now, lease_seconds=lease_seconds
-        ):
-            return None
-        row = self.sync_attempt(attempt_id)
-        assert row is not None
-        from vitalis.application.sync_types import SyncLease
-        return SyncLease(row.id, token, row.lease_epoch, row.lease_expires_at)
-
     def claim_sync_chunk(
         self, chunk_id: int, lease_token: str, *, now: datetime | None = None,
         lease_seconds: int = 60, attempt_lease_token: str | None = None,
@@ -2942,20 +2922,6 @@ class HealthRepository:
     def claim_chunk(self, *args, **kwargs) -> bool:
         return self.claim_sync_chunk(*args, **kwargs)
 
-    def takeover_expired_chunk(self, *args, **kwargs) -> bool:
-        return self.claim_sync_chunk(*args, **kwargs)
-
-    def acquire_sync_chunk_lease(
-        self, chunk_id: int, *, now: datetime | None = None, lease_seconds: int = 60
-    ) -> SyncLease | None:
-        token = uuid4().hex
-        if not self.claim_sync_chunk(chunk_id, token, now=now, lease_seconds=lease_seconds):
-            return None
-        row = self.db.get(orm.SyncChunk, chunk_id)
-        assert row is not None
-        from vitalis.application.sync_types import SyncLease
-        return SyncLease(row.id, token, row.lease_epoch, row.lease_expires_at)
-
     def renew_sync_attempt_lease(
         self, attempt_id: str, lease_token: str, lease_epoch: int, *,
         now: datetime | None = None, lease_seconds: int = 60
@@ -2974,9 +2940,6 @@ class HealthRepository:
         self.db.flush()
         return bool(result.rowcount)
 
-    def renew_attempt_lease(self, *args, **kwargs) -> bool:
-        return self.renew_sync_attempt_lease(*args, **kwargs)
-
     def renew_sync_chunk_lease(
         self, chunk_id: int, lease_token: str, lease_epoch: int, *,
         now: datetime | None = None, lease_seconds: int = 60
@@ -2994,9 +2957,6 @@ class HealthRepository:
         ))
         self.db.flush()
         return bool(result.rowcount)
-
-    def renew_chunk_lease(self, *args, **kwargs) -> bool:
-        return self.renew_sync_chunk_lease(*args, **kwargs)
 
     def release_sync_attempt_lease(
         self, attempt_id: str, lease_token: str, lease_epoch: int, *,
@@ -3038,9 +2998,6 @@ class HealthRepository:
         ))
         self.db.flush()
         return bool(result.rowcount)
-
-    def release_chunk_lease(self, *args, **kwargs) -> bool:
-        return self.release_sync_chunk_lease(*args, **kwargs)
 
     def request_sync_cancel(
         self,
@@ -3206,9 +3163,6 @@ class HealthRepository:
     def finalize_sync_chunk_success(self, *args, **kwargs) -> bool:
         return self._finalize_sync_chunk(*args, "succeeded", **kwargs)
 
-    def finalize_sync_chunk_unavailable(self, *args, **kwargs) -> bool:
-        return self._finalize_sync_chunk(*args, "unavailable", **kwargs)
-
     def finalize_sync_chunk_retry(self, *args, **kwargs) -> bool:
         return self._finalize_sync_chunk(*args, "retry_wait", **kwargs)
 
@@ -3311,21 +3265,6 @@ class HealthRepository:
     def finalize_sync_attempt_failure(self, *args, **kwargs) -> bool:
         return self._finalize_sync_attempt(*args, "failed", **kwargs)
 
-    def finalize_sync_attempt_partial(self, *args, **kwargs) -> bool:
-        return self._finalize_sync_attempt(*args, "partial", **kwargs)
-
-    def finalize_sync_attempt_needs_reauth(self, *args, **kwargs) -> bool:
-        return self._finalize_sync_attempt(*args, "needs_reauth", **kwargs)
-
-    def finalize_attempt_success(self, *args, **kwargs) -> bool:
-        return self.finalize_sync_attempt_success(*args, **kwargs)
-
-    def finalize_attempt_retry(self, *args, **kwargs) -> bool:
-        return self.finalize_sync_attempt_retry(*args, **kwargs)
-
-    def finalize_attempt_failure(self, *args, **kwargs) -> bool:
-        return self.finalize_sync_attempt_failure(*args, **kwargs)
-
     def finalize_attempt(self, attempt_id, lease_token, lease_epoch, status, **kwargs) -> bool:
         return self._finalize_sync_attempt(
             attempt_id, lease_token, lease_epoch, status, **kwargs
@@ -3358,9 +3297,6 @@ class HealthRepository:
             raw_records=sum(row.raw_records or 0 for row in rows),
             records_written=sum(row.records_written or 0 for row in rows),
         )
-
-    def sync_attempt_aggregate(self, *args, **kwargs) -> SyncAttemptAggregate:
-        return self.aggregate_sync_attempt(*args, **kwargs)
 
     # ---- 同步数据健康 ----
 
@@ -3700,9 +3636,6 @@ class HealthRepository:
         if row is None:
             return UserProfile(user_id=user_id)
         return _user_profile_from_row(row)
-
-    def get_user_profile(self, user_id: str) -> UserProfile:
-        return self.user_profile(user_id)
 
     def patch_user_profile(
         self, user_id: str, patch: UserProfilePatch
@@ -4175,24 +4108,6 @@ class HealthRepository:
             )
         ).scalars().first()
 
-    def latest_good_analysis_snapshot_on_or_before(
-        self,
-        user_id: str,
-        profile_type: str,
-        period_end: date,
-    ) -> orm.AnalysisSnapshot | None:
-        return self.db.execute(
-            self._current_snapshot_query(user_id).where(
-                *self._snapshot_contract_conditions(user_id, profile_type),
-                orm.AnalysisSnapshot.period_end <= period_end,
-            ).order_by(
-                orm.AnalysisSnapshot.period_end.desc(),
-                orm.AnalysisRun.completed_at.desc().nulls_last(),
-                orm.AnalysisRun.id.desc(),
-                orm.AnalysisSnapshot.id.desc(),
-            )
-        ).scalars().first()
-
     def analysis_snapshot_for_run(
         self, user_id: str, profile_type: str, period_end: date, run_id: str
     ) -> orm.AnalysisSnapshot | None:
@@ -4296,17 +4211,6 @@ class HealthRepository:
             orm.RecommendationInstance.date.between(start, end),
         ).order_by(orm.RecommendationInstance.date.desc(), orm.RecommendationInstance.created_at.desc())).scalars().all()
         return [_recommendation_from_row(row) for row in rows]
-
-    def recommendations_for_workouts(
-        self, user_id: str, workout_ids: list[str], source: str = "zepp"
-    ) -> dict[str, str]:
-        keyed = self.recommendations_for_workout_keys(
-            user_id, [(source, workout_id) for workout_id in workout_ids]
-        )
-        return {
-            workout_id: recommendation_id
-            for (_source, workout_id), recommendation_id in keyed.items()
-        }
 
     def recommendations_for_workout_keys(
         self, user_id: str, workout_keys: list[tuple[str, str]]
@@ -5061,20 +4965,6 @@ class HealthRepository:
             row.message = message[:512]
             row.last_seen_at = datetime.utcnow()
             self.db.flush()
-
-    def mark_user_browser_links_reauth(self, user_id: str, message: str) -> None:
-        rows = self.db.execute(
-            select(orm.ZeppBrowserLink).where(
-                orm.ZeppBrowserLink.user_id == user_id,
-                orm.ZeppBrowserLink.revoked_at.is_(None),
-            )
-        ).scalars().all()
-        now = datetime.utcnow()
-        for row in rows:
-            row.status = "needs_login"
-            row.message = message[:512]
-            row.last_seen_at = now
-        self.db.flush()
 
     def mark_browser_link_synced(
         self, token_digest: str, message: str, sync_attempt_id: str | None = None

@@ -2,7 +2,7 @@ from datetime import date, timedelta
 
 from vitalis.intelligence.analyzers import HrvAnalyzer, RecoveryAnalyzer, SleepAnalyzer, TrainingAnalyzer
 from vitalis.intelligence.baseline import BaselineEngine
-from vitalis.intelligence.contracts import EventLifecycle, RecoveryState
+from vitalis.intelligence.contracts import EventLifecycle
 from vitalis.intelligence.events import HealthEventEngine
 from vitalis.intelligence.lifecycle import EventLifecycleEngine
 from vitalis.intelligence.profile import RawDailyProfile, SeriesPoint

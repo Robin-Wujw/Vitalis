@@ -694,10 +694,6 @@ def validate_report_content(content: str, template: str) -> None:
         raise ValueError("Markdown template cannot contain raw report HTML")
 
 
-def validate_rendered_report(report: RenderedReport) -> None:
-    validate_report_content(report.content, report.template)
-
-
 def render_report(
     report: Any, target: ReportTarget = "markdown", *,
     max_length: int | None = None, measure: Callable[[str], int] = provider_text_length,

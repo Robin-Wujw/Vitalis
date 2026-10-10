@@ -165,9 +165,6 @@ class WinsorizedEWMA:
             stale=stale, history_count=self.count, last_date=last_date,
         )
 
-    def status_at(self, as_of: date) -> str:
-        return self.snapshot(as_of=as_of).status
-
     def _is_stale(self, as_of: date | None, last_date: date) -> bool:
         return as_of is not None and as_of - last_date > timedelta(days=14)
 

@@ -4,7 +4,6 @@ import pytest
 
 from vitalis.application.jobs import drain_analysis_jobs
 from vitalis.application.intelligence_service import IntelligenceCommand
-from vitalis.bootstrap import get_intelligence_command
 from vitalis.adapters.persistence import HealthRepository, session_scope
 from vitalis.adapters.persistence.models import AnalysisRun
 

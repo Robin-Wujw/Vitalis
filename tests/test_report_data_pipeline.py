@@ -1,4 +1,4 @@
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta
 import re
 from unittest.mock import patch
 
@@ -7,7 +7,6 @@ from vitalis.adapters.zepp.fetcher import FetchWindow
 from vitalis.intelligence.evening_briefing import EveningBriefingEngine
 from vitalis.intelligence.monthly_briefing import MonthlyBriefingEngine
 from vitalis.intelligence.morning_briefing import MorningBriefingEngine
-from vitalis.application.intelligence_service import IntelligenceCommand
 from vitalis.bootstrap import get_intelligence_command
 from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
 from vitalis.domain import ActivityRecord, DailyMetric, MetricSample, NormalizedDaily, SleepRecord, Workout

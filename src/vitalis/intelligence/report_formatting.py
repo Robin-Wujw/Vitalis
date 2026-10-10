@@ -184,15 +184,6 @@ def as_of_line(context: dict[str, Any]) -> str | None:
     return f"数据截至 {shown}{suffix}。"
 
 
-def list_facts(mapping: dict[str, Any], labels: list[tuple[str, str]]) -> list[str]:
-    output = []
-    for key, label in labels:
-        value = mapping.get(key)
-        if value is not None:
-            output.append(f"{label}：{value}。")
-    return output
-
-
 def running_class_label(code: str) -> str:
     from .running import CLASSIFICATION_LABELS
 

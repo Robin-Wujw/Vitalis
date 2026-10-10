@@ -1,4 +1,3 @@
-from pathlib import Path
 
 from tools.check_docs import check_links, documentation_files
 
@@ -49,9 +48,6 @@ def test_documentation_inventory_covers_extensions_and_excludes_external_caches(
         cached = tmp_path / folder
         cached.mkdir()
         (cached / "cache.md").write_text("# cache\n", encoding="utf-8")
-    external = docs / "Vitalis_Experience_Review_2026-10-08"
-    external.mkdir()
-    (external / "spec.md").write_text("# design package\n", encoding="utf-8")
 
     present = {path.relative_to(tmp_path).as_posix() for path in documentation_files(tmp_path)}
     assert present == {"README.md", "docs/guide.MARKDOWN", "docs/component.mdx"}

@@ -345,12 +345,6 @@ class EveningBriefingEngine:
             return f"（{baseline_text(deviation)}）"
         return ""
 
-    @staticmethod
-    def _fact_value(payload: dict[str, Any], metric: str) -> float | None:
-        items = (payload.get("facts") or {}).get(metric) or []
-        values = [item.get("value") for item in items if isinstance(item.get("value"), (int, float))]
-        return float(values[0]) if values else None
-
     def _intraday_section(self, features: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         activity = features.get("activity") or {}
         facts, limitations = [], []

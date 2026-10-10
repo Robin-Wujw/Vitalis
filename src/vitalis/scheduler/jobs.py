@@ -229,6 +229,7 @@ def drain_notification_polls(*, max_polls: int = 1) -> int:
     """Query accepted PushPlus messages without ever re-POSTing them."""
     from vitalis.adapters.notifications import PushService
     from vitalis.adapters.persistence import HealthRepository, session_scope
+    from vitalis.adapters.persistence.models import NotificationDelivery
 
     if not isinstance(max_polls, int) or max_polls < 1:
         raise ValueError("max_polls must be positive")

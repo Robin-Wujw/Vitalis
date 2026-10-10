@@ -697,7 +697,6 @@ class ZeppSyncCoordinator:
         control.check()
         operation = chunk["stages"].get("operation")
         params = dict(chunk["stages"].get("params") or {})
-        stream = chunk["stream"]
         start = chunk["window_start"]
         end = chunk["window_end"]
         timezone_name = params.get("time_zone") or timezone_name or "UTC"

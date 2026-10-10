@@ -11,7 +11,6 @@ import json
 import re
 import urllib.parse
 from dataclasses import dataclass
-from typing import Any
 
 from vitalis.adapters.zepp.client import validate_region_host
 

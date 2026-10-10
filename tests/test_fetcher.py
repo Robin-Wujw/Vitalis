@@ -774,6 +774,28 @@ def test_real_connector_fetch_synchronizes_requested_local_dates(monkeypatch):
     )
 
 
+@pytest.mark.parametrize("timezone_name", ["Asia/Shanghai", "America/New_York"])
+def test_mock_connector_fetch_uses_requested_hrv_window(monkeypatch, timezone_name):
+    monkeypatch.setattr("vitalis.adapters.zepp.settings.timezone", timezone_name)
+    connector = ZeppConnector(mock=True)
+
+    dailies = connector.fetch(
+        User(id="historical-window-user"),
+        date(2026, 10, 1),
+        date(2026, 10, 3),
+    )
+
+    assert [daily.date for daily in dailies] == [
+        date(2026, 10, 1), date(2026, 10, 2), date(2026, 10, 3),
+    ]
+    assert [
+        sample.timestamp.astimezone(ZoneInfo(timezone_name)).date()
+        for daily in dailies
+        for sample in daily.metric_samples
+        if sample.metric == "hrv_sdnn"
+    ] == [date(2026, 10, 1), date(2026, 10, 2), date(2026, 10, 3)]
+
+
 def test_mixed_chunk_availability_is_preserved_as_partial_coverage():
     class Connector:
         calls = 0

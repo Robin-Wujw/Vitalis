@@ -91,8 +91,6 @@ class ZeppParser:
           stp: 步数 {ttl, cal, dis(米)}
           tz:  时区偏移（秒）
         """
-        import base64
-        import json
 
         sleeps: dict[date, SleepRecord] = {}
         activities: dict[date, ActivityRecord] = {}
@@ -1536,13 +1534,20 @@ class ZeppParser:
     # ================= 真实 events（HRV / 摘要） =================
 
     @staticmethod
-    def parse_hrv_events(raw: dict) -> dict[date, int]:
+    def parse_hrv_events(
+        raw: dict, timezone_name: str | None = None
+    ) -> dict[date, int]:
         """HRV 事件流 -> {日期: 当天均值 ms}。
 
         对齐 ZeppBridge normalizer：
           - 新版：item.value = {samples: [{sdnn, rmssd, hrv, value}, ...]}
           - 旧版：item.value = 数值（直接取）
           - 时间戳优先 item.timestamp，兜底 value.startTime
+
+        Numeric timestamps are converted using the report timezone, rather
+        than the host process timezone.  A resumed or mock operation may pass
+        its persisted timezone explicitly; otherwise the configured app zone
+        is used by the shared time helper.
         """
         from statistics import fmean
 
@@ -1581,12 +1586,16 @@ class ZeppParser:
                                     break
                     # 日期用 item.timestamp 或 value.startTime
                     day = ZeppParser._ts_date(
-                        it.get("timestamp") or it.get("time") or val.get("startTime") or val.get("start_time")
+                        it.get("timestamp") or it.get("time") or val.get("startTime") or val.get("start_time"),
+                        timezone_name,
                     )
             elif isinstance(val, (int, float)):
                 # 旧版结构：直接数值
                 samples.append(float(val))
-                day = ZeppParser._ts_date(it.get("ts") or it.get("time") or it.get("timestamp"))
+                day = ZeppParser._ts_date(
+                    it.get("ts") or it.get("time") or it.get("timestamp"),
+                    timezone_name,
+                )
 
             if day and samples:
                 by_day.setdefault(day, []).extend(samples)
@@ -2025,17 +2034,23 @@ class ZeppParser:
             return 0
 
     @staticmethod
-    def _ts_date(v) -> date | None:
+    def _ts_date(v, timezone_name: str | None = None) -> date | None:
         if not v:
             return None
         s = str(v)
         # 纯数字（毫秒/秒时间戳）优先走时间戳分支，避免 fromisoformat 误解析
+        from vitalis.time import local_day
+
+        def timestamp_date(ts: float) -> date:
+            if ts > 1e12:
+                ts /= 1000
+            return local_day(
+                datetime.fromtimestamp(ts, tz=timezone.utc), timezone_name
+            )
+
         if s.isdigit():
             try:
-                ts = float(s)
-                if ts > 1e12:
-                    ts /= 1000
-                return datetime.fromtimestamp(ts).date()
+                return timestamp_date(float(s))
             except (TypeError, ValueError, OSError):
                 return None
         if "T" in s or len(s) >= 10:
@@ -2044,9 +2059,6 @@ class ZeppParser:
             except ValueError:
                 pass
         try:
-            ts = float(s)
-            if ts > 1e12:
-                ts /= 1000
-            return datetime.fromtimestamp(ts).date()
+            return timestamp_date(float(s))
         except (TypeError, ValueError, OSError):
             return None

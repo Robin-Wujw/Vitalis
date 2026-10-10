@@ -56,7 +56,6 @@ from vitalis.intelligence.contracts import (
     ProfileRevisionConflict,
     ProfileSource,
     ProfileField,
-    Sex,
     UserProfile,
     UserProfilePatch,
 )
@@ -4913,7 +4912,7 @@ class HealthRepository:
 
     def lock_pairing_claim(
         self, pairing_id: str, user_id: str, processing_token: str,
-        *, processing_epoch: int | None = None,
+        *, processing_epoch: int | None = None, now: datetime | None = None,
     ) -> bool:
         # Match delete_for_user's user-first lock order; both locks survive until commit.
         owner = self.db.execute(update(orm.User).where(
@@ -4921,7 +4920,7 @@ class HealthRepository:
         ).values(name=orm.User.name))
         if not owner.rowcount:
             return False
-        now = datetime.utcnow()
+        current = _naive_utc(now or datetime.now(timezone.utc))
         result = self.db.execute(update(orm.ZeppPairingSession).where(
             orm.ZeppPairingSession.id == pairing_id,
             orm.ZeppPairingSession.user_id == user_id,
@@ -4931,26 +4930,27 @@ class HealthRepository:
                 [orm.ZeppPairingSession.processing_epoch == processing_epoch]
                 if processing_epoch is not None else []
             ),
-            orm.ZeppPairingSession.expires_at > now,
+            orm.ZeppPairingSession.expires_at > current,
         ).values(processing_token=processing_token))
         return bool(result.rowcount)
 
     def finish_pairing_session(
         self, pairing_id: str, processing_token: str,
         message: str = "已连接", sync_attempt_id: str | None = None,
+        *, now: datetime | None = None,
     ) -> bool:
-        now = datetime.utcnow()
+        current = _naive_utc(now or datetime.now(timezone.utc))
         conditions = [
             orm.ZeppPairingSession.id == pairing_id,
             orm.ZeppPairingSession.status == "processing",
             orm.ZeppPairingSession.processing_token == processing_token,
-            orm.ZeppPairingSession.expires_at > now,
+            orm.ZeppPairingSession.expires_at > current,
         ]
         result = self.db.execute(
             update(orm.ZeppPairingSession).where(*conditions).values(
                 status="connected",
                 message=message[:512],
-                consumed_at=now,
+                consumed_at=current,
                 processing_started_at=None,
                 processing_token=None,
                 sync_attempt_id=sync_attempt_id,
@@ -4960,13 +4960,15 @@ class HealthRepository:
         return bool(result.rowcount)
 
     def fail_pairing_session(
-        self, pairing_id: str, processing_token: str, message: str
+        self, pairing_id: str, processing_token: str, message: str,
+        *, now: datetime | None = None,
     ) -> bool:
+        current = _naive_utc(now or datetime.now(timezone.utc))
         conditions = [
             orm.ZeppPairingSession.id == pairing_id,
             orm.ZeppPairingSession.status == "processing",
             orm.ZeppPairingSession.processing_token == processing_token,
-            orm.ZeppPairingSession.expires_at > datetime.utcnow(),
+            orm.ZeppPairingSession.expires_at > current,
         ]
         result = self.db.execute(update(orm.ZeppPairingSession).where(*conditions).values(
             status="failed",

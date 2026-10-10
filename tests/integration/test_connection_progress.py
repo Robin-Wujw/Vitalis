@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from vitalis.adapters.persistence import HealthRepository, database, init_db
-from vitalis.adapters.persistence.models import AnalysisJob, AnalysisRun, AnalysisSnapshot, SyncAttempt, User
+from vitalis.adapters.persistence.models import AnalysisJob, AnalysisRun, AnalysisSnapshot, SyncAttempt
 from vitalis.application.connection import ConnectionOperationError, ConnectionService
 from vitalis.config import settings
 from vitalis.domain import ActivityRecord, AuthToken, NormalizedDaily, SleepRecord
@@ -245,7 +245,49 @@ def test_pairing_submission_distinguishes_missing_and_expired(
     assert response.status_code == expected
 
 
-def test_progress_is_read_only_truthful_and_completes_after_bootstrap(client, connection_store):
+@pytest.mark.parametrize(("stage", "expected_status"), [("before", 410), ("during", 409)])
+def test_pairing_rechecks_expiry_with_advancing_clock(
+    client, connection_store, monkeypatch, stage, expected_status,
+):
+    user = "advancing-pairing-clock"
+    code = client.post(
+        "/api/connect/zepp/pair?sync_days=1", headers={"X-User-Id": user},
+    ).json()["pairing_code"]
+
+    def expire():
+        monkeypatch.setattr(connection_store.service, "_now", lambda: NOW + timedelta(minutes=10))
+
+    if stage == "before":
+        expire()
+    else:
+        verify = connection_store.provider.verify_credentials
+
+        def verify_then_expire(*args, **kwargs):
+            token = verify(*args, **kwargs)
+            expire()
+            return token
+
+        monkeypatch.setattr(connection_store.provider, "verify_credentials", verify_then_expire)
+    response = client.post(
+        f"/api/connect/zepp/pair/{code}/credentials",
+        json={"cookie": '{"userid":"vendor-advancing-clock","apptoken":"synthetic"}'},
+    )
+    assert response.status_code == expected_status
+    with connection_store.factory() as db:
+        repo = HealthRepository(db)
+        assert repo.get_token(user) is None
+        assert repo.latest_browser_link(user) is None
+        assert db.query(SyncAttempt).count() == 0
+
+
+@pytest.mark.parametrize(("analysis_offset", "expected_ready"), [
+    (timedelta(0), True),
+    (timedelta(minutes=-4), False),
+    (timedelta(seconds=1), False),
+])
+def test_progress_is_read_only_truthful_and_completes_after_bootstrap(
+    client, connection_store, analysis_offset, expected_ready,
+):
     user = "truthful-progress"
     headers = {"X-User-Id": user}
     pairing = client.post("/api/connect/zepp/pair?sync_days=3", headers=headers).json()
@@ -265,8 +307,10 @@ def test_progress_is_read_only_truthful_and_completes_after_bootstrap(client, co
             ))
         row = db.get(SyncAttempt, attempt_id)
         row.status = "partial"
+        row.created_at = NOW.replace(tzinfo=None) - timedelta(minutes=3)
         row.started_at = NOW.replace(tzinfo=None) - timedelta(minutes=2)
         row.finished_at = NOW.replace(tzinfo=None) - timedelta(minutes=1)
+        row.updated_at = row.finished_at
         job = repo.enqueue_analysis_job(
             user, DAY, event_type="pairing_initial_sync", source="zepp",
             idempotency_key=f"sync-analysis:{attempt_id}:{DAY}:-",
@@ -291,11 +335,15 @@ def test_progress_is_read_only_truthful_and_completes_after_bootstrap(client, co
     with connection_store.factory() as db:
         assert before == (db.query(AnalysisJob).count(), db.query(AnalysisRun).count(), db.query(AnalysisSnapshot).count())
     from vitalis.bootstrap import get_intelligence_command
-    get_intelligence_command(now_factory=lambda: NOW, today_factory=lambda: DAY).analyze(user, DAY)
+    get_intelligence_command(
+        now_factory=lambda: NOW + analysis_offset, today_factory=lambda: DAY,
+    ).analyze(user, DAY)
     ready = client.get("/api/connect/zepp/progress", headers=headers).json()
-    assert ready["state"] == "first_report_ready"
-    assert ready["first_report"]["ready"] is True
-    assert ready["first_report"]["report_url"] == f"/api/reports/daily?day={DAY}"
+    assert ready["state"] == ("first_report_ready" if expected_ready else "bootstrap_analysis_queued")
+    assert ready["first_report"]["ready"] is expected_ready
+    assert ready["first_report"]["report_url"] == (
+        f"/api/reports/daily?day={DAY}" if expected_ready else None
+    )
     assert "synthetic-secret" not in str(ready)
 
 

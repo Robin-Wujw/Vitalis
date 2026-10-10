@@ -387,14 +387,19 @@ class SourceAccountRepository(Protocol):
         processing_token: str,
         *,
         processing_epoch: int | None = None,
+        now: datetime | None = None,
     ) -> bool: ...
 
     def finish_pairing_session(
         self, pairing_id: str, processing_token: str,
         message: str = "已连接", sync_attempt_id: str | None = None,
+        *, now: datetime | None = None,
     ) -> bool: ...
 
-    def fail_pairing_session(self, pairing_id: str, processing_token: str, message: str) -> bool: ...
+    def fail_pairing_session(
+        self, pairing_id: str, processing_token: str, message: str,
+        *, now: datetime | None = None,
+    ) -> bool: ...
 
     def create_browser_link(
         self, token_digest: str, user_id: str, sync_attempt_id: str | None = None

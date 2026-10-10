@@ -33,6 +33,7 @@
 - 可选 HRV、密集文件或动作详情缺失只影响相关特征，不阻塞整份报告。必需信号不足时使用 `INSUFFICIENT_DATA`，不提供对应推断或处方。
 - `observed_fields`、coverage、`sample_count`、`distinct_days` 和 `limitations` 解释观测覆盖；它们不是伪造的测量值，也不自动代表数据质量概率。
 - Open Health 的 42 天训练负荷只使用持久同步账本验证的日期。完整窗口、分页和预算都合格时才设置 `upstream_coverage_verified`；未验证日保持 UNKNOWN。有训练但缺心率明细仍不可评分，摘要截断不会把遗漏训练改写成休息日，训练和心率输入遵守 `as_of`。
+- 分析 profile 对高频样本执行每指标和整档预算；达到预算时保留已读取事实并写入质量标记，coverage 必须按部分数据解释，不能把截断样本称为完整历史。
 
 ## 分析与报告
 

@@ -24,10 +24,8 @@ from vitalis.adapters.zepp.fetcher import (
 from vitalis.adapters.zepp.parser import WorkoutDetailLimitError, ZeppParser
 from vitalis.adapters.zepp.parsers import ParseContext, ParseResult, parse_workout_detail
 from vitalis.domain import (
-    ActivityRecord,
     DenseDataFile,
     NormalizedDaily,
-    SleepRecord,
     User,
 )
 from vitalis.adapters.persistence import HealthRepository

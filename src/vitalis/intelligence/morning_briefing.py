@@ -7,8 +7,8 @@ from typing import Any
 
 from vitalis.time import local_day
 
-from .contracts import DailyProfile, MorningBriefing, ReportSection
-from .report_presentation import daily_display_sections, daily_presentation, internal_sections
+from .contracts import DailyProfile, MorningBriefing
+from .report_presentation import daily_presentation, internal_sections
 from .report_formatting import (
     baseline_text,
     clock_text,
@@ -521,12 +521,9 @@ class MorningBriefingEngine:
         return []
 
     def _reasons(self, payload: dict[str, Any]) -> list[str]:
-        decision = payload.get("decision") or {}
         return self._plan_interpretation(payload)[:6]
 
     def _cautions(self, payload: dict[str, Any], delivery_metadata: dict[str, Any]) -> list[str]:
-        decision = payload.get("decision") or {}
-        plan = decision.get("action_plan") or {}
         output = []
         if delivery_metadata.get("sync_degraded"):
             output.append("本次同步未完整完成，结论仅使用已经保存的数据。")

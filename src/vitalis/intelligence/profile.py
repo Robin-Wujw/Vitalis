@@ -46,7 +46,8 @@ VENDOR_FUSED_DAILY_METRICS = {
     "hrv_baseline",
     "rhr_baseline",
 }
-MAX_SAMPLES_PER_METRIC = 1_000_000
+MAX_SAMPLES_PER_METRIC = 50_000
+MAX_PROFILE_SAMPLE_POINTS = 100_000
 PROFILE_HISTORY_DAYS = 180
 DETAIL_WORKOUTS_PER_FAMILY = 8
 log = logging.getLogger("vitalis.intelligence.profile")
@@ -93,6 +94,7 @@ class RawDailyProfile:
     open_health_load_queried_days: list[date] = field(default_factory=list)
     open_health_load_upstream_coverage_verified: bool = False
     open_health_load_truncated: bool = False
+    sample_budget_exhausted: bool = False
     open_health_rhr_by_day: dict[date, float] = field(default_factory=dict)
     open_health_input_failed: bool = False
 
@@ -508,7 +510,6 @@ class ProfileLoader:
         for day, record in raw.activity_by_day.items():
             source = record.get("source", "zepp")
             scope = record.get("source_scope", "normalized_daily_record")
-            observed = record.get("observed_fields")
             for metric, field, unit in (
                 ("steps", "steps", "steps"),
                 ("distance_km", "distance_km", "km"),
@@ -613,10 +614,16 @@ class ProfileLoader:
             "mental_charge",
             "stress",
         )
+        remaining = MAX_PROFILE_SAMPLE_POINTS
         for metric in sample_metrics:
-            for row in self.repo.metric_samples(
-                raw.user_id, metric, start_at, end_at, limit=MAX_SAMPLES_PER_METRIC
-            ):
+            if remaining <= 0:
+                raw.sample_budget_exhausted = True
+                break
+            limit = min(MAX_SAMPLES_PER_METRIC, remaining)
+            rows = self.repo.metric_samples(
+                raw.user_id, metric, start_at, end_at, limit=limit
+            )
+            for row in rows:
                 _append(
                     raw,
                     row.metric,
@@ -630,6 +637,9 @@ class ProfileLoader:
                     positive=False,
                     source_field=f"sample.{row.metric}",
                 )
+            remaining -= len(rows)
+            if remaining <= 0:
+                raw.sample_budget_exhausted = True
 
     def _add_energy_observations(self, raw: RawDailyProfile) -> None:
         """Materialize one canonical daily energy stream plus separate workouts."""
@@ -874,6 +884,15 @@ class ProfileLoader:
                 code="UNKNOWN_DEVICE_ATTRIBUTION",
                 severity="warning",
                 detail="部分设备级观测值缺少设备标识。",
+            ))
+        if raw.sample_budget_exhausted:
+            flags.append(QualityFlag(
+                code="PROFILE_SAMPLE_BUDGET_REACHED",
+                severity="error",
+                detail=(
+                    f"分析样本达到 profile 上限 {MAX_PROFILE_SAMPLE_POINTS} 条；"
+                    "相关趋势和覆盖按部分数据计算。"
+                ),
             ))
         for metric, points in raw.series.items():
             sample_points = [point for point in points if isinstance(point.observed_at, datetime)]

@@ -60,18 +60,13 @@ from vitalis.intelligence.contracts import (
     TrainingResponseProfile,
     UserProfile,
     UserProfilePatch,
-    ProfileRevisionConflict,
     WeeklyProfile,
 )
-from vitalis.intelligence.evening_briefing import EveningBriefingEngine
 from vitalis.intelligence.lifecycle import EventLifecycleEngine
-from vitalis.intelligence.monthly_briefing import MonthlyBriefingEngine
 from vitalis.intelligence.morning_briefing import MorningBriefingEngine
 from vitalis.intelligence.profile import ProfileLoader
 from vitalis.intelligence.strength import normalize_exercise
 from vitalis.intelligence.timeline import HealthTimelineEngine
-from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
-from vitalis.time import local_day
 
 
 class AnalysisInputChangedError(RuntimeError):

@@ -381,12 +381,14 @@ class ConnectionService:
                 self.pairing_processing_lease_seconds,
                 rate_limit_attempts=self.pairing_rate_limit_attempts,
                 rate_window_seconds=self.pairing_rate_limit_window_seconds,
+                now=self._now(),
             )
             if token is None:
                 retry_after = repository.pairing_retry_after(
                     pairing_id,
                     self.pairing_rate_limit_attempts,
                     self.pairing_rate_limit_window_seconds,
+                    now=self._now(),
                 )
                 if retry_after is not None:
                     raise PairingRateLimited(
@@ -404,7 +406,7 @@ class ConnectionService:
     def _fail_pairing(self, claim: PairingClaim, message: str) -> None:
         with self._unit_of_work_factory() as unit_of_work:
             unit_of_work.repository.fail_pairing_session(
-                claim.pairing_id, claim.processing_token, message
+                claim.pairing_id, claim.processing_token, message, now=self._now()
             )
             unit_of_work.commit()
 
@@ -439,6 +441,7 @@ class ConnectionService:
                     claim.user_id,
                     claim.processing_token,
                     processing_epoch=claim.processing_epoch,
+                    now=self._now(),
                 ):
                     raise SourceConnectionConflict("配对声明已被接管、删除或过期", kind="conflict")
                 repository.save_token(
@@ -461,6 +464,7 @@ class ConnectionService:
                     claim.processing_token,
                     "Zepp 已连接，云端正在同步",
                     attempt_id,
+                    now=self._now(),
                 ):
                     raise SourceConnectionConflict("配对声明已被接管或过期", kind="conflict")
                 repository.create_browser_link(link_digest, claim.user_id, attempt_id)

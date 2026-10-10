@@ -18,6 +18,12 @@ MAX_JOBS_PER_PASS = 4
 MAX_ANALYSIS_ATTEMPTS = 3
 _SAFE_FAILURE = "Analysis failed"
 
+__all__ = [
+    "IdempotencyConflict", "configure_analysis_jobs", "create_analysis_job",
+    "get_analysis_job", "drain_analysis_jobs", "DEFAULT_LEASE_SECONDS",
+    "MAX_JOBS_PER_PASS", "MAX_ANALYSIS_ATTEMPTS",
+]
+
 _repository: AnalysisJobRepository | None = None
 _runner: AnalysisRunner | None = None
 

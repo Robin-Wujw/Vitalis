@@ -15,7 +15,6 @@ from .contracts import (
     HrvFeatures,
     RecoveryFeatures,
     RecoveryState,
-    TrendDirection,
     TrendFeature,
 )
 from .localization import CONFIDENCE_LABELS

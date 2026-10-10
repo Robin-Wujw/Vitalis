@@ -22,7 +22,7 @@ from .contracts import (
     WorkoutExposure,
 )
 from .localization import CONFIDENCE_LABELS
-from .profile import RawDailyProfile, SeriesPoint
+from .profile import RawDailyProfile
 
 
 RESPONSE_METRICS = {

@@ -2,20 +2,20 @@
 
 [文档中心](README.md) | [仓库规则](../AGENTS.md) | [运维与排障](operations.md) | [整改计划](plan.md)
 
-本页是预发布环境的唯一发布主责。仓库当前没有自动 SSH 发布脚本，也没有 Docker/Compose 部署入口；以下步骤由具备服务器权限的维护者执行。服务器地址、用户、私钥和 `/etc/vitalis/vitalis.env` 不写入仓库。
+本页是预发布环境的唯一发布主责。发布顺序是：**feature branch 改代码 → 本地校验 → 固定候选 SHA 并传到服务器验证 → 更新所有服务并验收 → 合并、推送 main → 核对最终版本并清理已合并分支**。服务器地址、用户、私钥和环境文件中的秘密不写入仓库。每次发布从实际 systemd 配置和进程加载路径确定运行版本，不能把服务器 checkout 的 HEAD 当成正在运行的版本。
 
 ## 发布原则
 
-- 只部署已经在本地验证过的 `main` commit SHA。
-- 服务器不能直接运行未提交的工作区或自行选择分支。
-- API 和 worker 必须同时切换到同一 SHA、同一虚拟环境和同一配置。
-- 预发布允许破坏性更新，不保留旧版 schema/API/report 兼容链。
-- 失败时先停止新服务并回退代码/环境；数据库回退使用备份，不运行旧迁移脚本。
-- 真实部署禁止使用 `ZEPP_MOCK=true`，除非明确进入隔离演示环境；PushPlus 测试使用空凭据和合成数据库。
+- 只部署已经提交、经过本地验证的候选 commit SHA；服务器验收完成前不合并 `main`。
+- API、worker 和其它 Vitalis 服务使用同一个 SHA、同一套锁定依赖和一致的数据库、时区配置。
+- 本地未提交文件不能复制进运行目录；候选代码使用独立 release 目录，禁止在运行目录直接 `git pull`。
+- 数据库无变化时保留现库；能用加字段解决时不重建；确实需要破坏性变更时备份、验证候选库、切换，并在已有清理授权范围内删除被替代的旧工作数据库，保留回滚备份。
+- 预发布不维护历史 schema/API/report 兼容链。失败先回退代码/环境，数据库回退使用校验过的备份。
+- 真实服务禁止 `ZEPP_MOCK=true`；测试使用隔离的合成数据库、空 PushPlus 凭据，不向真实渠道发送测试通知。
 
-## 1. 本地完成和合并 main
+## 1. 本地修改与候选提交
 
-从仓库根目录执行：
+从仓库根目录、在 feature branch 执行：
 
 ```bash
 git status --short
@@ -25,149 +25,129 @@ uv run --locked --extra dev python tools/generate_report_examples.py --check
 git diff --check
 ```
 
-再运行受影响的目标测试。确认：
+同时运行受影响目标测试。检查 diff 只含当前目标需要的源码、测试和主责文档，APK、图片、数据库、凭据和日志不进入提交；生成文档无漂移，已删除的旧入口不再被引用。
 
-- 没有真实数据库、令牌、Cookie、APK、图片或日志进入 diff；
-- 生成文档无漂移；
-- 已删除的旧迁移脚本没有被任何路径引用；
-- 报告、API、Skill 和部署文档的语义一致。
-
-提交 feature branch 后审阅：
+提交 feature branch 后审阅并记录候选 SHA、源码树和锁文件摘要：
 
 ```bash
 git diff main...HEAD --stat
 git diff main...HEAD --check
-git log --oneline -1
+git rev-parse HEAD
+git rev-parse 'HEAD^{tree}'
 ```
 
-确认无误后合并并推送：
+可推送临时候选分支再让服务器 fetch；也可传输 `git bundle` 或由该提交生成的源码镜像，并校验 SHA 和内容摘要。此时 `main` 保持不变。
+
+## 2. 服务器候选环境与验证
+
+从现有 service unit、drop-in 和进程环境确认当前 release、虚拟环境、环境文件、数据库后端和时区。仅显示允许公开的配置字段；不能打印完整环境文件或进程环境。
+
+以下 `<server>`、`<repo>`、`<candidate_sha>`、`<python>` 和 `<deploy_user>` 由私有部署环境提供；Python 必须在项目支持的 3.11–3.13 范围内。
 
 ```bash
+ssh <deploy_user>@<server>
+git -C <repo> fetch --prune origin
+git -C <repo> show --no-patch --format='%H %s' <candidate_sha>
+git -C <repo> worktree add --detach /opt/vitalis/releases/<candidate_sha> <candidate_sha>
+cd /opt/vitalis/releases/<candidate_sha>
+UV_PROJECT_ENVIRONMENT=/opt/vitalis/venvs/<candidate_sha> uv sync --python <python> --locked --extra dev
+```
+
+`UV_PROJECT_ENVIRONMENT` 固定实际安装目录；只传 `--python` 不会把依赖装进指定的 release venv。采用源码镜像时也要记录 candidate SHA、源码树、镜像与锁文件摘要和生成时间。
+
+在服务器隔离配置中运行受影响目标测试、生成报告检查、候选 schema 检查和合成 API/worker smoke。本地 `tools/check.py all --ci` 已包含 wheel/sdist 打包验收；资源受限的运行服务器不重复全量 CI 或打包。若需要独立构建检查，先用受支持 Python 的 `ensurepip` 补齐构建工具，并在锁定开发环境验证。测试使用合成数据、空外部凭据和空 PushPlus 配置，临时数据库按服务器资源选择磁盘目录。服务器目标测试或运行验收失败先查明并修复，不合并失败候选。
+
+## 3. 停止服务与数据库备份
+
+候选验证完成后保存当前 unit/drop-in、release 路径和环境配置的私密回滚副本。确认所有 Vitalis 服务的实际状态，然后停止 API 和 worker，等待进程退出：
+
+```bash
+systemctl show vitalis-api vitalis-worker --property=ActiveState,SubState,MainPID,ExecStart,WorkingDirectory,EnvironmentFiles
+sudo systemctl stop vitalis-worker vitalis-api
+systemctl is-active vitalis-api vitalis-worker
+```
+
+SQLite 使用当前版本的备份命令或等价的 WAL-safe 流程，目标必须为新的带 SHA 和时间戳的文件。备份不能位于仓库或 release 目录：
+
+```bash
+<old-venv>/bin/vitalis db backup --output /var/backups/vitalis/vitalis-<old_sha>-<timestamp>.sqlite
+sha256sum /var/backups/vitalis/vitalis-<old_sha>-<timestamp>.sqlite
+```
+
+备份命令必须加载实际服务配置，校验数据库完整性和外键。PostgreSQL 使用 `pg_dump`/`pg_restore` 并保存校验记录；未知后端先确认，不能默认 SQLite。
+
+## 4. 数据库变更决策
+
+比较候选代码与实际运行 release 的模型/schema，再验证现库的 schema；不能只依据 checkout HEAD 或本次某个源码文件判断。
+
+1. **无 schema 变化**：保留当前数据库，通过只读 schema/完整性检查，不迁移、不删除。
+2. **加字段即可**：先备份，在候选副本验证字段、默认值、约束和现有数据；按本次明确的 DDL 更新，验收通过后用于当前库，不建立通用旧版兼容链。
+3. **确实需要破坏性迁移**：停写并备份旧库，建立当前 schema 候选库，进行明确、可审计的一次性导出/导入。验证 schema、完整性、外键、必要记录保留和合成 API/worker smoke 后切换数据库配置，启动服务并完成第 6 节验收。
+
+破坏性迁移验收成功后，在清理授权范围内删除已被替代的旧工作数据库及其 WAL/SHM 文件；校验过的原始备份和回滚材料继续保留。已有会话授权不重复询问；没有清理授权时保留旧工作库并说明阻塞。
+
+数据库清理前记录备份摘要、新 schema revision、导入/丢弃清单、验收结果、部署 SHA、依赖版本和时间戳。使用备份恢复到新路径，不能把删除当作备份。
+
+## 5. 更新所有服务
+
+service unit 可能通过 drop-in 覆盖启动命令或 `PYTHONPATH`；修改前先看实际文件，更新真正生效的配置。API 和 worker 的 `ExecStart` 及源码加载路径同时指向候选版本：
+
+```ini
+ExecStart=/opt/vitalis/venvs/<candidate_sha>/bin/vitalis serve
+ExecStart=/opt/vitalis/venvs/<candidate_sha>/bin/vitalis worker
+```
+
+如果部署使用 `uvicorn` 启动 API，保留已经验证的绑定地址、端口和日志参数。相对数据库路径按实际 `WorkingDirectory` 解释。用户数据仍位于私密数据目录，环境文件与加密密钥保留在原位置。
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl start vitalis-api vitalis-worker
+systemctl show vitalis-api vitalis-worker --property=ActiveState,SubState,MainPID,ExecStart
+```
+
+检查所有实际 Vitalis 服务，不能只更新某个 Git 仓库或只重启 API。确认进程虚拟环境、工作目录、`PYTHONPATH`、已安装包路径和 release SHA 对齐。
+
+## 6. 运行验收
+
+```bash
+curl --noproxy '*' --fail http://127.0.0.1:8000/live
+curl --noproxy '*' --fail http://127.0.0.1:8000/ready
+<release-venv>/bin/vitalis doctor
+systemctl is-active vitalis-api vitalis-worker
+```
+
+`doctor` 同样加载实际服务配置。绕过 shell 代理检查回环地址，避免代理 502 被误判成应用错误。继续核对：
+
+- worker heartbeat 在同一个数据库中持续更新；
+- API、worker 和其它 Vitalis 服务使用同一候选 SHA、虚拟环境和时区；
+- 隔离合成库能生成 morning/daily/evening/weekly/monthly，并通过 API 读取；
+- `/api/data-status` 合同正常，能展示同步与覆盖状态；
+- 测试没有向真实 PushPlus 发送通知；
+- 从日志中仅提取非敏感错误类别和数量，日志不输出凭据、个人信息或健康原文。
+
+保存验收退出码和结果后才进入合并步骤。
+
+## 7. 验收后合并 main 与清理
+
+服务器候选验收成功后，本地重新 fetch 并确认 `main` 未发生未验证变动，再合并：
+
+```bash
+git fetch origin --prune
 git switch main
 git pull --ff-only origin main
 git merge --no-ff <feature-branch>
+git diff --exit-code <candidate_sha> HEAD
+git rev-parse 'HEAD^{tree}'
 git push origin main
 git rev-parse HEAD
 ```
 
-记录最终 SHA；服务器只允许部署这个 SHA。
+最终 `main` 的源码树必须与服务器验收候选一致；若存在差异，先重新验证，不能把未验收内容混入最终发布。服务器仓库 fast-forward 到最终 `main` SHA，发布记录与所有服务对齐。若 merge commit 产生新 SHA，建立该 SHA 的 release 并校验源码树/锁文件一致，更新全部服务的 release 路径并再次检查探针、doctor 和心跳；或者使用能明确记录 final SHA、candidate SHA 与相同源码树的可校验发布映射。只检查 `git rev-parse HEAD` 不算完成。
 
-## 2. 服务器拉取代码
+确认服务器与 `origin/main` 对齐后，删除本次候选分支和其它已经合并的临时分支。先检查 `git branch --merged main`、远端合并关系和 worktree 使用状态，只用 `git branch -d` 删除本地已合并分支；不删除仍有独立提交或被其它工作占用的分支。最后记录 final SHA、服务状态、数据库处理和分支清理结果。
 
-以下命令中的 `<server>`, `<repo>`, `<release_sha>` 和 `<deploy_user>` 由私有部署环境提供，不写入文档或日志。服务器上使用发布目录，不在运行目录直接 `git pull`：
+## 8. 失败回滚
 
-```bash
-ssh <deploy_user>@<server>
-cd /opt/vitalis
-git fetch --prune origin
-git show --no-patch --format='%H %s' <release_sha>
-git worktree add --detach /opt/vitalis/releases/<release_sha> <release_sha>
-cd /opt/vitalis/releases/<release_sha>
-uv venv --python 3.12 /opt/vitalis/venvs/<release_sha>
-uv sync --python /opt/vitalis/venvs/<release_sha> --locked --extra dev
-```
+任何健康探针、doctor、worker heartbeat、合成报告、真实 schema 检查或实际加载路径验收失败，停止新服务，恢复保存的旧 unit/drop-in 和虚拟环境；若数据库已切换，使用校验备份恢复到新候选路径，然后启动旧服务并重新验收。
 
-如果服务器采用源码镜像而不是 Git worktree，也必须把镜像固定为该 SHA，并在部署记录中保存 SHA、依赖锁文件 hash 和生成时间。
-
-## 3. 停止服务和备份数据库
-
-先确认当前服务和数据库路径：
-
-```bash
-systemctl status vitalis-api vitalis-worker --no-pager
-systemctl cat vitalis-api vitalis-worker
-grep -E '^(DATABASE_URL|VITALIS_ENV|ZEPP_MOCK|VITALIS_TIMEZONE)=' /etc/vitalis/vitalis.env
-```
-
-停止 API 和 worker，等待进程退出：
-
-```bash
-sudo systemctl stop vitalis-worker vitalis-api
-pgrep -af 'vitalis (serve|worker)' || true
-```
-
-SQLite 数据库必须使用当前版本的备份命令或等价的 WAL-safe 流程，目标必须是新的带时间戳文件：
-
-```bash
-<release-venv>/bin/vitalis db backup \
-  --output /var/backups/vitalis/vitalis-<old_sha>-<timestamp>.sqlite
-sha256sum /var/backups/vitalis/vitalis-<old_sha>-<timestamp>.sqlite
-```
-
-PostgreSQL 环境必须使用 `pg_dump`/`pg_restore` 并保存 schema 和数据的校验记录。未知数据库后端不能假设 SQLite 命令适用。
-
-## 4. 破坏性数据库更新
-
-预发布不运行旧 schema 兼容迁移链。需要破坏性更新时：
-
-1. 旧库停写并完成备份；
-2. 用当前代码创建新的候选数据库和当前 schema；
-3. 如果需要保留数据，执行一次明确、可审计的导出/导入，而不是运行长期兼容层；
-4. 在候选库运行 `vitalis doctor`、schema 检查、合成报告、受影响测试和 API/worker smoke；
-5. 验收通过后切换 `DATABASE_URL` 或原子替换数据库路径；
-6. 重启服务并完成健康检查；
-7. 观察期结束、备份校验通过并得到明确清理授权后，才删除旧数据库。
-
-删除旧库前必须同时保留：
-
-- 旧库原始备份；
-- SHA256 或等价校验值；
-- 新库 schema revision；
-- 数据导入/丢弃清单；
-- smoke test 输出；
-- 部署 SHA、依赖版本和时间戳。
-
-不要重新加入旧版数据库迁移脚本作为通用兼容方案。当前项目需要的是“备份旧数据、验证新库、切换、保留回滚备份”，不是持续维护历史 schema。
-
-## 5. 切换 systemd 服务
-
-当前 service unit 固定使用 `/opt/vitalis/.venv/bin/vitalis`。切换发布版本时，修改 `/etc/systemd/system/vitalis-api.service` 和 `/etc/systemd/system/vitalis-worker.service` 的 `ExecStart`，指向已验证的 release venv，确保 API 和 worker 相同：
-
-```ini
-ExecStart=/opt/vitalis/venvs/<release_sha>/bin/vitalis serve
-ExecStart=/opt/vitalis/venvs/<release_sha>/bin/vitalis worker
-```
-
-修改 unit 后执行：
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable vitalis-api vitalis-worker
-sudo systemctl start vitalis-api vitalis-worker
-sudo systemctl status vitalis-api vitalis-worker --no-pager
-```
-
-服务仍应使用 `/etc/vitalis/vitalis.env`，用户数据仍位于 `/var/lib/vitalis`，不把数据库或凭据复制到 release 目录。
-
-## 6. 部署验收
-
-```bash
-curl --fail http://127.0.0.1:8000/live
-curl --fail http://127.0.0.1:8000/ready
-<release-venv>/bin/vitalis doctor
-systemctl is-active vitalis-api vitalis-worker
-journalctl -u vitalis-api -u vitalis-worker -n 100 --no-pager
-```
-
-继续验证：
-
-- worker heartbeat 在数据库中更新；
-- API 和 worker 使用同一 release SHA、数据库和时区；
-- 合成数据能生成 morning/daily/evening/weekly/monthly 报告；
-- PushPlus 测试配置为空，没有真实通知发送；
-- `/api/data-status` 能显示最近成功同步和 signal coverage；
-- 没有凭据、健康原文或用户个人信息进入日志。
-
-## 7. 失败回滚
-
-如果 `/live`、`/ready`、doctor、worker heartbeat、合成报告或数据库检查失败：
-
-```bash
-sudo systemctl stop vitalis-worker vitalis-api
-# 将 unit 恢复到上一份已验证 release venv
-sudo systemctl daemon-reload
-# 如数据库已切换，使用保留的、校验过的旧库备份恢复到新的候选路径
-sudo systemctl start vitalis-api vitalis-worker
-```
-
-回滚后重新检查健康探针和 worker；不要在异常状态下盲目重发 PushPlus。记录失败阶段、退出码、release SHA 和下一步，不记录 token、Cookie、数据库内容或健康原文。
+不要在异常状态下盲目重发 PushPlus，也不合并失败候选。记录失败阶段、退出码、候选 SHA 和下一步，保留备份；不记录 token、Cookie、数据库内容或健康原文。

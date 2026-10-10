@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from math import log
-from statistics import mean, median
+from statistics import median
 
 from .activity import workout_calories_kcal, workout_distance_km
 from .baseline import BaselineEngine, daily_stream_values

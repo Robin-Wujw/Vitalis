@@ -32,8 +32,6 @@ class EveningBriefingEngine:
         if metadata:
             context["delivery_metadata"] = dict(metadata)
         report_date = payload.get("date")
-        features = payload.get("features") or {}
-        training = features.get("training") or {}
         sections = self._sections(payload, report_date)
         quality = payload.get("data_quality") or {}
         presentation_payload = dict(payload)

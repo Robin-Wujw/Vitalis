@@ -23,6 +23,10 @@ PUSHPLUS_URL = "https://www.pushplus.plus/send"
 PUSHPLUS_QUERY_URL = (
     "https://www.pushplus.plus/api/open/message/sendMessageResult"
 )
+# PushPlus rejects a message body above 20,000 characters with code 999; reports
+# are rendered to a lower budget so the request never reaches that rejection.
+PUSHPLUS_CONTENT_LIMIT = 20_000
+PUSHPLUS_CONTENT_BUDGET = 19_000
 _ALLOWED_TEMPLATES = {"markdown", "html"}
 
 
@@ -241,7 +245,10 @@ class PushService:
     def _render_and_push(self, user_id: str, briefing: object) -> dict[str, Any]:
         from vitalis.intelligence.report_rendering import render_report
 
-        rendered = render_report(briefing, target=self.template)
+        rendered = render_report(
+            briefing, target=self.template,
+            max_characters=PUSHPLUS_CONTENT_BUDGET if self.pushplus_token else None,
+        )
         metadata = _render_metadata(rendered)
         payload = _payload_for_extras(briefing)
         payload.update(metadata)
@@ -305,10 +312,16 @@ class PushService:
             raise NotificationSendError("notification transport failed", ambiguous=True) from exc
 
     def _pushplus_handler(self, msg: PushMessage) -> dict[str, Any]:
+        from vitalis.intelligence.report_rendering import provider_text_length
+
         send_attempt_id = str(
             msg.extras.get("send_attempt_id") or self.send_attempt_id or uuid4().hex
         )
         try:
+            if provider_text_length(msg.body) > PUSHPLUS_CONTENT_LIMIT:
+                raise NotificationSendError(
+                    "notification content exceeds provider limit", ambiguous=False, retryable=False
+                )
             with httpx.Client(timeout=10.0, trust_env=False) as client:
                 response = client.post(PUSHPLUS_URL, json={
                     "token": self.pushplus_token,

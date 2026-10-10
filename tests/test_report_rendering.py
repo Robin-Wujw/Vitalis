@@ -8,8 +8,9 @@ from markdown import markdown
 import pytest
 
 from vitalis.intelligence.contracts import ReportBriefing
+from vitalis.intelligence.public_reports import PublicReportView
 from vitalis.intelligence.report_rendering import (
-    RenderedReport, render_report, validate_report_content,
+    RenderedReport, provider_text_length, render_report, validate_report_content,
 )
 
 
@@ -295,3 +296,86 @@ def test_generated_daily_and_evening_examples_are_distinct_named_reports():
     assert daily.startswith("# 日报 ·")
     assert evening.startswith("# 晚报 ·")
     assert daily != evening
+
+
+def _measured_fact(section_id, index):
+    return {
+        "metric": f"{section_id}_{index}", "label": f"{section_id}指标{index}", "value": 40 + index,
+        "unit": "bpm", "status": "AVAILABLE", "source": "zepp", "source_scope": "device",
+        "observed_at": "2026-10-07", "effective_days": 28, "expected_days": 28,
+        "sample_count": 28, "coverage_ratio": 1.0,
+    }
+
+
+def _unobserved_fact(section_id, index):
+    return {
+        "metric": f"{section_id}_missing_{index}", "label": f"{section_id}缺失{index}", "value": None,
+        "status": "UNKNOWN", "shadow_only": True, "effective_days": 0, "expected_days": 28,
+        "sample_count": 0, "coverage_ratio": 0.0,
+    }
+
+
+def large_report_view(*, measured=120, unobserved=0):
+    """A synthetic evening view far above a push provider's single-message limit."""
+    titles = (("activity", "活动"), ("training", "训练记录"), ("recovery", "昨夜恢复背景"), ("next", "变化、反馈与下一步"))
+    blocks = [{
+        "section_id": section_id, "title": title, "priority": priority, "status": "AVAILABLE",
+        "facts": [_measured_fact(section_id, index) for index in range(measured)]
+        + [_unobserved_fact(section_id, index) for index in range(unobserved)],
+        "interpretation": [f"{title}第 {index} 条变化说明。" for index in range(3)],
+        "action": "明天保持轻松活动。" if section_id == "next" else None,
+    } for priority, (section_id, title) in enumerate(titles, 1)]
+    return PublicReportView.model_validate({
+        "analysis_run_id": "synthetic-run", "kind": "evening", "title": "合成长报告",
+        "user_id": "synthetic-user", "date": "2026-10-07", "period_start": "2026-10-07",
+        "period_end": "2026-10-07", "as_of": "2026-10-07T13:20:00Z", "source_mode": "mock",
+        "report_context": {"timezone": "Asia/Shanghai"}, "summary": ["合成摘要。"],
+        "blocks": blocks, "suggestions": ["明天保持轻松活动。"],
+    })
+
+
+def test_provider_text_length_counts_utf16_code_units():
+    assert provider_text_length("晚报") == 2
+    assert provider_text_length("\U0001F600") == 2
+
+
+@pytest.mark.parametrize("target", ["markdown", "html"])
+def test_channel_budget_leaves_reports_within_budget_unchanged(target):
+    briefing = _briefing()
+    assert render_report(briefing, target, max_characters=19_000).content == render_report(briefing, target).content
+
+
+@pytest.mark.parametrize("target", ["markdown", "html"])
+def test_channel_budget_collapses_unobserved_facts_before_dropping_measured_facts(target):
+    view = large_report_view(measured=10, unobserved=100)
+    assert provider_text_length(render_report(view, target).content) > 19_000
+
+    content = render_report(view, target, max_characters=19_000).content
+
+    assert provider_text_length(content) <= 19_000
+    assert "记录未取得" not in content
+    for section_id in ("activity", "training", "recovery", "next"):
+        assert f"{section_id}指标9" in content
+        assert f"暂无可用记录：{section_id}缺失0、{section_id}缺失1" in content
+    assert "本节另有" not in content
+
+
+@pytest.mark.parametrize("target", ["markdown", "html"])
+def test_channel_budget_keeps_every_section_plan_and_whole_facts(target):
+    view = large_report_view(measured=120)
+    content = render_report(view, target, max_characters=19_000).content
+
+    assert provider_text_length(content) <= 19_000
+    assert content == render_report(view, target, max_characters=19_000).content
+    text = _text(content)[0] if target == "html" else content
+    for section_id, title in (("activity", "活动"), ("training", "训练记录"), ("recovery", "昨夜恢复背景"), ("next", "变化、反馈与下一步")):
+        assert title in text
+        assert f"{section_id}指标0" in text
+        assert f"{title}第 0 条变化说明。" in text
+    assert "明日重点" in text and "明天保持轻松活动。" in text
+    assert "本节另有" in text and "完整报告可通过 Vitalis API 或 Hermes 查看。" in text
+    if target == "markdown":
+        lines = [line for line in content.splitlines() if line]
+        for index, line in enumerate(lines):
+            if line.startswith("**") and "指标" in line:
+                assert lines[index + 1].startswith("来源 Zepp · 设备记录")

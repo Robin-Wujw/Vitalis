@@ -10,9 +10,12 @@ from vitalis.intelligence.evening_briefing import EveningBriefingEngine
 from vitalis.intelligence.morning_briefing import MorningBriefingEngine
 from vitalis.intelligence.monthly_briefing import MonthlyBriefingEngine
 from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
-from vitalis.adapters.notifications import PUSHPLUS_QUERY_URL, PUSHPLUS_URL, PushMessage, PushService
-from vitalis.intelligence.report_rendering import render_report
+from vitalis.adapters.notifications import (
+    PUSHPLUS_CONTENT_BUDGET, PUSHPLUS_CONTENT_LIMIT, PUSHPLUS_QUERY_URL, PUSHPLUS_URL, PushMessage, PushService,
+)
+from vitalis.intelligence.report_rendering import provider_text_length, render_report
 from tests.test_report_content import synthetic_daily_fixture, synthetic_period_fixture
+from tests.test_report_rendering import large_report_view
 
 
 class _VisibleTextParser(HTMLParser):
@@ -824,3 +827,56 @@ def test_pushplus_query_timeout_keeps_accepted_without_post(monkeypatch):
     ).query_pushplus("short-code")
     assert result["status"] == "accepted"
     assert calls == [("get", f"{PUSHPLUS_QUERY_URL}?shortCode=short-code")]
+
+
+def _accepting_pushplus_client(requests):
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"code": 200, "msg": "请求成功", "data": "synthetic-short-code"}
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def post(self, url, **kwargs):
+            requests.append((url, kwargs))
+            return Response()
+
+    return Client
+
+
+def test_pushplus_report_is_budgeted_below_the_provider_limit(monkeypatch):
+    requests = []
+    monkeypatch.setattr("vitalis.adapters.notifications.httpx.Client", _accepting_pushplus_client(requests))
+    view = large_report_view(measured=120)
+    assert provider_text_length(render_report(view, "markdown").content) > PUSHPLUS_CONTENT_LIMIT
+
+    result = PushService(pushplus_token="private-token").push_morning_briefing("user", view)
+
+    assert result["_pushplus_handler"] == "accepted"
+    content = requests[0][1]["json"]["content"]
+    assert provider_text_length(content) <= PUSHPLUS_CONTENT_BUDGET < PUSHPLUS_CONTENT_LIMIT
+    assert "本节另有" in content
+
+
+def test_pushplus_refuses_content_above_provider_limit_without_request(monkeypatch):
+    requests = []
+    monkeypatch.setattr("vitalis.adapters.notifications.httpx.Client", _accepting_pushplus_client(requests))
+
+    result = PushService(pushplus_token="private-token").push(PushMessage(
+        title="晚报", body="数" * (PUSHPLUS_CONTENT_LIMIT + 1), user_id="user",
+    ))
+
+    assert requests == []
+    assert result["_pushplus_handler"] == "error: delivery failed"
+    assert result["_pushplus_result"]["status"] == "failed"
+    assert result["_pushplus_result"]["retryable"] is False

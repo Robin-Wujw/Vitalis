@@ -1,6 +1,7 @@
 """Render already-computed report projections without I/O or health algorithms."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from hashlib import sha256
 import html
@@ -198,6 +199,11 @@ def _provenance(item: dict[str, Any]) -> str:
     return f"来源 {label}" + (f" · {scope}" if scope else "") + (f" · 设备 {item['device_id']}" if item.get("device_id") else "")
 
 
+def _fact_comparison(fact: dict[str, Any], block: dict[str, Any]) -> dict[str, Any] | None:
+    return next((item for item in block.get("comparisons") or [] if item.get("type") != "association" and
+                 all(item.get(key) == fact.get(key) for key in ("metric", "source", "source_scope", "device_id"))), None)
+
+
 def _fact_notes(fact: dict[str, Any], block: dict[str, Any], payload: dict[str, Any]) -> list[str]:
     notes = []
     if fact.get("value") is not None and fact.get("text"):
@@ -210,8 +216,7 @@ def _fact_notes(fact: dict[str, Any], block: dict[str, Any], payload: dict[str, 
         notes.append(status)
     if fact.get("shadow_only") or fact.get("decision_role") == "shadow":
         notes.append("shadow-only：仅作观察，不进入训练决策")
-    comparison = next((item for item in block.get("comparisons") or [] if item.get("type") != "association" and
-                       all(item.get(key) == fact.get(key) for key in ("metric", "source", "source_scope", "device_id"))), None)
+    comparison = _fact_comparison(fact, block)
     if comparison:
         text = _comparison({"comparison": comparison, "unit": fact.get("unit") or "单位未记录", "digits": fact.get("digits", 1)})
         if text:
@@ -241,54 +246,190 @@ def _fact_notes(fact: dict[str, Any], block: dict[str, Any], payload: dict[str, 
     return notes
 
 
-def _reading_items(payload: dict[str, Any]) -> list[tuple[str, str]]:
-    """The same ordered content items feed Markdown and HTML."""
-    output = [("paragraph", str(item)) for item in [*(payload.get("summary") or []), *(payload.get("alerts") or [])]]
+Item = tuple[str, str]
+# Selection order when a channel budget applies: interpretation first, then
+# measured facts and workouts in reading order, caveats, and absent signals.
+_UNIT_RANKS = {"interpretation": 0, "fact": 1, "workout": 1, "limitation": 2, "unobserved": 3}
+_SECTION_OMISSION = "推送篇幅有限，本节另有 {count} 项未展开。"
+_FULL_REPORT_NOTE = "完整报告可通过 Vitalis API 或 Hermes 查看。"
+
+
+@dataclass(frozen=True)
+class _Section:
+    """A block split into framing that is always shown and atomic optional units."""
+
+    head: list[Item]
+    units: list[tuple[int, list[Item]]]
+    tail: list[Item]
+
+
+def _fact_items(fact: dict[str, Any], block: dict[str, Any], payload: dict[str, Any]) -> list[Item]:
+    items = [("strong" if fact.get("value") is not None else "paragraph", _fact_heading(fact))]
+    items.extend(("note", note) for note in _fact_notes(fact, block, payload))
+    return items
+
+
+def _workout_items(workout: dict[str, Any], payload: dict[str, Any]) -> list[Item]:
+    items = [("h3", str(workout.get("title") or "训练记录"))]
+    info = [str(workout["date"])]
+    if workout.get("started_at"):
+        info.append(timestamp_text(workout["started_at"], (payload.get("report_context") or {}).get("timezone") or "UTC", short=True))
+    if workout.get("duration_minutes") is not None:
+        info.append(_value(workout["duration_minutes"], "min"))
+    if workout.get("source"):
+        info.append(_provenance(workout))
+    items.append(("paragraph", " · ".join(info)))
+    items.extend(("paragraph", str(item)) for item in workout.get("facts") or [])
+    for exercise in workout.get("exercises") or []:
+        items.append(("strong", str(exercise.get("name") or "未识别动作")))
+        items.extend(("paragraph", line) for line in _exercise_lines(exercise))
+        if exercise.get("comparison"):
+            reference = f"对照 {exercise['reference_date']} · " if exercise.get("reference_date") else ""
+            items.append(("note", reference + exercise["comparison"]))
+    return items
+
+
+def _unobserved(fact: dict[str, Any], block: dict[str, Any]) -> bool:
+    """A fact without value, explanation, gap, or comparison only needs its name."""
+    return (
+        fact.get("value") is None
+        and not any(fact.get(key) for key in ("text", "detail", "gap"))
+        and _fact_comparison(fact, block) is None
+    )
+
+
+def _sections(payload: dict[str, Any], *, collapse_unobserved: bool = False) -> tuple[list[Item], list[_Section]]:
+    preamble = [("paragraph", str(item)) for item in [*(payload.get("summary") or []), *(payload.get("alerts") or [])]]
+    sections = []
     for block in sorted(payload["blocks"], key=lambda item: item["priority"]):
         if not (block["facts"] or block["workouts"] or block["interpretation"] or block.get("action")):
             continue
-        output.extend([("block_start", ""), ("h2", str(block["title"]))])
+        units: list[tuple[int, list[Item]]] = []
+        unobserved = []
         for fact in block["facts"]:
-            output.append(("strong" if fact.get("value") is not None else "paragraph", _fact_heading(fact)))
-            output.extend(("note", note) for note in _fact_notes(fact, block, payload))
-        for workout in block["workouts"]:
-            output.append(("h3", str(workout.get("title") or "训练记录")))
-            info = [str(workout["date"])]
-            if workout.get("started_at"):
-                info.append(timestamp_text(workout["started_at"], (payload.get("report_context") or {}).get("timezone") or "UTC", short=True))
-            if workout.get("duration_minutes") is not None:
-                info.append(_value(workout["duration_minutes"], "min"))
-            if workout.get("source"):
-                info.append(_provenance(workout))
-            output.append(("paragraph", " · ".join(info)))
-            output.extend(("paragraph", str(item)) for item in workout.get("facts") or [])
-            for exercise in workout.get("exercises") or []:
-                output.append(("strong", str(exercise.get("name") or "未识别动作")))
-                output.extend(("paragraph", line) for line in _exercise_lines(exercise))
-                if exercise.get("comparison"):
-                    reference = f"对照 {exercise['reference_date']} · " if exercise.get("reference_date") else ""
-                    output.append(("note", reference + exercise["comparison"]))
-        output.extend(("paragraph", str(item)) for item in block["interpretation"])
-        output.extend(("note", str(item)) for item in block.get("limitations") or [])
+            if collapse_unobserved and _unobserved(fact, block):
+                unobserved.append(_plain(fact.get("label") or "已保存记录"))
+            else:
+                units.append((_UNIT_RANKS["fact"], _fact_items(fact, block, payload)))
+        if unobserved:
+            labels = "、".join(dict.fromkeys(unobserved))
+            units.append((_UNIT_RANKS["unobserved"], [("note", f"暂无可用记录：{labels}")]))
+        units.extend((_UNIT_RANKS["workout"], _workout_items(workout, payload)) for workout in block["workouts"])
+        units.extend((_UNIT_RANKS["interpretation"], [("paragraph", str(item))]) for item in block["interpretation"])
+        units.extend((_UNIT_RANKS["limitation"], [("note", str(item))]) for item in block.get("limitations") or [])
+        tail: list[Item] = []
         if block.get("action"):
             label = {"morning": "今天的安排", "evening": "明日重点", "weekly": "下周重点", "monthly": "下月重点", "daily": "下一步"}[payload["kind"]]
-            output.append(("h3", label))
-            output.extend(("paragraph", str(item)) for item in payload.get("suggestions") or [block["action"]])
-        output.append(("block_end", ""))
-    return output
+            tail.append(("h3", label))
+            tail.extend(("paragraph", str(item)) for item in payload.get("suggestions") or [block["action"]])
+        tail.append(("block_end", ""))
+        sections.append(_Section([("block_start", ""), ("h2", str(block["title"]))], units, tail))
+    return preamble, sections
 
 
-def _markdown_report(payload: dict[str, Any], label: str, headline: str) -> str:
+def _assemble(preamble: list[Item], sections: list[_Section], selected: list[set[int]], closing: list[Item]) -> list[Item]:
+    items = list(preamble)
+    for section, chosen in zip(sections, selected):
+        items.extend(section.head)
+        for index, (_, unit) in enumerate(section.units):
+            if index in chosen:
+                items.extend(unit)
+        if len(chosen) < len(section.units):
+            items.append(("note", _SECTION_OMISSION.format(count=len(section.units) - len(chosen))))
+        items.extend(section.tail)
+    return items + closing
+
+
+def _reading_items(payload: dict[str, Any]) -> list[Item]:
+    """The same ordered content items feed Markdown and HTML."""
+    preamble, sections = _sections(payload)
+    return _assemble(preamble, sections, [set(range(len(section.units))) for section in sections], [])
+
+
+def provider_text_length(text: str) -> int:
+    """Count UTF-16 code units, the unit push providers use for content limits."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _water_fill(room: int, needs: list[int]) -> list[int]:
+    """Share room so small sections keep everything and large ones split the rest."""
+    caps = [0] * len(needs)
+    pending = [index for index, need in enumerate(needs) if need > 0]
+    while pending and room > 0:
+        share = room // len(pending)
+        satisfied = [index for index in pending if needs[index] - caps[index] <= share]
+        if not satisfied:
+            for index in pending:
+                caps[index] += share
+            break
+        for index in satisfied:
+            room -= needs[index] - caps[index]
+            caps[index] = needs[index]
+        pending = [index for index in pending if index not in satisfied]
+    return caps
+
+
+def _budgeted_items(payload: dict[str, Any], cost: Callable[[list[Item]], int], room: int) -> list[Item]:
+    """Fit content into room without separating any fact from its notes."""
+    preamble, sections = _sections(payload, collapse_unobserved=True)
+    selected = [set(range(len(section.units))) for section in sections]
+    items = _assemble(preamble, sections, selected, [])
+    if cost(items) <= room:
+        return items
+    closing = [("note", _FULL_REPORT_NOTE)]
+    framing = cost(preamble) + cost(closing) + sum(
+        cost(section.head) + cost(section.tail)
+        + cost([("note", _SECTION_OMISSION.format(count=len(section.units)))])
+        for section in sections
+    )
+    unit_costs = [[cost(unit) for _, unit in section.units] for section in sections]
+    orders = [sorted(range(len(section.units)), key=lambda index, units=section.units: (units[index][0], index))
+              for section in sections]
+    selected = [set() for _ in sections]
+    spare = room - framing
+    if spare > 0:
+        caps = _water_fill(spare, [sum(costs) for costs in unit_costs])
+        for costs, order, cap, chosen in zip(unit_costs, orders, caps, selected):
+            used = 0
+            for index in order:
+                if used + costs[index] <= cap:
+                    chosen.add(index)
+                    used += costs[index]
+            spare -= used
+        for costs, order, chosen in zip(unit_costs, orders, selected):
+            for index in order:
+                if index not in chosen and costs[index] <= spare:
+                    chosen.add(index)
+                    spare -= costs[index]
+    items = _assemble(preamble, sections, selected, closing)
+    # Framing alone can only exceed the room for a pathological report; keep
+    # the highest-priority sections and the closing pointer to the full report.
+    while cost(items) > room and sections:
+        sections, selected = sections[:-1], selected[:-1]
+        items = _assemble(preamble, sections, selected, closing)
+    while cost(items) > room and preamble:
+        preamble = preamble[:-1]
+        items = _assemble(preamble, sections, selected, closing)
+    return items
+
+
+def _markdown_line(kind: str, text: str) -> str | None:
+    if kind in {"block_start", "block_end"}:
+        return None
+    shown = _markdown(text)
+    if kind in {"h2", "h3"}:
+        return f"{'##' if kind == 'h2' else '###'} {shown}"
+    if kind == "strong":
+        return f"**{shown}**"
+    return shown
+
+
+def _markdown_report(payload: dict[str, Any], label: str, headline: str, items: list[Item] | None = None) -> str:
     lines = [f"# {_markdown(label)} · {_markdown(headline)}", "", _markdown(_subtitle(payload))]
-    for kind, text in _reading_items(payload):
-        if kind in {"block_start", "block_end"}:
-            continue
-        shown = _markdown(text)
-        if kind in {"h2", "h3"}:
-            shown = f"{'##' if kind == 'h2' else '###'} {shown}"
-        elif kind == "strong":
-            shown = f"**{shown}**"
-        lines.extend(["", shown])
+    for kind, text in (_reading_items(payload) if items is None else items):
+        line = _markdown_line(kind, text)
+        if line is not None:
+            lines.extend(["", line])
     return "\n".join(lines) + "\n"
 
 
@@ -303,7 +444,24 @@ def _html_text(value: Any) -> str:
     return "".join(output)
 
 
-def _html_report(payload: dict[str, Any], label: str, headline: str) -> str:
+def _html_line(kind: str, text: str) -> str:
+    escape = _html_text
+    if kind == "block_start":
+        return '<div style="margin:16px 0;padding:14px 16px;border:1px solid #dfe7ed;border-radius:8px;background:#f5f7fa">'
+    if kind == "block_end":
+        return "</div>"
+    if kind == "h2":
+        return f'<h2 style="margin:0 0 12px;color:#111827;font-size:18px;line-height:1.45">{escape(text)}</h2>'
+    if kind == "h3":
+        return f'<h3 style="margin:18px 0 6px;color:#111827;font-size:17px;line-height:1.5">{escape(text)}</h3>'
+    if kind == "strong":
+        return f'<p style="margin:14px 0 6px;color:#111827;font-size:17px;font-weight:700;line-height:1.5">{escape(text)}</p>'
+    if kind == "note":
+        return f'<p style="margin:4px 0 10px;color:#475569;font-size:14px;line-height:1.65">{escape(text)}</p>'
+    return f'<p style="margin:8px 0;color:#334155;line-height:1.65">{escape(text)}</p>'
+
+
+def _html_report(payload: dict[str, Any], label: str, headline: str, items: list[Item] | None = None) -> str:
     escape = _html_text
     output = [
         '<div style="max-width:680px;margin:0 auto;padding:16px;box-sizing:border-box;'
@@ -313,23 +471,24 @@ def _html_report(payload: dict[str, Any], label: str, headline: str) -> str:
         f'<h1 style="margin:0 0 10px;font-size:24px;line-height:1.35">{escape(headline)}</h1>',
         f'<p style="margin:0 0 24px;font-size:14px;color:#475569">{escape(_subtitle(payload))}</p>',
     ]
-    for kind, text in _reading_items(payload):
-        if kind == "block_start":
-            output.append('<div style="margin:16px 0;padding:14px 16px;border:1px solid #dfe7ed;border-radius:8px;background:#f5f7fa">')
-        elif kind == "block_end":
-            output.append("</div>")
-        elif kind == "h2":
-            output.append(f'<h2 style="margin:0 0 12px;color:#111827;font-size:18px;line-height:1.45">{escape(text)}</h2>')
-        elif kind == "h3":
-            output.append(f'<h3 style="margin:18px 0 6px;color:#111827;font-size:17px;line-height:1.5">{escape(text)}</h3>')
-        elif kind == "strong":
-            output.append(f'<p style="margin:14px 0 6px;color:#111827;font-size:17px;font-weight:700;line-height:1.5">{escape(text)}</p>')
-        elif kind == "note":
-            output.append(f'<p style="margin:4px 0 10px;color:#475569;font-size:14px;line-height:1.65">{escape(text)}</p>')
-        else:
-            output.append(f'<p style="margin:8px 0;color:#334155;line-height:1.65">{escape(text)}</p>')
+    output.extend(_html_line(kind, text) for kind, text in (_reading_items(payload) if items is None else items))
     output.append("</div>")
     return "\n".join(output)
+
+
+def _fit_report(payload: dict[str, Any], label: str, headline: str, target: ReportTarget, limit: int) -> str:
+    """Render within a channel limit; each item's cost is exact because output is line-joined."""
+    if target == "markdown":
+        def cost(items: list[Item]) -> int:
+            return sum(2 + provider_text_length(line) for kind, text in items
+                       if (line := _markdown_line(kind, text)) is not None)
+        render = _markdown_report
+    else:
+        def cost(items: list[Item]) -> int:
+            return sum(1 + provider_text_length(_html_line(kind, text)) for kind, text in items)
+        render = _html_report
+    room = limit - provider_text_length(render(payload, label, headline, []))
+    return render(payload, label, headline, _budgeted_items(payload, cost, room))
 
 
 class _HTMLContract(HTMLParser):
@@ -380,7 +539,10 @@ def validate_rendered_report(report: RenderedReport) -> None:
     validate_report_content(report.content, report.template)
 
 
-def render_report(report: Any, target: ReportTarget = "markdown") -> RenderedReport:
+def render_report(
+    report: Any, target: ReportTarget = "markdown", *, max_characters: int | None = None,
+) -> RenderedReport:
+    """Render one report; ``max_characters`` fits a channel limit in UTF-16 code units."""
     if target not in _MEDIA_TYPES:
         raise ValueError("report target must be markdown or html")
     # Every channel enters through the same public projection, regardless of
@@ -392,6 +554,8 @@ def render_report(report: Any, target: ReportTarget = "markdown") -> RenderedRep
     label = _LABELS[report.kind]
     headline = _plain(report.title)
     content = _markdown_report(payload, label, headline) if target == "markdown" else _html_report(payload, label, headline)
+    if max_characters is not None and provider_text_length(content) > max_characters:
+        content = _fit_report(payload, label, headline, target, max_characters)
     return RenderedReport(
         title=f"Vitalis {label} · {headline}", content=content,
         media_type=_MEDIA_TYPES[target],

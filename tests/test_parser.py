@@ -765,6 +765,28 @@ def test_mock_unknown_events_are_explicitly_empty_without_changing_legacy_hrv():
     assert ZeppParser.parse_hrv_events(legacy)
 
 
+def test_mock_hrv_respects_requested_local_date_window():
+    client = MockZeppClient(seed=7, timezone_name="Asia/Shanghai")
+    bounded = client.fetch_hrv("2026-10-01", "2026-10-03", "Asia/Shanghai")
+    assert set(ZeppParser.parse_hrv_events(bounded, "Asia/Shanghai")) == {
+        date(2026, 10, 1), date(2026, 10, 2), date(2026, 10, 3),
+    }
+
+
+def test_parse_hrv_events_uses_explicit_timezone_for_numeric_timestamps(monkeypatch):
+    import vitalis.time as time_module
+
+    monkeypatch.setattr(time_module, "local_timezone", lambda *_args: timezone.utc)
+    timestamp = int(datetime(2026, 10, 1, 23, 30, tzinfo=timezone.utc).timestamp() * 1000)
+    raw = {"items": [{
+        "value": {"startTime": timestamp, "samples": [{"sdnn": 55}]},
+    }]}
+
+    assert ZeppParser.parse_hrv_events(raw, "Asia/Shanghai") == {
+        date(2026, 10, 2): 55,
+    }
+
+
 def test_parse_sdnn_samples_and_readiness_extensions():
     hrv = ZeppParser.parse_hrv_samples({"items": [{
         "value": {

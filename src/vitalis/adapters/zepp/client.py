@@ -830,10 +830,20 @@ class MockZeppClient:
 
         if (event_type, sub_type) == ("hrv_sdnn", "real_data"):
             # The older mock facade still consumes the daily-value representation.
+            # Use the requested local-date window whenever one is available so
+            # generated reports do not change when the process calendar advances.
+            if from_ms > 0 and to_ms > from_ms:
+                zone = ZoneInfo(self._timezone_name)
+                first = datetime.fromtimestamp(from_ms / 1000, timezone.utc).astimezone(zone).date()
+                last = datetime.fromtimestamp((to_ms - 1) / 1000, timezone.utc).astimezone(zone).date()
+                days = [first + timedelta(days=offset) for offset in range((last - first).days + 1)]
+                if reverse:
+                    days.reverse()
+            else:
+                days = [date.today() - timedelta(days=i) for i in range(14)]
             items = [
-                {"ts": (date.today() - timedelta(days=i)).isoformat(),
-                 "value": 40 + (date.today() - timedelta(days=i)).toordinal() % 31}
-                for i in range(max(0, min(limit, 14)))
+                {"ts": day.isoformat(), "value": 40 + day.toordinal() % 31}
+                for day in days[:max(0, min(limit, 14))]
             ]
             return {"code": 0, "data": {"items": items}}
 

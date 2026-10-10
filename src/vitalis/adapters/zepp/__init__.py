@@ -18,12 +18,12 @@ mock 模式保留：模拟 apptoken 同构数据 + 扫码演示，离线可端�
 """
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from vitalis.config import settings
 from vitalis.domain import AuthToken, MetricSample, NormalizedDaily, TrainingRecord, User
 from vitalis.adapters.persistence.repositories import SourceIdentityConflict
-from vitalis.time import local_today
+from vitalis.time import local_day_utc_bounds, local_today
 
 from vitalis.application.connector import ConnectorAuth, ConnectorSyncResult, HealthConnector
 from vitalis.application.ports import CredentialInput
@@ -502,8 +502,6 @@ class ZeppConnector(HealthConnector):
         client = self._mock_client
         band = client.fetch_band_data(start.isoformat(), end.isoformat(), "detail", 8, 0)
         sleeps, activities = self.parser.parse_band(band)
-        from vitalis.time import local_day_utc_bounds
-
         start_at, _ = local_day_utc_bounds(start, settings.timezone)
         _, end_at = local_day_utc_bounds(end, settings.timezone)
         workouts = []
@@ -512,8 +510,10 @@ class ZeppConnector(HealthConnector):
                 sport, int(start_at.timestamp()), int(end_at.timestamp()), 1
             )
             workouts.extend(self.parser.parse_sport_history(payload, sport_hint=sport))
-        hrv_raw = client.fetch_events("hrv_sdnn", "real_data", 0, 9999999999999, 2000, True)
-        hrv = self.parser.parse_hrv_events(hrv_raw)
+        hrv_raw = client.fetch_hrv(start.isoformat(), end.isoformat(), settings.timezone)
+        hrv_values = self.parser.parse_hrv_events(
+            hrv_raw, timezone_name=settings.timezone
+        )
         results: list[NormalizedDaily] = []
         day = start
         while day <= end:
@@ -531,12 +531,12 @@ class ZeppConnector(HealthConnector):
                     ),
                 )
             metric_samples = []
-            if day in hrv:
+            if day in hrv_values:
                 metric_samples.append(MetricSample(
                     user_id=user.id,
                     metric="hrv_sdnn",
-                    timestamp=datetime.combine(day, time.min, tzinfo=timezone.utc),
-                    value=hrv[day],
+                    timestamp=local_day_utc_bounds(day, settings.timezone)[0],
+                    value=hrv_values[day],
                     unit="ms",
                     source_scope="user_fused",
                 ))

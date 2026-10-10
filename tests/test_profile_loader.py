@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from vitalis.intelligence.activity import ActivityAnalyzer
 from vitalis.intelligence.baseline import BaselineEngine
@@ -15,6 +16,43 @@ from vitalis.domain import (
     User,
 )
 from vitalis.adapters.persistence import HealthRepository, session_scope
+
+
+def test_profile_loader_caps_high_frequency_sample_budget(monkeypatch):
+    from vitalis.intelligence import profile as profile_module
+
+    day = date(2026, 8, 28)
+    loader = ProfileLoader.__new__(ProfileLoader)
+    calls = []
+
+    class Repository:
+        def metric_samples(self, _user_id, metric, _start, _end, *, limit):
+            calls.append((metric, limit))
+            return [SimpleNamespace(
+                metric=metric,
+                value=50,
+                unit="ms",
+                timestamp=datetime(2026, 8, 28, tzinfo=timezone.utc),
+                source="zepp",
+                source_scope="unknown",
+                device_id=None,
+            ) for _ in range(limit)]
+
+    loader.repo = Repository()
+    monkeypatch.setattr(profile_module, "MAX_SAMPLES_PER_METRIC", 2)
+    monkeypatch.setattr(profile_module, "MAX_PROFILE_SAMPLE_POINTS", 3)
+    raw = profile_module.RawDailyProfile(
+        user_id="budget-user",
+        day=day,
+        as_of=datetime(2026, 8, 28, 23, tzinfo=timezone.utc),
+        timezone_name="UTC",
+    )
+
+    loader._add_sample_metrics(raw, day)
+
+    assert raw.sample_budget_exhausted is True
+    assert sum(len(points) for points in raw.series.values()) == 3
+    assert calls[:2] == [("hrv_rmssd", 2), ("hrv_sdnn", 1)]
 
 
 def test_profile_loader_reports_missing_signals_without_fabricating_facts():

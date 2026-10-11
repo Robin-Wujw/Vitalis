@@ -6,7 +6,6 @@ from vitalis.intelligence.contracts import (
     SubjectiveFeedback,
 )
 from vitalis.intelligence.profile import RawDailyProfile, SeriesPoint
-from vitalis.application.intelligence_service import IntelligenceAction
 from vitalis.bootstrap import get_intelligence_action
 from vitalis.intelligence.strength import StrengthAnalyzer, normalize_exercise
 from vitalis.domain import Workout, WorkoutMetricSample, WorkoutType

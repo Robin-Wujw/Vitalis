@@ -56,10 +56,6 @@ class NotificationSendError(RuntimeError):
         self.provider_status = provider_status
 
 
-class NotificationQueryError(RuntimeError):
-    """A status query failed without changing the already accepted send."""
-
-
 @dataclass
 class PushMessage:
     title: str
@@ -166,7 +162,7 @@ class PushService:
         pushplus_token: str | None = None,
         *,
         pushplus_access_key: str | None = None,
-        template: str = "markdown",
+        template: str = "html",
         query_max_attempts: int | None = None,
         query_interval_seconds: float | None = None,
         send_attempt_id: str | None = None,
@@ -427,6 +423,3 @@ class PushService:
                 "accepted", provider_id=provider_id,
                 provider_status="accepted", poll_attempt_id=poll_attempt_id,
             ).as_dict()
-
-    # Explicit spelling used by scheduler code and tests.
-    poll_pushplus = query_pushplus

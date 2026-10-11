@@ -357,54 +357,6 @@ def _complete_direct_notification(claim: dict, provider: dict, results: dict) ->
         )
 
 
-def deliver_period_report(
-    user_id: str,
-    pushplus_token: str,
-    profile: dict,
-    *,
-    period: str,
-    target_date: date,
-) -> dict:
-    """Deliver a saved calendar report through the same durable intent path."""
-    if period not in {"weekly", "monthly"}:
-        raise ValueError("period must be weekly or monthly")
-    claim = _claim_direct_notification(user_id, profile, period, target_date)
-    if claim is None:
-        return {"status": "already_sent", "period": period, "date": target_date.isoformat()}
-    if claim.get("status") in {"accepted", "delivered", "uncertain"}:
-        return {
-            "status": claim["status"], "period": period,
-            "date": target_date.isoformat(), "provider_id": claim.get("provider_id"),
-        }
-    if claim.get("status") == "deferred":
-        return {
-            "status": "deferred", "period": period, "date": target_date.isoformat(),
-            "reason": claim.get("reason", "analysis_run_required"),
-        }
-    try:
-        service = PushService(
-            pushplus_token=pushplus_token,
-            pushplus_access_key=getattr(settings, "pushplus_access_key", ""),
-            send_attempt_id=claim.get("send_attempt_id"),
-        )
-    except TypeError:
-        service = PushService(pushplus_token=pushplus_token)
-    results = (
-        service.push_weekly_profile(user_id, profile)
-        if period == "weekly" else service.push_monthly_profile(user_id, profile)
-    )
-    provider = _provider_result(results)
-    _complete_direct_notification(claim, provider, results)
-    if provider["status"] not in {"accepted", "delivered"}:
-        raise DailyPushDeliveryError(ambiguous=provider["status"] == "uncertain")
-    return {
-        "status": provider["status"], "period": period,
-        "date": target_date.isoformat(),
-        "quality": (profile.get("data_quality") or {}).get("status", "UNKNOWN"),
-        "provider_id": provider.get("provider_id"),
-    }
-
-
 def _require_local_api(api: str) -> None:
     """Keep the CLI argument, but never silently redirect a remote run locally."""
     parsed = urlsplit(api)

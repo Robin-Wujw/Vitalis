@@ -27,7 +27,6 @@ from .period_activity import comparison_gate
 from .profile import RawDailyProfile, SeriesPoint
 
 
-SIGNAL_REGISTRY_VERSION = "1.0"
 CalendarSemantics = Literal["sleep_day", "activity_day", "calendar_day"]
 DecisionRole = Literal["yes", "no", "shadow"]
 MeasurementKind = Literal["daily_summary", "samples", "sample_window", "unknown"]

@@ -13,7 +13,7 @@ from vitalis.adapters.zepp.fetcher import (
     FetchedRecord,
     RawRecord,
 )
-from vitalis.domain import User, Workout, WORKOUT_DETAIL_SCHEMA_VERSION
+from vitalis.domain import Workout, WORKOUT_DETAIL_SCHEMA_VERSION
 from vitalis.adapters.zepp.sync_coordinator import (
     SyncControl,
     ZeppSyncCoordinator,
@@ -21,7 +21,6 @@ from vitalis.adapters.zepp.sync_coordinator import (
     stable_chunk_key,
 )
 from vitalis.adapters.persistence import HealthRepository, init_db, session_scope
-from vitalis.adapters.persistence.database import SessionLocal
 from vitalis.adapters.persistence import models as orm
 
 
@@ -712,7 +711,6 @@ def test_large_manifest_keeps_global_statistics_and_sports_singleton():
 
 def test_dense_archive_selection_skips_handled_old_file_and_uses_newest():
     old_start = datetime(2026, 8, 1, tzinfo=timezone.utc)
-    new_start = datetime(2026, 8, 2, tzinfo=timezone.utc)
     payload = {"items": [{"value": {
         "startTime": int(old_start.timestamp() * 1000),
         "samples": [

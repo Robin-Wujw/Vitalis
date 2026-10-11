@@ -1602,19 +1602,6 @@ class ZeppParser:
 
         return {d: round(fmean(v)) for d, v in by_day.items() if v}
 
-    @staticmethod
-    def parse_load_events(raw: dict) -> dict[date, int]:
-        """训练负荷事件 -> {日期: 负荷}。"""
-        load: dict[date, int] = {}
-        items = ((raw or {}).get("data") or {}).get("items") or []
-        # WatchSportStatistics: items[{day, load}]；events: items[{ts, value}]
-        for it in items:
-            day = ZeppParser._ts_date(it.get("day") or it.get("ts"))
-            val = it.get("load" if "load" in it else "value")
-            if day and isinstance(val, (int, float)):
-                load[day] = int(val)
-        return load
-
     # ================= 旧 mock 直出格式（保留） =================
 
     def parse_sleep(self, raw: dict) -> SleepRecord | None:

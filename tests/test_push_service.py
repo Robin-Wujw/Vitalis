@@ -884,3 +884,15 @@ def test_pushplus_refuses_content_above_provider_limit_without_request(monkeypat
     assert result["_pushplus_handler"] == "error: delivery failed"
     assert result["_pushplus_result"]["status"] == "failed"
     assert result["_pushplus_result"]["retryable"] is False
+
+
+def test_pushplus_sends_the_html_page_by_default(monkeypatch):
+    requests = []
+    monkeypatch.setattr("vitalis.adapters.notifications.httpx.Client", _accepting_pushplus_client(requests))
+
+    result = PushService(pushplus_token="private-token").push_morning_briefing("user", large_briefing(3))
+
+    assert result["_pushplus_handler"] == "accepted"
+    sent = requests[0][1]["json"]
+    assert sent["template"] == "html"
+    assert sent["content"].startswith("<div") and "关键记录" in sent["content"]

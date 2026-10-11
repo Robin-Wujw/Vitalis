@@ -1,8 +1,7 @@
 """Pure finite report deadlines, partial fallback, and DST elapsed time."""
 
 from copy import deepcopy
-from datetime import UTC, date, datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import UTC, date, datetime
 
 import pytest
 

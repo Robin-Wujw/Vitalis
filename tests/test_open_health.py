@@ -1,14 +1,11 @@
-from datetime import date, timedelta
+from datetime import date
 from math import isclose
 
 from vitalis.intelligence.contracts import (
-    ConfidenceBand,
     OpenHealthBundle,
-    OpenHealthInsights,
     OpenHealthStatus,
     ReadinessInsight,
     SleepInsight,
-    UserProfile,
 )
 from vitalis.intelligence.open_health.projection import coverage_summary
 from vitalis.intelligence.open_health import (

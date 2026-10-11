@@ -332,13 +332,3 @@ def _prepare_scheduled_delivery(
         "sync_degraded": sync_degraded, "sync_status": sync_status,
         "retrospective": False, "test_delivery": test_delivery,
     }
-
-
-# Private spellings preserve the names used by the original policy tests while
-# keeping the public functions descriptive for new callers.
-_retrospective_age = retrospective_age
-_sleep_is_complete = sleep_is_complete
-_training_history = training_history
-_morning_facts_only_reason = morning_facts_only_reason
-_stored_profile_is_usable = stored_profile_is_usable
-_has_same_day_facts = has_same_day_facts

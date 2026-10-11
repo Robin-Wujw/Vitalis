@@ -109,36 +109,6 @@ class SyncControl:
         # reserve enough wall time for the larger root manifest to drain fairly.
         return max(90, min(90 + days * 15, 20 * 60))
 
-    @classmethod
-    def budget_for_root_chunks(cls, root_chunks: int) -> int:
-        """Return a monotonic budget when the planner grows its root set."""
-        return cls.budget_for_days(max(1, int(root_chunks)))
-
-    budget_for_window = budget_for_days
-
-    @classmethod
-    def for_window(
-        cls,
-        window: FetchWindow,
-        *,
-        deadline_at: datetime | None = None,
-        cancel_check: Callable[[], bool] | None = None,
-        wall_clock: Callable[[], datetime] | None = None,
-        monotonic_clock: Callable[[], float] | None = None,
-        slice_seconds: float = 30.0,
-    ) -> "SyncControl":
-        days = max(1, (date.fromisoformat(window.end_day()) - date.fromisoformat(window.start_day())).days + 1)
-        wall = wall_clock or (lambda: datetime.now(timezone.utc))
-        if deadline_at is None:
-            deadline_at = wall() + timedelta(seconds=cls.budget_for_days(days))
-        return cls(
-            deadline_at=deadline_at,
-            cancel_check=cancel_check,
-            wall_clock=wall,
-            monotonic_clock=monotonic_clock or time.monotonic,
-            slice_seconds=slice_seconds,
-        )
-
     def remaining_wall_seconds(self) -> float | None:
         if self.deadline_at is None:
             return None
@@ -173,9 +143,8 @@ class SyncControl:
             timeout = min(timeout, remaining)
         return timeout
 
-    # Friendly aliases used by callers/tests.
+    # Friendly alias used by callers/tests.
     remaining_seconds = remaining_wall_seconds
-    assert_available = check
 
 
 @dataclass
@@ -586,21 +555,6 @@ class ZeppSyncCoordinator:
             return enqueue(repository)
         with self._session() as db:
             return enqueue(HealthRepository(db))
-
-    def _attempt_snapshot(self, attempt_id: str) -> dict[str, Any] | None:
-        with self._session() as db:
-            row = HealthRepository(db).sync_attempt(attempt_id)
-            if row is None:
-                return None
-            return {
-                "id": row.id, "user_id": row.user_id, "status": row.status,
-                "trigger": row.trigger, "created_at": row.created_at,
-                "window_start": row.window_start, "window_end": row.window_end,
-                "timezone": row.timezone or "UTC",
-                "deadline_at": row.deadline_at, "options": dict(row.options or {}),
-                "cancel_requested_at": row.cancel_requested_at,
-                "lease_token": row.lease_token, "lease_epoch": row.lease_epoch,
-            }
 
     def _cancel_requested(self, attempt_id: str) -> bool:
         with self._session() as db:
@@ -1818,12 +1772,9 @@ class ZeppSyncCoordinator:
         success = state["attempt"]["status"] == "succeeded"
         return SyncReport(success, streams=streams, records_written=sum(item.records_written for item in streams), message=state["attempt"].get("error"), progress=state["progress"])
 
-    get_status = status
     get_report = report
     cancel = request_cancel
-    recover_due_attempts = recover_due
     trigger = create_attempt
-    kick = run_attempt
 
 
 class ZeppSyncJobAdapter:

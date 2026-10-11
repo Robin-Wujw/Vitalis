@@ -261,6 +261,3 @@ def _workout_read(row: orm.Workout) -> HealthWorkoutRead:
         detail=deepcopy(row.detail) if isinstance(row.detail, dict) else None,
         detail_synced=bool(row.detail_synced),
     )
-
-
-HealthReaderAdapter = SqlHealthReader

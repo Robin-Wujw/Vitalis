@@ -27,8 +27,6 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from .sport_types import ZEPP_SPORT_MODES
-
 try:
     import truststore
 except ImportError:
@@ -107,9 +105,6 @@ def validate_region_host(host: str) -> str:
             kind="invalid_request",
         )
     return normalized
-
-# Full public Zepp OS workout code -> canonical mode name.
-SPORT_TYPE_MAP = {code: mode.code for code, mode in ZEPP_SPORT_MODES.items()}
 
 # Earlier plans queried these paths independently. The account-wide feed
 # actually lives under /run/history.json; the other paths normally return 404.
@@ -714,9 +709,6 @@ class MockZeppClient:
 
     def verify(self) -> dict:
         return {"data": {"devices": [{"name": "Mock Amazfit"}]}}
-
-    def get_user_info(self, token) -> dict:
-        return {"user_id": "mock-user-001", "nickname": "Mock User"}
 
     # ---- 同构模拟数据 ----
     def fetch_heart_rate(self, start_time: int, end_time: int, limit: int = 1000, hr_type: int = 2) -> dict:

@@ -1,19 +1,17 @@
 """Source sample identity keeps concurrent measurements without shifting time."""
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from vitalis.domain import DenseDataFile, MetricSample, Workout, WorkoutMetricSample
+from vitalis.domain import MetricSample
 from vitalis.adapters.persistence import HealthRepository
 from vitalis.adapters.persistence.database import init_db
 from vitalis.adapters.persistence.models import (
-    DenseDataFile as StoredDenseDataFile,
     MetricSample as StoredMetricSample,
-    WorkoutMetricSample as StoredWorkoutMetricSample,
 )
 
 

@@ -13,7 +13,6 @@ from vitalis.domain import (
     MetricSample,
     NormalizedDaily,
     SleepRecord,
-    User,
 )
 from vitalis.adapters.persistence import HealthRepository, session_scope
 

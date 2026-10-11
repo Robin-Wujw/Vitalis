@@ -51,7 +51,7 @@ Get-Content .\daily.md
 
 - 第一次运行和 API 读取：[快速开始](docs/quickstart.md)
 - 报告周期、PushPlus 与 Hermes：[报告与渠道](docs/reports.md)
-- 产品、数据和报告整改：[预发布整改计划](docs/plan.md)
+- 接下来要做的改动：[改动计划](docs/plan/README.md)
 - 模块职责与数据流：[当前架构](docs/architecture.md)
 - 字段、单位、缺失和时间资格：[数据合同](docs/data-contracts.md)
 - Zepp 连接与协议边界：[Zepp](docs/zepp.md)

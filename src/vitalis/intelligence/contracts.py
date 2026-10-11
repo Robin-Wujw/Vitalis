@@ -2477,16 +2477,6 @@ class OpenHealthSummary(BaseModel):
     missing_inputs: list[str] = Field(default_factory=list, max_length=8)
 
 
-# Stable aliases for callers that use the generic envelope terminology.
-OpenHealthInsight = OpenHealthInsights
-OpenHealthEnvelope = OpenHealthInsights
-InsightStatus = OpenHealthStatus
-OpenHealthInsightStatus = OpenHealthStatus
-OpenHealthReadiness = ReadinessInsight
-OpenHealthAnomaly = AnomalyInsight
-OpenHealthSleep = SleepInsight
-
-
 # Resolve forward references used by the versioned report/context contracts.
 DailyProfile.model_rebuild()
 WeeklyProfile.model_rebuild()

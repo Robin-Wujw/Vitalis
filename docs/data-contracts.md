@@ -25,6 +25,10 @@
 
 时间戳通常以 UTC 保存，报告按配置时区（默认 `Asia/Shanghai`）解释本地日。日内区间使用明确截止时刻；跨日睡眠按解析后的本地报告日期归属。`period_start`/`period_end` 是包含端点的本地日期范围，`generated_at` 是生成时刻，`as_of` 表示数据看到的时刻。
 
+## 信号与基线
+
+信号注册表 `src/vitalis/intelligence/signals.py` 为每个规范指标登记源字段、单位、日期语义（`sleep_day`、`activity_day`、`calendar_day`）、资格、覆盖规则、可见渠道（晨报、晚报、Hermes、API）、是否进入决策（`yes`、`no`、`shadow`）以及缺失或迟到时的处理；新信号先登记再进入分析。逐信号状态为 `AVAILABLE`、`PARTIAL`、`STALE`、`UNKNOWN`、`INSUFFICIENT`，整份报告的 `data_quality` 不能代替逐信号状态。个人基线取窗口内每日值的中位数和 MAD，窗口长度随比较记录在 `baseline_window_days`。
+
 ## 缺失、零和不可比
 
 - 缺失字段保持 `null`、空列表或明确不可用状态；绝不补零、拿旧快照填充或把未知训练日改成休息日。
@@ -39,7 +43,9 @@
 
 Daily、Morning、Weekly、Monthly 和 briefing 投影共享同一分析快照，但展示顺序不同。日历周为周一至周日的完整周，日历月为完整本地月份；滚动窗口必须标记 `period_mode=rolling`。月报的日均、有效日数和频率要使用正确分母，不以不同月长的原始总量直接判断改善。
 
-比较应就地标明窗口、基线、单位、有效日数和来源。`association` 只表示个人统计关联，不表示因果；厂商睡眠分数、readiness、Charge 等按来源标签描述，不替代 Vitalis 的决策状态。`open_health_insights` 是描述性 `shadow_only` 输出，不改变 `decision`。
+比较应就地标明窗口、基线、单位、有效日数和来源。`association` 只表示个人统计关联，不表示因果；厂商睡眠分数、readiness、Charge 等按来源标签描述，不替代 Vitalis 的决策状态。`open_health_insights` 是描述性 `shadow_only` 输出，不改变 `decision`；周报/月报的 `open_health_period_summary` 只是目标日加周期覆盖的影子信号，不是周期健康结论。
+
+训练反应按 T+0 到 T+3 窗口记录每个指标：`not_due`（窗口未到）、`missing`、`partial`、`available` 或 `confounded`（被后续训练或活动混杂），持续恢复另有 `sustained`、`not_sustained` 等状态。个人关联只检验预先登记的假设，在 60 和 90 天窗口上计算，记录日期语义、样本数、覆盖和混杂比例，经 Benjamini–Hochberg 校正后 q ≤ 0.05 才算显著。两者只出现在周报、月报和 API。
 
 力量训练记录保留动作名称、来源、单位、真实组次和每组次数。`12 / 10 / 8` 不得改写为 `3 × 10`；设备识别与用户确认分别标记，没有冲突的有效设备记录可直接展示，但不能声称用户已确认。未知动作不能推断为某个动作，未知重量不能计算容量。
 

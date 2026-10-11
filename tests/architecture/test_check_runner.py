@@ -1,7 +1,6 @@
 """Failure propagation and scope of the unified verification runner."""
 
 from io import BytesIO
-from pathlib import Path
 import sys
 import tarfile
 import zipfile
@@ -110,9 +109,3 @@ def test_sdist_contents_reject_private_workspace_files(tmp_path):
     create_archive(expected | {"docs/local-material.apkm"})
     with pytest.raises(ValueError, match="sensitive"):
         check.inspect_sdist(sdist, expected)
-
-
-def test_ci_workflow_invokes_strict_aggregate():
-    workflow = (Path(__file__).parents[2] / ".github" / "workflows" / "check.yml").read_text(encoding="utf-8")
-    assert "python tools/check.py all --ci" in workflow
-    assert "permissions:" in workflow

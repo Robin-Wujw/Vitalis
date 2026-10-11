@@ -10,7 +10,6 @@ from vitalis.intelligence.contracts import (
     SubjectiveFeedbackInput,
     UserProfilePatch,
 )
-from vitalis.application.intelligence_service import IntelligenceAction, IntelligenceCommand, IntelligenceQuery
 from vitalis.bootstrap import get_intelligence_action, get_intelligence_command, get_intelligence_query
 from vitalis.domain import Workout, WorkoutType
 from vitalis.adapters.persistence import HealthRepository, session_scope

@@ -96,7 +96,11 @@ class MorningBriefingEngine:
                 section["display"] = True
         observations = [fact for section in sections for fact in section["facts"]]
         report_context = self._facts_only_context(payload.get("report_context"), metadata)
-        history_notice = "部分运动记录来源还未查全；已记录的训练照常展示，今天暂不生成训练安排。"
+        history_notice = (
+            "昨夜睡眠还没同步；以下仅展示已记录事实，今天暂不生成训练安排。"
+            if metadata.get("coverage_reason") == "sleep_incomplete"
+            else "部分运动记录来源还未查全；已记录的训练照常展示，今天暂不生成训练安排。"
+        )
         cautions = []
         if metadata.get("sync_degraded"):
             cautions.append("本次同步未完整完成，仅使用已保存的数据。")

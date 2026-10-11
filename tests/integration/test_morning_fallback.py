@@ -1,0 +1,396 @@
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, date, datetime
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from vitalis.adapters import daily_push
+from vitalis.adapters.persistence import init_db
+from vitalis.adapters.persistence import database
+from vitalis.adapters.persistence.models import (
+    AnalysisRun,
+    AnalysisSnapshot,
+    NotificationDelivery,
+    SyncAttempt,
+    User,
+)
+from vitalis.adapters.persistence.repositories import _current_analysis_config_digest
+from vitalis.bootstrap import get_intelligence_query
+from vitalis.config import settings
+from vitalis.intelligence import contracts
+from vitalis.scheduler import jobs
+
+
+DAY = date(2026, 8, 29)
+RUN_ID = "morning-fallback-run"
+
+
+@pytest.fixture
+def isolated_database(tmp_path, monkeypatch):
+    engine = create_engine(
+        f"sqlite:///{(tmp_path / 'morning-fallback.db').as_posix()}",
+        connect_args={"check_same_thread": False},
+    )
+    init_db(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+    monkeypatch.setattr(database, "SessionLocal", factory)
+    monkeypatch.setattr(settings, "push_user", "owner")
+    monkeypatch.setattr(settings, "pushplus_token", "offline-token")
+    monkeypatch.setattr("vitalis.time.local_today", lambda: DAY)
+    yield factory
+    engine.dispose()
+
+
+def _payload(*, sleep_complete: bool, same_day_facts: bool) -> dict:
+    sleep = {
+        "status": "AVAILABLE" if sleep_complete else "PARTIAL",
+        "duration_minutes": 420 if same_day_facts else None,
+        "wake_time": "08:00:00" if sleep_complete else None,
+    }
+    features = {"sleep": sleep}
+    if same_day_facts:
+        features["activity"] = {
+            "status": "AVAILABLE",
+            "steps": {"value": 3200, "unit": "steps"},
+        }
+    return {
+        "analysis_run_id": RUN_ID,
+        "user_id": "owner",
+        "date": DAY.isoformat(),
+        "data_quality": {"status": "PARTIAL"},
+        "report_context": {
+            "timezone": "Asia/Shanghai",
+            "as_of": "2026-08-29T01:40:00Z",
+            "training_history": {
+                "status": "COMPLETE",
+                "prior_7d_verified": True,
+            },
+        },
+        "features": features,
+        "decision": {"action": "TRAIN_NORMAL", "action_plan": {"title": "计划"}},
+    }
+
+
+def _seed(factory, payload: dict, error: str) -> None:
+    with factory.begin() as db:
+        db.add(User(id="owner"))
+        db.add(AnalysisRun(
+            id=RUN_ID,
+            user_id="owner",
+            target_date=DAY,
+            status="SUCCEEDED",
+            started_at=datetime(2026, 8, 29, 1, 30),
+            completed_at=datetime(2026, 8, 29, 1, 40),
+            intelligence_version=contracts.INTELLIGENCE_VERSION,
+            decision_policy_version=contracts.DECISION_POLICY_VERSION,
+            evidence_version=contracts.EVIDENCE_VERSION,
+            config_digest=_current_analysis_config_digest(),
+        ))
+        db.flush()
+        db.add(AnalysisSnapshot(
+            id="morning-fallback-snapshot",
+            analysis_run_id=RUN_ID,
+            user_id="owner",
+            profile_type="daily",
+            period_start=DAY,
+            period_end=DAY,
+            schema_version=contracts.DAILY_SCHEMA_VERSION,
+            intelligence_version=contracts.INTELLIGENCE_VERSION,
+            decision_policy_version=contracts.DECISION_POLICY_VERSION,
+            evidence_version=contracts.EVIDENCE_VERSION,
+            payload=payload,
+        ))
+        db.add(NotificationDelivery(
+            id="morning-fallback-delivery",
+            user_id="owner",
+            analysis_run_id=RUN_ID,
+            period="morning",
+            target_date=DAY,
+            status="deferred",
+            last_error=error,
+        ))
+
+
+def _delivery(factory) -> NotificationDelivery:
+    with factory() as db:
+        return db.query(NotificationDelivery).one()
+
+
+def test_morning_sleep_retry_is_queued_once(isolated_database, monkeypatch):
+    _seed(
+        isolated_database,
+        _payload(sleep_complete=False, same_day_facts=True),
+        "sleep_incomplete",
+    )
+    monkeypatch.setattr(
+        jobs,
+        "_utc_now",
+        lambda: datetime(2026, 8, 29, 1, 45, tzinfo=UTC),
+    )
+
+    assert jobs.reconcile_deferred_daily_reports() == 1
+    with isolated_database() as db:
+        attempts = db.query(SyncAttempt).all()
+        assert len(attempts) == 1
+        assert attempts[0].trigger == "morning"
+        assert attempts[0].trigger_ref == "morning-sleep-retry:2026-08-29"
+    assert jobs.reconcile_deferred_daily_reports() == 0
+    with isolated_database() as db:
+        assert db.query(SyncAttempt).count() == 1
+    assert _delivery(isolated_database).last_error == "morning_sleep_retry_queued"
+
+
+@pytest.mark.parametrize("terminal_status", ["succeeded", "partial", "failed"])
+def test_retry_history_prevents_repeat_when_delivery_returns_to_sleep_wait(
+    isolated_database, monkeypatch, terminal_status,
+):
+    _seed(
+        isolated_database,
+        _payload(sleep_complete=False, same_day_facts=True),
+        "sleep_incomplete",
+    )
+    monkeypatch.setattr(
+        jobs, "_utc_now",
+        lambda: datetime(2026, 8, 29, 1, 45, tzinfo=UTC),
+    )
+    assert jobs.reconcile_deferred_daily_reports() == 1
+    with isolated_database.begin() as db:
+        db.query(SyncAttempt).one().status = terminal_status
+        db.query(NotificationDelivery).one().last_error = "sleep_incomplete"
+
+    assert jobs.reconcile_deferred_daily_reports() == 1
+    with isolated_database() as db:
+        assert db.query(SyncAttempt).count() == 1
+
+
+def test_failed_enqueue_rolls_back_partial_sync_attempt(
+    isolated_database, monkeypatch,
+):
+    _seed(
+        isolated_database,
+        _payload(sleep_complete=False, same_day_facts=True),
+        "sleep_incomplete",
+    )
+    monkeypatch.setattr(
+        jobs, "_utc_now",
+        lambda: datetime(2026, 8, 29, 1, 45, tzinfo=UTC),
+    )
+    original = jobs._sync_user
+
+    def fail_after_insert(*args, **kwargs):
+        original(*args, **kwargs)
+        raise RuntimeError("synthetic failure after insert")
+
+    monkeypatch.setattr(jobs, "_sync_user", fail_after_insert)
+    assert jobs.reconcile_deferred_daily_reports() == 0
+    with isolated_database() as db:
+        assert db.query(SyncAttempt).count() == 0
+    assert _delivery(isolated_database).last_error == "morning_sleep_retry_failed"
+
+
+def test_concurrent_reconcile_queues_one_retry(isolated_database, monkeypatch):
+    _seed(
+        isolated_database,
+        _payload(sleep_complete=False, same_day_facts=True),
+        "sleep_incomplete",
+    )
+    monkeypatch.setattr(
+        jobs, "_utc_now",
+        lambda: datetime(2026, 8, 29, 1, 45, tzinfo=UTC),
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: jobs.reconcile_deferred_daily_reports(), range(2)))
+    assert sum(results) == 1
+    with isolated_database() as db:
+        assert db.query(SyncAttempt).count() == 1
+
+
+def test_queued_retry_without_snapshot_does_not_create_recovery_analysis(
+    isolated_database, monkeypatch,
+):
+    _seed(
+        isolated_database,
+        _payload(sleep_complete=False, same_day_facts=True),
+        "morning_sleep_retry_queued",
+    )
+    with isolated_database.begin() as db:
+        db.query(AnalysisSnapshot).delete()
+    monkeypatch.setattr(
+        jobs,
+        "_utc_now",
+        lambda: datetime(2026, 8, 29, 1, 45, tzinfo=UTC),
+    )
+
+    assert jobs.reconcile_deferred_daily_reports() == 0
+    with isolated_database() as db:
+        from vitalis.adapters.persistence.models import AnalysisJob
+        assert db.query(AnalysisJob).count() == 0
+
+
+def test_failed_morning_sleep_retry_is_not_repeated(
+    isolated_database, monkeypatch,
+):
+    _seed(
+        isolated_database,
+        _payload(sleep_complete=False, same_day_facts=True),
+        "sleep_incomplete",
+    )
+    monkeypatch.setattr(
+        jobs,
+        "_utc_now",
+        lambda: datetime(2026, 8, 29, 1, 45, tzinfo=UTC),
+    )
+
+    def fail_retry(*args, **kwargs):
+        raise RuntimeError("synthetic retry failure")
+
+    monkeypatch.setattr(jobs, "_sync_user", fail_retry)
+    assert jobs.reconcile_deferred_daily_reports() == 0
+    assert _delivery(isolated_database).last_error == "morning_sleep_retry_failed"
+    assert jobs.reconcile_deferred_daily_reports() == 0
+    assert _delivery(isolated_database).last_error == "morning_sleep_retry_failed"
+
+
+def test_sleep_arrival_rearms_and_sends_full_morning_report(
+    isolated_database, monkeypatch,
+):
+    _seed(
+        isolated_database,
+        _payload(sleep_complete=True, same_day_facts=True),
+        "morning_sleep_retry_queued",
+    )
+    monkeypatch.setattr(
+        jobs,
+        "_utc_now",
+        lambda: datetime(2026, 8, 29, 1, 45, tzinfo=UTC),
+    )
+    sent = []
+
+    class OfflinePush:
+        def __init__(self, pushplus_token, **kwargs):
+            assert pushplus_token == "offline-token"
+
+        def push_daily_profile(self, user_id, profile, period):
+            sent.append((user_id, profile, period))
+            return {"_pushplus_handler": "ok"}
+
+    monkeypatch.setattr(daily_push, "PushService", OfflinePush)
+    monkeypatch.setattr(
+        daily_push,
+        "_delivery_now",
+        lambda: datetime(2026, 8, 29, 1, 45, tzinfo=UTC),
+    )
+    monkeypatch.setattr(daily_push, "local_today", lambda: DAY)
+
+    assert jobs.reconcile_deferred_daily_reports() == 1
+    assert _delivery(isolated_database).status == "pending"
+    assert jobs.drain_notification_deliveries() == 1
+    assert len(sent) == 1
+    assert sent[0][2] == "morning"
+    assert sent[0][1]["delivery_metadata"]["facts_only"] is False
+    assert _delivery(isolated_database).status == "accepted"
+
+
+def test_fallback_after_waiting_period_sends_facts_only(
+    isolated_database, monkeypatch,
+):
+    _seed(
+        isolated_database,
+        _payload(sleep_complete=False, same_day_facts=True),
+        "morning_sleep_retry_queued",
+    )
+    monkeypatch.setattr(
+        jobs,
+        "_utc_now",
+        lambda: datetime(2026, 8, 29, 2, 5, tzinfo=UTC),
+    )
+    sent = []
+
+    class OfflinePush:
+        def __init__(self, pushplus_token, **kwargs):
+            pass
+
+        def push_daily_profile(self, user_id, profile, period):
+            sent.append(profile)
+            return {"_pushplus_handler": "ok"}
+
+    monkeypatch.setattr(daily_push, "PushService", OfflinePush)
+    monkeypatch.setattr(
+        daily_push,
+        "_delivery_now",
+        lambda: datetime(2026, 8, 29, 2, 5, tzinfo=UTC),
+    )
+    monkeypatch.setattr(daily_push, "local_today", lambda: DAY)
+
+    assert jobs.reconcile_deferred_daily_reports() == 1
+    assert _delivery(isolated_database).status == "pending"
+    assert jobs.drain_notification_deliveries() == 1
+    assert sent[0]["delivery_metadata"]["facts_only"] is True
+    assert sent[0]["delivery_metadata"]["coverage_reason"] == "sleep_incomplete"
+    assert _delivery(isolated_database).status == "accepted"
+
+
+def test_fallback_without_same_day_facts_keeps_a_missed_record(
+    isolated_database, monkeypatch,
+):
+    _seed(
+        isolated_database,
+        _payload(sleep_complete=False, same_day_facts=False),
+        "morning_sleep_retry_queued",
+    )
+    monkeypatch.setattr(
+        jobs,
+        "_utc_now",
+        lambda: datetime(2026, 8, 29, 2, 5, tzinfo=UTC),
+    )
+    monkeypatch.setattr(
+        daily_push,
+        "PushService",
+        lambda **_: pytest.fail("no-facts fallback must not send"),
+    )
+
+    assert jobs.reconcile_deferred_daily_reports() == 1
+    row = _delivery(isolated_database)
+    assert row.status == "deferred"
+    assert row.last_error == "morning_fallback_no_facts"
+    assert jobs.drain_notification_deliveries() == 0
+
+
+def test_delivery_query_exposes_only_whitelisted_failure_code(
+    isolated_database,
+):
+    _seed(
+        isolated_database,
+        _payload(sleep_complete=False, same_day_facts=False),
+        "morning_fallback_no_facts",
+    )
+
+    delivery = get_intelligence_query().deliveries("owner")[0]
+    assert delivery["failure_code"] == "morning_fallback_no_facts"
+
+    with isolated_database.begin() as db:
+        db.query(NotificationDelivery).one().last_error = "private-detail"
+    delivery = get_intelligence_query().deliveries("owner")[0]
+    assert delivery["failure_code"] is None
+
+
+def test_morning_deadline_closes_a_deferred_record(
+    isolated_database, monkeypatch,
+):
+    _seed(
+        isolated_database,
+        _payload(sleep_complete=False, same_day_facts=True),
+        "morning_sleep_retry_queued",
+    )
+    monkeypatch.setattr(
+        jobs,
+        "_utc_now",
+        lambda: datetime(2026, 8, 29, 4, 35, tzinfo=UTC),
+    )
+
+    assert jobs.reconcile_deferred_daily_reports() == 1
+    row = _delivery(isolated_database)
+    assert row.status == "deferred"
+    assert row.last_error == "stale_plan_expired"
+    assert jobs.drain_notification_deliveries() == 0

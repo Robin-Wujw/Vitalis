@@ -73,6 +73,24 @@ class AnalysisInputChangedError(RuntimeError):
     """The analysis snapshot became stale before its outputs could publish."""
 
 
+_DELIVERY_FAILURE_CODES = frozenset({
+    "lease_expired_uncertain",
+    "snapshot_unavailable",
+    "delivery_disabled",
+    "stale_report_date",
+    "stale_plan_expired",
+    "sleep_incomplete",
+    "stored_data_incomplete",
+    "morning_sleep_retry_queued",
+    "morning_sleep_retry_failed",
+    "morning_fallback_no_facts",
+    "unusable_sync_state",
+    "transport_ambiguous",
+    "transport_rejected",
+    "render_failed",
+})
+
+
 def _feedback_request_hash(feedback_input: SubjectiveFeedbackInput) -> str:
     """Hash the validated request body using the current idempotency contract."""
     payload = json.dumps(
@@ -332,7 +350,13 @@ class IntelligenceCommand:
                         input_revision=run.input_revision_used,
                     )
                 row = repo.complete_analysis_run(run.id, AnalysisRunStatus.SUCCEEDED.value)
-                repo.rearm_unavailable_notification_deliveries(user_id, run.id, target)
+                for delivery_period in ("morning", "evening"):
+                    repo.rearm_unavailable_notification_deliveries(
+                        user_id,
+                        run.id,
+                        target,
+                        period=delivery_period,
+                    )
                 repo.refresh_existing_calendar_notification_deliveries(
                     user_id, run.id, target
                 )
@@ -755,28 +779,32 @@ class IntelligenceQuery:
         """Return user-scoped delivery state without lease or provider errors."""
         with self._uow_factory() as uow:
             rows = uow.repository.notification_deliveries(user_id, limit=limit)
-        return [
-            {
-                "delivery_id": row.id,
-                "analysis_run_id": row.analysis_run_id,
-                "target_date": row.target_date,
-                "period": row.period,
-                "status": row.status,
-                "provider_id": row.provider_id,
-                "provider_status": row.provider_status,
-                "template": row.template,
-                "renderer_version": row.renderer_version,
-                "content_sha256": row.content_sha256,
-                "attempt_count": row.attempt_count,
-                "send_attempt_count": row.send_attempt_count,
-                "poll_attempt_count": row.poll_attempt_count,
-                "next_attempt_at": row.next_attempt_at,
-                "next_poll_at": row.next_poll_at,
-                "created_at": row.created_at,
-                "updated_at": row.updated_at,
-            }
-            for row in rows
-        ]
+            return [
+                {
+                    "delivery_id": row.id,
+                    "analysis_run_id": row.analysis_run_id,
+                    "target_date": row.target_date,
+                    "period": row.period,
+                    "status": row.status,
+                    "failure_code": (
+                        row.last_error
+                        if row.last_error in _DELIVERY_FAILURE_CODES else None
+                    ),
+                    "provider_id": row.provider_id,
+                    "provider_status": row.provider_status,
+                    "template": row.template,
+                    "renderer_version": row.renderer_version,
+                    "content_sha256": row.content_sha256,
+                    "attempt_count": row.attempt_count,
+                    "send_attempt_count": row.send_attempt_count,
+                    "poll_attempt_count": row.poll_attempt_count,
+                    "next_attempt_at": row.next_attempt_at,
+                    "next_poll_at": row.next_poll_at,
+                    "created_at": row.created_at,
+                    "updated_at": row.updated_at,
+                }
+                for row in rows
+            ]
 
 
 class IntelligenceAction:

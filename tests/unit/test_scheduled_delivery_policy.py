@@ -99,6 +99,37 @@ def test_evening_delay_uses_six_real_hours_across_dst(target, deadline):
     ).total_seconds() == 21600
 
 
+def test_prior_workouts_are_not_same_day_facts():
+    payload = profile()
+    payload["features"] = {
+        "sleep": {"status": "INSUFFICIENT_DATA"},
+        "training": {
+            "recent_workouts": [{"date": "2026-10-08", "duration_minutes": 45}],
+            "status": "AVAILABLE",
+        },
+    }
+    assert delivery_policy.has_same_day_facts(payload) is False
+    assert prepare(payload, period="morning", now=datetime(2026, 10, 9, 10, tzinfo=UTC))["status"] == "deferred"
+
+
+@pytest.mark.parametrize("steps", [0, 123])
+def test_observed_zero_and_current_values_are_same_day_facts(steps):
+    payload = profile()
+    payload["features"] = {
+        "activity": {"status": "AVAILABLE", "steps": {"value": steps}},
+    }
+    assert delivery_policy.has_same_day_facts(payload) is True
+
+
+def test_empty_available_activity_is_not_a_fact():
+    payload = profile()
+    payload["features"] = {
+        "sleep": {"status": "INSUFFICIENT_DATA"},
+        "activity": {"status": "AVAILABLE", "steps": None},
+    }
+    assert delivery_policy.has_same_day_facts(payload) is False
+
+
 def test_explicit_plan_expiry_cannot_extend_scheduled_deadline():
     result = prepare(profile(), now=datetime(2026, 10, 10, 5, tzinfo=UTC),
                      plan_expires_at=datetime(2100, 1, 1, tzinfo=UTC))

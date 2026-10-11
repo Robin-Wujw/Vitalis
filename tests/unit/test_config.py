@@ -18,6 +18,7 @@ def test_load_settings_is_explicit_and_does_not_change_process_environment(monke
         ("PORT", "nope"),
         ("PORT", "65536"),
         ("SYNC_CRON_HOUR", "24"),
+        ("SYNC_DISPATCHER_INTERVAL_SECONDS", "901"),
         ("VITALIS_WEEKLY_REPORT_ENABLED", "perhaps"),
         ("VITALIS_WEEKLY_REPORT_HOUR", "24"),
         ("VITALIS_WEEKLY_REPORT_MINUTE", "60"),

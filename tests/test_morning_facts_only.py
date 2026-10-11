@@ -58,6 +58,18 @@ def test_facts_only_projection_is_a_strict_sleep_body_whitelist():
     assert briefing["cautions"] == []
 
 
+def test_sleep_fallback_facts_only_uses_a_sleep_specific_notice():
+    report = MorningBriefingEngine().build_payload(
+        _daily(),
+        {"facts_only": True, "coverage_reason": "sleep_incomplete"},
+    )
+
+    assert report["summary"] == [
+        "昨夜睡眠还没同步；以下仅展示已记录事实，今天暂不生成训练安排。"
+    ]
+    assert "action_plan" not in report
+
+
 def test_facts_only_push_renders_sleep_body_and_no_training_sections():
     received = []
     service = PushService(pushplus_token="")

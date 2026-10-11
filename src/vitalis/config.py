@@ -152,7 +152,7 @@ def load_settings(environ: Mapping[str, str]) -> Settings:
         sync_cron_hour=integer("SYNC_CRON_HOUR", 2, 0, 23),
         sync_cron_minute=integer("SYNC_CRON_MINUTE", 0, 0, 59),
         sync_dispatcher_interval_seconds=integer(
-            "SYNC_DISPATCHER_INTERVAL_SECONDS", 60, 1, 86400
+            "SYNC_DISPATCHER_INTERVAL_SECONDS", 60, 1, 900
         ),
         sync_dispatcher_batch_chunks=integer("SYNC_DISPATCHER_BATCH_CHUNKS", 16, 1, 1024),
         sync_lease_seconds=integer("SYNC_LEASE_SECONDS", 120, 1, 86400),

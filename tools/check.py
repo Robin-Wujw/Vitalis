@@ -1,6 +1,6 @@
 """Offline-oriented verification commands for the current Vitalis checkout.
 
-Dependencies are provisioned explicitly by the caller or CI, never by this runner.
+Dependencies are provisioned explicitly by the caller, never by this runner.
 """
 
 from __future__ import annotations

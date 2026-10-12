@@ -4,7 +4,7 @@
 
 ## 为什么
 
-报告页眉会按 `report_state` 显示“数据已更新，显示上一版结果”这类系统状态（`src/vitalis/intelligence/report_rendering.py`），用户读不懂，也不知道该做什么。
+报告页眉会按 `report_state` 显示“数据已更新，显示上一版结果”这类系统状态（`src/vitalis/intelligence/report_rendering.py`），用户读不懂，也不知道该做什么。10/12 的真实晨报和晚报页眉都标着“部分报告”，只因为当天还没结束，看起来像出了故障。
 
 ## 改什么
 

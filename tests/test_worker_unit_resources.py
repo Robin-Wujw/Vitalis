@@ -6,8 +6,8 @@ def test_worker_unit_caps_memory_and_swap():
     unit = Path(__file__).resolve().parents[1] / "deploy" / "systemd" / "vitalis-worker.service"
     config = ConfigParser(interpolation=None)
     assert config.read(unit, encoding="utf-8")
-    assert config.get("Service", "MemoryHigh") == "250M"
-    assert config.get("Service", "MemoryMax") == "320M"
+    assert config.get("Service", "MemoryHigh") == "500M"
+    assert config.get("Service", "MemoryMax") == "640M"
     assert config.get("Service", "MemorySwapMax") == "128M"
     # The 30 s heartbeat must fit many times into the watchdog window.
     assert config.get("Service", "WatchdogSec") == "600"

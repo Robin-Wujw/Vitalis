@@ -18,8 +18,10 @@ RestartSec=5
 # aborted (Python stacks go to the journal) and restarted.
 WatchdogSec=600
 LimitCORE=0
-MemoryHigh=250M
-MemoryMax=320M
+# One analysis peaked at 362 MB RSS (2026-10-12); above MemoryHigh the kernel
+# throttles the whole worker, so keep MemoryHigh well over that peak.
+MemoryHigh=500M
+MemoryMax=640M
 MemorySwapMax=128M
 NoNewPrivileges=true
 PrivateTmp=true

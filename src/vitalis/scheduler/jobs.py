@@ -1,7 +1,7 @@
 """Scheduled durable synchronization and profile jobs."""
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -10,6 +10,18 @@ from apscheduler.triggers.interval import IntervalTrigger
 from vitalis.config import settings
 
 log = logging.getLogger("vitalis.scheduler")
+
+MORNING_SLEEP_RETRY_REASON = "morning_sleep_retry_queued"
+MORNING_SLEEP_RETRY_FAILED_REASON = "morning_sleep_retry_failed"
+MORNING_FALLBACK_NO_FACTS_REASON = "morning_fallback_no_facts"
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _morning_retry_trigger_ref(target: date) -> str:
+    return f"morning-sleep-retry:{target.isoformat()}"
 
 
 def _get_authorized_users() -> set[str]:
@@ -46,18 +58,48 @@ def _get_authorized_users() -> set[str]:
         return set(db.execute(statement).scalars())
 
 
-def _create_attempt(user_id: str, days: int, trigger: str):
+def _create_attempt(
+    user_id: str,
+    days: int,
+    trigger: str,
+    *,
+    trigger_ref: str | None = None,
+    repository=None,
+):
     from vitalis.bootstrap import get_connector
     connector = get_connector("zepp")
     create = getattr(connector, "create_attempt", None)
     if create is None:
         return None
-    return create(user_id, days=days, trigger=trigger, trigger_ref=user_id)
+    kwargs = {
+        "days": days,
+        "trigger": trigger,
+        "trigger_ref": trigger_ref or user_id,
+    }
+    if repository is not None:
+        kwargs["repository"] = repository
+    return create(user_id, **kwargs)
 
 
-def _sync_user(user_id: str, days: int, label: str) -> str | None:
+def _sync_user(
+    user_id: str,
+    days: int,
+    label: str,
+    *,
+    trigger_ref: str | None = None,
+    repository=None,
+) -> str | None:
     """Create a ledger entry only; the dispatcher owns network execution."""
-    attempt = _create_attempt(user_id, days, trigger=label)
+    if trigger_ref is None and repository is None:
+        attempt = _create_attempt(user_id, days, trigger=label)
+    else:
+        attempt = _create_attempt(
+            user_id,
+            days,
+            trigger=label,
+            trigger_ref=trigger_ref,
+            repository=repository,
+        )
     attempt_id = attempt.id if attempt is not None else None
     log.info("%s queued: user=%s attempt=%s", label, user_id, attempt_id)
     return attempt_id
@@ -279,8 +321,65 @@ def drain_notification_polls(*, max_polls: int = 1) -> int:
     return drained
 
 
+def _queue_morning_sleep_retry(user_id: str, target: date) -> bool:
+    """Claim and queue the one extra morning sync inside the sleep wait window."""
+    from sqlalchemy import select
+
+    from vitalis.adapters.persistence import HealthRepository, session_scope
+    from vitalis.adapters.persistence.models import User
+
+    with session_scope() as db:
+        if db.execute(select(User.id).where(
+            User.id == user_id,
+        ).with_for_update()).scalar_one_or_none() is None:
+            return False
+        repo = HealthRepository(db)
+        retry_ref = _morning_retry_trigger_ref(target)
+        existing = repo.sync_attempt_for_trigger_ref(
+            user_id, "zepp", "morning", retry_ref
+        )
+        if not repo.claim_morning_sleep_retry(user_id, target):
+            return False
+        if existing is not None:
+            if existing.status in {"failed", "needs_reauth", "cancelled"}:
+                repo.mark_morning_sleep_retry_failed(user_id, target)
+            return True
+        try:
+            attempt_id = _sync_user(
+                user_id,
+                days=2,
+                label="morning",
+                trigger_ref=retry_ref,
+                repository=repo,
+            )
+            if attempt_id is None:
+                raise RuntimeError(
+                    "morning sleep retry could not create a sync attempt"
+                )
+        except Exception:
+            db.rollback()
+            try:
+                with session_scope() as failure_db:
+                    HealthRepository(failure_db).mark_morning_sleep_retry_failed(
+                        user_id, target
+                    )
+            except Exception:
+                log.exception(
+                    "morning sleep retry failure marker failed: user=%s target=%s",
+                    user_id,
+                    target,
+                )
+            log.exception(
+                "morning sleep retry enqueue failed: user=%s target=%s",
+                user_id,
+                target,
+            )
+            return False
+    return True
+
+
 def reconcile_deferred_daily_reports() -> int:
-    """Recover an existing unsent daily intent once per changed input snapshot."""
+    """Recover deferred daily intents and request one bounded morning retry."""
     import hashlib
 
     from sqlalchemy import select
@@ -288,13 +387,37 @@ def reconcile_deferred_daily_reports() -> int:
     from vitalis.adapters.persistence import HealthRepository, session_scope
     from vitalis.adapters.persistence.models import AnalysisJob, NotificationDelivery, User
     from vitalis.adapters.persistence.repositories import _current_analysis_config_digest
-    from vitalis.application.delivery_policy import stored_profile_is_usable
+    from vitalis.application.delivery_policy import (
+        has_same_day_facts,
+        scheduled_report_window,
+        stored_profile_is_usable,
+    )
     from vitalis.application.jobs import create_analysis_job
     from vitalis.time import local_today
 
     if not settings.push_user or not settings.pushplus_token:
         return 0
     today = local_today()
+    now = _utc_now()
+    window = scheduled_report_window(today, "morning", settings.timezone)
+    scheduled = datetime.fromisoformat(
+        window["scheduled_for"].replace("Z", "+00:00")
+    )
+    fallback = datetime.fromisoformat(
+        window["partial_fallback_after"].replace("Z", "+00:00")
+    )
+    deadline = datetime.fromisoformat(
+        window["deadline_at"].replace("Z", "+00:00")
+    )
+    evening_window = scheduled_report_window(today, "evening", settings.timezone)
+    evening_scheduled = datetime.fromisoformat(
+        evening_window["scheduled_for"].replace("Z", "+00:00")
+    )
+    evening_deadline = datetime.fromisoformat(
+        evening_window["deadline_at"].replace("Z", "+00:00")
+    )
+    retry_requested = False
+    changed = 0
     with session_scope() as db:
         repo = HealthRepository(db)
         owner = db.get(User, settings.push_user)
@@ -306,26 +429,115 @@ def reconcile_deferred_daily_reports() -> int:
             NotificationDelivery.period.in_(("morning", "evening")),
             NotificationDelivery.status == "deferred",
             NotificationDelivery.last_error.in_((
-                "snapshot_unavailable", "sleep_incomplete", "stored_data_incomplete",
+                "snapshot_unavailable",
+                "sleep_incomplete",
+                "stored_data_incomplete",
+                MORNING_SLEEP_RETRY_REASON,
+                MORNING_SLEEP_RETRY_FAILED_REASON,
+                MORNING_FALLBACK_NO_FACTS_REASON,
             )),
         ).order_by(NotificationDelivery.created_at).limit(2)).scalars().all()
         if not rows:
             return 0
+        if now >= deadline:
+            changed += repo.expire_morning_deferred_notification_delivery(
+                owner.id, today, now=now
+            )
+            rows = [row for row in rows if row.period != "morning"]
+            if not rows:
+                return changed
         snapshot = repo.latest_analysis_snapshot(owner.id, "daily", today)
         if snapshot is not None:
-            if any(stored_profile_is_usable(snapshot.payload, today, row.period) for row in rows):
-                return repo.rearm_unavailable_notification_deliveries(
-                    owner.id, snapshot.analysis_run_id, today
+            for row in rows:
+                usable = (
+                    stored_profile_is_usable(snapshot.payload, today, row.period)
+                    and has_same_day_facts(snapshot.payload)
                 )
-            return 0
-        material = f"{owner.id}:{today}:{owner.analysis_input_revision}:{_current_analysis_config_digest()}"
-        key = "daily-recovery:" + hashlib.sha256(material.encode()).hexdigest()
-        if db.execute(select(AnalysisJob.id).where(
-            AnalysisJob.user_id == owner.id,
-            AnalysisJob.idempotency_key == key,
-        )).first() is not None:
-            return 0
-        user_id = owner.id
+                if row.period == "morning":
+                    if usable and row.last_error in {
+                        "sleep_incomplete",
+                        MORNING_SLEEP_RETRY_REASON,
+                        MORNING_SLEEP_RETRY_FAILED_REASON,
+                    }:
+                        changed += repo.rearm_morning_deferred_notification_delivery(
+                            owner.id, snapshot.analysis_run_id, today
+                        )
+                    elif usable and row.last_error != MORNING_FALLBACK_NO_FACTS_REASON:
+                        changed += repo.rearm_unavailable_notification_deliveries(
+                            owner.id,
+                            snapshot.analysis_run_id,
+                            today,
+                            period="morning",
+                        )
+                    elif (
+                        row.last_error == "sleep_incomplete"
+                        and scheduled <= now < fallback
+                    ):
+                        retry_requested = True
+                    elif (
+                        row.last_error in {
+                            "sleep_incomplete",
+                            MORNING_SLEEP_RETRY_REASON,
+                            MORNING_SLEEP_RETRY_FAILED_REASON,
+                        }
+                        and fallback <= now < deadline
+                    ):
+                        if has_same_day_facts(snapshot.payload):
+                            changed += repo.rearm_morning_deferred_notification_delivery(
+                                owner.id, snapshot.analysis_run_id, today
+                            )
+                        else:
+                            changed += int(
+                                repo.mark_morning_fallback_no_facts(owner.id, today)
+                            )
+                elif (
+                    usable
+                    and evening_scheduled <= now < evening_deadline
+                ):
+                    changed += repo.rearm_unavailable_notification_deliveries(
+                        owner.id,
+                        snapshot.analysis_run_id,
+                        today,
+                        period=row.period,
+                    )
+            user_id = owner.id
+        else:
+            retry_requested = any(
+                row.period == "morning"
+                and row.last_error == "sleep_incomplete"
+                and scheduled <= now < fallback
+                for row in rows
+            )
+            user_id = owner.id
+            if not retry_requested:
+                recoverable_rows = [
+                    row for row in rows
+                    if not (
+                        row.period == "morning"
+                        and row.last_error in {
+                            MORNING_SLEEP_RETRY_REASON,
+                            MORNING_SLEEP_RETRY_FAILED_REASON,
+                            MORNING_FALLBACK_NO_FACTS_REASON,
+                        }
+                    )
+                ]
+                if not recoverable_rows:
+                    return changed
+                material = (
+                    f"{owner.id}:{today}:{owner.analysis_input_revision}:"
+                    f"{_current_analysis_config_digest()}"
+                )
+                key = "daily-recovery:" + hashlib.sha256(material.encode()).hexdigest()
+                if db.execute(select(AnalysisJob.id).where(
+                    AnalysisJob.user_id == owner.id,
+                    AnalysisJob.idempotency_key == key,
+                )).first() is not None:
+                    return 0
+    if retry_requested:
+        changed += int(_queue_morning_sleep_retry(user_id, today))
+        return changed
+    if snapshot is not None:
+        return changed
     create_analysis_job(user_id, today, key)
     return 1
 

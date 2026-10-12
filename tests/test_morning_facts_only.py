@@ -58,6 +58,18 @@ def test_facts_only_projection_is_a_strict_sleep_body_whitelist():
     assert briefing["cautions"] == []
 
 
+def test_sleep_fallback_facts_only_uses_a_sleep_specific_notice():
+    report = MorningBriefingEngine().build_payload(
+        _daily(),
+        {"facts_only": True, "coverage_reason": "sleep_incomplete"},
+    )
+
+    assert report["summary"] == [
+        "昨夜睡眠还没同步；以下仅展示已记录事实，今天暂不生成训练安排。"
+    ]
+    assert "action_plan" not in report
+
+
 def test_facts_only_push_renders_sleep_body_and_no_training_sections():
     received = []
     service = PushService(pushplus_token="")
@@ -83,6 +95,29 @@ def test_facts_only_push_renders_sleep_body_and_no_training_sections():
     assert message.extras["summary"] == ["部分运动记录来源还未查全；已记录的训练照常展示，今天暂不生成训练安排。"]
     assert "action_plan" not in repr(message.extras)
     assert "primary_session" not in repr(message.extras)
+
+
+@pytest.mark.parametrize("template", ["html", "markdown"])
+def test_sleep_fallback_push_body_leads_with_the_sleep_notice(template):
+    received = []
+    service = PushService(pushplus_token="", template=template)
+    service.add_handler(received.append)
+    service.push_daily_profile(
+        "synthetic-user",
+        {
+            **_daily(prior_7d_verified=True),
+            "delivery_metadata": {
+                "facts_only": True,
+                "coverage_reason": "sleep_incomplete",
+            },
+        },
+        period="morning",
+    )
+
+    message = received[0]
+    assert "昨夜睡眠还没同步；以下仅展示已记录事实，今天暂不生成训练安排。" in message.body
+    assert "部分运动记录来源还未查全" not in message.body
+    assert "今天的安排" not in message.body
 
 
 def test_unverified_history_test_delivery_isolated_from_scheduled_delivery(monkeypatch, tmp_path):
@@ -307,6 +342,26 @@ def test_facts_only_renders_dated_activity_and_observed_training_without_a_plan(
     assert "距离 0 公里" not in text
     assert marker not in text
     assert "action_plan" not in text
+
+
+@pytest.mark.parametrize("target", ["markdown", "html"])
+def test_facts_only_lists_yesterdays_workout_once(target):
+    daily = _daily()
+    yesterday = (TARGET_DATE - timedelta(days=1)).isoformat()
+    daily["features"]["training"]["recent_workouts"].append({
+        "date": yesterday, "source": "zepp", "workout_id": "fixture-yesterday-walk",
+        "type_label": "步行", "sport_mode_label": "步行", "duration_minutes": 32,
+        "distance_km": 2.4, "calories_kcal": 120, "heart_rate_avg_bpm": 97,
+    })
+
+    report = MorningBriefingEngine().build_payload(
+        daily, {"facts_only": True, "coverage_reason": "sleep_incomplete"}
+    )
+    text = render_report(report, target=target).content
+
+    assert report["training"] == []
+    assert text.count("97 次/分钟") == 1
+    assert "已记录步行" in text
 
 
 def test_facts_only_summarizes_yesterday_observed_sets_without_prescribing():

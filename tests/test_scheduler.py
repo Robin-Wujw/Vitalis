@@ -191,6 +191,11 @@ def test_reconcile_deferred_daily_reports_queues_one_idempotent_reanalysis(
         monkeypatch.setattr(settings, "push_user", "owner")
         monkeypatch.setattr(settings, "pushplus_token", "offline-token")
         monkeypatch.setattr("vitalis.time.local_today", lambda: day)
+        monkeypatch.setattr(
+            jobs,
+            "_utc_now",
+            lambda: datetime(2026, 8, 29, 1, 45, tzinfo=timezone.utc),
+        )
         configure_analysis_jobs(
             repository=SqlAnalysisJobRepository(factory),
             runner=lambda _claim: "unused",
@@ -200,7 +205,8 @@ def test_reconcile_deferred_daily_reports_queues_one_idempotent_reanalysis(
         assert jobs.reconcile_deferred_daily_reports() == 0
         with factory() as db:
             rows = db.query(AnalysisJob).all()
-            assert len(rows) == expected
+            expected_analysis_jobs = 0 if reason == "sleep_incomplete" else expected
+            assert len(rows) == expected_analysis_jobs
             if rows:
                 assert rows[0].target_date == day
                 assert rows[0].delivery_period is None

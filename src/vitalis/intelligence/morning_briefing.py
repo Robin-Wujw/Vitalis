@@ -8,6 +8,7 @@ from typing import Any
 from vitalis.time import local_day
 
 from .contracts import DailyProfile, MorningBriefing
+from .public_reports import HISTORY_PENDING_NOTICE, SLEEP_PENDING_NOTICE
 from .report_presentation import daily_presentation, internal_sections
 from .report_formatting import (
     baseline_text,
@@ -96,7 +97,11 @@ class MorningBriefingEngine:
                 section["display"] = True
         observations = [fact for section in sections for fact in section["facts"]]
         report_context = self._facts_only_context(payload.get("report_context"), metadata)
-        history_notice = "部分运动记录来源还未查全；已记录的训练照常展示，今天暂不生成训练安排。"
+        history_notice = (
+            SLEEP_PENDING_NOTICE
+            if metadata.get("coverage_reason") == "sleep_incomplete"
+            else HISTORY_PENDING_NOTICE
+        )
         cautions = []
         if metadata.get("sync_degraded"):
             cautions.append("本次同步未完整完成，仅使用已保存的数据。")

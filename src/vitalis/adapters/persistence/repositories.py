@@ -2516,6 +2516,23 @@ class HealthRepository:
             return None
         return row
 
+    def sync_attempt_for_trigger_ref(
+        self,
+        user_id: str,
+        source: str,
+        trigger: str,
+        trigger_ref: str,
+    ) -> orm.SyncAttempt | None:
+        """Find a retry attempt across active and terminal ledger states."""
+        return self.db.execute(select(orm.SyncAttempt).where(
+            orm.SyncAttempt.user_id == user_id,
+            orm.SyncAttempt.source == source,
+            orm.SyncAttempt.trigger == trigger,
+            orm.SyncAttempt.trigger_ref == trigger_ref,
+        ).order_by(
+            orm.SyncAttempt.created_at.desc(), orm.SyncAttempt.id.desc()
+        ).limit(1)).scalar_one_or_none()
+
     def sync_attempts(
         self, user_id: str, source: str | None = None, statuses: tuple[str, ...] | None = None,
         limit: int = 100,
@@ -5004,6 +5021,9 @@ class HealthRepository:
         "stale_plan_expired",
         "sleep_incomplete",
         "stored_data_incomplete",
+        "morning_sleep_retry_queued",
+        "morning_sleep_retry_failed",
+        "morning_fallback_no_facts",
         "unusable_sync_state",
         "transport_ambiguous",
         "transport_rejected",
@@ -5143,7 +5163,12 @@ class HealthRepository:
         return refreshed
 
     def rearm_unavailable_notification_deliveries(
-        self, user_id: str, analysis_run_id: str, target_date: date
+        self,
+        user_id: str,
+        analysis_run_id: str,
+        target_date: date,
+        *,
+        period: str | None = None,
     ) -> int:
         """Rearm only existing, definitely unsent intents after a successful run."""
         run = self.db.execute(select(orm.AnalysisRun.id).where(
@@ -5154,13 +5179,18 @@ class HealthRepository:
         )).scalar_one_or_none()
         if run is None:
             raise ValueError("notification rearm requires a succeeded analysis run")
-        result = self.db.execute(update(orm.NotificationDelivery).where(
+        conditions = [
             orm.NotificationDelivery.user_id == user_id,
             orm.NotificationDelivery.target_date == target_date,
             orm.NotificationDelivery.status == "deferred",
             orm.NotificationDelivery.last_error.in_(
                 ("snapshot_unavailable", "sleep_incomplete", "stored_data_incomplete")
             ),
+        ]
+        if period is not None:
+            conditions.append(orm.NotificationDelivery.period == period)
+        result = self.db.execute(update(orm.NotificationDelivery).where(
+            *conditions,
         ).values(
             analysis_run_id=analysis_run_id,
             status="pending",
@@ -5184,6 +5214,142 @@ class HealthRepository:
         ))
         self.db.flush()
         return result.rowcount
+
+    def claim_morning_sleep_retry(
+        self, user_id: str, target_date: date, *, now: datetime | None = None
+    ) -> bool:
+        """Claim the one in-window morning sync retry for a deferred intent."""
+        current = _naive_utc(now or datetime.now(timezone.utc))
+        result = self.db.execute(update(orm.NotificationDelivery).where(
+            orm.NotificationDelivery.user_id == user_id,
+            orm.NotificationDelivery.target_date == target_date,
+            orm.NotificationDelivery.period == "morning",
+            orm.NotificationDelivery.status == "deferred",
+            orm.NotificationDelivery.last_error == "sleep_incomplete",
+        ).values(
+            last_error="morning_sleep_retry_queued",
+            updated_at=current,
+        ))
+        self.db.flush()
+        return bool(result.rowcount)
+
+    def mark_morning_sleep_retry_failed(
+        self, user_id: str, target_date: date, *, now: datetime | None = None
+    ) -> bool:
+        """Close a failed retry claim so the dispatcher cannot repeat it."""
+        current = _naive_utc(now or datetime.now(timezone.utc))
+        result = self.db.execute(update(orm.NotificationDelivery).where(
+            orm.NotificationDelivery.user_id == user_id,
+            orm.NotificationDelivery.target_date == target_date,
+            orm.NotificationDelivery.period == "morning",
+            orm.NotificationDelivery.status == "deferred",
+            orm.NotificationDelivery.last_error.in_(
+                ("sleep_incomplete", "morning_sleep_retry_queued")
+            ),
+        ).values(
+            last_error="morning_sleep_retry_failed",
+            updated_at=current,
+        ))
+        self.db.flush()
+        return bool(result.rowcount)
+
+    def mark_morning_fallback_no_facts(
+        self, user_id: str, target_date: date, *, now: datetime | None = None
+    ) -> bool:
+        """Keep a deferred morning intent auditable when no same-day facts exist."""
+        current = _naive_utc(now or datetime.now(timezone.utc))
+        result = self.db.execute(update(orm.NotificationDelivery).where(
+            orm.NotificationDelivery.user_id == user_id,
+            orm.NotificationDelivery.target_date == target_date,
+            orm.NotificationDelivery.period == "morning",
+            orm.NotificationDelivery.status == "deferred",
+            orm.NotificationDelivery.last_error.in_(
+                (
+                    "sleep_incomplete",
+                    "morning_sleep_retry_queued",
+                    "morning_sleep_retry_failed",
+                )
+            ),
+        ).values(
+            last_error="morning_fallback_no_facts",
+            updated_at=current,
+        ))
+        self.db.flush()
+        return bool(result.rowcount)
+
+    def expire_morning_deferred_notification_delivery(
+        self, user_id: str, target_date: date, *, now: datetime | None = None
+    ) -> int:
+        """Close morning wait states after the scheduled delivery deadline."""
+        current = _naive_utc(now or datetime.now(timezone.utc))
+        result = self.db.execute(update(orm.NotificationDelivery).where(
+            orm.NotificationDelivery.user_id == user_id,
+            orm.NotificationDelivery.target_date == target_date,
+            orm.NotificationDelivery.period == "morning",
+            orm.NotificationDelivery.status == "deferred",
+            orm.NotificationDelivery.last_error.in_(
+                (
+                    "snapshot_unavailable",
+                    "sleep_incomplete",
+                    "stored_data_incomplete",
+                    "morning_sleep_retry_queued",
+                    "morning_sleep_retry_failed",
+                )
+            ),
+        ).values(
+            last_error="stale_plan_expired",
+            updated_at=current,
+        ))
+        self.db.flush()
+        return int(result.rowcount or 0)
+
+    def rearm_morning_deferred_notification_delivery(
+        self, user_id: str, analysis_run_id: str, target_date: date
+    ) -> int:
+        """Rearm a morning wait/fallback intent after usable facts are saved."""
+        run = self.db.execute(select(orm.AnalysisRun.id).where(
+            orm.AnalysisRun.id == analysis_run_id,
+            orm.AnalysisRun.user_id == user_id,
+            orm.AnalysisRun.target_date == target_date,
+            orm.AnalysisRun.status == "SUCCEEDED",
+        )).scalar_one_or_none()
+        if run is None:
+            raise ValueError("morning notification rearm requires a succeeded analysis run")
+        result = self.db.execute(update(orm.NotificationDelivery).where(
+            orm.NotificationDelivery.user_id == user_id,
+            orm.NotificationDelivery.target_date == target_date,
+            orm.NotificationDelivery.period == "morning",
+            orm.NotificationDelivery.status == "deferred",
+            orm.NotificationDelivery.last_error.in_(
+                (
+                    "sleep_incomplete",
+                    "morning_sleep_retry_queued",
+                    "morning_sleep_retry_failed",
+                )
+            ),
+        ).values(
+            analysis_run_id=analysis_run_id,
+            status="pending",
+            attempt_count=0,
+            send_attempt_count=0,
+            poll_attempt_count=0,
+            send_attempt_id=None,
+            poll_attempt_id=None,
+            provider_id=None,
+            provider_status=None,
+            template=None,
+            renderer_version=None,
+            content_sha256=None,
+            last_error=None,
+            next_attempt_at=None,
+            next_poll_at=None,
+            lease_token=None,
+            lease_kind=None,
+            lease_expires_at=None,
+            updated_at=datetime.utcnow(),
+        ))
+        self.db.flush()
+        return int(result.rowcount or 0)
 
     def notification_delivery(
         self, delivery_id: str, user_id: str

@@ -106,6 +106,7 @@ def stored_profile_is_usable(daily: dict, day: date, period: ReportPeriod) -> bo
 
 
 def has_same_day_facts(daily: dict) -> bool:
+    """Return true only when the daily projection contains observed facts."""
     features = daily.get("features") or {}
     sleep = features.get("sleep") or {}
     if sleep.get("status") in {"AVAILABLE", "PARTIAL"} and any(
@@ -113,17 +114,34 @@ def has_same_day_facts(daily: dict) -> bool:
         for key in ("duration_minutes", "wake_time", "bedtime", "vendor_sleep_score")
     ):
         return True
+
     activity = features.get("activity") or {}
-    if activity.get("status") == "AVAILABLE" or any(
-        activity.get(key) is not None
-        for key in ("steps", "step_count", "distance_km", "calories")
+    for key in ("steps", "step_count", "distance_km", "active_minutes", "calories"):
+        value = activity.get(key)
+        if isinstance(value, dict):
+            if value.get("value") is not None:
+                return True
+        elif value is not None:
+            return True
+    if activity.get("energy"):
+        return True
+
+    target_day = daily.get("date")
+    training = features.get("training") or {}
+    if any(
+        training.get(key) is not None
+        for key in ("today_duration_minutes", "today_load")
     ):
         return True
-    training = features.get("training") or {}
-    if training.get("status") == "AVAILABLE":
-        return True
     for key in ("workouts", "recent_workouts", "sessions"):
-        if training.get(key):
+        items = training.get(key) or []
+        if any(
+            isinstance(item, dict) and (
+                item.get("date") == target_day
+                or item.get("calendar_day") == target_day
+            )
+            for item in items
+        ):
             return True
     return False
 
@@ -314,7 +332,16 @@ def _prepare_scheduled_delivery(
         return {**result, "status": "deferred", "reason": "stored_data_incomplete"}
     late = metadata["late"]
     facts_only = bool(missing or sync_degraded or late)
-    reason = "late_report" if late else missing[0] if missing else "sync_degraded" if sync_degraded else None
+    if period == "morning" and "sleep_complete" in missing:
+        reason = "sleep_incomplete"
+    elif late:
+        reason = "late_report"
+    elif missing:
+        reason = missing[0]
+    elif sync_degraded:
+        reason = "sync_degraded"
+    else:
+        reason = None
     metadata.update(
         partial=bool(missing or sync_degraded or context.get("target_day_complete") is False),
         facts_only=facts_only, coverage_reason=reason,

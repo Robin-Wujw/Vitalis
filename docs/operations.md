@@ -16,6 +16,7 @@
 | `VITALIS_TIMEZONE` | `Asia/Shanghai` | 本地日历边界和调度时区。 |
 | `HOST` / `PORT` | `127.0.0.1` / `8000` | API 监听地址。 |
 | `SYNC_CRON_HOUR` / `SYNC_CRON_MINUTE` | `02:00` | worker 自动同步时间。 |
+| `SYNC_DISPATCHER_INTERVAL_SECONDS` | `60`（最多 `900`） | 同步、分析和投递 dispatcher 间隔；晨报睡眠等待期要求不超过 15 分钟。 |
 | `VITALIS_WEEKLY_REPORT_ENABLED` | `false` | 周报自动投递开关。 |
 | `VITALIS_WEEKLY_REPORT_HOUR` / `MINUTE` | `10:00` | 周报投递本地时间。 |
 | `VITALIS_MONTHLY_REPORT_ENABLED` | `false` | 月报自动投递开关。 |
@@ -25,7 +26,7 @@
 | `PUSHPLUS_QUERY_MAX_ATTEMPTS` | `3` | 状态查询最多轮询次数；不会重发原消息。 |
 | `PUSHPLUS_QUERY_INTERVAL_SECONDS` | `60` | 状态查询间隔秒数；只影响状态查询。 |
 
-晨报 `09:30`、晚报 `21:30` 的调度由当前 worker 任务定义；配置和时区不要在其它文档复制成另一套默认值。晨报需要完整睡眠和已核实的前 7 天训练记录，睡眠未到齐时最多再等 30 分钟；晚报需要当天事实和训练记录。必需数据缺失、同步降级或发送比调度时刻晚 30 分钟以上时，只发仅事实版本（不带训练安排、建议和变化）；没有当天事实时不发。调度时刻后晨报 3 小时、晚报 6 小时内仍未发出的，本次投递作废（`delivery_deadline_expired`）。这些规则在 `src/vitalis/application/delivery_policy.py`。真实模式还需要有效的 `VITALIS_TOKEN_ENCRYPTION_KEY`，并将其与数据库分开保存。
+晨报 `09:30`、晚报 `21:30` 的调度由当前 worker 任务定义；配置和时区不要在其它文档复制成另一套默认值。晨报需要完整睡眠和已核实的前 7 天训练记录，睡眠未到齐时最多再等 30 分钟，并在等待期内自动补同步一次（每天只补一次，失败不重试）；晚报需要当天事实和训练记录。必需数据缺失、同步降级或发送比调度时刻晚 30 分钟以上时，只发仅事实版本（不带训练安排、建议和变化），睡眠仍缺的晨报开头写明“昨夜睡眠还没同步”；没有当天事实时不发并保留延期记录，`/api/deliveries` 的 `failure_code` 给出原因。调度时刻后晨报 3 小时、晚报 6 小时内仍未发出的，本次投递作废（`delivery_deadline_expired`）。这些规则在 `src/vitalis/application/delivery_policy.py` 和 worker 的延期投递协调中执行。真实模式还需要有效的 `VITALIS_TOKEN_ENCRYPTION_KEY`，并将其与数据库分开保存。
 
 ## 初始化与进程
 
@@ -89,7 +90,7 @@ PushPlus 的 HTTP 200 只表示请求完成；只有业务 `code=200` 且有有�
 | worker 无心跳 | 确认独立 worker 进程、同一环境和数据库；查看进程退出原因。 |
 | 报告 404 | 指定日期没有已保存快照；创建分析任务并等待 worker，不要把 404 当零数据。 |
 | 同步需要认证 | 重新走官方 Zepp 配对；不要在日志或聊天中传 Cookie/apptoken。 |
-| 报告延期 | 查看数据覆盖和 required signals；可用已保存事实时只生成合资格内容。 |
+| 报告延期 | 从 `/api/deliveries` 的 `failure_code` 看原因（如 `sleep_incomplete`、`morning_sleep_retry_queued`、`morning_sleep_retry_failed`、`morning_fallback_no_facts`、`stale_plan_expired`），再查看数据覆盖和 required signals；可用已保存事实时只生成合资格内容。 |
 | 投递 uncertain | 保留不确定状态。响应丢失且没有流水号时无法自动查询，需在供应商侧人工核对；不创建新意图盲重发。 |
 | 投递 failed | 从 `/api/deliveries` 查看 `provider_status`、`send_attempt_count` 和 `next_attempt_at`，结合 worker 的非敏感错误类别排查凭据/模板/目标；明确拒绝的意图由 worker 按退避和最大次数重试。 |
 

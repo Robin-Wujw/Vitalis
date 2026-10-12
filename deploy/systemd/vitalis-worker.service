@@ -14,6 +14,10 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/vitalis/.venv/bin/vitalis worker
 Restart=on-failure
 RestartSec=5
+# The 30 s heartbeat feeds the watchdog; a worker frozen for 10 minutes is
+# aborted (Python stacks go to the journal) and restarted.
+WatchdogSec=600
+LimitCORE=0
 MemoryHigh=250M
 MemoryMax=320M
 MemorySwapMax=128M

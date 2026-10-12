@@ -9,6 +9,10 @@ def test_worker_unit_caps_memory_and_swap():
     assert config.get("Service", "MemoryHigh") == "250M"
     assert config.get("Service", "MemoryMax") == "320M"
     assert config.get("Service", "MemorySwapMax") == "128M"
+    # The 30 s heartbeat must fit many times into the watchdog window.
+    assert config.get("Service", "WatchdogSec") == "600"
+    assert config.get("Service", "Restart") == "on-failure"
+    assert config.get("Service", "LimitCORE") == "0"
     assert not config.has_option("Unit", "Requires")
     assert "vitalis.service" not in config.get("Unit", "After")
 

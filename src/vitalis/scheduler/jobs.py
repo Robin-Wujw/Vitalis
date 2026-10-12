@@ -1,6 +1,10 @@
 """Scheduled durable synchronization and profile jobs."""
 
 import logging
+import os
+from pathlib import Path
+import socket
+import time
 from datetime import date, datetime, timedelta, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -14,10 +18,74 @@ log = logging.getLogger("vitalis.scheduler")
 MORNING_SLEEP_RETRY_REASON = "morning_sleep_retry_queued"
 MORNING_SLEEP_RETRY_FAILED_REASON = "morning_sleep_retry_failed"
 MORNING_FALLBACK_NO_FACTS_REASON = "morning_fallback_no_facts"
+# Scheduled report syncs and the local times their cron jobs fire.
+SCHEDULED_REPORT_SYNCS = {"morning": (9, 30, 2), "evening": (21, 30, 1)}
+CATCH_UP_GRACE = timedelta(minutes=2)
+# The 30 s heartbeat logs memory every 20 beats, about every 10 minutes.
+HEARTBEATS_PER_MEMORY_LOG = 20
+_heartbeats = 0
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _memory_text() -> str:
+    """This process's RSS/swap and its cgroup usage against memory.high, for logs."""
+    fields: dict[str, int] = {}
+    try:
+        with open("/proc/self/status", encoding="ascii") as handle:
+            for line in handle:
+                key, _, value = line.partition(":")
+                if key in {"VmRSS", "VmSwap"}:
+                    fields[key] = int(value.split()[0]) // 1024
+    except (OSError, ValueError, IndexError):
+        return "memory=unavailable"
+    text = f"rss={fields.get('VmRSS', '?')}MB swap={fields.get('VmSwap', '?')}MB"
+    try:
+        with open("/proc/self/cgroup", encoding="ascii") as handle:
+            path = next(line for line in handle if line.startswith("0::"))[3:].strip()
+        base = Path("/sys/fs/cgroup") / path.lstrip("/")
+        current = int((base / "memory.current").read_text()) // 2**20
+        high = (base / "memory.high").read_text().strip()
+        events = dict(
+            line.split() for line in (base / "memory.events").read_text().splitlines()
+        )
+        high_text = high if high == "max" else f"{int(high) // 2**20}MB"
+        text += f" cgroup={current}MB high={high_text} high_events={events.get('high', '0')}"
+    except (OSError, ValueError, StopIteration):
+        pass
+    return text
+
+
+def _release_memory() -> None:
+    """Hand memory freed by an analysis back to the OS so a long-lived worker stays small."""
+    import gc
+
+    gc.collect()
+    try:
+        import ctypes
+
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass
+
+
+def _notify_systemd(message: str) -> bool:
+    """Send one sd_notify datagram when systemd supervises this process."""
+    address = os.environ.get("NOTIFY_SOCKET")
+    if not address or not hasattr(socket, "AF_UNIX"):
+        return False
+    if address.startswith("@"):
+        address = "\0" + address[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as notify:
+            notify.connect(address)
+            notify.sendall(message.encode("ascii"))
+    except OSError:
+        log.warning("systemd notify failed: %s", message)
+        return False
+    return True
 
 
 def _morning_retry_trigger_ref(target: date) -> str:
@@ -117,7 +185,9 @@ def nightly_sync_job() -> None:
 
 def _profile_push_job(period: str, sync_days: int) -> None:
     """Queue one scheduled sync whose terminal state creates the report job."""
-    for user_id in _get_authorized_users():
+    users = _get_authorized_users()
+    log.info("%s report job started: users=%s sync_days=%s", period, len(users), sync_days)
+    for user_id in users:
         try:
             _sync_user(user_id, days=sync_days, label=period)
         except Exception:
@@ -126,11 +196,66 @@ def _profile_push_job(period: str, sync_days: int) -> None:
 
 
 def morning_analysis_job() -> None:
-    _profile_push_job("morning", sync_days=2)
+    _profile_push_job("morning", sync_days=SCHEDULED_REPORT_SYNCS["morning"][2])
 
 
 def evening_analysis_job() -> None:
-    _profile_push_job("evening", sync_days=1)
+    _profile_push_job("evening", sync_days=SCHEDULED_REPORT_SYNCS["evening"][2])
+
+
+def catch_up_scheduled_reports() -> int:
+    """Queue today's morning/evening sync when the worker missed its cron run.
+
+    The scheduler keeps cron state in memory, so a worker that was frozen or
+    restarted across 09:30/21:30 would otherwise skip that report entirely.
+    Only the PushPlus delivery owner is caught up, since the missed report is
+    what matters. A run counts once its scheduled sync or delivery intent
+    exists; catch-up stops at the report deadline and never crosses midnight.
+    """
+    from zoneinfo import ZoneInfo
+
+    from sqlalchemy import select
+
+    from vitalis.adapters.persistence import session_scope
+    from vitalis.adapters.persistence.models import NotificationDelivery, SyncAttempt
+    from vitalis.application.delivery_policy import scheduled_report_window
+
+    if not settings.push_user or not settings.pushplus_token:
+        return 0
+    now = _utc_now()
+    zone = ZoneInfo(settings.timezone)
+    today = now.astimezone(zone).date()
+    midnight = datetime.combine(today + timedelta(days=1), datetime.min.time(), zone)
+    queued = 0
+    for period, (_hour, _minute, sync_days) in SCHEDULED_REPORT_SYNCS.items():
+        window = scheduled_report_window(today, period, settings.timezone)
+        scheduled = datetime.fromisoformat(window["scheduled_for"].replace("Z", "+00:00"))
+        deadline = datetime.fromisoformat(window["deadline_at"].replace("Z", "+00:00"))
+        if not scheduled + CATCH_UP_GRACE <= now < min(deadline, midnight):
+            continue
+        user_id = settings.push_user
+        if user_id not in _get_authorized_users():
+            return queued
+        with session_scope() as db:
+            ran = db.execute(select(SyncAttempt.id).where(
+                SyncAttempt.user_id == user_id,
+                SyncAttempt.trigger == period,
+                SyncAttempt.trigger_ref == user_id,
+                SyncAttempt.created_at >= scheduled.replace(tzinfo=None),
+            ).limit(1)).first() or db.execute(select(NotificationDelivery.id).where(
+                NotificationDelivery.user_id == user_id,
+                NotificationDelivery.target_date == today,
+                NotificationDelivery.period == period,
+            ).limit(1)).first()
+        if ran:
+            continue
+        log.warning("%s report run was missed; catching up: user=%s", period, user_id)
+        try:
+            _sync_user(user_id, days=sync_days, label=period)
+            queued += 1
+        except Exception:
+            log.exception("%s catch-up enqueue failed: user=%s", period, user_id)
+    return queued
 
 
 def weekly_analysis_job() -> None:
@@ -142,10 +267,15 @@ def monthly_analysis_job() -> None:
 
 
 def worker_heartbeat_job() -> None:
-    """Record worker liveness independently of a potentially slow sync pass."""
+    """Record worker liveness independently of a potentially slow sync pass.
+
+    Each written heartbeat also feeds the systemd watchdog, so a worker that
+    stops making progress (for example frozen under memory.high) is restarted.
+    """
     from vitalis.adapters.persistence import session_scope
     from vitalis.adapters.persistence.models import WorkerHeartbeat
 
+    global _heartbeats
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     with session_scope() as db:
         row = db.get(WorkerHeartbeat, "primary")
@@ -153,6 +283,10 @@ def worker_heartbeat_job() -> None:
             db.add(WorkerHeartbeat(name="primary", last_seen_at=now))
         else:
             row.last_seen_at = now
+    _notify_systemd("WATCHDOG=1")
+    if _heartbeats % HEARTBEATS_PER_MEMORY_LOG == 0:
+        log.info("worker alive: %s", _memory_text())
+    _heartbeats += 1
 
 
 MAX_NOTIFICATION_ATTEMPTS = 3
@@ -250,6 +384,10 @@ def drain_notification_deliveries(*, max_deliveries: int = 1) -> int:
                     next_attempt_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
                         seconds=min(3600, 60 * (2 ** max(0, current.attempt_count - 1)))
                     )
+        log.info(
+            "notification delivery %s %s: status=%s reason=%s",
+            delivery["period"], delivery["target_date"], status, error or "-",
+        )
         next_poll_at = None
         if status == "accepted" and provider.get("provider_id") and getattr(settings, "pushplus_access_key", ""):
             next_poll_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
@@ -439,10 +577,13 @@ def reconcile_deferred_daily_reports() -> int:
         ).order_by(NotificationDelivery.created_at).limit(2)).scalars().all()
         if not rows:
             return 0
+        pending = ", ".join(f"{row.period}:{row.last_error}" for row in rows)
         if now >= deadline:
             changed += repo.expire_morning_deferred_notification_delivery(
                 owner.id, today, now=now
             )
+            if changed:
+                log.info("deferred reports [%s]: morning expired at deadline", pending)
             rows = [row for row in rows if row.period != "morning"]
             if not rows:
                 return changed
@@ -534,11 +675,18 @@ def reconcile_deferred_daily_reports() -> int:
                 )).first() is not None:
                     return 0
     if retry_requested:
-        changed += int(_queue_morning_sleep_retry(user_id, today))
-        return changed
+        queued = _queue_morning_sleep_retry(user_id, today)
+        log.info(
+            "deferred reports [%s]: morning sleep retry %s",
+            pending, "queued" if queued else "not queued",
+        )
+        return changed + int(queued)
     if snapshot is not None:
+        if changed:
+            log.info("deferred reports [%s]: %s intents updated", pending, changed)
         return changed
     create_analysis_job(user_id, today, key)
+    log.info("deferred reports [%s]: recovery analysis queued", pending)
     return 1
 
 
@@ -550,9 +698,14 @@ def dispatcher_job() -> int:
 
     configure_analysis_jobs()
     reconcile_deferred_daily_reports()
+    started = time.monotonic()
     analysis_drained = drain_analysis_jobs(max_jobs=1)
     if analysis_drained:
-        log.info("analysis dispatcher drained jobs=%s", analysis_drained)
+        _release_memory()
+        log.info(
+            "analysis dispatcher drained jobs=%s seconds=%.1f %s",
+            analysis_drained, time.monotonic() - started, _memory_text(),
+        )
     notification_drained = drain_notification_deliveries(max_deliveries=1)
     poll_drained = drain_notification_polls(max_polls=1)
     if notification_drained or poll_drained:
@@ -588,17 +741,20 @@ def start_scheduler() -> BackgroundScheduler:
         id="nightly_sync", misfire_grace_time=3600,
         max_instances=1, coalesce=True,
     )
+    for period, job in (("morning", morning_analysis_job), ("evening", evening_analysis_job)):
+        hour, minute, _days = SCHEDULED_REPORT_SYNCS[period]
+        scheduler.add_job(
+            job,
+            CronTrigger(hour=hour, minute=minute, timezone=settings.timezone),
+            id=f"{period}_analysis", misfire_grace_time=1800,
+            max_instances=1, coalesce=True,
+        )
     scheduler.add_job(
-        morning_analysis_job,
-        CronTrigger(hour=9, minute=30, timezone=settings.timezone),
-        id="morning_analysis", misfire_grace_time=1800,
+        catch_up_scheduled_reports,
+        IntervalTrigger(minutes=5, timezone=settings.timezone),
+        id="report_catch_up", misfire_grace_time=60,
         max_instances=1, coalesce=True,
-    )
-    scheduler.add_job(
-        evening_analysis_job,
-        CronTrigger(hour=21, minute=30, timezone=settings.timezone),
-        id="evening_analysis", misfire_grace_time=1800,
-        max_instances=1, coalesce=True,
+        next_run_time=datetime.now(timezone.utc),
     )
     if settings.weekly_report_enabled:
         scheduler.add_job(

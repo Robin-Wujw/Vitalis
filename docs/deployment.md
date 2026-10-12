@@ -94,7 +94,7 @@ sha256sum /var/backups/vitalis/vitalis-<old_sha>-<timestamp>.sqlite
 
 ## 5. 更新所有服务
 
-service unit 可能通过 drop-in 覆盖启动命令或 `PYTHONPATH`；修改前先看实际文件，更新真正生效的配置。API 和 worker 的 `ExecStart` 及源码加载路径同时指向候选版本：
+service unit 可能通过 drop-in 覆盖启动命令，环境文件也可能固定 `PYTHONPATH`；修改前先看实际文件，更新真正生效的配置。`PYTHONPATH` 优先于虚拟环境：只改 `ExecStart` 而环境文件仍指向旧 release 的 `src` 时，进程用新虚拟环境却加载旧代码。API 和 worker 的 `ExecStart` 及源码加载路径同时指向候选版本：
 
 ```ini
 ExecStart=/opt/vitalis/venvs/<candidate_sha>/bin/vitalis serve
@@ -109,7 +109,7 @@ sudo systemctl start vitalis-api vitalis-worker
 systemctl show vitalis-api vitalis-worker --property=ActiveState,SubState,MainPID,ExecStart
 ```
 
-检查所有实际 Vitalis 服务，不能只更新某个 Git 仓库或只重启 API。确认进程虚拟环境、工作目录、`PYTHONPATH`、已安装包路径和 release SHA 对齐。
+检查所有实际 Vitalis 服务，不能只更新某个 Git 仓库或只重启 API。确认进程虚拟环境、工作目录、`PYTHONPATH`、已安装包路径和 release SHA 对齐：从 `/proc/<pid>/environ` 读出 `PYTHONPATH`，并在服务环境下导入 `vitalis` 确认实际加载路径。worker unit 的 `WatchdogSec` 等资源设置以 `deploy/systemd/` 模板为准，改动模板时同步更新服务器上的 unit。
 
 ## 6. 运行验收
 

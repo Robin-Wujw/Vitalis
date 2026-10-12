@@ -1313,6 +1313,19 @@ class ZeppSyncCoordinator:
         }
         affected_streams: set[str] = set()
         chunks = HealthRepository(db).sync_chunks(attempt["id"])
+        sleep_days = [
+            f"{local_day(chunk.window_start.replace(tzinfo=timezone.utc), timezone_name)}"
+            f"={chunk.parse_status}/{chunk.records_written or 0}"
+            for chunk in chunks
+            if (chunk.health_stream or chunk.stream) == "sleep" and chunk.window_start is not None
+        ]
+        log.info(
+            "sync finished: attempt=%s trigger=%s status=%s chunks=%s written=%s sleep=[%s] "
+            "report_target=%s period=%s",
+            attempt["id"], trigger, terminal_status, len(chunks),
+            sum(chunk.records_written or 0 for chunk in chunks), ", ".join(sleep_days),
+            target_date, delivery_period or "-",
+        )
         if terminal_status in {"failed", "needs_reauth", "cancelled"} and not any(
             (chunk.records_written or 0) > 0 for chunk in chunks
         ):

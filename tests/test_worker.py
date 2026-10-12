@@ -1,7 +1,24 @@
+import logging
 from threading import Event, Timer
 
 from vitalis.entrypoints import worker
 from vitalis.scheduler import jobs
+
+
+def test_worker_logging_shows_vitalis_info_and_keeps_apscheduler_quiet(monkeypatch):
+    root, vitalis_logger = logging.getLogger(), logging.getLogger("vitalis")
+    saved = (list(root.handlers), root.level, vitalis_logger.level)
+    monkeypatch.setattr(worker.faulthandler, "enable", lambda: None)
+    root.handlers.clear()
+    try:
+        worker.configure_logging()
+        assert len(root.handlers) == 1
+        assert logging.getLogger("vitalis.scheduler").isEnabledFor(logging.INFO)
+        assert not logging.getLogger("apscheduler.scheduler").isEnabledFor(logging.INFO)
+    finally:
+        root.handlers[:] = saved[0]
+        root.setLevel(saved[1])
+        vitalis_logger.setLevel(saved[2])
 
 
 def test_worker_owns_scheduler_lifecycle(monkeypatch):

@@ -6,6 +6,7 @@ from datetime import date, datetime
 from hashlib import sha256
 import logging
 from threading import Event, Thread
+from time import monotonic
 
 from vitalis.application.ports import (
     AnalysisJobRepository, AnalysisJobState, AnalysisRunner, IdempotencyConflict, JobClaim,
@@ -119,6 +120,11 @@ def drain_analysis_jobs(*, max_jobs: int = 1, lease_seconds: int = DEFAULT_LEASE
         if claim is None:
             break
         drained += 1
+        log.info(
+            "analysis job started: job=%s target=%s period=%s",
+            claim.id, claim.target_date, claim.delivery_period or "-",
+        )
+        started = monotonic()
         stopped = Event()
         renewer = Thread(
             target=_keep_lease, args=(repository, claim, lease_seconds, stopped), daemon=True
@@ -133,6 +139,10 @@ def drain_analysis_jobs(*, max_jobs: int = 1, lease_seconds: int = DEFAULT_LEASE
         finally:
             stopped.set()
             renewer.join()
+        log.info(
+            "analysis job %s: job=%s seconds=%.1f",
+            "failed" if failed else "finished", claim.id, monotonic() - started,
+        )
         retry = failed and _requeue_input_changed(repository, claim)
         if failed and not retry:
             error = _SAFE_FAILURE

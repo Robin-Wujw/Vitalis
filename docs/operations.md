@@ -47,6 +47,12 @@ uv run --locked --extra dev vitalis worker
 
 API 的 `/live` 只表示进程存活，`/ready` 检查当前 schema；`doctor` 的 `not_seen` 表示 worker 尚未写心跳，不等于 API 故障。调度器只在 `worker` 进程启动，不能从 API 应用或普通 GET 触发。
 
+worker 把 `vitalis.*` 的 INFO 日志写到 stderr（systemd 下即 journal），APScheduler 只记警告。日志包含：晨报/晚报任务开始，同步结束（每个睡眠日分片的解析状态，`empty` 表示来源当时还没有睡眠），每个分析任务的开始、耗时和处理后的内存，每次投递的状态和原因，延期投递的处理结果，以及约每 10 分钟一行的内存（进程 RSS/swap、cgroup 用量与 `memory.high` 触发次数）。按时间段查看：`journalctl -u vitalis-worker --since 09:25 --until 10:05`。
+
+worker 的内存上限写在 `deploy/systemd/vitalis-worker.service`：单次分析实测峰值约 360 MB，超过 `MemoryHigh` 时内核会节流整个进程，所以设 `MemoryHigh=500M`、`MemoryMax=640M`（超过后被 OOM 结束并自动重启）。分析日志行里的 `cgroup` 用量和 `high_events` 增长说明正在逼近上限。
+
+每次写入心跳都会喂 systemd 看门狗（unit 设 `WatchdogSec=600`）：进程 10 分钟没有心跳（例如超过 `MemoryHigh` 后被内核节流到停住）会被中止并按 `Restart=on-failure` 重启，中止时 faulthandler 把所有线程的 Python 调用栈打进 journal；未完成的分析在租约过期后重跑。worker 漏掉 09:30/21:30 定时任务时（冻结或在调度时刻之后才启动），启动时和之后每 5 分钟检查一次：配置了 PushPlus 投递且当天该时段还没有定时同步或投递记录时，为投递对象补建一次同步，补跑在投递期限和当天午夜之前停止。
+
 ## 发布入口
 
 本页只负责运行、备份和排障。完整的本地检查、服务器候选验证、数据库处理、全部服务切换、运行验收、验收后合并推送 `main`、分支清理和失败回滚见[发布与部署 SOP](deployment.md)。数据库无变化时保留现库，加字段足够时不重建；确实需要破坏性迁移时遵循“备份旧库 → 新库测试 → 验收切换 → 删除旧工作库和备份”，不使用历史 schema 兼容迁移链。

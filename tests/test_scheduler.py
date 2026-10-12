@@ -1,13 +1,18 @@
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
+import socket
+import sys
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from vitalis.adapters.persistence import HealthRepository, init_db
-from vitalis.adapters.persistence.models import AuthToken, SourceAccount, User
+from vitalis.adapters.persistence.models import (
+    AuthToken, SourceAccount, SyncAttempt, User, WorkerHeartbeat,
+)
 from vitalis.config import settings
 from vitalis.scheduler import jobs
 
@@ -40,8 +45,12 @@ def test_scheduler_uses_configured_timezone_cron_and_single_dispatcher(monkeypat
     assert scheduler.started
     assert {item[2]["id"] for item in captured} == {
         "nightly_sync", "morning_analysis", "evening_analysis", "sync_dispatcher",
-        "worker_heartbeat",
+        "worker_heartbeat", "report_catch_up",
     }
+    catch_up = next(item for item in captured if item[2]["id"] == "report_catch_up")
+    assert catch_up[0] is jobs.catch_up_scheduled_reports
+    assert catch_up[1].interval.total_seconds() == 300
+    assert abs((datetime.now(timezone.utc) - catch_up[2]["next_run_time"]).total_seconds()) < 5
     nightly = next(item for item in captured if item[2]["id"] == "nightly_sync")
     assert nightly[0] is jobs.nightly_sync_job
     assert "hour='4'" in str(nightly[1])
@@ -391,3 +400,133 @@ def test_dispatcher_limits_each_pass_to_configured_chunk_batch(monkeypatch):
 
     assert jobs.dispatcher_job() == 3
     assert len(calls) == 3
+
+
+def _shanghai(*parts):
+    return datetime(*parts, tzinfo=ZoneInfo("Asia/Shanghai")).astimezone(timezone.utc)
+
+
+@pytest.fixture
+def catch_up_database(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    init_db(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+
+    @contextmanager
+    def isolated_session_scope():
+        with factory.begin() as db:
+            yield db
+
+    queued = []
+
+    def sync_user(user_id, days, label):
+        queued.append((user_id, days, label))
+        _add_attempt(factory, f"queued-{len(queued)}", label, jobs._utc_now())
+        return f"queued-{len(queued)}"
+
+    monkeypatch.setattr("vitalis.adapters.persistence.session_scope", isolated_session_scope)
+    monkeypatch.setattr(settings, "timezone", "Asia/Shanghai")
+    monkeypatch.setattr(settings, "push_user", "owner")
+    monkeypatch.setattr(settings, "pushplus_token", "offline-token")
+    monkeypatch.setattr(jobs, "_get_authorized_users", lambda: {"owner", "other"})
+    monkeypatch.setattr(jobs, "_sync_user", sync_user)
+    yield factory, queued
+    engine.dispose()
+
+
+def _add_attempt(factory, attempt_id, trigger, created_at, trigger_ref="owner"):
+    with factory.begin() as db:
+        db.add(SyncAttempt(
+            id=attempt_id, user_id="owner", trigger=trigger, trigger_ref=trigger_ref,
+            request_key=attempt_id, window_start=datetime(2026, 10, 11, 16),
+            window_end=datetime(2026, 10, 12, 16), status="succeeded",
+            created_at=created_at.replace(tzinfo=None),
+        ))
+
+
+@pytest.mark.parametrize("local_now, expected", [
+    ((2026, 10, 12, 9, 31), []),
+    ((2026, 10, 12, 10, 5), [("owner", 2, "morning")]),
+    ((2026, 10, 12, 12, 31), []),
+    ((2026, 10, 12, 21, 45), [("owner", 1, "evening")]),
+    ((2026, 10, 13, 0, 10), []),
+])
+def test_missed_report_sync_is_caught_up_once_inside_its_window(
+    catch_up_database, monkeypatch, local_now, expected,
+):
+    _factory, queued = catch_up_database
+    monkeypatch.setattr(jobs, "_utc_now", lambda: _shanghai(*local_now))
+
+    assert jobs.catch_up_scheduled_reports() == len(expected)
+    assert jobs.catch_up_scheduled_reports() == 0
+    assert queued == expected
+
+
+def test_catch_up_counts_only_todays_scheduled_sync(catch_up_database, monkeypatch):
+    factory, queued = catch_up_database
+    _add_attempt(factory, "yesterday", "morning", _shanghai(2026, 10, 11, 9, 30))
+    _add_attempt(
+        factory, "sleep-retry", "morning", _shanghai(2026, 10, 12, 9, 40),
+        trigger_ref="morning-sleep-retry:2026-10-12",
+    )
+    monkeypatch.setattr(jobs, "_utc_now", lambda: _shanghai(2026, 10, 12, 10, 5))
+    assert jobs.catch_up_scheduled_reports() == 1
+
+    _add_attempt(factory, "evening-cron", "evening", _shanghai(2026, 10, 12, 21, 30))
+    monkeypatch.setattr(jobs, "_utc_now", lambda: _shanghai(2026, 10, 12, 21, 45))
+    assert jobs.catch_up_scheduled_reports() == 0
+    assert queued == [("owner", 2, "morning")]
+
+
+def test_catch_up_needs_a_configured_delivery_owner(catch_up_database, monkeypatch):
+    _factory, queued = catch_up_database
+    monkeypatch.setattr(settings, "pushplus_token", "")
+    monkeypatch.setattr(jobs, "_utc_now", lambda: _shanghai(2026, 10, 12, 10, 5))
+
+    assert jobs.catch_up_scheduled_reports() == 0
+    assert queued == []
+
+
+def test_heartbeat_feeds_the_systemd_watchdog(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    init_db(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+
+    @contextmanager
+    def isolated_session_scope():
+        with factory.begin() as db:
+            yield db
+
+    notes = []
+    monkeypatch.setattr("vitalis.adapters.persistence.session_scope", isolated_session_scope)
+    monkeypatch.setattr(jobs, "_notify_systemd", notes.append)
+    try:
+        jobs.worker_heartbeat_job()
+        with factory() as db:
+            assert db.get(WorkerHeartbeat, "primary") is not None
+    finally:
+        engine.dispose()
+    assert notes == ["WATCHDOG=1"]
+
+
+def test_systemd_notify_is_a_noop_outside_systemd(monkeypatch):
+    monkeypatch.delenv("NOTIFY_SOCKET", raising=False)
+    assert jobs._notify_systemd("WATCHDOG=1") is False
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or not hasattr(socket, "AF_UNIX"),
+    reason="needs unix datagram sockets",
+)
+def test_systemd_notify_sends_one_datagram(monkeypatch, tmp_path):
+    path = tmp_path / "notify.sock"
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as server:
+        server.bind(str(path))
+        monkeypatch.setenv("NOTIFY_SOCKET", str(path))
+        assert jobs._notify_systemd("WATCHDOG=1") is True
+        assert server.recv(64) == b"WATCHDOG=1"
+
+
+def test_memory_text_never_raises():
+    text = jobs._memory_text()
+    assert text == "memory=unavailable" or text.startswith("rss=")

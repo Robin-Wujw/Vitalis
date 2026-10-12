@@ -14,8 +14,14 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/vitalis/.venv/bin/vitalis worker
 Restart=on-failure
 RestartSec=5
-MemoryHigh=250M
-MemoryMax=320M
+# The 30 s heartbeat feeds the watchdog; a worker frozen for 10 minutes is
+# aborted (Python stacks go to the journal) and restarted.
+WatchdogSec=600
+LimitCORE=0
+# One analysis peaked at 362 MB RSS (2026-10-12); above MemoryHigh the kernel
+# throttles the whole worker, so keep MemoryHigh well over that peak.
+MemoryHigh=500M
+MemoryMax=640M
 MemorySwapMax=128M
 NoNewPrivileges=true
 PrivateTmp=true

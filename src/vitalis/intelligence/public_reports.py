@@ -15,6 +15,10 @@ from .report_presentation import daily_profile_presentation
 
 PUBLIC_REPORT_SCHEMA_VERSION = "1.0"
 PublicKind = Literal["daily", "morning", "evening", "weekly", "monthly"]
+# The lead sentence of a facts-only report; the briefing payload and the rendered
+# push must say the same thing.
+SLEEP_PENDING_NOTICE = "昨夜睡眠还没同步；以下仅展示已记录事实，今天暂不生成训练安排。"
+HISTORY_PENDING_NOTICE = "部分运动记录来源还未查全；已记录的训练照常展示，今天暂不生成训练安排。"
 
 
 SignalStatus = Literal["AVAILABLE", "PARTIAL", "STALE", "UNKNOWN", "INSUFFICIENT"]
@@ -826,7 +830,8 @@ def to_public_report_view(value: Any, kind: PublicKind | None = None) -> PublicR
     audit = {key: deepcopy(item) for key, item in (raw.get("metadata") or {}).items() if key in {"profile_revision_used", "input_revision_used", "correction_chain", "supersedes"}}
     summary = []
     if facts_only:
-        summary = ["部分运动记录来源还未查全；已记录的训练照常展示，今天暂不生成训练安排。"] if metadata.get("coverage_reason") else ["仅展示已保存事实。"]
+        reason = metadata.get("coverage_reason")
+        summary = [SLEEP_PENDING_NOTICE if reason == "sleep_incomplete" else HISTORY_PENDING_NOTICE if reason else "仅展示已保存事实。"]
     title = "已记录昨夜事实" if inferred == "morning" and facts_only else "已记录本日事实" if inferred in {"daily", "evening"} and facts_only else "已记录周期事实" if facts_only else str(presentation.get("headline") or "已记录数据回顾")
     return PublicReportView(
         analysis_run_id=str(raw.get("analysis_run_id") or ""), analysis={"versions": versions, **audit}, user_id=str(raw.get("user_id") or ""),

@@ -5,7 +5,7 @@ health scores, trends, prescriptions, or inferred exercise progress.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Any, Iterable
 
 from .period_activity import comparison_gate
@@ -553,9 +553,9 @@ def _workout_projection(item: dict[str, Any], *, facts: list[str] | None = None,
     return {"title": _workout_title(item), "date": workout_date, "started_at": item.get("started_at"), "duration_minutes": _number(item.get("duration_minutes")), "facts": unique(facts or []), "exercises": exercises or []}
 
 
-def _training_projection(payload: dict[str, Any], *, include_observed_day: Any = None) -> list[dict[str, Any]]:
+def _training_projection(payload: dict[str, Any]) -> list[dict[str, Any]]:
     training = (payload.get("features") or {}).get("training") or {}
-    target = include_observed_day if include_observed_day is not None else payload.get("date")
+    target = payload.get("date")
     generic = [item for item in training.get("recent_workouts") or [] if isinstance(item, dict) and _same_day(item.get("date"), target)]
     running = [item for item in ((training.get("running") or {}).get("recent_sessions") or []) if isinstance(item, dict) and _same_day(item.get("date"), target)]
     strength = [item for item in ((training.get("strength") or {}).get("recent_sessions") or []) if isinstance(item, dict) and _same_day(item.get("date"), target)]
@@ -741,9 +741,8 @@ def daily_presentation(payload: Any, *, morning: bool = False, facts_only: bool 
         decision = {} if facts_only else raw.get("decision") or {}
         action_label = decision.get("action_label") or "今天的安排"
         headline = "已记录昨夜事实，今天暂不生成训练安排" if facts_only or decision.get("action") == "INSUFFICIENT_DATA" else f"今天安排：{action_label}"
-        target = _date(raw.get("date"))
-        training = _training_projection(raw, include_observed_day=target - timedelta(days=1)) if facts_only and target else []
-        return {"headline": headline, "as_of": _as_of(raw), "metrics": metrics, "findings": [] if facts_only else _morning_findings(raw), "training": training, "suggestions": [] if facts_only else _daily_suggestions(raw), "alerts": _daily_alerts(raw, facts_only=facts_only)}
+        # Yesterday's workouts are listed once, in the morning's observed-training section.
+        return {"headline": headline, "as_of": _as_of(raw), "metrics": metrics, "findings": [] if facts_only else _morning_findings(raw), "training": [], "suggestions": [] if facts_only else _daily_suggestions(raw), "alerts": _daily_alerts(raw, facts_only=facts_only)}
     findings, suggestions = _strength_change_texts(raw)
     training = _training_projection(raw)
     headline = "今日训练与活动回顾" if training else "今日活动回顾"

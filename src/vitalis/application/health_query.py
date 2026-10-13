@@ -8,6 +8,7 @@ from typing import Callable, Literal
 
 from vitalis.time import local_day
 
+from .data_freshness import stream_freshness
 from .ports import HealthReader
 
 
@@ -54,6 +55,10 @@ class HealthQuery:
     def data_status(self, user_id: str) -> dict:
         """Return source coverage and the latest bounded synchronization result."""
         rows = self._reader.sync_stream_states(user_id)
+        as_of = _as_utc(self._now_factory())
+        coverage_end = local_day(as_of, self._timezone_name)
+        coverage_start = coverage_end - timedelta(days=6)
+        observation_dates = getattr(self._reader, "stream_observation_dates", None)
         latest = self._reader.latest_sync_attempt(user_id, source="zepp")
         chunks = (
             self._reader.sync_chunks(latest.attempt_id, user_id)
@@ -132,33 +137,65 @@ class HealthQuery:
                 "chunks_by_stream": chunk_summary,
             }
 
+        streams = []
+        for row in rows:
+            observed_dates = None
+            if callable(observation_dates):
+                try:
+                    observed_dates = observation_dates(
+                        user_id,
+                        row.stream,
+                        start=coverage_start,
+                        end=coverage_end,
+                        timezone_name=self._timezone_name,
+                        source="zepp",
+                    )
+                except (AttributeError, NotImplementedError):
+                    observed_dates = None
+            if observed_dates is None and row.last_sample_at is not None:
+                # A reader without the bounded observation query can prove only
+                # the latest stored observation, never a complete seven-day set.
+                observed_dates = {local_day(row.last_sample_at, self._timezone_name)}
+            freshness = stream_freshness(
+                stream=row.stream,
+                last_observed_at=row.last_sample_at,
+                observed_dates=observed_dates,
+                as_of=as_of,
+                window_end=coverage_end,
+            )
+            streams.append({
+                "stream": row.stream,
+                "fetch": {
+                    "status": row.fetch_status,
+                    "at": _iso_utc(row.fetched_at) if row.fetched_at else None,
+                },
+                "parse": {
+                    "status": row.parse_status,
+                    "at": _iso_utc(row.parsed_at) if row.parsed_at else None,
+                },
+                "write": {
+                    "status": row.write_status,
+                    "at": _iso_utc(row.written_at) if row.written_at else None,
+                },
+                "last_sample_at": (
+                    _iso_utc(row.last_sample_at) if row.last_sample_at else None
+                ),
+                "raw_records": row.raw_records,
+                "records_written": row.records_written,
+                "error_kind": row.error_kind,
+                **freshness,
+            })
+
         return {
             "user_id": user_id,
+            "as_of": _iso_utc(as_of),
+            "coverage_window": {
+                "start": coverage_start.isoformat(),
+                "end": coverage_end.isoformat(),
+                "days": 7,
+            },
             "latest_attempt": latest_payload,
-            "streams": [
-                {
-                    "stream": row.stream,
-                    "fetch": {
-                        "status": row.fetch_status,
-                        "at": _iso_utc(row.fetched_at) if row.fetched_at else None,
-                    },
-                    "parse": {
-                        "status": row.parse_status,
-                        "at": _iso_utc(row.parsed_at) if row.parsed_at else None,
-                    },
-                    "write": {
-                        "status": row.write_status,
-                        "at": _iso_utc(row.written_at) if row.written_at else None,
-                    },
-                    "last_sample_at": (
-                        _iso_utc(row.last_sample_at) if row.last_sample_at else None
-                    ),
-                    "raw_records": row.raw_records,
-                    "records_written": row.records_written,
-                    "error_kind": row.error_kind,
-                }
-                for row in rows
-            ],
+            "streams": streams,
         }
 
     def metric_series(

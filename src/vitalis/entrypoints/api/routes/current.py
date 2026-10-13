@@ -13,6 +13,7 @@ from vitalis.bootstrap import (
     get_health_query,
     get_source_account_service,
     get_sync_job_service,
+    list_delivery_alerts as load_delivery_alerts,
 )
 from vitalis.intelligence.contracts import (
     DailyProfile, MonthlyProfile, MorningBriefing, ReportBriefing,
@@ -63,6 +64,16 @@ def list_notification_deliveries(
 ) -> list[dict]:
     """Expose sanitized, user-scoped notification delivery state."""
     return get_intelligence_query().deliveries(user_id, limit=limit)
+
+
+@router.get("/delivery-alerts", operation_id="list_delivery_alerts")
+def list_delivery_alerts(
+    limit: int = Query(100, ge=1, le=100),
+    status: Literal["pending", "suppressed", "acknowledged"] | None = Query(None),
+    user_id: str = Depends(require_user_id),
+) -> list[dict]:
+    """Expose persisted internal alerts without provider payloads or secrets."""
+    return load_delivery_alerts(user_id, limit=limit, status=status)
 
 
 @router.get("/reports/{kind}", response_model=Report, operation_id="get_report")

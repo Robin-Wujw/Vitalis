@@ -31,6 +31,7 @@ EVENT_LABELS = {
     "TRAINING_LOAD_SPIKE": "训练负荷明显增加",
     "TRAINING_GAP": "训练连续中断",
     "RECOVERY_SUPPRESSED": "恢复状态受抑制",
+    "BODY_SIGNAL_WARNING": "多个身体信号同时偏离",
     "ACTIVITY_DROP": "活动量明显下降",
     "ACTIVITY_SURGE": "活动量明显增加",
 }
@@ -170,6 +171,61 @@ class HealthEventEngine:
             key=lambda item: (severity_rank[item.severity], item.type),
             reverse=True,
         )
+
+
+def detect_body_signal_warning(
+    user_id: str,
+    target_day: date,
+    signals: dict[str, dict],
+    *,
+    minimum_deviation_percent: float = 10.0,
+) -> HealthEvent | None:
+    """Return a non-diagnostic warning only when two qualified signals agree.
+
+    The caller supplies already-qualified personal-baseline deviations. A single
+    missing, stale, or shadow-only signal cannot trigger the warning.
+    """
+    evidence = []
+    for metric, item in signals.items():
+        if not isinstance(item, dict) or item.get("status") != "AVAILABLE":
+            continue
+        deviation = item.get("deviation") if isinstance(item.get("deviation"), dict) else item
+        direction = deviation.get("direction")
+        percent = deviation.get("percent")
+        if direction not in {"above", "below"} or not isinstance(percent, (int, float)):
+            continue
+        if abs(float(percent)) < minimum_deviation_percent:
+            continue
+        evidence.append(HealthEventEvidence(
+            fact=metric,
+            fact_label=METRIC_LABELS.get(metric, metric),
+            value=round(float(percent), 2),
+            unit="%",
+        ))
+    if len(evidence) < 2:
+        return None
+    directions = {
+        metric: ((item.get("deviation") if isinstance(item.get("deviation"), dict) else item).get("direction"))
+        for metric, item in signals.items()
+        if isinstance(item, dict) and item.get("status") == "AVAILABLE"
+    }
+    hrv_down = any(name in directions and directions[name] == "below" for name in ("hrv", "hrv_rmssd", "sleep_hrv"))
+    systemic_up = sum(
+        directions.get(name) == "above"
+        for name in ("resting_hr", "rhr", "respiratory_rate", "skin_temperature", "skin_temperature_delta", "spo2")
+    )
+    if not ((hrv_down and systemic_up >= 1) or systemic_up >= 2):
+        return None
+    return _simple_event(
+        user_id,
+        "BODY_SIGNAL_WARNING",
+        target_day,
+        target_day,
+        "多个身体信号同时偏离个人范围，今天建议降低训练强度；这不是疾病判断。",
+        ConfidenceBand.MODERATE,
+        evidence,
+        severity=EventSeverity.MODERATE,
+    )
 
 
 def _persistent_deviation_event(

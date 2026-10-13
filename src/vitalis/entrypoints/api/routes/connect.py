@@ -3,19 +3,23 @@ from __future__ import annotations
 
 import html as html_mod
 from importlib import resources
+import json
+import secrets
 import zipfile
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import qrcode
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from vitalis.config import settings
 from vitalis.bootstrap import (
     get_connector,
     get_connection_service,
+    get_zepp_login_adapter,
 )
 from vitalis.application.connection import ConnectionOperationError
 from vitalis.application.connection_progress import INITIAL_SYNC_DAYS, iso_utc
@@ -27,6 +31,24 @@ router = APIRouter(prefix="/connect", tags=["connect"])
 
 def _connector() -> CredentialProvider:
     return get_connector("zepp")  # type: ignore[return-value]
+
+
+def _login_adapter():
+    adapter = get_zepp_login_adapter()
+    try:
+        yield adapter
+    finally:
+        adapter.close()
+
+
+class PhoneLoginRequest(BaseModel):
+    """Password input accepted once by the mobile pairing page."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    account: str = Field(min_length=1, max_length=320)
+    password: SecretStr = Field(min_length=1, max_length=256)
+    country_code: str = Field(default="CN", min_length=2, max_length=24)
 
 
 def _connection_status(error: ConnectionOperationError) -> int:
@@ -220,6 +242,172 @@ def _public_base_url(request: Request) -> str:
     if settings.public_url:
         return settings.public_url
     return str(request.base_url).rstrip("/")
+
+
+def _require_phone_origin(request: Request) -> None:
+    """Apply the phone page's origin/referrer boundary before password input."""
+    expected = _public_base_url(request).rstrip("/")
+    expected_parts = urlsplit(expected)
+    production = settings.env in {"prod", "production"}
+    if production and (
+        not settings.public_url
+        or expected_parts.scheme != "https"
+        or request.headers.get("X-Forwarded-Proto", request.url.scheme).split(",", 1)[0].strip().lower() != "https"
+    ):
+        raise HTTPException(status_code=503, detail="手机登录要求 HTTPS 公网地址")
+
+    origin = request.headers.get("Origin")
+    if production and origin is None:
+        raise HTTPException(status_code=403, detail="手机登录需要同源请求")
+    if origin is not None and origin.rstrip("/") != expected:
+        raise HTTPException(status_code=403, detail="不允许此手机登录来源")
+    referrer = request.headers.get("Referer")
+    if referrer:
+        parts = urlsplit(referrer)
+        ref_origin = f"{parts.scheme}://{parts.netloc}".rstrip("/")
+        if ref_origin != expected:
+            raise HTTPException(status_code=403, detail="手机登录来源页面无效")
+
+
+def _phone_response_headers(nonce: str | None = None) -> dict[str, str]:
+    script_policy = f"'nonce-{nonce}'" if nonce else "'none'"
+    style_policy = f"'nonce-{nonce}'" if nonce else "'none'"
+    return {
+        "Cache-Control": "no-store, max-age=0",
+        "Pragma": "no-cache",
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": (
+            "default-src 'none'; "
+            f"script-src {script_policy}; style-src {style_policy}; "
+            "img-src 'self' data:; connect-src 'self'; "
+            "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+        ),
+    }
+
+
+def _phone_pairing_html(code: str, expires_at: str, *, nonce: str) -> str:
+    """Self-contained local phone form; it has no third-party assets/scripts."""
+    code_json = json.dumps(code, ensure_ascii=True)
+    code_esc = html_mod.escape(code, quote=True)
+    expiry_esc = html_mod.escape(expires_at, quote=True)
+    reset_url = "https://user.zepp.com/universalLogin/index.html#/forget"
+    reset_esc = html_mod.escape(reset_url, quote=True)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="referrer" content="no-referrer"/>
+<title>Vitalis · 连接 Zepp</title>
+<style nonce="{nonce}">
+:root {{ color-scheme: light; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }}
+* {{ box-sizing: border-box; }}
+body {{ margin: 0; min-height: 100vh; background: #f4f7f5; color: #15221c; }}
+main {{ width: min(460px, calc(100% - 32px)); margin: 0 auto; padding: 34px 0 48px; }}
+header {{ border-bottom: 1px solid #d6e1da; padding: 6px 0 22px; }}
+.brand {{ color: #16745b; font-size: 13px; font-weight: 750; letter-spacing: .08em; }}
+h1 {{ font-size: 25px; line-height: 1.25; margin: 10px 0 8px; }}
+.lead {{ color: #5c6d64; font-size: 14px; line-height: 1.6; margin: 0; }}
+section {{ padding: 24px 0 0; }}
+label {{ display: block; font-size: 14px; font-weight: 650; margin: 16px 0 7px; }}
+input {{ width: 100%; min-height: 46px; border: 1px solid #bdcec3; border-radius: 6px; background: #fff; color: #15221c; font: inherit; padding: 10px 12px; }}
+input:focus {{ outline: 3px solid #b9dfcf; border-color: #16745b; }}
+button {{ width: 100%; min-height: 46px; border: 0; border-radius: 6px; margin-top: 22px; background: #16745b; color: white; font: inherit; font-weight: 700; cursor: pointer; }}
+button:disabled {{ cursor: wait; opacity: .65; }}
+.status {{ min-height: 24px; margin-top: 16px; color: #6a4a13; font-size: 14px; line-height: 1.5; }}
+.status.ok {{ color: #16745b; }}
+.meta {{ color: #718178; font-size: 12px; line-height: 1.6; margin-top: 16px; }}
+a {{ color: #12634e; }}
+</style>
+</head>
+<body>
+<main>
+<header><div class="brand">VITALIS</div><h1>连接 Zepp 健康数据</h1>
+<p class="lead">密码只在本次请求中经过 Vitalis 服务端处理，不会保存、记录或返回。登录协议由 Zepp 官方网页公开脚本定义。</p></header>
+<section>
+<form id="login-form" autocomplete="on">
+<label for="account">Zepp 手机号或邮箱</label>
+<input id="account" name="username" autocomplete="username" maxlength="320" required />
+<label for="password">Zepp 密码</label>
+<input id="password" name="password" type="password" autocomplete="current-password" maxlength="256" required />
+<label for="country">国家/地区代码</label>
+<input id="country" name="country_code" value="CN" maxlength="24" pattern="[A-Za-z]{{2}}(-[A-Za-z0-9_-]{{1,16}})?" required />
+<button id="submit" type="submit">安全登录并连接</button>
+<div id="status" class="status" role="status" aria-live="polite">一次性配对码 {code_esc} · {expiry_esc} 前有效</div>
+</form>
+<p class="meta">没有密码或遇到图形验证？请在 <a href="{reset_esc}" rel="noopener noreferrer">Zepp 官方忘记密码页面</a> 完成重置后返回本页。</p>
+</section>
+</main>
+<script nonce="{nonce}">
+(() => {{
+  const code = {code_json};
+  const form = document.getElementById("login-form");
+  const password = document.getElementById("password");
+  const button = document.getElementById("submit");
+  const status = document.getElementById("status");
+  const loginPath = "/api/connect/zepp/pair/" + encodeURIComponent(code) + "/login";
+  const statusPath = "/api/connect/zepp/pair/" + encodeURIComponent(code);
+  const setStatus = (text, ok = false) => {{ status.textContent = text; status.className = ok ? "status ok" : "status"; }};
+  async function poll() {{
+    try {{
+      const response = await fetch(statusPath, {{ cache: "no-store", headers: {{ "Accept": "application/json" }} }});
+      const data = await response.json();
+      if (data.status === "connected") {{ setStatus("已连接，云端同步已启动。", true); return; }}
+      if (data.status === "expired") {{ setStatus("配对码已过期，请重新生成连接页面。"); return; }}
+    }} catch (_) {{}}
+    window.setTimeout(poll, 2500);
+  }}
+  form.addEventListener("submit", async (event) => {{
+    event.preventDefault();
+    button.disabled = true;
+    setStatus("正在通过官方登录协议验证…");
+    try {{
+      const response = await fetch(loginPath, {{
+        method: "POST",
+        cache: "no-store",
+        headers: {{ "Content-Type": "application/json", "Accept": "application/json" }},
+        body: JSON.stringify({{
+          account: document.getElementById("account").value,
+          password: password.value,
+          country_code: document.getElementById("country").value
+        }})
+      }});
+      password.value = "";
+      if (response.ok) {{
+        setStatus("登录成功，云端同步已启动。", true);
+        window.setTimeout(poll, 800);
+      }} else if (response.status === 429) {{
+        setStatus("尝试次数过多，请稍后重试。 ");
+      }} else {{
+        setStatus("登录未完成，请使用官方页面重置密码后重试。");
+      }}
+    }} catch (_) {{
+      password.value = "";
+      setStatus("网络暂时不可用，请稍后重试。");
+    }} finally {{ button.disabled = false; }}
+  }});
+}})();
+</script>
+</body>
+</html>"""
+
+
+@router.get("/zepp/phone", response_class=HTMLResponse, summary="手机 Zepp 登录页")
+def zepp_phone_page(
+    request: Request,
+    code: str = Query(..., min_length=1, max_length=128),
+) -> Response:
+    _require_phone_origin(request)
+    try:
+        status = get_connection_service().pairing_status(code)
+    except ConnectionOperationError as exc:
+        raise HTTPException(status_code=exc.http_status, detail="配对会话不存在或已过期") from exc
+    nonce = secrets.token_urlsafe(18)
+    return HTMLResponse(
+        _phone_pairing_html(code, iso_utc(status.expires_at) or "", nonce=nonce),
+        headers=_phone_response_headers(nonce),
+    )
 
 
 @router.get("/zepp/extension.zip", summary="下载 Vitalis Zepp 登录桥", include_in_schema=False)

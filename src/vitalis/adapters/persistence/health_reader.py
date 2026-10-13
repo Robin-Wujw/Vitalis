@@ -56,6 +56,26 @@ class SqlHealthReader(HealthReader):
                 for row in rows
             )
 
+    def stream_observation_dates(
+        self,
+        user_id: str,
+        stream: str,
+        *,
+        start: date,
+        end: date,
+        timezone_name: str,
+        source: str = "zepp",
+    ) -> tuple[date, ...]:
+        with self._session_factory() as db:
+            return tuple(sorted(HealthRepository(db).stream_observation_dates(
+                user_id,
+                stream,
+                source=source,
+                window_start=start,
+                window_end=end,
+                timezone_name=timezone_name,
+            )))
+
     def latest_sync_attempt(
         self, user_id: str, source: str = "zepp"
     ) -> HealthSyncAttemptRead | None:

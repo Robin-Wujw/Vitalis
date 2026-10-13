@@ -198,6 +198,41 @@ class DailyMetric(Base):
     device_id: Mapped[str] = mapped_column(String(128), default="", nullable=False)
 
 
+class DailyFeature(Base):
+    """Derived day-level feature with explicit qualification and input cursor."""
+
+    __tablename__ = "daily_features"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "date", "feature", "source", "source_scope", "device_id",
+            name="uq_daily_feature_identity",
+        ),
+        Index("ix_daily_features_user_date", "user_id", "date"),
+        {"info": {"timescale": True}},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    feature: Mapped[str] = mapped_column(String(96), index=True)
+    source: Mapped[str] = mapped_column(String(32), default="zepp")
+    source_scope: Mapped[str] = mapped_column(String(32), default="unknown")
+    device_id: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    unit: Mapped[str] = mapped_column(String(24), default="")
+    value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="UNKNOWN")
+    sample_count: Mapped[int] = mapped_column(Integer, default=0)
+    distinct_days: Mapped[int] = mapped_column(Integer, default=0)
+    expected_days: Mapped[int] = mapped_column(Integer, default=1)
+    coverage_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    as_of: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    input_revision: Mapped[int] = mapped_column(Integer, default=0)
+    algorithm_version: Mapped[str] = mapped_column(String(32), default="daily-feature-v1")
+
+
 class DenseDataFile(Base):
     """Indexed vendor file whose payload has not necessarily been decoded."""
 
@@ -278,6 +313,52 @@ class WorkerHeartbeat(Base):
 
     name: Mapped[str] = mapped_column(String(32), primary_key=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class DeliveryAlertEvent(Base):
+    """Durable, user-scoped alert raised by an internal health evaluator.
+
+    The event key is the business identity of one incident. It is unique only
+    within a user so the same scheduled period or analysis job can exist for
+    separate local users without leaking or coalescing their state.
+    """
+
+    __tablename__ = "delivery_alert_events"
+    __table_args__ = (
+        UniqueConstraint("user_id", "event_key", name="uq_delivery_alert_user_event"),
+        CheckConstraint(
+            "category IN ('delivery', 'worker', 'analysis', 'provider')",
+            name="ck_delivery_alert_category",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'suppressed', 'acknowledged')",
+            name="ck_delivery_alert_status",
+        ),
+        Index("ix_delivery_alert_user_status", "user_id", "status"),
+        Index(
+            "ix_delivery_alert_user_target",
+            "user_id", "target_date", "period",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    event_key: Mapped[str] = mapped_column(String(192))
+    category: Mapped[str] = mapped_column(String(32), index=True)
+    reason: Mapped[str] = mapped_column(String(64), index=True)
+    period: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    target_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    suppressed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
 
 
 class SyncStreamState(Base):
@@ -502,6 +583,15 @@ class StrengthExercise(Base):
     source: Mapped[str] = mapped_column(String(24))
     confidence: Mapped[str] = mapped_column(String(16))
     confidence_label: Mapped[str] = mapped_column(String(16))
+    canonical_qualified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    volume_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_unit: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    volume_basis: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    estimated_1rm_kg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    estimated_1rm_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    estimated_1rm_evidence: Mapped[list] = mapped_column(JSON, default=list)
+    personal_record: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    personal_record_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
@@ -802,6 +892,9 @@ class SubjectiveFeedback(Base):
     workout_source: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     workout_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     recommendation_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    feeling_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    soreness_parts: Mapped[list] = mapped_column(JSON, default=list)
+    behavior_tags: Mapped[list] = mapped_column(JSON, default=list)
     session_rpe: Mapped[float | None] = mapped_column(Float, nullable=True)
     physical_fatigue: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mental_state: Mapped[int | None] = mapped_column(Integer, nullable=True)

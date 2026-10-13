@@ -5,6 +5,7 @@ from .workout_detail import (
     ParseResult,
     ParseStatus,
     parse_workout_detail,
+    parse_workout_detail_stream,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "ParseResult",
     "ParseStatus",
     "parse_workout_detail",
+    "parse_workout_detail_stream",
 ]

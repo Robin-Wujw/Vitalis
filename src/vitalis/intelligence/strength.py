@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from hashlib import sha256
+from math import isfinite
 from statistics import median
 from uuid import uuid4
 
@@ -14,6 +16,7 @@ from .contracts import (
     Availability,
     ConfidenceBand,
     ExerciseHypothesis,
+    MuscleLoadStatus,
     MuscleRecoveryStatus,
     StrengthAnalysis,
     StrengthExerciseComparison,
@@ -23,7 +26,6 @@ from .contracts import (
 )
 from .localization import AVAILABILITY_LABELS, CONFIDENCE_LABELS
 from .running import RunningAnalyzer
-
 
 PATTERN_LABELS = {
     "squat": "下蹲",
@@ -157,6 +159,255 @@ def reported_set_count(data: dict) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
 
 
+_CAPACITY_UNITS = {"kg", "lb"}
+_CAPACITY_BASES = {"per_hand", "total", "machine", "bodyweight"}
+_LB_TO_KG = 0.45359237
+
+
+def _capacity_mapping(value: object) -> dict:
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="python")
+    return {}
+
+
+def _capacity_number(value) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(float(value)) else None
+
+
+def _capacity_unit(value, weight_kg=None) -> str | None:
+    if weight_kg is not None:
+        return "kg"
+    if value in (None, ""):
+        return None
+    normalized = str(value).strip().lower().replace(" ", "_").replace("-", "_")
+    return {
+        "kg": "kg", "kgs": "kg", "kilogram": "kg", "kilograms": "kg", "公斤": "kg", "千克": "kg",
+        "lb": "lb", "lbs": "lb", "pound": "lb", "pounds": "lb", "磅": "lb",
+    }.get(normalized)
+
+
+def _canonical_capacity_exercise(item: dict) -> tuple[str, tuple[str, ...]] | None:
+    item = _capacity_mapping(item)
+    source = item.get("source")
+    if source not in {"user_confirmed", "vendor_explicit"}:
+        return None
+    exercise_id = item.get("exercise_id")
+    name = item.get("exercise_name")
+    if source == "vendor_explicit" and not exercise_id:
+        return None
+    identity = str(exercise_id or name or "").strip()
+    if not identity:
+        return None
+    pattern, muscles = classify_exercise(exercise_id, name)
+    if pattern == "unknown" or not muscles:
+        return None
+    return identity.casefold(), tuple(muscles)
+
+
+def _capacity_weight(item: dict) -> tuple[float, str, str] | None:
+    item = _capacity_mapping(item)
+    raw_kg = _capacity_number(item.get("weight_kg"))
+    raw_value = raw_kg if raw_kg is not None else _capacity_number(item.get("weight_value"))
+    unit = _capacity_unit(item.get("weight_unit"), raw_kg)
+    basis = item.get("weight_basis")
+    if raw_value is None or raw_value < 0 or unit not in _CAPACITY_UNITS or basis not in _CAPACITY_BASES:
+        return None
+    return (raw_value if unit == "kg" else raw_value * _LB_TO_KG, unit, basis)
+
+
+def _capacity_rows(item: dict) -> list[dict]:
+    item = _capacity_mapping(item)
+    identity = _canonical_capacity_exercise(item)
+    if identity is None:
+        return []
+    exercise_id, muscles = identity
+    explicit_sets = item.get("sets")
+    if isinstance(explicit_sets, list):
+        rows = [row for row in explicit_sets if isinstance(row, dict)]
+    else:
+        count = item.get("sets")
+        count = count if isinstance(count, int) and not isinstance(count, bool) and count > 0 else 1
+        rows = [item] * count
+    output = []
+    for row in rows:
+        repetitions = row.get("repetitions", item.get("repetitions"))
+        if isinstance(repetitions, str) and repetitions.strip().isdigit():
+            repetitions = int(repetitions.strip())
+        if not isinstance(repetitions, int) or isinstance(repetitions, bool) or repetitions <= 0:
+            continue
+        weight = _capacity_weight({**item, **row})
+        if weight is None:
+            continue
+        weight_kg, unit, basis = weight
+        output.append({
+            "exercise_id": exercise_id,
+            "exercise_name": item.get("exercise_name") or item.get("exercise_id") or exercise_id,
+            "muscles": muscles,
+            "repetitions": repetitions,
+            "weight_kg": weight_kg,
+            "input_unit": unit,
+            "weight_basis": basis,
+            "personal_record": bool(item.get("personal_record")),
+        })
+    return output
+
+
+def estimate_one_rep_max(weight, repetitions, *, unit: str | None, basis: str | None) -> float | None:
+    """Estimate 1RM only when the weight unit and load basis are explicit."""
+    numeric_weight = _capacity_number(weight)
+    numeric_repetitions = repetitions if isinstance(repetitions, int) and not isinstance(repetitions, bool) else None
+    normalized_unit = _capacity_unit(unit)
+    if numeric_weight is None or numeric_weight <= 0 or numeric_repetitions is None or numeric_repetitions <= 0:
+        return None
+    if normalized_unit not in _CAPACITY_UNITS or basis not in _CAPACITY_BASES:
+        return None
+    kilograms = numeric_weight if normalized_unit == "kg" else numeric_weight * _LB_TO_KG
+    return round(kilograms * (1 + numeric_repetitions / 30), 1)
+
+
+def strength_session_capacity(session: dict, history: list[dict] | None = None) -> dict:
+    """Build evidence-backed volume, 1RM, PR, and muscle-share facts for a session."""
+    session = _capacity_mapping(session)
+    current_rows = [row for item in session.get("explicit_exercises") or [] for row in _capacity_rows(item)]
+    historical_max: dict[tuple[str, str], float] = {}
+    for previous in history or []:
+        previous = _capacity_mapping(previous)
+        rows = [row for item in previous.get("explicit_exercises") or [] for row in _capacity_rows(item)]
+        grouped: dict[tuple[str, str], list[float]] = defaultdict(list)
+        for row in rows:
+            grouped[(row["exercise_id"], row["weight_basis"])].append(
+                row["weight_kg"] * (1 + row["repetitions"] / 30)
+            )
+        for key, values in grouped.items():
+            if values:
+                historical_max[key] = max(historical_max.get(key, 0), max(values))
+
+    grouped_rows: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for row in current_rows:
+        grouped_rows[(row["exercise_id"], row["weight_basis"])].append(row)
+    capacity = []
+    muscle_volume: dict[str, float] = defaultdict(float)
+    for (exercise_id, basis), rows in grouped_rows.items():
+        volume = sum(row["weight_kg"] * row["repetitions"] for row in rows)
+        estimated = max(row["weight_kg"] * (1 + row["repetitions"] / 30) for row in rows)
+        muscles = rows[0]["muscles"]
+        for muscle in muscles:
+            muscle_volume[muscle] += volume / len(muscles)
+        key = (exercise_id, basis)
+        prior = historical_max.get(key)
+        capacity.append({
+            "exercise_id": exercise_id,
+            "exercise_name": rows[0]["exercise_name"],
+            "weight_unit": "kg",
+            "weight_basis": basis,
+            "volume": round(volume, 1),
+            "volume_unit": "kg*reps",
+            "estimated_1rm": round(estimated, 1),
+            "estimated_1rm_unit": "kg",
+            "personal_record": any(row.get("personal_record") for row in rows) or (prior is not None and estimated > prior),
+            "muscle_groups": list(muscles),
+        })
+    total = sum(muscle_volume.values())
+    ratios = {
+        muscle: round(value / total, 4)
+        for muscle, value in sorted(muscle_volume.items())
+        if total > 0
+    }
+    limitations = []
+    if not current_rows:
+        limitations.append("缺少同时具备动作、重量单位和负重口径的明确组次，未计算力量容量或估算 1RM。")
+    if current_rows and not history:
+        limitations.append("没有可比较的历史明确组次，未标记个人纪录。")
+    return {"capacity": capacity, "muscle_ratios": ratios, "limitations": limitations}
+
+
+_MUSCLE_LOAD_LABELS = {
+    "PRODUCTIVE": "训练刺激有效",
+    "MAINTAINING": "维持水平",
+    "OVERTRAINING": "短期负荷偏高",
+    "INSUFFICIENT_DATA": "数据不足",
+}
+
+
+def _apply_session_capacity(session: StrengthSessionAnalysis, history: list[StrengthSessionAnalysis]) -> StrengthSessionAnalysis:
+    payload = session.model_dump(mode="python")
+    previous = [item.model_dump(mode="python") for item in history]
+    summary = strength_session_capacity(payload, previous)
+    by_key = {
+        (item["exercise_id"], item["weight_basis"]): item
+        for item in summary["capacity"]
+    }
+    exercises = []
+    for exercise in session.explicit_exercises:
+        key = (str(exercise.exercise_id or exercise.exercise_name).casefold(), exercise.weight_basis)
+        derived = by_key.get(key)
+        if derived is None:
+            exercises.append(exercise)
+            continue
+        exercises.append(exercise.model_copy(update={
+            "canonical_qualified": True,
+            "volume_value": derived["volume"],
+            "volume_unit": derived["volume_unit"],
+            "volume_basis": derived["weight_basis"],
+            "estimated_1rm_kg": derived["estimated_1rm"],
+            "estimated_1rm_method": "Epley",
+            "estimated_1rm_evidence": ["明确重复次数", "重量单位和负重口径已记录", "动作可映射到规范动作"],
+            "personal_record": bool(derived["personal_record"]),
+            "personal_record_date": session.date if derived["personal_record"] else None,
+        }))
+    return session.model_copy(update={
+        "explicit_exercises": exercises,
+        "capacity_volume_kg": round(sum(item["volume"] for item in summary["capacity"]), 1) if summary["capacity"] else None,
+        "capacity_unit": "kg*reps" if summary["capacity"] else None,
+    })
+
+
+def _muscle_load_status(day: date, sessions: list[StrengthSessionAnalysis]) -> list[MuscleLoadStatus]:
+    short_start = day - timedelta(days=6)
+    long_start = day - timedelta(days=27)
+    short: dict[str, float] = defaultdict(float)
+    long: dict[str, float] = defaultdict(float)
+    latest: dict[str, date] = {}
+    for session in sessions:
+        if not (long_start <= session.date <= day):
+            continue
+        rows = [row for item in session.explicit_exercises for row in _capacity_rows(item.model_dump(mode="python"))]
+        for row in rows:
+            share = row["weight_kg"] * row["repetitions"] / len(row["muscles"])
+            for muscle in row["muscles"]:
+                long[muscle] += share
+                latest[muscle] = max(latest.get(muscle, row.get("date", session.date)), session.date)
+                if session.date >= short_start:
+                    short[muscle] += share
+    output = []
+    for muscle in sorted(long):
+        long_load = long[muscle] / 4
+        short_load = short.get(muscle, 0.0)
+        if long_load <= 0:
+            status = "INSUFFICIENT_DATA"
+            ratio = None
+            qualified = False
+        else:
+            ratio = round(short_load / long_load, 3)
+            status = "PRODUCTIVE" if 0.8 <= ratio <= 1.3 else "MAINTAINING" if ratio < 0.8 else "OVERTRAINING"
+            qualified = True
+        output.append(MuscleLoadStatus(
+            muscle_group=muscle,
+            muscle_group_label=MUSCLE_LABELS[muscle],
+            short_load=round(short_load, 1),
+            long_load=round(long_load, 1) if long_load > 0 else None,
+            short_long_ratio=ratio,
+            status=status,
+            status_label=_MUSCLE_LOAD_LABELS[status],
+            freshness_days=(day - latest[muscle]).days if muscle in latest else None,
+            qualified=qualified,
+            limitations=[] if qualified else ["缺少可比较的规范动作容量。"],
+        ))
+    return output
+
+
 class StrengthAnalyzer:
     def analyze(self, raw) -> StrengthAnalysis:
         start = raw.day - timedelta(days=27)
@@ -179,12 +430,15 @@ class StrengthAnalyzer:
             self._session(raw, workout, threshold)
             for workout in sorted(workouts, key=RunningAnalyzer._workout_sort_key)
         ]
-        sessions = [
-            session.model_copy(update={
+        qualified_sessions = []
+        for index, session in enumerate(sessions):
+            session = _apply_session_capacity(session, sessions[:index])
+            session = session.model_copy(update={
                 "comparisons": self._comparisons_for_session(session, sessions[:index]),
             })
-            for index, session in enumerate(sessions)
-        ]
+            qualified_sessions.append(session)
+        sessions = qualified_sessions
+        muscle_load = _muscle_load_status(raw.day, sessions)
         explicit_count = sum(bool(item.explicit_exercises) for item in sessions)
         split, split_confidence = self._split(sessions)
         next_focus = self._next_focus(split, sessions)
@@ -207,6 +461,7 @@ class StrengthAnalyzer:
             next_focus_label=FOCUS_LABELS.get(next_focus) if next_focus else None,
             recent_sessions=list(reversed(sessions[-8:])),
             muscle_recovery=self._muscle_recovery(raw.day, sessions),
+            muscle_load=muscle_load,
             limitations=limitations,
         )
 
@@ -420,7 +675,7 @@ class StrengthAnalyzer:
             pattern, muscles = classify_exercise(exercise_id, name)
             confidence = ConfidenceBand.HIGH if pattern != "unknown" else ConfidenceBand.MODERATE
             stable_id = sha256(
-                f"{user_id}|{workout_source}|{workout_id}|vendor|{order}".encode("utf-8")
+                f"{user_id}|{workout_source}|{workout_id}|vendor|{order}".encode()
             ).hexdigest()[:32]
             repetitions = value("repetitions")
             weight_kg = value("weight_kg")

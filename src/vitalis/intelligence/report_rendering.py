@@ -1,19 +1,18 @@
 """Render already-computed report projections without I/O or health algorithms."""
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass, field
-from hashlib import sha256
 import html
-from html.parser import HTMLParser
 import json
 import math
 import re
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from hashlib import sha256
+from html.parser import HTMLParser
 from typing import Any, Literal
 
-from .report_formatting import minutes_text, number, payload_of, timestamp_text
 from .public_reports import PublicReportView, report_presentation, to_public_report_view
-
+from .report_formatting import minutes_text, number, payload_of, timestamp_text
 
 RENDERER_VERSION = "4.0"
 ReportTarget = Literal["markdown", "html"]
@@ -125,6 +124,44 @@ def _delta(metric: dict[str, Any]) -> dict[str, str] | None:
     return {"text": f"{arrow} {abs(change):.1f}%", "tone": tone}
 
 
+def _state_notice(payload: dict[str, Any], context: dict[str, Any]) -> str | None:
+    """Explain only a saved state and explicitly recorded missing evidence."""
+    state = str(payload.get("state") or "current")
+    if state == "current":
+        return None
+    state_text = {
+        "stale": "新数据已经到达",
+        "queued": "更新尚未完成",
+        "running": "更新正在进行",
+        "failed": "这次更新没有完成",
+    }.get(state)
+    if state_text is None:
+        return None
+    missing = []
+    metadata = context.get("delivery_metadata") or {}
+    candidates = []
+    for value in (metadata.get("missing_signals"), metadata.get("coverage_reason")):
+        if isinstance(value, (list, tuple)):
+            candidates.extend(value)
+        elif value:
+            candidates.append(value)
+    for item in candidates:
+        text = str(item).strip()
+        if text and text not in missing:
+            missing.append(text)
+    reason_labels = {
+        "sleep_complete": "昨夜睡眠",
+        "prior_7d_training_history": "近 7 天训练记录",
+        "same_day_facts": "今天的记录",
+        "training_history": "训练历史",
+        "sleep_incomplete": "昨夜睡眠",
+        "stored_data_incomplete": "当天记录",
+    }
+    missing_text = "、".join(reason_labels.get(item, item) for item in missing)
+    detail = f"，缺少 {missing_text}" if missing_text else ""
+    return f"{state_text}{detail}；当前显示已保存版本。"
+
+
 def _subtitle(payload: dict[str, Any]) -> str:
     start, end = payload["period_start"], payload["period_end"]
     period = str(start) if start == end else f"{start}—{end}"
@@ -138,14 +175,9 @@ def _subtitle(payload: dict[str, Any]) -> str:
     else:
         period += " · 数据截至时间未记录"
     period += f" · {_SOURCE_MODE_LABELS.get(payload['source_mode'], '来源模式未标记')}"
-    state_label = {
-        "stale": "数据已更新，显示上一版结果",
-        "queued": "更新已排队，显示上一版结果",
-        "running": "正在更新，显示上一版结果",
-        "failed": "更新失败，显示上一版结果",
-    }.get(payload["state"])
-    if state_label:
-        period += f" · {state_label}"
+    notice = _state_notice(payload, context)
+    if notice:
+        period += f" · {notice}"
     if context.get("period_mode") == "rolling":
         period += " · 滚动窗口"
     for key, label in (("late", "延迟报告"), ("partial", "部分报告"), ("facts_only", "仅展示事实")):
@@ -209,6 +241,15 @@ Item = tuple[str, Any]
 _UNIT_RANKS = {"record": 0, "finding": 0, "fact": 1, "limitation": 2}
 _SECTION_OMISSION = "推送篇幅有限，本节另有 {count} 项未展开。"
 _FULL_REPORT_NOTE = "完整报告可通过 Vitalis API 或 Hermes 查看。"
+# Daily push reports have a stricter readable-content budget than the provider
+# transport ceiling, so long histories cannot silently become giant messages.
+REPORT_VISIBLE_LIMITS = {
+    "morning": 8_000,
+    "daily": 10_000,
+    "evening": 10_000,
+    "weekly": 12_000,
+    "monthly": 14_000,
+}
 _FINDING_HEADINGS = {"morning": "昨夜与今天", "daily": "今天的变化", "evening": "今天的变化", "weekly": "本周变化", "monthly": "本月变化"}
 _NEXT_HEADINGS = {"daily": "下一步", "evening": "明日重点", "weekly": "下周重点", "monthly": "下月重点"}
 # Reading reports show the engine-curated sections for their own period. Audit
@@ -340,13 +381,13 @@ def _report_sections(view: dict[str, Any], presentation: dict[str, Any]) -> tupl
         if not _shown_section(section, kind):
             continue
         lines = {key: [] for key in ("facts", "interpretation", "limitations")}
-        for key in lines:
+        for key, values in lines.items():
             for item in section.get(key) or []:
                 text = _section_line(str(section.get("key")), str(item))
                 # Engines repeat a period's main change inside several sections.
                 if text is not None and text not in shown:
                     shown.add(text)
-                    lines[key].append(text)
+                    values.append(text)
         units = [(_UNIT_RANKS["fact"], [item]) for item in _fact_items(lines["facts"])]
         units += [(_UNIT_RANKS["finding"], [("paragraph", text)]) for text in lines["interpretation"]]
         units += [(_UNIT_RANKS["limitation"], [("note", text)]) for text in lines["limitations"]]
@@ -401,6 +442,36 @@ def markdown_html_length(content: str) -> int:
         text = html.unescape(_MARKDOWN_ESCAPE.sub(r"\1", line))
         total += provider_text_length(html.escape(text, quote=True)) + tags + 1
     return total
+
+
+class _VisibleTextParser(HTMLParser):
+    """Collect browser-visible text while ignoring tags and attributes."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+
+def visible_text(content: str, template: ReportTarget) -> str:
+    """Return the normalized text a reader sees for one report template."""
+    if template == "markdown":
+        from markdown import markdown as markdown_to_html
+
+        content = markdown_to_html(content, output_format="html5")
+    elif template != "html":
+        raise ValueError("report template must be markdown or html")
+    parser = _VisibleTextParser()
+    parser.feed(content)
+    parser.close()
+    return re.sub(r"\s+", " ", "".join(parser.parts)).strip()
+
+
+def visible_text_length(content: str, template: ReportTarget) -> int:
+    """Count UTF-16 code units in rendered text, excluding markup and styles."""
+    return provider_text_length(visible_text(content, template))
 
 
 def _water_fill(room: int, needs: list[int]) -> list[int]:
@@ -620,9 +691,11 @@ def _html_report(
         hero.append(f'<p style="margin:10px 0 0"><span style="display:inline-block;padding:2px 10px;border-radius:999px;'
                     f'background:{background};color:{color};font-size:13px;font-weight:600">{escape(status[1])}</span></p>')
     output = [
-        f'<div style="max-width:680px;margin:0 auto;padding:12px 12px 18px;box-sizing:border-box;background:{_PLANE};'
-        f"color:{_INK};font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',"
-        'sans-serif;font-size:15px;line-height:1.6;overflow-wrap:anywhere;word-break:break-word">',
+        (
+            f'<div style="max-width:680px;margin:0 auto;padding:12px 12px 18px;box-sizing:border-box;background:{_PLANE};'
+            f"color:{_INK};font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',"
+            'sans-serif;font-size:15px;line-height:1.6;overflow-wrap:anywhere;word-break:break-word">'
+        ),
         f'<div style="padding:16px 18px;border-radius:14px;background:{_HERO};color:#ffffff">' + "".join(hero) + "</div>",
     ]
     output.extend(_html_line(kind, item) for kind, item in items)
@@ -647,7 +720,17 @@ def _fit_report(
             return sum(measure("\n" + _html_line(kind, text)) for kind, text in items)
         render = _html_report
     room = limit - measure(render(payload, label, headline, [], status))
-    return render(payload, label, headline, _budgeted_items(*content, cost, room), status)
+    # Markdown parsing and browser whitespace collapsing can differ slightly
+    # from the additive unit estimate. Re-fit against the complete rendered
+    # body until the measured result, not the estimate, satisfies the limit.
+    body = render(payload, label, headline, _budgeted_items(*content, cost, room), status)
+    for _ in range(64):
+        actual = measure(body)
+        if actual <= limit:
+            return body
+        room = max(0, room - (actual - limit) - 1)
+        body = render(payload, label, headline, _budgeted_items(*content, cost, room), status)
+    return body
 
 
 class _HTMLContract(HTMLParser):
@@ -661,7 +744,7 @@ class _HTMLContract(HTMLParser):
         if any(name not in {"style", "lang"} for name, _ in attrs):
             raise ValueError("HTML report contains an unsupported attribute")
         for name, value in attrs:
-            if name == "style" and value and re.search(r"url\s*\(|expression\s*\(|@import", value, re.I):
+            if name == "style" and value and re.search(r"url\s*\(|expression\s*\(|@import", value, re.IGNORECASE):
                 raise ValueError("HTML report contains an unsafe style")
         self.tags.append(tag)
 
@@ -681,7 +764,7 @@ def validate_report_content(content: str, template: str) -> None:
     except ValueError:
         serialized = None
     if isinstance(serialized, str):
-        raise ValueError("report content is a second JSON serialization")
+        raise ValueError("report content is a second JSON serialization")  # noqa: TRY004 - stable validation contract
     if template == "html":
         if not text.startswith("<") or re.match(r"&lt;", text):
             raise ValueError("HTML template requires unescaped HTML content")
@@ -690,7 +773,7 @@ def validate_report_content(content: str, template: str) -> None:
         parser.close()
         if not parser.tags:
             raise ValueError("HTML template requires HTML elements")
-    elif re.search(r"<(?:/?(?:div|p|h[1-6]|script|style|img|a))\b", content, re.I):
+    elif re.search(r"<(?:/?(?:div|p|h[1-6]|script|style|img|a))\b", content, re.IGNORECASE):
         raise ValueError("Markdown template cannot contain raw report HTML")
 
 
@@ -721,8 +804,25 @@ def render_report(
     headline = _plain(view.title)
     render = _markdown_report if target == "markdown" else _html_report
     body = render(payload, label, headline, _all_items(*content), status)
+
+    # Readability and transport are different contracts.  First fit the text a
+    # person sees, then apply an optional provider-specific byte/character cap;
+    # a large transport override must never bypass the normal report budget.
+    visible_limit = REPORT_VISIBLE_LIMITS.get(view.kind)
+    if visible_limit is not None and visible_text_length(body, target) > visible_limit:
+        body = _fit_report(
+            payload, label, headline, target, content, visible_limit,
+            lambda value: visible_text_length(value, target), status,
+        )
     if max_length is not None and measure(body) > max_length:
         body = _fit_report(payload, label, headline, target, content, max_length, measure, status)
+        # The transport pass works from the complete unit list; reassert the
+        # reader-facing contract after it so it cannot reintroduce omitted units.
+        if visible_limit is not None and visible_text_length(body, target) > visible_limit:
+            body = _fit_report(
+                payload, label, headline, target, content, visible_limit,
+                lambda value: visible_text_length(value, target), status,
+            )
     return RenderedReport(
         title=f"Vitalis {label} · {headline}", content=body,
         media_type=_MEDIA_TYPES[target],

@@ -47,7 +47,7 @@ def _check_current_sqlite(path: Path, *, standalone: bool = False) -> None:
     from sqlalchemy import create_engine
     from sqlalchemy.exc import SQLAlchemyError
     from sqlalchemy.pool import NullPool
-    from vitalis.adapters.persistence.database import check_schema
+    from vitalis.adapters.persistence.database import SchemaMismatch, check_schema
 
     if path.is_symlink() or not path.is_file():
         raise ValueError("source must be an existing regular SQLite file, not a symlink")
@@ -63,6 +63,8 @@ def _check_current_sqlite(path: Path, *, standalone: bool = False) -> None:
                 raise ValueError("SQLite integrity check failed")
             if connection.exec_driver_sql("PRAGMA foreign_key_check").first() is not None:
                 raise ValueError("SQLite foreign key check failed")
+    except SchemaMismatch:
+        raise ValueError("source schema does not match the current Vitalis schema") from None
     except SQLAlchemyError as exc:
         raise ValueError("source is not a readable current SQLite database") from exc
     finally:

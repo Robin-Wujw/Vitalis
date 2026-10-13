@@ -20,7 +20,6 @@
 
 | 优先级 | 改动 | 前置 |
 | --- | --- | --- |
-| P0 | [后端测试超出 600 秒上限](backend-test-time.md) | — |
 | P0 | [投递目标与漏发告警](delivery-alerts.md) | — |
 | P0 | [日常报告的自动验收](report-acceptance.md) | — |
 | P0 | [推送里的系统状态改成人话](status-wording.md) | — |

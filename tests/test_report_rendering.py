@@ -1,15 +1,21 @@
 """Cross-channel report content is qualified data, not an HTML/Markdown snapshot."""
-from html.parser import HTMLParser
 import hashlib
 import json
+from html.parser import HTMLParser
 from pathlib import Path
 
-from markdown import markdown
 import pytest
+from markdown import markdown
 
 from vitalis.intelligence.contracts import ReportBriefing
 from vitalis.intelligence.report_rendering import (
-    RenderedReport, markdown_html_length, provider_text_length, render_report, validate_report_content,
+    REPORT_VISIBLE_LIMITS,
+    RenderedReport,
+    markdown_html_length,
+    provider_text_length,
+    render_report,
+    validate_report_content,
+    visible_text_length,
 )
 
 
@@ -276,16 +282,33 @@ def test_daily_fact_dates_keep_their_time_precision(observed_at, expected):
         assert "08:00" not in section["facts"][0]
 
 
-@pytest.mark.parametrize("state, label", [
-    ("stale", "数据已更新，显示上一版结果"),
-    ("queued", "更新已排队，显示上一版结果"),
-    ("running", "正在更新，显示上一版结果"),
-    ("failed", "更新失败，显示上一版结果"),
+@pytest.mark.parametrize("state, expected", [
+    ("stale", "新数据已经到达；当前显示已保存版本"),
+    ("queued", "更新尚未完成；当前显示已保存版本"),
+    ("running", "更新正在进行；当前显示已保存版本"),
+    ("failed", "这次更新没有完成；当前显示已保存版本"),
 ])
-def test_last_good_report_state_is_visible_in_both_channels(state, label):
+def test_last_good_report_state_is_human_and_does_not_invent_missing_data_or_promises(state, expected):
     briefing = _briefing(report_context={"report_state": {"state": state}})
     for target in ("markdown", "html"):
-        assert label in render_report(briefing, target).content
+        content = render_report(briefing, target).content
+        assert expected in content
+        assert "部分新数据" not in content
+        assert "自动更新" not in content
+        assert "显示上一版结果" not in content
+        assert "更新已排队" not in content
+
+
+def test_report_state_notice_uses_only_explicit_missing_signal_metadata():
+    briefing = _briefing(report_context={
+        "report_state": {"state": "queued"},
+        "delivery_metadata": {"missing_signals": ["sleep_complete"]},
+    })
+
+    content = render_report(briefing, "markdown").content
+
+    assert "缺少 昨夜睡眠" in content
+    assert "自动更新" not in content
 
 
 def test_generated_daily_and_evening_examples_are_distinct_named_reports():
@@ -336,7 +359,8 @@ def test_channel_budget_leaves_reports_within_budget_unchanged(target, measure):
 @pytest.mark.parametrize(("target", "measure"), _BUDGET_MEASURES)
 def test_channel_budget_keeps_records_plan_and_whole_exercises(target, measure):
     briefing = large_briefing()
-    assert measure(render_report(briefing, target).content) > 18_000
+    readable = render_report(briefing, target, max_length=100_000).content
+    assert visible_text_length(readable, target) <= REPORT_VISIBLE_LIMITS["evening"]
 
     content = render_report(briefing, target, max_length=18_000, measure=measure).content
 
@@ -392,3 +416,29 @@ def test_stress_zone_shares_become_one_labelled_bar_in_html_only():
     for line in zones:
         assert line in markdown_content
     assert "压力分区占比" not in markdown_content
+
+
+@pytest.mark.parametrize("target", ["markdown", "html"])
+def test_default_readable_limit_counts_visible_text_and_max_length_cannot_bypass_it(target):
+    briefing = large_briefing()
+    normal = render_report(briefing, target).content
+    with_large_transport_budget = render_report(briefing, target, max_length=100_000).content
+
+    assert visible_text_length(normal, target) <= REPORT_VISIBLE_LIMITS["evening"]
+    assert with_large_transport_budget == normal
+    assert "完整报告可通过 Vitalis API 或 Hermes 查看。" in normal
+
+
+def test_readable_limits_cover_short_and_long_report_kinds():
+    assert set(REPORT_VISIBLE_LIMITS) == {"morning", "daily", "evening", "weekly", "monthly"}
+    assert REPORT_VISIBLE_LIMITS["weekly"] < 18_000
+    assert REPORT_VISIBLE_LIMITS["monthly"] < 18_000
+
+
+@pytest.mark.parametrize("target", ["markdown", "html"])
+def test_transport_budget_is_independent_from_visible_text_budget(target):
+    briefing = large_briefing()
+    rendered = render_report(briefing, target, max_length=18_000, measure=provider_text_length)
+
+    assert provider_text_length(rendered.content) <= 18_000
+    assert visible_text_length(rendered.content, target) <= REPORT_VISIBLE_LIMITS["evening"]

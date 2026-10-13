@@ -165,11 +165,15 @@ class ConnectionService:
         return claim
 
     def _ensure_vendor_identity_available(
-        self, user_id: str, credentials: CredentialInput
+        self, user_id: str, credentials: CredentialInput | Any
     ) -> None:
+        vendor_user_id = getattr(credentials, "vendor_user_id", None)
+        if vendor_user_id is None:
+            vendor_user_id = getattr(credentials, "source_user_id", "")
+        vendor_user_id = vendor_user_id or ""
         with self._unit_of_work_factory() as unit_of_work:
             if unit_of_work.repository.source_identity_owned_by_other(
-                user_id, self.source, credentials.vendor_user_id
+                user_id, self.source, vendor_user_id
             ):
                 raise SourceConnectionConflict(
                     "Zepp 账号已被其他用户绑定", kind="identity_conflict"
@@ -207,12 +211,17 @@ class ConnectionService:
         if kind == "unknown" and error.__class__.__name__ == "SourceIdentityConflict":
             kind = "identity_conflict"
         needs_reauth = bool(getattr(error, "needs_reauth", False))
-        return ConnectionOperationError(
+        converted = ConnectionOperationError(
             fallback,
             kind=kind,
             needs_reauth=needs_reauth,
             retry_after=getattr(error, "retry_after", None),
         )
+        # Keep stable classifications available to a richer caller without
+        # copying vendor messages or response bodies into the public error.
+        converted.failure_code = getattr(error, "failure_code", None)
+        converted.reset_url = getattr(error, "reset_url", None)
+        return converted
 
     @staticmethod
     def _identity_conflict(error: Exception) -> SourceConnectionConflict | None:
@@ -328,6 +337,8 @@ class ConnectionService:
             "progress_url": "/api/connect/zepp/progress",
             "scan_url": f"/api/connect/zepp/scan?code={pairing_id}",
             "submit_path": f"/api/connect/zepp/pair/{pairing_id}/credentials",
+            "phone_url": f"/api/connect/zepp/phone?code={pairing_id}",
+            "login_path": f"/api/connect/zepp/pair/{pairing_id}/login",
         }
 
     def pairing_status(self, pairing_id: str, user_id: str | None = None) -> PairingStatus:
@@ -403,6 +414,103 @@ class ConnectionService:
                 claim.pairing_id, claim.processing_token, message, now=self._now()
             )
             unit_of_work.commit()
+
+    def submit_password_login(
+        self,
+        pairing_id: str,
+        account: str,
+        password: str,
+        *,
+        country_code: str = "CN",
+        login_provider: Any | None = None,
+    ) -> dict:
+        """Process one phone-page password through the one-time pairing lease.
+
+        The login adapter performs vendor I/O before this transaction opens.  A
+        successful result is converted to ``AuthToken`` only inside the guarded
+        save, where the original source-account claim fences concurrent revoke,
+        rebind, and worker activity.
+        """
+        claim = self.claim_pairing(pairing_id)
+        provider = login_provider or self.provider
+        try:
+            login = getattr(provider, "login", None)
+            if not callable(login):
+                raise ConnectionOperationError(
+                    "Zepp 手机登录适配器未配置",
+                    kind="service",
+                )
+            result = login(account, password, country_code=country_code)
+            to_auth_token = getattr(result, "to_auth_token", None)
+            token = to_auth_token(claim.user_id) if callable(to_auth_token) else result
+            if token is None or not getattr(token, "access_token", None):
+                raise ConnectionOperationError(
+                    "Zepp 登录响应未确认成功",
+                    kind="vendor_response",
+                )
+            self._ensure_vendor_identity_available(claim.user_id, token)
+        except ConnectionOperationError as exc:
+            self._fail_pairing(claim, "Zepp 登录失败，请在官方页面重置密码后重试")
+            raise
+        except Exception as exc:
+            error = self._provider_error(exc, fallback="Zepp 登录失败，请在官方页面重置密码后重试")
+            self._fail_pairing(claim, "Zepp 登录失败，请在官方页面重置密码后重试")
+            raise error from None
+
+        try:
+            with self._unit_of_work_factory() as unit_of_work:
+                repository = unit_of_work.repository
+                if not repository.lock_pairing_claim(
+                    claim.pairing_id,
+                    claim.user_id,
+                    claim.processing_token,
+                    processing_epoch=claim.processing_epoch,
+                    now=self._now(),
+                ):
+                    raise SourceConnectionConflict("配对声明已被接管、删除或过期", kind="conflict")
+                repository.save_token(
+                    token,
+                    allow_create_user=False,
+                    allow_reactivate=False,
+                    expected_account_id=claim.source_claim.account_id,
+                    expected_fence_epoch=claim.source_claim.fence_epoch,
+                )
+                attempt = self._attempt(
+                    repository,
+                    claim.user_id,
+                    days=claim.sync_days,
+                    trigger="pairing_initial",
+                    trigger_ref=claim.pairing_id,
+                )
+                attempt_id = self._attempt_id(attempt)
+                if not repository.finish_pairing_session(
+                    claim.pairing_id,
+                    claim.processing_token,
+                    "Zepp 已连接，云端正在同步",
+                    attempt_id,
+                    now=self._now(),
+                ):
+                    raise SourceConnectionConflict("配对声明已被接管或过期", kind="conflict")
+                unit_of_work.commit()
+        except SourceConnectionConflict:
+            self._fail_pairing(claim, "Zepp 登录失败，请在官方页面重置密码后重试")
+            raise
+        except Exception as exc:
+            self._fail_pairing(claim, "Zepp 登录失败，请在官方页面重置密码后重试")
+            conflict = self._identity_conflict(exc)
+            if conflict is not None:
+                raise conflict from exc
+            raise
+        return {
+            "status": "connected",
+            "state": "connected",
+            "connection_state": "backfill_requested" if attempt_id else "credential_verified",
+            "message": "登录凭据已安全保存，云端同步已启动",
+            "sync_attempt_id": attempt_id,
+            "sync_days": claim.sync_days,
+            "sync_status": "queued" if attempt_id else None,
+            "progress_url": "/api/connect/zepp/progress",
+        }
 
     def submit_pairing(self, pairing_id: str, raw_cookie: str) -> dict:
         claim = self.claim_pairing(pairing_id)

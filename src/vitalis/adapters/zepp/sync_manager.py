@@ -522,10 +522,27 @@ class SyncManager:
             fetched_at=fetched_at or datetime.now(timezone.utc),
         )
         if repo is None:
+            cleanup = getattr(record.raw.payload, "cleanup", None)
+            if callable(cleanup):
+                cleanup()
             return report
-        from vitalis.adapters.persistence.source_journal import stage_sync_record
+        from vitalis.adapters.persistence.source_journal import (
+            stage_spooled_sync_record,
+            stage_sync_record,
+        )
+        from vitalis.adapters.zepp.workout_streaming import SpoolPayload
 
-        journal = stage_sync_record(repo, user, record, self.fetcher, fetched_at=report.fetched_at)
+        try:
+            journal = (
+                stage_spooled_sync_record(repo, user, record, self.fetcher, fetched_at=report.fetched_at)
+                if isinstance(record.raw.payload, SpoolPayload)
+                else stage_sync_record(repo, user, record, self.fetcher, fetched_at=report.fetched_at)
+            )
+        except Exception:
+            cleanup = getattr(record.raw.payload, "cleanup", None)
+            if callable(cleanup):
+                cleanup()
+            raise
         journal_context = getattr(getattr(repo, "db", None), "info", {})
         had_source_record = "active_source_record_id" in journal_context
         previous_source_record = journal_context.get("active_source_record_id")
@@ -625,6 +642,9 @@ class SyncManager:
                 journal_context["active_source_record_id"] = previous_source_record
             else:
                 journal_context.pop("active_source_record_id", None)
+            cleanup = getattr(record.raw.payload, "cleanup", None)
+            if callable(cleanup):
+                cleanup()
         return report
 
     @staticmethod
@@ -768,13 +788,33 @@ class SyncManager:
                 return 0, 0
             detail = result.detail
             parsed = int(bool(workout_id))
-            written = int(bool(workout_id) and repo.save_workout_detail(
-                user.id,
-                workout_id,
-                detail.model_dump(mode="json", exclude={"samples"}),
-                samples=detail.samples,
-                source="zepp",
-            ))
+            from vitalis.adapters.zepp.workout_streaming import SpoolPayload
+            if isinstance(payload, SpoolPayload):
+                from vitalis.adapters.persistence.workout_detail_writer import (
+                    write_streamed_workout_detail,
+                )
+                from vitalis.adapters.zepp.workout_streaming import SampleSpool
+
+                with SampleSpool() as sample_spool:
+                    for sample in detail.samples:
+                        sample_spool.add(sample)
+                    written, parsed_samples = write_streamed_workout_detail(
+                        repo,
+                        user.id,
+                        workout_id,
+                        detail.model_dump(mode="json", exclude={"samples"}),
+                        sample_spool,
+                        source="zepp",
+                    )
+                    parsed = int(bool(workout_id))
+            else:
+                written = int(bool(workout_id) and repo.save_workout_detail(
+                    user.id,
+                    workout_id,
+                    detail.model_dump(mode="json", exclude={"samples"}),
+                    samples=detail.samples,
+                    source="zepp",
+                ))
 
         elif stream == "heart_rate":
             samples = parser.parse_heart_rate_samples(payload)

@@ -113,23 +113,25 @@ class SqlAnalysisJobRepository:
             )).scalar_one_or_none()
             return _state(row) if row is not None else None
 
-    def claim(self, lease_seconds: int) -> JobClaim | None:
+    def claim(self, lease_seconds: int, user_id: str | None = None) -> JobClaim | None:
         now = _now()
         due = or_(
             AnalysisJob.status == "queued",
             (AnalysisJob.status == "running") & (AnalysisJob.lease_expires_at <= now),
         )
         claimable = due & (AnalysisJob.attempt_count < MAX_ANALYSIS_ATTEMPTS)
+        owner = AnalysisJob.user_id == user_id if user_id is not None else True
         with self._sessions() as db:
             exhausted_candidates = db.execute(
                 select(AnalysisJob.id).where(
+                    owner,
                     AnalysisJob.status == "running",
                     AnalysisJob.lease_expires_at <= now,
                     AnalysisJob.attempt_count >= MAX_ANALYSIS_ATTEMPTS,
                 ).order_by(AnalysisJob.created_at, AnalysisJob.id).limit(16)
             ).scalars().all()
             candidates = db.execute(
-                select(AnalysisJob.id).where(claimable)
+                select(AnalysisJob.id).where(owner, claimable)
                 .order_by(
                     AnalysisJob.priority.desc(),
                     AnalysisJob.created_at.asc(),
@@ -141,6 +143,8 @@ class SqlAnalysisJobRepository:
             token = uuid4().hex
             with self._sessions.begin() as db:
                 current = db.get(AnalysisJob, job_id)
+                if user_id is not None and (current is None or current.user_id != user_id):
+                    continue
                 previous_run_id = current.run_id if current is not None else None
                 if (
                     current is not None
@@ -153,6 +157,7 @@ class SqlAnalysisJobRepository:
                     exhausted = db.execute(
                         update(AnalysisJob).where(
                             AnalysisJob.id == job_id,
+                            owner,
                             AnalysisJob.user_id == current.user_id,
                             AnalysisJob.status == "running",
                             AnalysisJob.lease_token == current.lease_token,
@@ -185,7 +190,7 @@ class SqlAnalysisJobRepository:
                     continue
                 changed = db.execute(
                     update(AnalysisJob).where(
-                        AnalysisJob.id == job_id, claimable,
+                        AnalysisJob.id == job_id, owner, claimable,
                     ).values(
                         status="running",
                         lease_token=token,

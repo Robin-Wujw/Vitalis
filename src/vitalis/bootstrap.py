@@ -167,6 +167,29 @@ def get_health_query() -> HealthQuery:
     )
 
 
+def list_delivery_alerts(user_id: str, *, limit: int = 100, status: str | None = None) -> list[dict]:
+    """Return sanitized internal alerts through the composition root."""
+    with database.session_scope() as db:
+        rows = HealthRepository(db).delivery_alerts(user_id, limit=limit, status=status)
+        return [
+            {
+                "alert_id": row.id,
+                "event_key": row.event_key,
+                "category": row.category,
+                "reason": row.reason,
+                "status": row.status,
+                "period": row.period,
+                "target_date": row.target_date,
+                "observed_at": row.observed_at,
+                "acknowledged_at": row.acknowledged_at,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+                "external_channel": "unconfigured",
+            }
+            for row in rows
+        ]
+
+
 def get_range_summary() -> RangeSummaryQuery:
     """Return the range-summary use case with the production SQL reader."""
     return RangeSummaryQuery(_SqlRangeSummaryReader())
@@ -234,6 +257,13 @@ def get_connector(source: str, **kwargs) -> HealthConnector:
     from vitalis.adapters.zepp import ZeppConnector
 
     return ZeppConnector(**kwargs)
+
+
+def get_zepp_login_adapter():
+    """Compose the official-web login adapter outside the API route layer."""
+    from vitalis.adapters.zepp.login import ZeppLoginAdapter
+
+    return ZeppLoginAdapter()
 
 
 def available_sources() -> list[str]:

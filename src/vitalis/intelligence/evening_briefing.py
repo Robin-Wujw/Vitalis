@@ -4,7 +4,6 @@ from __future__ import annotations
 from typing import Any
 
 from .contracts import ReportBriefing
-from .report_presentation import daily_display_sections, daily_presentation, internal_sections
 from .report_formatting import (
     baseline_text,
     date_text,
@@ -20,6 +19,11 @@ from .report_formatting import (
     unique,
     value_with_unit,
 )
+from .report_presentation import (
+    daily_display_sections,
+    daily_presentation,
+    internal_sections,
+)
 
 
 class EveningBriefingEngine:
@@ -28,15 +32,16 @@ class EveningBriefingEngine:
     def build_payload(self, daily: Any, delivery_metadata: dict | None = None) -> dict[str, Any]:
         payload = payload_of(daily)
         context = dict(payload.get("report_context") or {})
-        metadata = delivery_metadata or payload.get("delivery_metadata") or {}
+        metadata = delivery_metadata or payload.get("delivery_metadata") or context.get("delivery_metadata") or {}
         if metadata:
             context["delivery_metadata"] = dict(metadata)
         report_date = payload.get("date")
+        facts_only = bool(metadata.get("facts_only"))
         sections = self._sections(payload, report_date)
         quality = payload.get("data_quality") or {}
         presentation_payload = dict(payload)
         presentation_payload["report_context"] = context
-        presentation = daily_presentation(presentation_payload)
+        presentation = daily_presentation(presentation_payload, facts_only=facts_only)
         summary = []
         return ReportBriefing(
             period="evening",
@@ -50,7 +55,7 @@ class EveningBriefingEngine:
             data_quality=quality,
             **presentation,
             summary=summary,
-            sections=internal_sections([self._section(item) for item in sections]) + daily_display_sections(presentation_payload),
+            sections=internal_sections([self._section(item) for item in sections]) + daily_display_sections(presentation_payload, facts_only=facts_only),
         ).model_dump(mode="json")
 
     def build(self, daily: Any, delivery_metadata: dict | None = None) -> ReportBriefing:
@@ -303,11 +308,33 @@ class EveningBriefingEngine:
         return "；".join(parts) or None
 
     def _activity_section(self, payload: dict[str, Any]) -> dict[str, Any]:
-        activity = (payload.get("features") or {}).get("activity") or {}
+        features = payload.get("features") or {}
+        activity = features.get("activity") or {}
+        training = features.get("training") or {}
         facts, interpretation = [], []
+        contradictory_active_minutes = False
+        workout_duration = training.get("today_duration_minutes")
+        if not isinstance(workout_duration, (int, float)) or isinstance(workout_duration, bool):
+            workout_duration = None
+        if workout_duration is None:
+            target = payload.get("date")
+            durations = [
+                item.get("duration_minutes")
+                for item in training.get("recent_workouts") or []
+                if isinstance(item, dict) and item.get("date") == target
+                and isinstance(item.get("duration_minutes"), (int, float))
+                and not isinstance(item.get("duration_minutes"), bool)
+            ]
+            if durations:
+                workout_duration = sum(durations)
         for key, label, unit, digits in (("steps", "步数", "步", 0), ("distance_km", "活动距离", "公里", 2), ("active_minutes", "活动时长", "分钟", 0)):
             metric = activity.get(key)
             value = metric.get("value") if isinstance(metric, dict) else None
+            if key == "active_minutes" and value is not None and workout_duration is not None and value < workout_duration:
+                # A vendor daily total that is shorter than a recorded workout is
+                # ambiguous; keep the workout fact and omit the contradictory total.
+                contradictory_active_minutes = True
+                continue
             if value is not None:
                 facts.append(f"{label} {number(value, digits)} {unit}" + self._metric_baseline(metric) + "。")
                 direction = (metric.get("deviation") or {}).get("direction")
@@ -328,6 +355,8 @@ class EveningBriefingEngine:
             "target_day_incomplete_baseline_comparison_skipped": "本日仍在累计，暂不与完整日总量比较。",
         }
         limitations = [labels.get(value, value) for value in activity.get("limitations") or []]
+        if contradictory_active_minutes:
+            limitations.append("设备活动总时长小于当天已记录训练时长，未展示该汇总值。")
         if any(item.get("role") == "unspecified" for item in energies):
             limitations.append("未确认口径的热量只作为设备估算热量展示，不与其他热量入口合并；统计范围不足以形成能量平衡判断。")
         return {

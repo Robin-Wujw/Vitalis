@@ -1,14 +1,20 @@
 from datetime import date
 from types import SimpleNamespace
 
+import pytest
+
 from vitalis.adapters.zepp.parser import ZEPP_STRENGTH_LAP_LABELS
 from vitalis.intelligence.contracts import StrengthExerciseInput, TrainingPreferences
-from vitalis.intelligence.evening_briefing import EveningBriefingEngine
-from vitalis.intelligence.strength import StrengthAnalyzer, normalize_exercise
-from vitalis.intelligence.report_rendering import render_report
 from vitalis.intelligence.decision import DecisionEngine
+from vitalis.intelligence.evening_briefing import EveningBriefingEngine
 from vitalis.intelligence.profile import RawDailyProfile
-
+from vitalis.intelligence.report_rendering import render_report
+from vitalis.intelligence.strength import (
+    StrengthAnalyzer,
+    estimate_one_rep_max,
+    normalize_exercise,
+    strength_session_capacity,
+)
 
 TARGET = date(2026, 9, 5)
 
@@ -38,6 +44,52 @@ def _payload(session):
             "activity": {},
         },
     }
+
+
+def test_strength_capacity_requires_known_unit_basis_and_canonical_exercise():
+    assert estimate_one_rep_max(60, 8, unit="kg", basis="total") == 76.0
+    summary = strength_session_capacity(
+        {
+            "explicit_exercises": [{
+                "source": "user_confirmed", "exercise_id": "bench_press", "exercise_name": "卧推",
+                "sets": 3, "repetitions": 8, "weight_kg": 60,
+                "weight_unit": "kg", "weight_basis": "total",
+            }],
+            "observed_sets": [{
+                "source": "lap_62", "vendor_exercise_code": 999999,
+                "repetitions": 12, "weight_value": 20,
+            }],
+        },
+        history=[{
+            "explicit_exercises": [{
+                "source": "user_confirmed", "exercise_id": "bench_press", "exercise_name": "卧推",
+                "sets": 3, "repetitions": 8, "weight_kg": 50,
+                "weight_unit": "kg", "weight_basis": "total",
+            }],
+        }],
+    )
+
+    assert summary["capacity"][0]["volume"] == 1440.0
+    assert summary["capacity"][0]["estimated_1rm"] == 76.0
+    assert summary["capacity"][0]["personal_record"] is True
+    assert sum(summary["muscle_ratios"].values()) == pytest.approx(1.0, abs=0.001)
+    assert not any(item.get("exercise_id") == "999999" for item in summary["capacity"])
+
+
+@pytest.mark.parametrize("field", ["weight_unit", "weight_basis"])
+def test_strength_capacity_abstains_when_weight_qualification_is_missing(field):
+    exercise = {
+        "source": "user_confirmed", "exercise_id": "bench_press", "exercise_name": "卧推",
+        "sets": 3, "repetitions": 8, "weight_kg": None, "weight_value": 60,
+        "weight_unit": "kg", "weight_basis": "total",
+    }
+    exercise[field] = None
+
+    summary = strength_session_capacity({"explicit_exercises": [exercise]})
+
+    assert summary["capacity"] == []
+    assert summary["muscle_ratios"] == {}
+    assert summary["limitations"]
 
 
 def test_observed_sets_keep_a_b_a_order_and_lap_does_not_become_explicit():

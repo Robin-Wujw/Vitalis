@@ -10,6 +10,7 @@ from .contracts import (
     ConfidenceBand,
     DailySleepHrvPoint,
     HealthEvent,
+    OpenHealthBundle,
     QualityStatus,
     TrendDirection,
     TrendFeature,
@@ -24,16 +25,15 @@ from .contracts import (
     WeeklyRecoveryFacts,
     WeeklySleepFacts,
     WeeklyTrainingFacts,
-    OpenHealthBundle,
 )
 from .localization import CONFIDENCE_LABELS, QUALITY_LABELS
 from .open_health.projection import coverage_summary, period_summary
-from .profile import RawDailyProfile
 from .period_activity import (
     build_period_activity_metrics,
     comparison_gate,
     period_training_details,
 )
+from .profile import RawDailyProfile
 from .report_periods import (
     PeriodMode,
     ReportPeriod,
@@ -41,7 +41,6 @@ from .report_periods import (
     resolve_week_period,
 )
 from .trend import TrendEngine
-
 
 PERIOD_DAYS = 7
 MIN_COMPARISON_DAYS = comparison_gate(PERIOD_DAYS)
@@ -220,6 +219,12 @@ def _sleep_facts(
         median(abs(value - median(bedtimes)) for value in bedtimes)
         if len(bedtimes) >= 3 else None
     )
+    late_bedtime_days = sum(
+        60 <= value < 12 * 60
+        for day, item in raw.sleep_by_day.items()
+        if period_start <= day <= raw.day
+        and (value := _clock_minutes_of_day(item.get("bedtime"))) is not None
+    )
     return WeeklySleepFacts(
         available_days=len(current),
         previous_available_days=len(previous),
@@ -231,6 +236,7 @@ def _sleep_facts(
         bedtime_regularity_minutes=(
             _rounded(float(regularity)) if regularity is not None else None
         ),
+        late_bedtime_days=late_bedtime_days,
     )
 
 
@@ -587,10 +593,10 @@ def _recommend(
             code="WEEKLY_INSUFFICIENT_DATA",
             title="先补齐周期记录",
             action="先完成后续同步，待 7 天训练覆盖明确后再评估训练量变化。",
-            reasons=[
+            reasons=[(
                 f"本周训练历史已记录 {coverage.get('record_days', 0)} 天，"
                 f"仍有 {coverage.get('unknown_days', PERIOD_DAYS)} 天未知。"
-            ],
+            )],
         )]
 
     # User-specific strength cadence is actionable only when its calendar is complete;
@@ -613,10 +619,10 @@ def _recommend(
             code="MAINTAIN_STRENGTH_RHYTHM",
             title="维持力量训练节奏",
             action=f"在恢复允许时，安排 {gap} 次符合当前偏好的力量训练，不做补偿性堆量。",
-            reasons=[
+            reasons=[(
                 f"完整 7 天记录显示本周力量训练 {facts.training.strength_sessions} 次，"
                 f"当前个人目标为 {preferences.weekly_strength_target} 次。"
-            ],
+            )],
         ))
     if not output:
         output.append(WeeklyRecommendation(
@@ -684,6 +690,19 @@ def _clock_minutes(value) -> int | None:
     else:
         result = value.hour * 60 + value.minute
     return result - 1440 if result >= 12 * 60 else result
+
+
+def _clock_minutes_of_day(value) -> int | None:
+    """Parse a bedtime for an absolute clock-hour threshold without shifting noon."""
+    if value is None:
+        return None
+    try:
+        if isinstance(value, str):
+            hours, minutes, *_ = value.split(":")
+            return int(hours) * 60 + int(minutes)
+        return value.hour * 60 + value.minute
+    except (AttributeError, TypeError, ValueError):
+        return None
 
 
 def _mean(values: list[float]) -> float | None:

@@ -17,6 +17,10 @@
 | `HOST` / `PORT` | `127.0.0.1` / `8000` | API 监听地址。 |
 | `SYNC_CRON_HOUR` / `SYNC_CRON_MINUTE` | `02:00` | worker 自动同步时间。 |
 | `SYNC_DISPATCHER_INTERVAL_SECONDS` | `60`（最多 `900`） | 同步、分析和投递 dispatcher 间隔；晨报睡眠等待期要求不超过 15 分钟。 |
+| `MORNING_WAKE_START_HOUR` / `MORNING_WAKE_START_MINUTE` | `07:30` | 晨报醒来轮询窗口的最早本地时间。 |
+| `MORNING_WAKE_END_HOUR` / `MORNING_WAKE_END_MINUTE` | `11:00` | 晨报醒来轮询窗口的最晚本地时间；超时沿用事实兜底/期限策略。 |
+| `MORNING_WAKE_POLL_INTERVAL_SECONDS` | `900`（60–1200） | 醒来轮询间隔；每次只创建一个有幂等键的晨报同步尝试。 |
+| `MORNING_WAKE_DAILY_REQUEST_LIMIT` | `12` | 每用户每天醒来轮询的 Zepp 请求预算。 |
 | `VITALIS_WEEKLY_REPORT_ENABLED` | `false` | 周报自动投递开关。 |
 | `VITALIS_WEEKLY_REPORT_HOUR` / `MINUTE` | `10:00` | 周报投递本地时间。 |
 | `VITALIS_MONTHLY_REPORT_ENABLED` | `false` | 月报自动投递开关。 |
@@ -27,6 +31,8 @@
 | `PUSHPLUS_QUERY_INTERVAL_SECONDS` | `60` | 状态查询间隔秒数；只影响状态查询。 |
 
 晨报 `09:30`、晚报 `21:30` 的调度由当前 worker 任务定义；配置和时区不要在其它文档复制成另一套默认值。晨报需要完整睡眠和已核实的前 7 天训练记录，睡眠未到齐时最多再等 30 分钟，并在等待期内自动补同步一次（每天只补一次，失败不重试）；晚报需要当天事实和训练记录。必需数据缺失、同步降级或发送比调度时刻晚 30 分钟以上时，只发仅事实版本（不带训练安排、建议和变化），睡眠仍缺的晨报开头写明“昨夜睡眠还没同步”；没有当天事实时不发并保留延期记录，`/api/deliveries` 的 `failure_code` 给出原因。调度时刻后晨报 3 小时、晚报 6 小时内仍未发出的，本次投递作废（`delivery_deadline_expired`）。这些规则在 `src/vitalis/application/delivery_policy.py` 和 worker 的延期投递协调中执行。真实模式还需要有效的 `VITALIS_TOKEN_ENCRYPTION_KEY`，并将其与数据库分开保存。
+
+当前第二告警通道暂未配置：worker 只在当前数据库持久化内部告警，不发送邮件、Hermes 或其它网络告警。使用 `GET /api/delivery-alerts` 查看按用户隔离的 `pending`、`suppressed` 和 `acknowledged` 事件；告警不会替代 `/api/deliveries` 的投递账本。`GET /api/data-status` 的每个流还会返回预期间隔、实际观测年龄、`freshness` 和基于真实存储观测的近 7 天覆盖；没有观测时显示未知，不补零。
 
 ## 初始化与进程
 
@@ -70,7 +76,7 @@ uv run --locked --extra dev vitalis db restore --backup C:\secure\vitalis-backup
 
 命令会检查 schema、完整性、外键和 sidecar；备份、恢复目标和凭据文件不要放入仓库。restore 不覆盖已有文件，也拒绝把备份直接写回当前配置库。恢复后把 `DATABASE_URL` 指向新库，先运行 `doctor`，再启动服务和 worker。不要用文件复制代替带 WAL/SHM 检查的备份。
 
-生产服务器不长期保留备份：发布前生成的备份在验收通过后删除，服务器只保留当前数据库，见[发布与部署 SOP](deployment.md)。
+生产服务器不长期保留备份：发布前生成的备份在验收通过后删除，服务器只保留当前数据库，见[发布与部署 SOP](deployment.md)。原始响应回放仅在离线隔离环境进行；原始响应使用加密不可变 journal 保存，回放副本和临时生产只读副本放在仓库外的受控目录，回放/等价性验收完成后校验删除，不保留凭据、Cookie、PushPlus 内容或未脱敏个人样例。
 
 开发环境若明确要丢弃一个非当前配置的 `.db`/`.sqlite` 文件，必须使用 `db reset --database PATH --confirm-discard-local-data`；生产环境和当前配置库会被拒绝。
 

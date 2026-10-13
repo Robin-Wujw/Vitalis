@@ -30,6 +30,8 @@ from . import models as orm
 
 RAW_SCHEMA_VERSION = "zepp-json-v1"
 DENSE_RAW_SCHEMA_VERSION = "zepp-sec-hr-v1"
+STREAM_JOURNAL_PREFIX = "fernet:stream:v1:"
+STREAM_JOURNAL_CHUNK_BYTES = 64 * 1024
 CURRENT_PARSER_VERSION = "zepp-parser-v1"
 MANIFEST_VERSION = "source-input-manifest-v1"
 MAX_MANIFEST_DAYS = 730
@@ -251,6 +253,108 @@ class SourceJournalRepository:
             # A concurrent duplicate must not roll back the caller's facts or
             # fencing state. The losing append only reads the immutable winner.
             self.db.execute(insert(SourceJournalRecord).values(**values).on_conflict_do_nothing(index_elements=["id"]))
+        else:
+            self.db.add(SourceJournalRecord(**values))
+        self.db.flush()
+        return self.get(journal_id, user_id=item.user_id)
+
+    def append_spooled_json(self, item: SourceRecordInput, spool: Any) -> SourceJournalRecord:
+        """Append a JSON body from a file-backed spool without loading it.
+
+        The metadata identity and source/account checks intentionally mirror
+        ``append``.  The body is encrypted in fixed-size Fernet records; the
+        database still stores one immutable text field and ``read_payload``
+        reconstructs the original JSON bytes for replay.
+        """
+        _validate_input(item)
+        self.db.flush()
+        owner = self.db.get(orm.User, item.user_id)
+        if owner is None or owner.source_mode != item.source_mode:
+            raise JournalError("source journal requires its owner's bound source mode")
+        origin_mode = item.origin_source_mode or item.source_mode
+        if item.source_mode == "replay":
+            dataset = self.db.get(ReplayDataset, item.user_id)
+            if dataset is None or dataset.origin_source != item.source or dataset.origin_source_mode != origin_mode:
+                raise JournalError("source journal replay origin does not match its dataset")
+            if dataset.origin_kind == "journal":
+                origin = self.get(item.origin_journal_id or "", user_id=dataset.origin_user_id)
+                if (
+                    origin.source != item.source
+                    or origin.source_mode != origin_mode
+                    or origin.source_account_id != item.source_account_id
+                    or origin.source_account_epoch != item.source_account_epoch
+                ):
+                    raise JournalError("source journal replay provenance is invalid")
+        elif item.source_account_id is not None:
+            account = self.db.get(orm.SourceAccount, item.source_account_id)
+            if (
+                account is None
+                or account.user_id != item.user_id
+                or account.source != item.source
+                or account.status != "active"
+                or account.fence_epoch != item.source_account_epoch
+            ):
+                raise JournalError("source journal account ownership or epoch is invalid")
+        elif item.source_mode == "real":
+            raise JournalError("real source journal requires an account epoch")
+
+        digest = hashlib.sha256()
+        payload_bytes = 0
+        for chunk in spool.iter_bytes(chunk_size=STREAM_JOURNAL_CHUNK_BYTES):
+            payload_bytes += len(chunk)
+            if payload_bytes > MAX_PAYLOAD_BYTES:
+                raise JournalError("source payload exceeds its bounded size limit")
+            digest.update(chunk)
+        values = {
+            "user_id": item.user_id,
+            "source": item.source,
+            "source_mode": item.source_mode,
+            "stream": item.stream,
+            "record_id": item.record_id,
+            "time_basis": item.time_basis,
+            "observed_start": _iso(item.observed_start),
+            "observed_end": _iso(item.observed_end),
+            "payload_hash": digest.hexdigest(),
+            "payload_format": "json",
+            "payload_bytes": payload_bytes,
+            "raw_schema_version": item.raw_schema_version,
+            "source_account_id": item.source_account_id,
+            "source_account_epoch": item.source_account_epoch,
+            "source_scope": item.source_scope,
+            "device_id": item.device_id,
+            "capability": item.capability,
+            "incomplete": item.incomplete,
+            "origin_journal_id": item.origin_journal_id,
+            "origin_source_mode": origin_mode,
+        }
+        journal_id = payload_hash(values)
+        if origin_mode == "real":
+            try:
+                credentials._cipher()
+            except (RuntimeError, ValueError, UnicodeError) as exc:
+                raise JournalError("source journal encryption is unavailable") from exc
+        existing = self.db.get(SourceJournalRecord, journal_id)
+        if existing is not None:
+            return existing
+        values.update({
+            "id": journal_id,
+            "observed_start": _naive(item.observed_start),
+            "observed_end": _naive(item.observed_end),
+            "fetched_at": _naive(item.fetched_at),
+            "parser_version": item.parser_version,
+            "encrypted_payload": _encrypt_spool(spool, origin_mode),
+        })
+        dialect = self.db.get_bind().dialect.name
+        if dialect in {"sqlite", "postgresql"}:
+            if dialect == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert
+            else:
+                from sqlalchemy.dialects.postgresql import insert
+            self.db.execute(
+                insert(SourceJournalRecord).values(**values).on_conflict_do_nothing(
+                    index_elements=["id"]
+                )
+            )
         else:
             self.db.add(SourceJournalRecord(**values))
         self.db.flush()
@@ -617,6 +721,28 @@ def _selection(start_date, end_date, as_of, timezone_name, limit, journal_ids):
     return start, end, cutoff, ids
 
 
+def _encrypt_spool(spool: Any, origin_mode: str) -> str:
+    """Encrypt a file-backed JSON body in bounded Fernet chunks."""
+    try:
+        if origin_mode == "real" or settings.token_encryption_key:
+            cipher = credentials._cipher()
+            prefix = "fernet:"
+        elif origin_mode == "mock" and settings.env in {"dev", "test"}:
+            cipher = credentials._mock_cipher()
+            prefix = "mock-fernet:"
+        else:
+            raise JournalError("source journal encryption requires a private key")
+        encoded = ".".join(
+            cipher.encrypt(chunk).decode("ascii")
+            for chunk in spool.iter_bytes(chunk_size=STREAM_JOURNAL_CHUNK_BYTES)
+        )
+        return f"{prefix}stream:v1:" + encoded
+    except (RuntimeError, ValueError, UnicodeError) as exc:
+        if isinstance(exc, JournalError):
+            raise
+        raise JournalError("source journal encryption is unavailable") from exc
+
+
 def _encrypt(encoded: bytes, origin_mode: str) -> str:
     try:
         if origin_mode == "real" or settings.token_encryption_key:
@@ -630,6 +756,22 @@ def _encrypt(encoded: bytes, origin_mode: str) -> str:
 
 def _decrypt(value: str, origin_mode: str) -> bytes:
     try:
+        if value.startswith("fernet:stream:v1:"):
+            cipher = credentials._cipher()
+            encoded = value[len("fernet:stream:v1:"):]
+            return b"".join(
+                cipher.decrypt(item.encode("ascii"))
+                for item in encoded.split(".")
+                if item
+            )
+        if value.startswith("mock-fernet:stream:v1:") and origin_mode == "mock" and settings.env in {"dev", "test"}:
+            cipher = credentials._mock_cipher()
+            encoded = value[len("mock-fernet:stream:v1:"):]
+            return b"".join(
+                cipher.decrypt(item.encode("ascii"))
+                for item in encoded.split(".")
+                if item
+            )
         if value.startswith("fernet:"):
             return credentials._cipher().decrypt(value[len("fernet:"):].encode("ascii"))
         if value.startswith("mock-fernet:") and origin_mode == "mock" and settings.env in {"dev", "test"}:
@@ -723,6 +865,43 @@ def stage_sync_record(repo, user, record, fetcher, *, fetched_at=None) -> Source
     ))
 
 
+def stage_spooled_sync_record(repo, user, record, fetcher, *, fetched_at=None) -> SourceJournalRecord | None:
+    """Stage a spooled JSON response through the same journal boundary."""
+    db = getattr(repo, "db", None)
+    if not isinstance(db, Session):
+        return None
+    context = db.info.get("source_journal_context", {})
+    if context.get("replay_prejournaled"):
+        return None
+    connector = getattr(fetcher, "connector", None)
+    db.flush()
+    mode = context.get("source_mode") or getattr(connector, "source_mode", None)
+    owner_mode = repo.source_mode(user.id)
+    if mode is None and owner_mode in {"real", "mock"}:
+        mode = owner_mode
+    if mode not in {"real", "mock"}:
+        raise JournalError("sync journal requires an explicitly bound source mode")
+    if owner_mode == "unknown":
+        repo.bind_source_mode(user.id, mode)
+    elif owner_mode != mode:
+        raise JournalError("sync journal source mode is not bound to its owner")
+    account_id = context.get("source_account_id")
+    account_epoch = context.get("source_account_epoch")
+    if "source_account_id" not in context:
+        account = repo.source_account(user.id, "zepp", active_only=True)
+        if account is not None:
+            account_id, account_epoch = account.id, account.fence_epoch
+    raw = record.raw
+    return SourceJournalRepository(db).append_spooled_json(SourceRecordInput(
+        user_id=user.id, source="zepp", source_mode=mode,
+        stream=raw.stream, record_id=raw.source_key,
+        observed_start=raw.start_utc, observed_end=raw.end_utc,
+        fetched_at=context.get("fetched_at") or fetched_at or datetime.now(timezone.utc),
+        payload=None, source_account_id=account_id, source_account_epoch=account_epoch,
+        capability=raw.capability, incomplete=record.incomplete,
+    ), raw.payload)
+
+
 def sync_journal_context(repo, attempt_id: str, *, fetched_at: datetime) -> dict[str, Any]:
     """Load the durable attempt's provenance within its existing transaction."""
     attempt = repo.sync_attempt(attempt_id)
@@ -761,5 +940,6 @@ __all__ = [
     "CURRENT_PARSER_VERSION", "DENSE_RAW_SCHEMA_VERSION", "JournalError", "MANIFEST_VERSION",
     "MAX_MANIFEST_DAYS", "MAX_MANIFEST_RECORDS", "RAW_SCHEMA_VERSION", "ReplayDataset",
     "SourceJournalRecord", "SourceJournalRepository", "SourceRecordInput", "SourceReplayRun",
-    "manifest_digest", "payload_hash", "stage_sync_record", "sync_journal_context",
+    "STREAM_JOURNAL_PREFIX", "manifest_digest", "payload_hash", "stage_spooled_sync_record",
+    "stage_sync_record", "sync_journal_context",
 ]

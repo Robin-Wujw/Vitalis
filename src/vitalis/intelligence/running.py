@@ -3,22 +3,21 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from math import isfinite
 from statistics import mean, median
 
 from .contracts import (
     Availability,
+    ComparableRunBaseline,
     ConfidenceBand,
     RunningAnalysis,
-    ComparableRunBaseline,
     RunningHeartRateZone,
     RunningKilometerSplit,
     RunningSegment,
     RunningSessionAnalysis,
 )
 from .localization import AVAILABILITY_LABELS, CONFIDENCE_LABELS
-
 
 CLASSIFICATION_LABELS = {
     "RECOVERY_RUN": "恢复跑",
@@ -359,7 +358,7 @@ class RunningAnalyzer:
         elif started.tzinfo is not None:
             started = started.replace(tzinfo=None)
         if started.tzinfo is not None:
-            started = started.astimezone(timezone.utc).replace(tzinfo=None)
+            started = started.astimezone(UTC).replace(tzinfo=None)
         return RunningAnalyzer._workout_date(workout), started
 
     @staticmethod
@@ -423,8 +422,8 @@ class RunningAnalyzer:
     ) -> float:
         def utc_seconds(value: datetime) -> float:
             if value.tzinfo is None:
-                value = value.replace(tzinfo=timezone.utc)
-            return value.astimezone(timezone.utc).timestamp()
+                value = value.replace(tzinfo=UTC)
+            return value.astimezone(UTC).timestamp()
 
         start_seconds = utc_seconds(start)
         end_seconds = utc_seconds(end)
@@ -642,6 +641,8 @@ class RunningAnalyzer:
                 round((current_power - baseline_power) / baseline_power * 100, 1)
                 if current_power is not None and baseline_power not in (None, 0) else None
             ),
+            comparison_basis="distance_matched",
+            heart_rate_matched=False,
         )
 
     def _workout_pace(self, workout: dict) -> float | None:
@@ -860,8 +861,8 @@ def _parse_datetime(value) -> datetime | None:
 
 def _utc_seconds(value: datetime) -> float:
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).timestamp()
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).timestamp()
 
 
 def _observed_at_before(observed_at, cutoff: datetime | None) -> bool:

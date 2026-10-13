@@ -25,12 +25,25 @@ from vitalis.domain import (
 from vitalis.adapters.persistence import HealthRepository, session_scope
 
 
-def _drain_sync_worker():
-    """Drive durable sync work explicitly; HTTP only enqueues the job."""
-    from vitalis.scheduler.jobs import dispatcher_job
+def _drain_sync_worker(attempt_id: str):
+    """Drive only the attempt created by this test; HTTP only enqueues it."""
+    from vitalis.adapters.zepp.sync_coordinator import ZeppSyncCoordinator
+    from vitalis.bootstrap import get_connector
+    from vitalis.config import settings
 
+    coordinator = ZeppSyncCoordinator(
+        connector=get_connector("zepp"),
+        lease_seconds=settings.sync_lease_seconds,
+        attempt_lease_seconds=settings.sync_attempt_lease_seconds,
+    )
     for _ in range(256):
-        if not dispatcher_job():
+        report = coordinator.drain_once(attempt_id)
+        if report is None:
+            break
+        state = coordinator.status(attempt_id)
+        if state is None or state["attempt"]["status"] in {
+            "succeeded", "partial", "failed", "needs_reauth", "cancelled",
+        }:
             break
 
 
@@ -58,7 +71,7 @@ def _queue_sync_job(
     job_id = response.json()["job_id"]
     assert response.json()["status_url"] == f"/api/jobs/{job_id}"
     if dispatch:
-        _drain_sync_worker()
+        _drain_sync_worker(job_id)
     return response
 
 
@@ -70,7 +83,7 @@ def _run_analysis_job(client, user_id, day=None, *, key="first"):
     job_id = queued.json()["job_id"]
     assert queued.json()["status_url"] == f"/api/jobs/{job_id}"
     assert client.get(f"/api/jobs/{job_id}", headers=headers).json()["status"] == "queued"
-    assert drain_analysis_jobs(max_jobs=1) == 1
+    assert drain_analysis_jobs(max_jobs=1, user_id=user_id) == 1
     job = client.get(f"/api/jobs/{job_id}", headers=headers).json()
     assert job["status"] == "succeeded", job
     report = client.get(
@@ -96,7 +109,7 @@ def test_daily_profile_after_sync(client):
     queued = _queue_sync_job(client, "001", dispatch=False)
     job_id = queued.json()["job_id"]
     assert client.get("/api/reports/daily", headers={"X-User-Id": "001"}).status_code == 404
-    _drain_sync_worker()
+    _drain_sync_worker(job_id)
     assert client.get(
         f"/api/jobs/{job_id}", headers={"X-User-Id": "001"}
     ).status_code == 200
@@ -935,7 +948,6 @@ def test_health_token_status_unauthorized(client):
 
 def test_health_range(client):
     """GET /health/range 多级聚合查询。"""
-    _queue_sync_job(client, "001")
     resp = client.get(
         "/api/health/range?from=2024-01-01&to=2024-01-07&granularity=1d",
         headers={"X-User-Id": "001"},

@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 from vitalis.intelligence.contracts import (
     ConfidenceBand,
@@ -8,7 +8,6 @@ from vitalis.intelligence.contracts import (
 from vitalis.intelligence.profile import RawDailyProfile, SeriesPoint
 from vitalis.intelligence.trend import TrendEngine
 from vitalis.intelligence.weekly import WeeklyProfileEngine
-
 
 TARGET = date(2026, 8, 28)
 
@@ -86,6 +85,20 @@ def _raw_week():
         },
     ]
     return raw
+
+
+def test_weekly_late_bedtime_count_uses_unshifted_clock_minutes():
+    raw = RawDailyProfile(user_id="late-bedtime-week", day=TARGET)
+    for offset in range(7):
+        day = TARGET - timedelta(days=offset)
+        raw.sleep_by_day[day] = {
+            "sleep_duration": 420,
+            "bedtime": "01:30" if offset == 0 else "23:00",
+        }
+
+    profile = WeeklyProfileEngine().build("late-bedtime-run", raw, [], [], period_mode="rolling")
+
+    assert profile.facts.sleep.late_bedtime_days == 1
 
 
 def test_weekly_profile_separates_facts_inferences_and_actions():
@@ -311,7 +324,7 @@ def test_calendar_weekly_steps_use_activity_average_in_report_changes():
     raw = RawDailyProfile(
         user_id="weekly-step-statistics",
         day=date(2026, 10, 5),
-        as_of=datetime(2026, 10, 5, 9, tzinfo=timezone.utc),
+        as_of=datetime(2026, 10, 5, 9, tzinfo=UTC),
         timezone_name="UTC",
     )
     values = [1000] * 6 + [13000] + [2000] * 6 + [8900]

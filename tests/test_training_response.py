@@ -518,7 +518,7 @@ def test_personal_feedback_scales_have_independent_denominators_and_distribution
         )]
     model = PersonalModelEngine().build("feedback", _daily(), responses, [])
     distributions = {item.metric: item for item in model.subjective_feedback_distributions}
-    assert set(distributions) == {"session_rpe", "physical_fatigue", "mental_state", "muscle_soreness"}
+    assert set(distributions) == {"session_rpe", "physical_fatigue", "mental_state", "muscle_soreness", "feeling_score"}
     assert distributions["session_rpe"].median == 6.5
     assert distributions["physical_fatigue"].median == 1.5
     assert distributions["mental_state"].median == 3.5

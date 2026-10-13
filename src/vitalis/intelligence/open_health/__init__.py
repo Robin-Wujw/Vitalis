@@ -12,7 +12,7 @@ from .ewma import (
     openstrap_winsorized_ewma,
     winsorized_ewma,
 )
-from .readiness import compute_readiness, readiness_insight
+from .readiness import compute_composite_readiness, compute_readiness, readiness_insight
 from .sleep import compute_sleep, compute_sleep_insight, sleep_insight
 from .load import (
     HeartRatePoint,
@@ -41,6 +41,7 @@ __all__ = [
     "compute_ewma",
     "openstrap_winsorized_ewma",
     "winsorized_ewma",
+    "compute_composite_readiness",
     "compute_readiness",
     "compute_sleep",
     "compute_sleep_insight",

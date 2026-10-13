@@ -710,6 +710,8 @@ class ComparableRunBaseline(BaseModel):
     heart_rate_difference_bpm: float | None = None
     median_power_watts: float | None = Field(default=None, ge=0)
     power_difference_percent: float | None = None
+    comparison_basis: Literal["distance_matched", "same_heart_rate"] = "distance_matched"
+    heart_rate_matched: bool = False
 
 
 class RunningSessionAnalysis(BaseModel):
@@ -833,6 +835,15 @@ class StrengthExerciseRecord(BaseModel):
     source: Literal["user_confirmed", "vendor_explicit"]
     confidence: ConfidenceBand
     confidence_label: str
+    canonical_qualified: bool = False
+    volume_value: float | None = Field(default=None, ge=0)
+    volume_unit: str | None = None
+    volume_basis: StrengthWeightBasis | None = None
+    estimated_1rm_kg: float | None = Field(default=None, ge=0)
+    estimated_1rm_method: str | None = None
+    estimated_1rm_evidence: list[str] = Field(default_factory=list)
+    personal_record: bool = False
+    personal_record_date: DateValue | None = None
     # Source time is retained when known; absent source time stays absent for stable output.
     created_at: datetime | None = None
 
@@ -870,6 +881,19 @@ class ExerciseHypothesis(BaseModel):
     evidence: list[str] = Field(default_factory=list)
 
 
+class MuscleLoadStatus(BaseModel):
+    muscle_group: str
+    muscle_group_label: str
+    short_load: float | None = Field(default=None, ge=0)
+    long_load: float | None = Field(default=None, ge=0)
+    short_long_ratio: float | None = Field(default=None, ge=0)
+    status: Literal["PRODUCTIVE", "MAINTAINING", "OVERTRAINING", "INSUFFICIENT_DATA"] = "INSUFFICIENT_DATA"
+    status_label: str = "数据不足"
+    freshness_days: int | None = Field(default=None, ge=0)
+    qualified: bool = False
+    limitations: list[str] = Field(default_factory=list)
+
+
 class StrengthSessionAnalysis(BaseModel):
     vendor_reported_sets: int | None = Field(default=None, ge=1)
     workout_id: str
@@ -900,6 +924,9 @@ class StrengthSessionAnalysis(BaseModel):
     heart_rate_zones: list[RunningHeartRateZone] = Field(default_factory=list)
     session_rpe: float | None = Field(default=None, ge=1, le=10)
     muscle_soreness: int | None = Field(default=None, ge=1, le=5)
+    capacity_volume_kg: float | None = Field(default=None, ge=0)
+    capacity_unit: str | None = None
+    muscle_load: list[MuscleLoadStatus] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
 
 
@@ -928,6 +955,7 @@ class StrengthAnalysis(BaseModel):
     next_focus_label: str | None = None
     recent_sessions: list[StrengthSessionAnalysis] = Field(default_factory=list, max_length=8)
     muscle_recovery: list[MuscleRecoveryStatus] = Field(default_factory=list)
+    muscle_load: list[MuscleLoadStatus] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
 
 
@@ -1193,6 +1221,7 @@ class WeeklySleepFacts(BaseModel):
     previous_average_minutes: float | None = None
     change_percent: float | None = None
     bedtime_regularity_minutes: float | None = None
+    late_bedtime_days: int = Field(default=0, ge=0, le=7)
 
 
 class WeeklyRecoveryFacts(BaseModel):
@@ -1520,8 +1549,18 @@ class MonthlyProfile(BaseModel):
     open_health_coverage: dict[str, "OpenHealthCoverage"] = Field(default_factory=dict)
 
 
+_KNOWN_SORENESS_PARTS = frozenset({
+    "neck", "shoulders", "chest", "back", "lower_back", "arms",
+    "elbows", "wrists", "core", "hips", "glutes", "quadriceps",
+    "hamstrings", "knees", "calves", "ankles", "feet",
+})
+
+
 class SubjectiveFeedbackInput(BaseModel):
     date: DateValue | None = None
+    feeling_score: int | None = Field(default=None, ge=1, le=5, strict=True)
+    soreness_parts: list[str] = Field(default_factory=list, max_length=12)
+    behavior_tags: list[Literal["alcohol", "late_dinner", "caffeine", "illness", "travel"]] = Field(default_factory=list, max_length=5)
     workout_source: str | None = Field(default=None, min_length=1, max_length=32)
     workout_id: str | None = Field(default=None, max_length=128)
     recommendation_id: str | None = Field(default=None, max_length=64)
@@ -1533,7 +1572,16 @@ class SubjectiveFeedbackInput(BaseModel):
 
     @model_validator(mode="after")
     def require_observation(self):
+        if any(part not in _KNOWN_SORENESS_PARTS for part in self.soreness_parts):
+            raise ValueError("soreness_parts contains an unsupported body part")
+        if len(set(self.soreness_parts)) != len(self.soreness_parts):
+            raise ValueError("soreness_parts must not contain duplicates")
+        if len(set(self.behavior_tags)) != len(self.behavior_tags):
+            raise ValueError("behavior_tags must not contain duplicates")
         if not any((
+            self.feeling_score is not None,
+            bool(self.soreness_parts),
+            bool(self.behavior_tags),
             self.session_rpe is not None,
             self.physical_fatigue is not None,
             self.mental_state is not None,
@@ -1558,6 +1606,9 @@ class SubjectiveFeedback(BaseModel):
     id: str
     user_id: str
     date: DateValue
+    feeling_score: int | None = Field(default=None, ge=1, le=5, strict=True)
+    soreness_parts: list[str] = Field(default_factory=list, max_length=12)
+    behavior_tags: list[Literal["alcohol", "late_dinner", "caffeine", "illness", "travel"]] = Field(default_factory=list, max_length=5)
     workout_source: str | None = None
     workout_id: str | None = None
     recommendation_id: str | None = None
@@ -2200,6 +2251,9 @@ class PersonalModel(BaseModel):
     analysis_run_id: str
     user_id: str
     date: DateValue
+    feedback_days: int = Field(default=0, ge=0)
+    prediction_status: Literal["ACCUMULATING", "ACTIVE", "REFUSED"] = "ACCUMULATING"
+    prediction_limitation: str = "需要至少 60 个带反馈日期，且预测必须优于明天等于今天的基线。"
     intelligence_version: str = INTELLIGENCE_VERSION
     decision_policy_version: str = DECISION_POLICY_VERSION
     evidence_version: str = EVIDENCE_VERSION
@@ -2290,6 +2344,14 @@ class ReadinessInsight(BaseModel):
     history_nights: int = Field(default=0, ge=0)
     prior_nights: int = Field(default=0, ge=0)
     rr_available: bool = True
+    composite_score: int | None = Field(default=None, ge=0, le=100)
+    component_scores: dict[str, float] = Field(default_factory=dict)
+    applied_weights: dict[str, float] = Field(default_factory=dict)
+    missing_components: list[str] = Field(default_factory=list)
+    driver_labels: list[str] = Field(default_factory=list, max_length=3)
+    hrv_normal_low: float | None = None
+    hrv_normal_high: float | None = None
+    hrv_out_of_range_streak: int = Field(default=0, ge=0)
 
 
 class AnomalyInsight(BaseModel):

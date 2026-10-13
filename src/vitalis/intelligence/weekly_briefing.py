@@ -4,7 +4,6 @@ from __future__ import annotations
 from typing import Any
 
 from .contracts import ReportBriefing
-from .report_presentation import internal_sections, period_presentation
 from .report_formatting import (
     as_of_line,
     coverage_text,
@@ -16,7 +15,7 @@ from .report_formatting import (
     running_class_label,
     unique,
 )
-
+from .report_presentation import internal_sections, period_presentation
 
 _ACTIVITY_UNIT_LABELS = {
     "steps": "步",
@@ -121,11 +120,32 @@ class WeeklyBriefingEngine:
             if recovery.get("rhr_change_percent") is not None:
                 text += f"，变化 {percent(recovery['rhr_change_percent'])}"
             fact_lines.append(text + "。")
+        regularity = sleep.get("bedtime_regularity_minutes")
+        if regularity is not None:
+            fact_lines.append(f"入睡时刻离散度 {number(regularity, 0)} 分钟。")
+        late_bedtime_days = sleep.get("late_bedtime_days")
+        if late_bedtime_days:
+            fact_lines.append(f"有 {number(late_bedtime_days, 0)} 晚在凌晨 1 点后入睡。")
         if not fact_lines:
             fact_lines.append("本周期没有足够的睡眠、HRV 或静息心率事实可比较。")
         interpretations = list(inferences.get("key_changes") or [])
         if not interpretations:
             interpretations = self._recovery_impact(sleep, recovery)
+        average_sleep = sleep.get("average_minutes")
+        if average_sleep is not None:
+            if average_sleep < 420:
+                interpretations.append("平均睡眠少于成年人通常建议的 7–9 小时，下一周优先给睡眠留出时间。")
+            elif average_sleep > 540:
+                interpretations.append("平均睡眠超过 9 小时；结合白天精神状态判断是否需要关注恢复质量。")
+            else:
+                interpretations.append("平均睡眠处于成年人通常建议的 7–9 小时范围内。")
+        if regularity is not None:
+            if regularity >= 60:
+                interpretations.append("入睡时刻波动较大，作息稳定性是下一周可以优先改善的一项。")
+            elif regularity <= 30:
+                interpretations.append("入睡时刻相对稳定，继续保持固定作息。")
+        if late_bedtime_days is not None and late_bedtime_days >= 3:
+            interpretations.append("本周有多晚在凌晨 1 点后入睡，建议先把入睡时间逐步提前并保持稳定。")
         if sleep.get("available_days") is not None and sleep.get("available_days", 0) < 5:
             interpretations.append(
                 f"本周仅有 {number(sleep['available_days'], 0)} 晚睡眠记录，暂不比较趋势。"

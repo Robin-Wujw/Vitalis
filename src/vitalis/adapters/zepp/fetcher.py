@@ -138,7 +138,7 @@ class RawRecord:
     source_key: str
     start_utc: datetime
     end_utc: datetime | None
-    payload: dict
+    payload: Any
     capability: str = "verified"
 
 

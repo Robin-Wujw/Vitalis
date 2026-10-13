@@ -858,7 +858,9 @@ def test_pushplus_report_is_budgeted_below_the_provider_limit(monkeypatch):
     requests = []
     monkeypatch.setattr("vitalis.adapters.notifications.httpx.Client", _accepting_pushplus_client(requests))
     briefing = large_briefing()
-    assert markdown_html_length(render_report(briefing, "markdown").content) > PUSHPLUS_CONTENT_LIMIT
+    preview = render_report(briefing, "markdown").content
+    assert "本节另有" in preview
+    assert markdown_html_length(preview) < PUSHPLUS_CONTENT_LIMIT
 
     result = PushService(pushplus_token="private-token").push_morning_briefing("user", briefing)
 

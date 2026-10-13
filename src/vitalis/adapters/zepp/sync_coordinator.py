@@ -1558,7 +1558,9 @@ class ZeppSyncCoordinator:
             self._apply_terminal_side_effect(attempt_id, terminal)
         return self.report(attempt_id)
 
-    def drain_once(self, attempt_id: str | None = None) -> SyncReport | None:
+    def drain_once(
+        self, attempt_id: str | None = None, *, user_id: str | None = None,
+    ) -> SyncReport | None:
         with self._session() as db:
             if attempt_id is None:
                 now = self._naive(self.wall_clock())
@@ -1579,10 +1581,15 @@ class ZeppSyncCoordinator:
                     other.c.status == "running",
                     other.c.id != orm.SyncAttempt.id,
                 ).exists()
-                row = db.execute(select(orm.SyncAttempt).where(
+                conditions = [
                     orm.SyncAttempt.source == "zepp",
                     orm.SyncAttempt.status.in_(("queued", "running", "retry_wait")),
                     orm.SyncAttempt.cancel_requested_at.is_(None),
+                ]
+                if user_id is not None:
+                    conditions.append(orm.SyncAttempt.user_id == user_id)
+                row = db.execute(select(orm.SyncAttempt).where(
+                    *conditions,
                     or_(orm.SyncAttempt.next_retry_at.is_(None), orm.SyncAttempt.next_retry_at <= now),
                     or_(orm.SyncAttempt.lease_expires_at.is_(None), orm.SyncAttempt.lease_expires_at <= now),
                     no_other_running,

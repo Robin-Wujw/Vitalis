@@ -99,7 +99,10 @@ def _requeue_input_changed(repository: AnalysisJobRepository, claim: JobClaim) -
         return False
 
 
-def drain_analysis_jobs(*, max_jobs: int = 1, lease_seconds: int = DEFAULT_LEASE_SECONDS) -> int:
+def drain_analysis_jobs(
+    *, max_jobs: int = 1, lease_seconds: int = DEFAULT_LEASE_SECONDS,
+    user_id: str | None = None,
+) -> int:
     """Process a bounded batch of leased jobs.
 
     The runner commits job success with its analysis outputs; failures before
@@ -116,7 +119,7 @@ def drain_analysis_jobs(*, max_jobs: int = 1, lease_seconds: int = DEFAULT_LEASE
         raise RuntimeError("analysis jobs have not been configured")
     drained = 0
     for _ in range(min(max_jobs, MAX_JOBS_PER_PASS)):
-        claim = repository.claim(lease_seconds)
+        claim = repository.claim(lease_seconds, user_id=user_id)
         if claim is None:
             break
         drained += 1

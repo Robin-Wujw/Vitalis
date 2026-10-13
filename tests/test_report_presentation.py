@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-
 from vitalis.intelligence.report_presentation import (
+    daily_display_sections,
     daily_presentation,
     period_presentation,
 )
@@ -253,3 +253,90 @@ def test_facts_only_has_no_prescription_projection():
     result = daily_presentation(payload, morning=True, facts_only=True)
     assert result["suggestions"] == []
     assert result["findings"] == []
+
+
+def test_short_daily_comparison_label_hides_internal_baseline_window_but_keeps_it_in_data():
+    result = daily_presentation(_daily(), morning=True)
+
+    comparison = result["metrics"][0]["comparison"]
+    assert comparison["label"] == "个人参照"
+    assert comparison["baseline_window_days"] == 28
+    assert "近 28 日" not in comparison["label"]
+
+
+def test_visible_daily_activity_suppresses_contradictory_vendor_active_minutes():
+    payload = _daily()
+    payload["features"]["activity"]["active_minutes"] = {"value": 30}
+    payload["features"]["training"]["recent_workouts"] = [{
+        "date": "2026-10-07", "duration_minutes": 45,
+    }]
+
+    sections = daily_display_sections(payload)
+    activity = next(item for item in sections if item["key"] == "display_activity")
+
+    assert "活动时长 30 分钟" not in activity["facts"]
+    assert any("设备活动总时长小于当天已记录训练时长" in item for item in activity["limitations"])
+
+
+def test_strength_card_shows_qualified_capacity_and_mapped_ratios_only():
+    payload = _daily()
+    payload["features"]["training"]["strength"]["recent_sessions"] = [
+        {
+            "date": "2026-10-01",
+            "explicit_exercises": [{
+                "source": "user_confirmed", "exercise_id": "bench_press", "exercise_name": "卧推",
+                "sets": 3, "repetitions": 8, "weight_kg": 50,
+                "weight_unit": "kg", "weight_basis": "total",
+            }],
+        },
+        {
+            "date": "2026-10-07",
+            "explicit_exercises": [{
+                "source": "user_confirmed", "exercise_id": "bench_press", "exercise_name": "卧推",
+                "sets": 3, "repetitions": 8, "weight_kg": 60,
+                "weight_unit": "kg", "weight_basis": "total",
+            }, {
+                "source": "lap_62", "vendor_exercise_code": 999999,
+                "repetitions": 12, "weight_value": 20,
+            }],
+        },
+    ]
+
+    card = next(item for item in daily_display_sections(payload) if item["key"] == "display_strength_card")
+    text = " ".join(card["facts"])
+
+    assert "卧推容量 1,440 kg·次" in text
+    assert "估算 1RM 76 kg" in text
+    assert "高于已记录的可比较历史" in text
+    assert "已映射肌群的记录容量占比" in text
+    assert "999999" not in text
+
+
+def test_running_card_reuses_analytics_and_does_not_claim_same_heart_rate():
+    payload = _daily()
+    payload["features"]["training"]["running"]["recent_sessions"] = [{
+        "date": "2026-10-07",
+        "classification_label": "轻松跑",
+        "heart_rate_zone_source": "lactate_threshold",
+        "heart_rate_zones": [
+            {"zone": 1, "label": "一区：轻松", "share_percent": 72},
+            {"zone": 2, "label": "二区：耐力", "share_percent": 28},
+        ],
+        "cardiac_drift_percent": 4.5,
+        "average_pace_seconds_per_km": 360,
+        "average_heart_rate_bpm": 145,
+        "comparable_baseline": {
+            "median_pace_seconds_per_km": 375,
+            "pace_difference_percent": -4.0,
+            "median_heart_rate_bpm": 142,
+        },
+    }]
+
+    card = next(item for item in daily_display_sections(payload) if item["key"] == "display_running_card")
+    text = " ".join(card["facts"])
+
+    assert "心率区间分布" in text
+    assert "心率漂移 +4.5%" in text
+    assert "相近距离的近期配速对照" in text
+    assert "同心率" not in text
+    assert "同心率" not in " ".join(card["limitations"])

@@ -33,6 +33,12 @@ class Settings:
     sync_dispatcher_batch_chunks: int
     sync_lease_seconds: int
     sync_attempt_lease_seconds: int
+    morning_wake_start_hour: int
+    morning_wake_start_minute: int
+    morning_wake_end_hour: int
+    morning_wake_end_minute: int
+    morning_wake_poll_interval_seconds: int
+    morning_wake_daily_request_limit: int
     host: str
     port: int
     public_url: str
@@ -157,6 +163,12 @@ def load_settings(environ: Mapping[str, str]) -> Settings:
         sync_dispatcher_batch_chunks=integer("SYNC_DISPATCHER_BATCH_CHUNKS", 16, 1, 1024),
         sync_lease_seconds=integer("SYNC_LEASE_SECONDS", 120, 1, 86400),
         sync_attempt_lease_seconds=integer("SYNC_ATTEMPT_LEASE_SECONDS", 300, 1, 86400),
+        morning_wake_start_hour=integer("MORNING_WAKE_START_HOUR", 7, 0, 23),
+        morning_wake_start_minute=integer("MORNING_WAKE_START_MINUTE", 30, 0, 59),
+        morning_wake_end_hour=integer("MORNING_WAKE_END_HOUR", 11, 0, 23),
+        morning_wake_end_minute=integer("MORNING_WAKE_END_MINUTE", 0, 0, 59),
+        morning_wake_poll_interval_seconds=integer("MORNING_WAKE_POLL_INTERVAL_SECONDS", 900, 60, 1200),
+        morning_wake_daily_request_limit=integer("MORNING_WAKE_DAILY_REQUEST_LIMIT", 12, 1, 96),
         host=environ.get("HOST", "127.0.0.1"),
         port=local_port,
         public_url=public_url,

@@ -1329,6 +1329,56 @@ class HealthRepository:
             stmt = stmt.where(orm.DailyMetric.metric == metric)
         return list(self.db.execute(stmt.order_by(orm.DailyMetric.date, orm.DailyMetric.metric)).scalars().all())
 
+    def upsert_daily_features(self, features: list[dict]) -> int:
+        """Persist qualified derived day features without inventing missing values."""
+        changed = 0
+        for item in features:
+            values = {
+                "user_id": item["user_id"], "date": item["date"],
+                "feature": item["feature"], "source": item.get("source", "vitalis"),
+                "source_scope": item.get("source_scope", "derived"),
+                "device_id": item.get("device_id") or "", "unit": item.get("unit", ""),
+                "value": item.get("value"), "payload": item.get("payload") or {},
+                "status": item.get("status", "UNKNOWN"),
+                "sample_count": int(item.get("sample_count", 0)),
+                "distinct_days": int(item.get("distinct_days", 0)),
+                "expected_days": int(item.get("expected_days", 1)),
+                "coverage_ratio": item.get("coverage_ratio"),
+                "observed_at": _naive_utc(item["observed_at"]) if item.get("observed_at") else None,
+                "fetched_at": _naive_utc(item["fetched_at"]) if item.get("fetched_at") else None,
+                "as_of": _naive_utc(item["as_of"]) if item.get("as_of") else None,
+                "input_revision": int(item.get("input_revision", 0)),
+                "algorithm_version": item.get("algorithm_version", "daily-feature-v1"),
+            }
+            row = self.db.execute(select(orm.DailyFeature).where(
+                orm.DailyFeature.user_id == values["user_id"],
+                orm.DailyFeature.date == values["date"],
+                orm.DailyFeature.feature == values["feature"],
+                orm.DailyFeature.source == values["source"],
+                orm.DailyFeature.source_scope == values["source_scope"],
+                orm.DailyFeature.device_id == values["device_id"],
+            )).scalar_one_or_none()
+            if row is None:
+                self.db.add(orm.DailyFeature(**values))
+                changed += 1
+                continue
+            if any(getattr(row, key) != value for key, value in values.items() if key not in {"user_id", "date", "feature", "source", "source_scope", "device_id"}):
+                for key, value in values.items():
+                    if key not in {"user_id", "date", "feature", "source", "source_scope", "device_id"}:
+                        setattr(row, key, value)
+                changed += 1
+        self.db.flush()
+        return changed
+
+    def daily_features(self, user_id: str, start: date, end: date, feature: str | None = None) -> list[orm.DailyFeature]:
+        statement = select(orm.DailyFeature).where(
+            orm.DailyFeature.user_id == user_id,
+            orm.DailyFeature.date.between(start, end),
+        )
+        if feature:
+            statement = statement.where(orm.DailyFeature.feature == feature)
+        return list(self.db.execute(statement.order_by(orm.DailyFeature.date, orm.DailyFeature.feature)).scalars().all())
+
     # ---- 密集数据文件索引 ----
 
     def save_dense_data_files(self, files: list[DenseDataFile]) -> int:
@@ -3384,6 +3434,146 @@ class HealthRepository:
             ).order_by(orm.SyncStreamState.stream)
         ).scalars().all())
 
+    def stream_observation_dates(
+        self,
+        user_id: str,
+        stream: str,
+        *,
+        source: str = "zepp",
+        window_start: date | None = None,
+        window_end: date | None = None,
+        timezone_name: str = "UTC",
+    ) -> set[date]:
+        """Return calendar days backed by actual stored observations only."""
+        end = window_end or datetime.now(timezone.utc).date()
+        start = window_start or (end - timedelta(days=6))
+        if start > end:
+            return set()
+        start_at, _ = local_day_utc_bounds(start, timezone_name)
+        _, end_at = local_day_utc_bounds(end, timezone_name)
+        start_utc = _naive_utc(start_at)
+        end_utc = _naive_utc(end_at)
+        metric_by_stream = {
+            "heart_rate": "heart_rate",
+            "heart_rate/minute_endpoint": "heart_rate",
+            "hrv": "hrv_sdnn",
+            "wellness/hrv_rmssd": "hrv_rmssd",
+            "wellness/spo2_point": "spo2",
+            "wellness/spo2_odi": "spo2_odi",
+            "wellness/spo2_osa": "spo2_apnea_low",
+            "wellness/respiratory_rate": "respiratory_rate",
+            "wellness/all_day_stress": "stress",
+            "wellness/pai": "pai_daily",
+            "wellness/lactate_threshold": "lactate_threshold_hr",
+        }
+        metric = metric_by_stream.get(stream)
+        if metric is not None:
+            timestamps = self.db.execute(select(orm.MetricSample.timestamp).where(
+                orm.MetricSample.user_id == user_id,
+                orm.MetricSample.source == source,
+                orm.MetricSample.metric == metric,
+                orm.MetricSample.timestamp >= start_utc,
+                orm.MetricSample.timestamp < end_utc,
+            )).scalars().all()
+            days = {local_day(item, timezone_name) for item in timestamps}
+            if days or stream not in {"wellness/all_day_stress", "wellness/pai"}:
+                return days
+            daily_dates = self.db.execute(select(orm.DailyMetric.date).where(
+                orm.DailyMetric.user_id == user_id,
+                orm.DailyMetric.source == source,
+                orm.DailyMetric.metric == metric,
+                orm.DailyMetric.date.between(start, end),
+            )).scalars().all()
+            return set(daily_dates)
+
+        if stream in {"sleep", "activity", "training"}:
+            model = {
+                "sleep": orm.SleepRecord,
+                "activity": orm.ActivityRecord,
+                "training": orm.TrainingRecord,
+            }[stream]
+            return set(self.db.execute(select(model.date).where(
+                model.user_id == user_id,
+                model.date.between(start, end),
+            )).scalars().all())
+        if stream == "workouts":
+            timestamps = self.db.execute(select(orm.Workout.started_at).where(
+                orm.Workout.user_id == user_id,
+                orm.Workout.source == source,
+                orm.Workout.started_at.is_not(None),
+                orm.Workout.started_at >= start_utc,
+                orm.Workout.started_at < end_utc,
+            )).scalars().all()
+            return {local_day(item, timezone_name) for item in timestamps}
+        if stream == "workout_detail":
+            timestamps = self.db.execute(select(orm.WorkoutMetricSample.timestamp).where(
+                orm.WorkoutMetricSample.user_id == user_id,
+                orm.WorkoutMetricSample.source == source,
+                orm.WorkoutMetricSample.timestamp >= start_utc,
+                orm.WorkoutMetricSample.timestamp < end_utc,
+            )).scalars().all()
+            return {local_day(item, timezone_name) for item in timestamps}
+        if stream in {"dense_files", "heart_rate/dense_file", "heart_rate/dense_archive"}:
+            dates = self.db.execute(select(orm.DenseDataFile.date).where(
+                orm.DenseDataFile.user_id == user_id,
+                orm.DenseDataFile.source == source,
+                orm.DenseDataFile.date.between(start, end),
+            )).scalars().all()
+            timestamps = self.db.execute(select(orm.DenseDataFile.end_utc).where(
+                orm.DenseDataFile.user_id == user_id,
+                orm.DenseDataFile.source == source,
+                orm.DenseDataFile.end_utc.is_not(None),
+                orm.DenseDataFile.end_utc >= start_utc,
+                orm.DenseDataFile.end_utc < end_utc,
+            )).scalars().all()
+            return set(dates) | {local_day(item, timezone_name) for item in timestamps}
+        if stream == "daily_summary" or stream.startswith("daily_summary/"):
+            dates = self.db.execute(select(orm.DailyMetric.date).where(
+                orm.DailyMetric.user_id == user_id,
+                orm.DailyMetric.source == source,
+                orm.DailyMetric.date.between(start, end),
+            )).scalars().all()
+            return set(dates)
+        if stream == "wellness" or stream.startswith("wellness/"):
+            dates = self.db.execute(select(orm.DailyMetric.date).where(
+                orm.DailyMetric.user_id == user_id,
+                orm.DailyMetric.source == source,
+                orm.DailyMetric.date.between(start, end),
+            )).scalars().all()
+            return set(dates)
+        return set()
+
+    def worker_heartbeat(self, name: str = "primary") -> orm.WorkerHeartbeat | None:
+        return self.db.get(orm.WorkerHeartbeat, name)
+
+    def failed_analysis_runs(
+        self, user_id: str, *, limit: int = 100
+    ) -> list[orm.AnalysisRun]:
+        return list(self.db.execute(select(orm.AnalysisRun).where(
+            orm.AnalysisRun.user_id == user_id,
+            orm.AnalysisRun.status == "FAILED",
+        ).order_by(
+            orm.AnalysisRun.completed_at.desc().nulls_last(),
+            orm.AnalysisRun.id.desc(),
+        ).limit(max(1, min(limit, 1000)))).scalars().all())
+
+    def provider_rejected_deliveries(
+        self, user_id: str, *, limit: int = 100
+    ) -> list[orm.NotificationDelivery]:
+        return list(self.db.execute(select(orm.NotificationDelivery).where(
+            orm.NotificationDelivery.user_id == user_id,
+            or_(
+                orm.NotificationDelivery.last_error == "transport_rejected",
+                and_(
+                    orm.NotificationDelivery.status == "failed",
+                    orm.NotificationDelivery.provider_status.in_(("rejected", "failed", "error")),
+                ),
+            ),
+        ).order_by(
+            orm.NotificationDelivery.updated_at.desc(),
+            orm.NotificationDelivery.id.desc(),
+        ).limit(max(1, min(limit, 1000)))).scalars().all())
+
     def latest_stream_sample_at(
         self, user_id: str, stream: str, source: str = "zepp"
     ) -> datetime | None:
@@ -3563,6 +3753,15 @@ class HealthRepository:
                 source=row.source,
                 confidence=row.confidence,
                 confidence_label=row.confidence_label,
+                canonical_qualified=bool(row.canonical_qualified),
+                volume_value=row.volume_value,
+                volume_unit=row.volume_unit,
+                volume_basis=row.volume_basis,
+                estimated_1rm_kg=row.estimated_1rm_kg,
+                estimated_1rm_method=row.estimated_1rm_method,
+                estimated_1rm_evidence=list(row.estimated_1rm_evidence or []),
+                personal_record=bool(row.personal_record),
+                personal_record_date=row.personal_record_date,
                 created_at=(
                     row.created_at.replace(tzinfo=timezone.utc)
                     if row.created_at is not None else None
@@ -5029,6 +5228,162 @@ class HealthRepository:
         "transport_rejected",
         "render_failed",
     }
+
+    _DELIVERY_ALERT_CATEGORIES = {"delivery", "worker", "analysis", "provider"}
+    _DELIVERY_ALERT_REASONS = {
+        "delivery_target_missed",
+        "worker_heartbeat_stale",
+        "analysis_failed",
+        "provider_rejected",
+    }
+    _DELIVERY_ALERT_STATUSES = {"pending", "suppressed", "acknowledged"}
+    _DELIVERY_ALERT_PAYLOAD_KEYS = {
+        "target_at", "delivery_present", "delivery_status", "last_seen_at",
+        "age_seconds", "stale_after_seconds", "analysis_run_id", "error",
+        "delivery_id", "provider_status",
+    }
+
+    @classmethod
+    def _safe_delivery_alert_payload(cls, payload: dict | None) -> dict:
+        """Retain only evaluator fields that are safe to expose later."""
+        if not isinstance(payload, dict):
+            return {}
+        output: dict[str, object] = {}
+        for key in cls._DELIVERY_ALERT_PAYLOAD_KEYS:
+            value = payload.get(key)
+            if value is None or isinstance(value, (bool, int, float, str)):
+                output[key] = value
+        return output
+
+    def create_delivery_alert(
+        self,
+        user_id: str,
+        *,
+        event_key: str,
+        category: str,
+        reason: str,
+        observed_at: datetime,
+        period: str | None = None,
+        target_date: date | None = None,
+        payload: dict | None = None,
+        status: str = "pending",
+    ) -> orm.DeliveryAlertEvent:
+        """Insert one alert idempotently by ``(user_id, event_key)``."""
+        if category not in self._DELIVERY_ALERT_CATEGORIES:
+            raise ValueError("invalid delivery alert category")
+        if reason not in self._DELIVERY_ALERT_REASONS:
+            raise ValueError("invalid delivery alert reason")
+        if status not in self._DELIVERY_ALERT_STATUSES:
+            raise ValueError("invalid delivery alert status")
+        if not isinstance(event_key, str) or not event_key.strip() or len(event_key) > 192:
+            raise ValueError("invalid delivery alert event key")
+        if period is not None and period not in {"morning", "evening", "weekly", "monthly"}:
+            raise ValueError("invalid delivery alert period")
+        self.db.flush()
+        if not self.user_exists(user_id):
+            raise ValueError("用户不存在")
+        observed = _naive_utc(observed_at)
+        row_id = hashlib.sha256(f"{user_id}:{event_key}".encode("utf-8")).hexdigest()
+        values = {
+            "id": row_id,
+            "user_id": user_id,
+            "event_key": event_key,
+            "category": category,
+            "reason": reason,
+            "period": period,
+            "target_date": target_date,
+            "observed_at": observed,
+            "status": status,
+            "payload": self._safe_delivery_alert_payload(payload),
+            "created_at": observed,
+            "updated_at": observed,
+        }
+        dialect = self.db.get_bind().dialect.name
+        if dialect in {"sqlite", "postgresql"}:
+            if dialect == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert as dialect_insert
+            else:
+                from sqlalchemy.dialects.postgresql import insert as dialect_insert
+            self.db.execute(
+                dialect_insert(orm.DeliveryAlertEvent)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=["user_id", "event_key"])
+            )
+        else:
+            existing = self.db.execute(select(orm.DeliveryAlertEvent).where(
+                orm.DeliveryAlertEvent.user_id == user_id,
+                orm.DeliveryAlertEvent.event_key == event_key,
+            )).scalar_one_or_none()
+            if existing is None:
+                self.db.add(orm.DeliveryAlertEvent(**values))
+        self.db.flush()
+        return self.db.execute(select(orm.DeliveryAlertEvent).where(
+            orm.DeliveryAlertEvent.user_id == user_id,
+            orm.DeliveryAlertEvent.event_key == event_key,
+        )).scalar_one()
+
+    def delivery_alert(
+        self, user_id: str, event_id: str
+    ) -> orm.DeliveryAlertEvent | None:
+        """Return an alert only when it belongs to the requested user."""
+        row = self.db.get(orm.DeliveryAlertEvent, event_id)
+        if row is None:
+            row = self.db.execute(select(orm.DeliveryAlertEvent).where(
+                orm.DeliveryAlertEvent.user_id == user_id,
+                orm.DeliveryAlertEvent.event_key == event_id,
+            )).scalar_one_or_none()
+        return row if row is not None and row.user_id == user_id else None
+
+    def delivery_alerts(
+        self,
+        user_id: str,
+        *,
+        limit: int = 100,
+        status: str | None = None,
+    ) -> list[orm.DeliveryAlertEvent]:
+        """List sanitized-at-source alert rows in newest-first order."""
+        if status is not None and status not in self._DELIVERY_ALERT_STATUSES:
+            raise ValueError("invalid delivery alert status")
+        conditions = [orm.DeliveryAlertEvent.user_id == user_id]
+        if status is not None:
+            conditions.append(orm.DeliveryAlertEvent.status == status)
+        return list(self.db.execute(
+            select(orm.DeliveryAlertEvent).where(*conditions).order_by(
+                orm.DeliveryAlertEvent.observed_at.desc(),
+                orm.DeliveryAlertEvent.created_at.desc(),
+                orm.DeliveryAlertEvent.id.desc(),
+            ).limit(max(1, min(int(limit), 1000)))
+        ).scalars().all())
+
+    def acknowledge_delivery_alert(
+        self, user_id: str, event_id: str, *, now: datetime | None = None
+    ) -> orm.DeliveryAlertEvent | None:
+        row = self.delivery_alert(user_id, event_id)
+        if row is None:
+            return None
+        timestamp = _naive_utc(now or datetime.now(timezone.utc))
+        row.status = "acknowledged"
+        row.acknowledged_at = timestamp
+        row.updated_at = timestamp
+        self.db.flush()
+        return row
+
+    def suppress_delivery_alert(
+        self, user_id: str, event_id: str, *, now: datetime | None = None
+    ) -> orm.DeliveryAlertEvent | None:
+        row = self.delivery_alert(user_id, event_id)
+        if row is None:
+            return None
+        timestamp = _naive_utc(now or datetime.now(timezone.utc))
+        row.status = "suppressed"
+        row.suppressed_at = timestamp
+        row.updated_at = timestamp
+        self.db.flush()
+        return row
+
+    # Explicit aliases keep repository terminology discoverable at call sites.
+    list_delivery_alerts = delivery_alerts
+    upsert_delivery_alert = create_delivery_alert
 
     def _repoint_notification_delivery(
         self, existing: orm.NotificationDelivery, analysis_run_id: str

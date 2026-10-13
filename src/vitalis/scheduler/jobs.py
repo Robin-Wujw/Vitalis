@@ -195,6 +195,58 @@ def _profile_push_job(period: str, sync_days: int) -> None:
     dispatcher_job()
 
 
+def morning_wake_poll_job(now: datetime | None = None) -> int:
+    """Poll sleep during the configurable wake window with a daily request cap."""
+    from sqlalchemy import select
+    from zoneinfo import ZoneInfo
+
+    from vitalis.adapters.persistence import session_scope
+    from vitalis.adapters.persistence.models import SyncAttempt
+
+    current = (now or _utc_now()).astimezone(ZoneInfo(settings.timezone))
+    target = current.date()
+    start = datetime(
+        target.year, target.month, target.day,
+        settings.morning_wake_start_hour, settings.morning_wake_start_minute,
+        tzinfo=ZoneInfo(settings.timezone),
+    )
+    end = datetime(
+        target.year, target.month, target.day,
+        settings.morning_wake_end_hour, settings.morning_wake_end_minute,
+        tzinfo=ZoneInfo(settings.timezone),
+    )
+    if not start <= current < end:
+        return 0
+    slot = int((current - start).total_seconds() // settings.morning_wake_poll_interval_seconds)
+    trigger_ref = f"morning-wake:{target.isoformat()}:{slot}"
+    start_utc = start.astimezone(timezone.utc).replace(tzinfo=None)
+    queued = 0
+    for user_id in _get_authorized_users():
+        with session_scope() as db:
+            attempts = db.execute(select(SyncAttempt).where(
+                SyncAttempt.user_id == user_id,
+                SyncAttempt.trigger == "morning",
+                SyncAttempt.created_at >= start_utc,
+                SyncAttempt.trigger_ref.like(f"morning-wake:{target.isoformat()}:%"),
+            ).limit(settings.morning_wake_daily_request_limit + 1)).scalars().all()
+            if len(attempts) >= settings.morning_wake_daily_request_limit:
+                continue
+            if db.execute(select(SyncAttempt.id).where(
+                SyncAttempt.user_id == user_id,
+                SyncAttempt.trigger == "morning",
+                SyncAttempt.trigger_ref == trigger_ref,
+            ).limit(1)).first() is not None:
+                continue
+        try:
+            if _sync_user(user_id, days=2, label="morning", trigger_ref=trigger_ref):
+                queued += 1
+        except Exception:
+            log.exception("morning wake poll enqueue failed: user=%s", user_id)
+    if queued:
+        dispatcher_job()
+    return queued
+
+
 def morning_analysis_job() -> None:
     _profile_push_job("morning", sync_days=SCHEDULED_REPORT_SYNCS["morning"][2])
 
@@ -266,6 +318,90 @@ def monthly_analysis_job() -> None:
     _profile_push_job("monthly", sync_days=2)
 
 
+def _evaluate_internal_alerts(*, now: datetime | None = None) -> int:
+    """Persist internal alert candidates without invoking any external channel."""
+    from sqlalchemy import select
+
+    from vitalis.adapters.persistence import HealthRepository, session_scope
+    from vitalis.adapters.persistence.models import AnalysisRun, NotificationDelivery
+    from vitalis.application.delivery_alerts import (
+        AnalysisFailureObservation,
+        DeliveryObservation,
+        ProviderRejectionObservation,
+        evaluate_alert_candidates,
+    )
+
+    current = now or _utc_now()
+    with session_scope() as db:
+        repository = HealthRepository(db)
+        user_ids = set(db.execute(select(NotificationDelivery.user_id).distinct()).scalars())
+        user_ids.update(db.execute(select(AnalysisRun.user_id).where(
+            AnalysisRun.status.in_(("FAILED", "failed"))
+        ).distinct()).scalars())
+        if settings.push_user:
+            user_ids.add(settings.push_user)
+        heartbeat = repository.worker_heartbeat("primary")
+        persisted = 0
+        for user_id in sorted(user_ids):
+            deliveries = repository.notification_deliveries(user_id, limit=100)
+            failures = repository.failed_analysis_runs(user_id, limit=100)
+            rejected = repository.provider_rejected_deliveries(user_id, limit=100)
+            candidates = evaluate_alert_candidates(
+                user_id,
+                now=current,
+                timezone_name=settings.timezone,
+                deliveries=(
+                    DeliveryObservation(
+                        period=row.period,
+                        target_date=row.target_date,
+                        status=row.status,
+                        last_error=row.last_error,
+                        provider_status=row.provider_status,
+                        delivery_id=row.id,
+                    )
+                    for row in deliveries
+                ),
+                heartbeat_at=(
+                    heartbeat.last_seen_at
+                    if settings.push_user and user_id == settings.push_user and heartbeat
+                    else None
+                ),
+                analysis_failures=(
+                    AnalysisFailureObservation(
+                        run_id=row.id,
+                        target_date=row.target_date,
+                        failed_at=row.completed_at,
+                        error=row.error,
+                    )
+                    for row in failures
+                ),
+                provider_rejections=(
+                    ProviderRejectionObservation(
+                        delivery_id=row.id,
+                        period=row.period,
+                        target_date=row.target_date,
+                        provider_status=row.provider_status,
+                    )
+                    for row in rejected
+                ),
+                include_delivery_targets=bool(deliveries) or user_id == settings.push_user,
+            )
+            for candidate in candidates:
+                existing = repository.delivery_alert(user_id, candidate.event_key)
+                repository.create_delivery_alert(
+                    user_id,
+                    event_key=candidate.event_key,
+                    category=candidate.category,
+                    reason=candidate.reason,
+                    observed_at=candidate.observed_at,
+                    period=candidate.period,
+                    target_date=candidate.target_date,
+                    payload=candidate.payload,
+                )
+                persisted += int(existing is None)
+        return persisted
+
+
 def worker_heartbeat_job() -> None:
     """Record worker liveness independently of a potentially slow sync pass.
 
@@ -277,6 +413,10 @@ def worker_heartbeat_job() -> None:
 
     global _heartbeats
     now = datetime.now(timezone.utc).replace(tzinfo=None)
+    try:
+        _evaluate_internal_alerts(now=now.replace(tzinfo=timezone.utc))
+    except Exception:
+        log.exception("internal delivery alert evaluation failed")
     with session_scope() as db:
         row = db.get(WorkerHeartbeat, "primary")
         if row is None:
@@ -753,6 +893,16 @@ def start_scheduler() -> BackgroundScheduler:
         catch_up_scheduled_reports,
         IntervalTrigger(minutes=5, timezone=settings.timezone),
         id="report_catch_up", misfire_grace_time=60,
+        max_instances=1, coalesce=True,
+        next_run_time=datetime.now(timezone.utc),
+    )
+    scheduler.add_job(
+        morning_wake_poll_job,
+        IntervalTrigger(
+            seconds=settings.morning_wake_poll_interval_seconds,
+            timezone=settings.timezone,
+        ),
+        id="morning_wake_poll", misfire_grace_time=60,
         max_instances=1, coalesce=True,
         next_run_time=datetime.now(timezone.utc),
     )

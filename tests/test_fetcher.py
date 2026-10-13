@@ -109,7 +109,10 @@ def test_sport_detail_stream_retries_and_decodes_compressed_json():
         return httpx.Response(200, headers={"content-encoding": "gzip"}, stream=httpx.ByteStream(compressed), request=request)
 
     client._client = httpx.Client(transport=httpx.MockTransport(handler), trust_env=False)
-    assert client.fetch_sport_detail("123", "cloud") == {"data": {"trackid": 123}}
+    payload = client.fetch_sport_detail("123", "cloud")
+    assert getattr(payload, "size", 0) == len(json.dumps({"data": {"trackid": 123}}).encode())
+    assert payload is not None
+    payload.cleanup()
     assert len(calls) == 2
     client.close()
 

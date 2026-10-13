@@ -45,7 +45,7 @@ def test_scheduler_uses_configured_timezone_cron_and_single_dispatcher(monkeypat
     assert scheduler.started
     assert {item[2]["id"] for item in captured} == {
         "nightly_sync", "morning_analysis", "evening_analysis", "sync_dispatcher",
-        "worker_heartbeat", "report_catch_up",
+        "worker_heartbeat", "report_catch_up", "morning_wake_poll",
     }
     catch_up = next(item for item in captured if item[2]["id"] == "report_catch_up")
     assert catch_up[0] is jobs.catch_up_scheduled_reports

@@ -14,7 +14,12 @@ from vitalis.config import settings
 from vitalis.bootstrap import get_connector, get_connection_service
 from vitalis.application.connection import ConnectionOperationError
 from vitalis.application.connection_progress import INITIAL_SYNC_DAYS, iso_utc
-from .connect import connection_http_error
+from .connect import (
+    PhoneLoginRequest,
+    _login_adapter,
+    _require_phone_origin,
+    connection_http_error,
+)
 
 router = APIRouter(prefix="/connect/zepp", tags=["connect"])
 
@@ -73,6 +78,27 @@ def zepp_pairing_status(
         "sync_days": status.sync_days,
         "progress": status.progress,
     }
+
+
+@router.post("/pair/{pairing_id}/login", summary="手机页提交 Zepp 手机号或邮箱密码")
+def submit_zepp_phone_login(
+    pairing_id: str,
+    body: PhoneLoginRequest,
+    request: Request,
+    login_adapter=Depends(_login_adapter),
+) -> dict:
+    """Process one password in memory, then discard it before returning."""
+    _require_phone_origin(request)
+    try:
+        return get_connection_service(provider=get_connector("zepp")).submit_password_login(
+            pairing_id,
+            body.account,
+            body.password.get_secret_value(),
+            country_code=body.country_code,
+            login_provider=login_adapter,
+        )
+    except ConnectionOperationError as exc:
+        raise connection_http_error(exc) from exc
 
 
 @router.post("/pair/{pairing_id}/credentials", summary="浏览器扩展提交 Zepp 登录凭据")

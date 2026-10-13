@@ -21,6 +21,7 @@ from .localization import CONFIDENCE_LABELS
 
 
 FEEDBACK_FIELDS = {
+    "feeling_score": ("score_1_5", 1, 5),
     "session_rpe": ("score_1_10", 1, 10),
     "physical_fatigue": ("score_1_5", 1, 5),
     "mental_state": ("score_1_5", 1, 5),
@@ -122,9 +123,14 @@ class PersonalModelEngine:
             limitations.append("尚无显式主观反馈；缺失反馈不推断为正常状态或已完成。")
         if not supported_associations:
             limitations.append("尚无中等或较高置信度的 60/90 天个人关联。")
+        feedback_days = len({item.date for item in all_feedback})
+        prediction_status = "ACCUMULATING"
+        if prediction_status != "ACTIVE":
+            limitations.append(f"预测模型仍在积累反馈（当前 {feedback_days} 个反馈日期，启用门槛为 60 个）。")
         limitations.append("个人模式与关联是描述性 observed association，不能解释为训练因果。")
         return PersonalModel(
             analysis_run_id=analysis_run_id, user_id=daily.user_id, date=daily.date, generated_at=timestamp,
+            feedback_days=feedback_days, prediction_status=prediction_status,
             baselines=[item for items in daily.baselines.values() for item in items
                        if item.window_days == 28 and item.status == Availability.AVAILABLE],
             long_term_trends=[item for item in daily.trends

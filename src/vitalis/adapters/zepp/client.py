@@ -19,13 +19,20 @@ import random
 import re
 import secrets
 import time as time_mod
-import zlib
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Literal
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 import httpx
+
+from .workout_streaming import (
+    SpoolPayload,
+    WorkoutStreamError,
+    WorkoutStreamLimitError,
+    spool_http_response,
+    validate_json_limits,
+)
 
 try:
     import truststore
@@ -47,7 +54,7 @@ API_USER_EVENTS_DATE = "/users/{user_id}/events/dateString"  # ODI / OSA nightly
 API_FILE_INFO_EVENTS = "/users/me/fileInfo/events"  # Dense measurement file index
 API_FILE_DOWNLOAD_URLS = "/files/{file_type}/users/{user_id}/queryDownUrlList"
 MAX_DENSE_FILE_BYTES = 64 * 1024 * 1024
-MAX_WORKOUT_DETAIL_BYTES = 4 * 1024 * 1024
+MAX_WORKOUT_DETAIL_BYTES = 32 * 1024 * 1024
 MAX_WORKOUT_DETAIL_JSON_OBJECTS = 20_000
 MAX_WORKOUT_DETAIL_JSON_SEPARATORS = 80_000
 
@@ -188,7 +195,7 @@ class ZeppAPIClient:
     # ---- 核心 GET ----
     def _get(
         self, path: str, params: dict, *, max_response_bytes: int | None = None,
-    ) -> dict:
+    ) -> dict | SpoolPayload:
         params = {**params, "r": self._request_id()}
         for attempt in range(3):
             self._check_request_budget()
@@ -219,6 +226,9 @@ class ZeppAPIClient:
                 self._check_request_budget()
                 raise ZeppAuthError(f"网络错误: {exc}", kind="network") from exc
 
+            if isinstance(resp, SpoolPayload):
+                return resp
+
             if resp.status_code in (401, 403):
                 raise ZeppAuthError(
                     f"token 失效（HTTP {resp.status_code}），请重新导入",
@@ -243,11 +253,6 @@ class ZeppAPIClient:
                     kind="vendor_response",
                 )
             try:
-                if max_response_bytes is not None and (
-                    resp.content.count(b"{") > MAX_WORKOUT_DETAIL_JSON_OBJECTS
-                    or resp.content.count(b",") > MAX_WORKOUT_DETAIL_JSON_SEPARATORS
-                ):
-                    raise ZeppAuthError("运动明细 JSON 结构超过安全上限", kind="resource_limit")
                 return resp.json()
             except ValueError:
                 # band_data 等可能返回非 JSON，按文本返回
@@ -261,8 +266,8 @@ class ZeppAPIClient:
         max_bytes: int,
         *,
         timeout: float | None = None,
-    ) -> httpx.Response:
-        """Read a detail response with raw-wire and expanded-body limits."""
+    ) -> httpx.Response | SpoolPayload:
+        """Stream one bounded detail response into a private spool."""
         stream_kwargs = {
             "params": params,
             "headers": {**self._headers, "accept-encoding": "gzip, deflate, identity"},
@@ -272,56 +277,28 @@ class ZeppAPIClient:
         with self._client.stream("GET", self.base_url + path, **stream_kwargs) as response:
             if response.status_code != 200:
                 return httpx.Response(response.status_code, content=b"", request=response.request)
-            content_length = response.headers.get("content-length")
-            if content_length is not None:
-                try:
-                    if int(content_length) > max_bytes:
-                        raise ZeppAuthError("运动明细响应超过大小上限", kind="resource_limit")
-                except ValueError:
-                    pass
-            encoding = response.headers.get("content-encoding", "").strip().lower()
-            if encoding in {"", "identity"}:
-                decoder = None
-            elif encoding == "gzip":
-                decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
-            elif encoding == "deflate":
-                decoder = zlib.decompressobj(zlib.MAX_WBITS)
-            else:
-                raise ZeppAuthError("运动明细响应压缩格式不受支持", kind="vendor_response")
-
-            body = bytearray()
-            wire_bytes = 0
-            for part in response.iter_raw(chunk_size=64 * 1024):
-                self._check_request_budget()
-                wire_bytes += len(part)
-                if wire_bytes > max_bytes:
-                    raise ZeppAuthError("运动明细响应超过大小上限", kind="resource_limit")
-                if decoder is None:
-                    expanded = part
-                else:
-                    try:
-                        expanded = decoder.decompress(part, max_bytes + 1 - len(body))
-                    except zlib.error as exc:
-                        raise ZeppAuthError("运动明细响应压缩内容无效", kind="vendor_response") from exc
-                    if decoder.unconsumed_tail:
-                        raise ZeppAuthError("运动明细响应超过大小上限", kind="resource_limit")
-                    if decoder.unused_data:
-                        raise ZeppAuthError("运动明细响应压缩内容无效", kind="vendor_response")
-                if len(body) + len(expanded) > max_bytes:
-                    raise ZeppAuthError("运动明细响应超过大小上限", kind="resource_limit")
-                body.extend(expanded)
-            if decoder is not None and not decoder.eof:
-                raise ZeppAuthError("运动明细响应压缩内容无效", kind="vendor_response")
-            headers = {
-                key: value for key, value in response.headers.items()
-                if key.lower() not in {"content-encoding", "content-length", "transfer-encoding"}
-            }
-            return httpx.Response(
-                response.status_code,
-                headers=headers,
-                content=bytes(body),
-                request=response.request,
-            )
+            spool = None
+            try:
+                spool = spool_http_response(
+                    response,
+                    max_bytes=max_bytes,
+                    check=self._check_request_budget,
+                )
+                validate_json_limits(
+                    spool,
+                    max_objects=MAX_WORKOUT_DETAIL_JSON_OBJECTS,
+                    max_separators=MAX_WORKOUT_DETAIL_JSON_SEPARATORS,
+                    require_complete=False,
+                )
+                return spool
+            except WorkoutStreamLimitError as exc:
+                if spool is not None:
+                    spool.cleanup()
+                raise ZeppAuthError(str(exc), kind="resource_limit") from exc
+            except WorkoutStreamError as exc:
+                if spool is not None:
+                    spool.cleanup()
+                raise ZeppAuthError(str(exc), kind="vendor_response") from exc
 
     def _request_id(self) -> str:
         self._request_seq += 1
@@ -456,7 +433,7 @@ class ZeppAPIClient:
             },
         )
 
-    def fetch_sport_detail(self, track_id: str, source: str) -> dict:
+    def fetch_sport_detail(self, track_id: str, source: str) -> dict | SpoolPayload:
         return self._get(
             API_SPORT_DETAIL,
             {"trackid": track_id, "source": source},

@@ -5,11 +5,22 @@ health scores, trends, prescriptions, or inferred exercise progress.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import date, datetime
-from typing import Any, Iterable
+from typing import Any
 
 from .period_activity import comparison_gate
-from .report_formatting import energy_label, metric_label, minutes_text, number, payload_of, timestamp_text, unique, value_with_unit
+from .report_formatting import (
+    energy_label,
+    metric_label,
+    minutes_text,
+    number,
+    payload_of,
+    timestamp_text,
+    unique,
+    value_with_unit,
+)
+from .strength import MUSCLE_LABELS, strength_session_capacity
 
 
 def _number(value: Any) -> float | None:
@@ -95,12 +106,15 @@ def _deviation_comparison(
     if reference is None and change is None:
         return None
     window = _integer(deviation.get("baseline_window_days"))
-    label = f"个人参照（近 {window} 日）" if window else "个人参照"
     start, end = _reference_period(payload)
     return {
-        "label": label,
+        # Daily readers do not need the implementation window in the label;
+        # retain the qualified value for API/audit consumers.
+        "label": "个人参照",
         "reference_value": reference,
         "change_percent": change,
+        "direction": deviation.get("direction"),
+        "baseline_window_days": window,
         "reference_period_start": start,
         "reference_period_end": end,
     }
@@ -130,6 +144,20 @@ def _period_comparison(
     }
 
 
+def _metric_judgement(key: str, comparison: dict[str, Any] | None) -> str | None:
+    """Use saved comparison direction only; never turn a percentage heuristic into advice."""
+    if not isinstance(comparison, dict):
+        return None
+    reference = _number(comparison.get("reference_value"))
+    direction = str(comparison.get("direction") or "").lower()
+    if not direction and str(comparison.get("label") or "") != "个人参照":
+        return None
+    labels = {"above": "高于个人参照", "below": "低于个人参照", "near": "接近个人参照"}
+    if reference is None or direction not in labels:
+        return "判断：个人参照证据不足，无法判断。"
+    return f"判断：{labels[direction]}。"
+
+
 def _metric(
     key: str,
     label: str,
@@ -141,6 +169,9 @@ def _metric(
     detail: str | None = None,
     gap: str | None = None,
 ) -> dict[str, Any]:
+    judgement = _metric_judgement(key, comparison)
+    if judgement:
+        detail = f"{detail}；{judgement}" if detail else judgement
     return {
         "key": key,
         "label": label,
@@ -734,18 +765,150 @@ def _pressure_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
     return {"key": "display_signals", "title": "日内记录", "facts": facts, "interpretation": [], "limitations": [], "display": True}
 
 
+def _strength_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Expose qualified strength capacity without interpreting unknown vendor codes."""
+    training = (payload.get("features") or {}).get("training") or {}
+    target = payload.get("date")
+    sessions = [
+        item for item in _strength_sessions(training)
+        if _same_day(item.get("date"), target)
+    ]
+    if not sessions:
+        return None
+    facts: list[str] = []
+    limitations: list[str] = []
+    for session in sessions:
+        history = [
+            item for item in _strength_sessions(training)
+            if _date(item.get("date")) is not None and _date(item.get("date")) < _date(session.get("date"))
+        ]
+        summary = strength_session_capacity(session, history)
+        for item in summary["capacity"]:
+            name = item["exercise_name"]
+            facts.append(
+                f"{name}容量 {number(item['volume'])} kg·次（已记录重量×次数）"
+                f"；估算 1RM {number(item['estimated_1rm'])} kg（Epley，仅估算）"
+            )
+            if item["personal_record"]:
+                facts.append(f"{name}估算 1RM 高于已记录的可比较历史。")
+        if summary["muscle_ratios"]:
+            ratio_text = "、".join(
+                f"{MUSCLE_LABELS.get(muscle, muscle)} {ratio:.0%}"
+                for muscle, ratio in summary["muscle_ratios"].items()
+            )
+            facts.append("已映射肌群的记录容量占比：" + ratio_text + "。")
+        for load in session.get("muscle_load") or []:
+            if not isinstance(load, dict) or load.get("qualified") is not True:
+                continue
+            label = load.get("muscle_group_label") or MUSCLE_LABELS.get(load.get("muscle_group"), load.get("muscle_group"))
+            ratio = _number(load.get("short_long_ratio"))
+            status = load.get("status_label")
+            if label and ratio is not None and status:
+                facts.append(f"{label}短长期容量比 {ratio:.2f}（{status}）。")
+        limitations.extend(summary["limitations"])
+    if not facts and not limitations:
+        return None
+    return {
+        "key": "display_strength_card", "title": "力量容量", "facts": unique(facts),
+        "interpretation": [], "limitations": unique(limitations), "display": True,
+    }
+
+
+def _running_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Expose saved running analytics without inventing a new comparator."""
+    training = (payload.get("features") or {}).get("training") or {}
+    target = payload.get("date")
+    sessions = [
+        item for item in ((training.get("running") or {}).get("recent_sessions") or [])
+        if isinstance(item, dict) and _same_day(item.get("date"), target)
+    ]
+    if not sessions:
+        return None
+    facts: list[str] = []
+    limitations: list[str] = []
+    zone_sources = {"device_workout": "设备区间", "lactate_threshold": "个人乳酸阈心率区间", "mixed": "混合来源区间"}
+    for session in sessions:
+        # Classification is an internal training fact; the public card is a
+        # readable running summary and never promotes a low-confidence label.
+        title = "跑步"
+        zones = [item for item in session.get("heart_rate_zones") or [] if isinstance(item, dict)]
+        if zones:
+            parts = []
+            for zone in zones:
+                share = _number(zone.get("share_percent"))
+                label = zone.get("label") or f"第 {zone.get('zone', '?')} 区"
+                if share is not None:
+                    parts.append(f"{label} {number(share)}%")
+            if parts:
+                source = zone_sources.get(session.get("heart_rate_zone_source"), "已记录区间")
+                facts.append(f"{title}心率区间分布（{source}）：" + "；".join(parts) + "。")
+        else:
+            limitations.append(f"{title}没有足够心率证据，未展示心率区间分布。")
+
+        drift = _number(session.get("cardiac_drift_percent"))
+        if drift is not None:
+            facts.append(f"{title}心率漂移 {drift:+.1f}%。")
+        else:
+            limitation = next((item for item in session.get("limitations") or [] if "漂移" in str(item)), None)
+            if session.get("confidence") not in {"MODERATE", "HIGH"}:
+                limitation = None
+            limitations.append(str(limitation or f"{title}未计算心率漂移；连续低强度和同源速度、心率证据不足。"))
+
+        baseline = session.get("comparable_baseline")
+        if isinstance(baseline, dict):
+            current_pace = _pace_text(session.get("average_pace_seconds_per_km"))
+            reference_pace = _pace_text(baseline.get("median_pace_seconds_per_km"))
+            change = _number(baseline.get("pace_difference_percent"))
+            parts = ["相近距离的近期配速对照"]
+            if current_pace:
+                parts.append(f"当前 {current_pace}")
+            if reference_pace:
+                parts.append(f"对照中位 {reference_pace}")
+            if change is not None:
+                parts.append(f"变化 {change:+.1f}%")
+            # The baseline is distance-matched; its HR is evidence, not a
+            # license to call this a same-heart-rate comparison.
+            reference_hr = _number(baseline.get("median_heart_rate_bpm"))
+            current_hr = _number(session.get("average_heart_rate_bpm"))
+            if current_hr is not None and reference_hr is not None:
+                parts.append(f"当前/对照平均心率 {number(current_hr)} / {number(reference_hr)} 次/分钟")
+            facts.append("；".join(parts) + "。")
+        else:
+            limitations.append(f"{title}没有足够的相近距离历史样本，未作配速对照。")
+    return {
+        "key": "display_running_card", "title": "跑步卡", "facts": unique(facts),
+        "interpretation": [], "limitations": unique(limitations), "display": True,
+    }
+
+
 def daily_presentation(payload: Any, *, morning: bool = False, facts_only: bool = False) -> dict[str, Any]:
     raw = payload_of(payload)
     metrics = _daily_metrics(raw, morning=morning)
+    if facts_only:
+        factual_metrics = []
+        for metric in metrics:
+            item = dict(metric)
+            item["comparison"] = None
+            detail = item.get("detail")
+            if isinstance(detail, str) and "判断：" in detail:
+                detail = "；".join(part for part in detail.split("；") if not part.startswith("判断：")) or None
+            item["detail"] = detail
+            factual_metrics.append(item)
+        metrics = factual_metrics
     if morning:
         decision = {} if facts_only else raw.get("decision") or {}
         action_label = decision.get("action_label") or "今天的安排"
         headline = "已记录昨夜事实，今天暂不生成训练安排" if facts_only or decision.get("action") == "INSUFFICIENT_DATA" else f"今天安排：{action_label}"
         # Yesterday's workouts are listed once, in the morning's observed-training section.
         return {"headline": headline, "as_of": _as_of(raw), "metrics": metrics, "findings": [] if facts_only else _morning_findings(raw), "training": [], "suggestions": [] if facts_only else _daily_suggestions(raw), "alerts": _daily_alerts(raw, facts_only=facts_only)}
-    findings, suggestions = _strength_change_texts(raw)
+    findings, suggestions = ([], []) if facts_only else _strength_change_texts(raw)
     training = _training_projection(raw)
-    headline = "今日训练与活动回顾" if training else "今日活动回顾"
+    if facts_only:
+        for workout in training:
+            for exercise in workout.get("exercises") or []:
+                exercise["comparison"] = None
+                exercise["reference_date"] = None
+    headline = "已记录训练与活动事实" if facts_only else ("今日训练与活动回顾" if training else "今日活动回顾")
     if findings:
         for session in _strength_sessions((raw.get("features") or {}).get("training") or {}):
             if not _same_day(session.get("date"), raw.get("date")):
@@ -786,10 +949,25 @@ def daily_display_sections(payload: Any, *, facts_only: bool = False) -> list[di
     if recovery_facts:
         sections.append({"key": "display_recovery", "title": "昨夜恢复背景", "facts": recovery_facts, "interpretation": [], "limitations": [], "display": True})
     activity = features.get("activity") or {}
+    training = features.get("training") or {}
     activity_facts = []
+    activity_limitations = []
+    workout_duration = _number(training.get("today_duration_minutes"))
+    if workout_duration is None:
+        durations = [
+            _number(item.get("duration_minutes"))
+            for item in training.get("recent_workouts") or []
+            if isinstance(item, dict) and _same_day(item.get("date"), raw.get("date"))
+        ]
+        known_durations = [value for value in durations if value is not None and value >= 0]
+        if known_durations and len(known_durations) == len(durations):
+            workout_duration = sum(known_durations)
     for key, label, unit, digits in (("distance_km", "活动距离", "公里", 2), ("active_minutes", "活动时长", "分钟", 0)):
         item = activity.get(key) or {}
         value = _number(item.get("value")) if isinstance(item, dict) else None
+        if key == "active_minutes" and value is not None and workout_duration is not None and value < workout_duration:
+            activity_limitations.append("设备活动总时长小于当天已记录训练时长，未展示该汇总值。")
+            continue
         if value is not None:
             activity_facts.append(f"{label} {number(value, digits)} {unit}")
     for item in activity.get("energy") or []:
@@ -798,13 +976,21 @@ def daily_display_sections(payload: Any, *, facts_only: bool = False) -> list[di
         shown = value_with_unit(item.get("value"), item.get("unit"))
         if shown:
             activity_facts.append(f"{energy_label(item.get('role'))} {shown}")
-    if activity_facts:
-        sections.append({"key": "display_activity", "title": "日常活动与能量", "facts": unique(activity_facts), "interpretation": [], "limitations": [], "display": True})
+    if activity_facts or activity_limitations:
+        sections.append({
+            "key": "display_activity", "title": "日常活动与能量", "facts": unique(activity_facts),
+            "interpretation": [], "limitations": unique(activity_limitations), "display": True,
+        })
     pressure = _pressure_display_section(raw)
     if pressure:
         sections.append(pressure)
-    if facts_only:
-        return sections
+    if not facts_only:
+        running_card = _running_display_section(raw)
+        if running_card:
+            sections.append(running_card)
+        strength_card = _strength_display_section(raw)
+        if strength_card:
+            sections.append(strength_card)
     return sections
 
 
@@ -949,4 +1135,4 @@ def daily_profile_presentation(payload: Any) -> dict[str, Any]:
     }
 
 
-__all__ = ["daily_presentation", "daily_profile_presentation", "period_presentation", "internal_sections", "daily_display_sections"]
+__all__ = ["daily_display_sections", "daily_presentation", "daily_profile_presentation", "internal_sections", "period_presentation"]

@@ -40,7 +40,7 @@
 
 目标是晨报在窗口结束后 30 分钟内（默认 11:30）、晚报在 22:30 前被 PushPlus 受理（业务 `code=200`）。告警检查不在 worker 里：`vitalis-alerts.timer` 每 10 分钟启动一次 `vitalis alerts check`，独立进程，worker 冻住时照样运行。到目标仍未受理、PushPlus 明确拒绝、24 小时内分析失败，或 worker 心跳超过 30 分钟未更新时各记一次事件，同一事件不重复。没有投递意图的漏发在 `GET /api/deliveries` 里显示为 `status=missed` 的记录，`failure_code` 为 `worker_not_running`、`snapshot_unavailable` 或 `delivery_not_created`。
 
-第二告警通道（邮件或 Hermes）尚待用户确认：目前事件只写入当前数据库，用 `GET /api/delivery-alerts` 查看，`external_channel` 为 `unconfigured`；`journalctl -u vitalis-alerts` 里每个新事件一行，只含原因类别和日期。
+第二告警通道（邮件或 Hermes）用户决定暂不接入（2026-10-13）：事件只写入当前数据库，用 `GET /api/delivery-alerts` 查看，`external_channel` 为 `unconfigured`；`journalctl -u vitalis-alerts` 里每个新事件一行，只含原因类别和日期。
 
 漏发按这个顺序查：`GET /api/delivery-alerts` 的原因 → `GET /api/deliveries` 当天记录的 `status` 和 `failure_code` → `systemctl status vitalis-worker` 与 `vitalis doctor` 的心跳 → `journalctl -u vitalis-worker --since 07:25` 里的晨报探测、同步结束（睡眠分片状态）、分析和投递日志 → `GET /api/data-status` 的数据新鲜度。
 

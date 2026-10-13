@@ -27,7 +27,7 @@ Mock 生成同构的睡眠、活动、训练和来源元信息，可离线执行
 
 ### 手机登录（未启用）
 
-不用插件、在手机上用 Zepp 账号密码连接的登录页（配对会话返回的 `phone_url`）已在代码里，但要等用户确认“密码只经过自己的 Vitalis 服务器一次、不保存”的方案并配好公网 HTTPS 入口后才启用；生产 API 只在本机监听，现在仍按上面的插件流程配对，见[改动计划](plan/zepp-phone-login.md)。
+不用插件、在手机上用 Zepp 账号密码连接的登录页（配对会话返回的 `phone_url`）已在代码里，“密码只经过自己的 Vitalis 服务器一次、不保存”的方案已于 2026-10-13 经用户确认，配好公网 HTTPS 入口后启用；生产 API 只在本机监听，在此之前仍按上面的插件流程配对，见[改动计划](plan/zepp-phone-login.md)。
 
 手机页按 Zepp `user.zepp.com/universalLogin` 当前生产 JavaScript 使用的两步表单流程：先向 `api-user.huami.com/registrations/{account}/tokens` 换取 `access`，再向 `account.huami.com/v2/client/login` 换取 `app_token`、`login_token` 和 `user_id`。成功必须同时满足第二步 `result=ok` 和三项令牌字段存在；任何未知响应都不会被当作成功。这个 legacy 网页协议不是 Zepp 官方 OAuth API，实际部署仍需目标环境单独验收。
 

@@ -20,16 +20,15 @@
 
 | 优先级 | 改动 | 前置 |
 | --- | --- | --- |
-| P0 | [漏发告警的第二通道](delivery-alerts.md) | 用户选定通道 |
 | P0 | [晨报醒来窗口的一周验收](wake-triggered-morning.md) | — |
-| P0 | [不用插件，在手机上连接 Zepp](zepp-phone-login.md) | 用户确认 |
+| P0 | [不用插件，在手机上连接 Zepp](zepp-phone-login.md) | 公网 HTTPS 入口 |
 | P1 | [日级特征表与日常计算路径](daily-features.md) | — |
 | P1 | [数据流新鲜度监控](data-freshness.md) | 漏发告警的第二通道 |
 | P1 | [准备度评分与 HRV 状态](readiness-score.md) | 日级特征表 |
 | P1 | [周负荷目标与训练计划](weekly-load-plan.md) | 日级特征表 |
 | P1 | [身体信号异常预警](illness-warning.md) | — |
 | P1 | [训练明细拿全](workout-detail-streaming.md) | — |
-| P1 | [发布流程减负](release-process.md) | 用户确认 |
+| P2 | [漏发告警的第二通道](delivery-alerts.md) | 用户选定通道 |
 | P2 | [一键反馈与行为标签](feedback-tags.md) | — |
 | P2 | [力量容量与肌群负荷](strength-load.md) | — |
 | P2 | [原始响应留存与离线回放](raw-replay.md) | — |

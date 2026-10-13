@@ -2,7 +2,7 @@
 
 [文档中心](README.md) | [仓库规则](../AGENTS.md) | [运维与排障](operations.md) | [改动计划](plan/README.md)
 
-本页是预发布环境的唯一发布主责。发布顺序是：**feature branch 改代码 → 本地校验 → 固定候选 SHA 并传到服务器验证 → 更新所有服务并验收 → 合并、推送 main → 核对最终版本并清理已合并分支**。服务器地址、用户、私钥和环境文件中的秘密不写入仓库。每次发布从实际 systemd 配置和进程加载路径确定运行版本，不能把服务器 checkout 的 HEAD 当成正在运行的版本。
+本页是预发布环境的唯一发布主责。发布顺序是：**feature branch 改代码 → 本地校验 → 固定候选 SHA 并传到服务器验证 → 更新所有服务并验收 → main 快进到已验收候选并推送 → 清理已合并分支**。服务器地址、用户、私钥和环境文件中的秘密不写入仓库。每次发布从实际 systemd 配置和进程加载路径确定运行版本，不能把服务器 checkout 的 HEAD 当成正在运行的版本。
 
 ## 发布原则
 
@@ -137,20 +137,18 @@ sudo systemctl start vitalis-alerts.service && systemctl show vitalis-alerts.ser
 
 ## 7. 验收后合并 main 与清理
 
-服务器候选验收成功后，本地重新 fetch 并确认 `main` 未发生未验证变动，再合并：
+服务器候选验收成功后，本地重新 fetch，让 `main` 快进到已验收的候选提交（2026-10-13 起，用户决定）：
 
 ```bash
 git fetch origin --prune
 git switch main
 git pull --ff-only origin main
-git merge --no-ff <feature-branch>
-git diff --exit-code <candidate_sha> HEAD
-git rev-parse 'HEAD^{tree}'
+git merge --ff-only <candidate_sha>
+test "$(git rev-parse HEAD)" = "<candidate_sha>"
 git push origin main
-git rev-parse HEAD
 ```
 
-最终 `main` 的源码树必须与服务器验收候选一致；若存在差异，先重新验证，不能把未验收内容混入最终发布。服务器仓库 fast-forward 到最终 `main` SHA，发布记录与所有服务对齐。若 merge commit 产生新 SHA，建立该 SHA 的 release 并校验源码树/锁文件一致，更新全部服务的 release 路径并再次检查探针、doctor 和心跳；或者使用能明确记录 final SHA、candidate SHA 与相同源码树的可校验发布映射。只检查 `git rev-parse HEAD` 不算完成。
+最终 `main` 的 SHA 就是服务器上运行的候选 SHA，不再产生 merge commit，也不需要为最终 SHA 再构建、切换一次。如果候选分出后 `main` 有了新提交、无法快进，先把 feature branch 变基到最新 `main`，以新的候选 SHA 重新做第 1、2、6 节验收，不能把未验收内容推进 `main`。服务器仓库同步到最终 SHA 后，发布记录与所有服务对齐。
 
 确认服务器与 `origin/main` 对齐后，删除本次候选分支和其它已经合并的临时分支。先检查 `git branch --merged main`、远端合并关系和 worktree 使用状态，只用 `git branch -d` 删除本地已合并分支；不删除仍有独立提交或被其它工作占用的分支。
 

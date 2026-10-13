@@ -1,6 +1,6 @@
 # 不用插件，在手机上连接 Zepp
 
-[改动计划](README.md) · P0 · 前置：用户确认方案
+[改动计划](README.md) · P0 · 前置：公网 HTTPS 入口（方案已于 2026-10-13 经用户确认）
 
 ## 为什么
 
@@ -10,7 +10,7 @@ Zepp 官方网页登录（`user.zepp.com/universalLogin`）对手机号账号使
 
 ## 改什么（提案）
 
-候选分支已有手机页和两步登录的服务端边界（`/api/connect/zepp/phone`、`src/vitalis/adapters/zepp/login.py`），但 API 只在本机监听，没有公网 HTTPS 入口，手机打不开；用户确认方案前不对外开放，也不删除浏览器插件。
+手机页和两步登录的服务端边界已在代码里（`/api/connect/zepp/phone`、`src/vitalis/adapters/zepp/login.py`），用户已确认“密码只经过自己的 Vitalis 服务器一次、不保存”的方案。API 只在本机监听，下一步是配公网 HTTPS 入口（`VITALIS_PUBLIC_URL`、反向代理与证书）；配好并用真实账号走通前不删除浏览器插件。
 
 - 配对链接由 `vitalis connect zepp` 命令或 Hermes 生成，发到手机。
 - 链接打开 Vitalis 的手机页：输入 Zepp 手机号（或邮箱）和密码，服务端按官方网页相同的两步换取令牌，验证后加密保存；密码只在内存中用一次，不落库、不进日志和响应。

@@ -15,6 +15,7 @@ from .contracts import (
     HrvFeatures,
     RecoveryFeatures,
     RecoveryState,
+    TrainingFeatures,
     TrendFeature,
 )
 from .localization import CONFIDENCE_LABELS
@@ -50,6 +51,7 @@ class HealthEventEngine:
         trends: list[TrendFeature],
         hrv: HrvFeatures,
         recovery: RecoveryFeatures,
+        training: TrainingFeatures | None = None,
     ) -> list[HealthEvent]:
         events: list[HealthEvent] = []
         hrv_metric = hrv.preferred_metric
@@ -104,6 +106,7 @@ class HealthEventEngine:
                 "TRAINING_LOAD_SPIKE",
                 "training_load",
                 load_trend,
+                summary=_load_spike_summary(load_trend, training),
             ))
 
         steps_trend = _best_trend(trends, "steps", 7)
@@ -304,15 +307,35 @@ def _persistent_deviation_event(
     )]
 
 
+_LOAD_SPIKE_ADVICE = "加量偏快；接下来几天先别再加量，留意疲劳和睡眠。"
+
+
+def _load_spike_summary(trend: TrendFeature, training: TrainingFeatures | None) -> str:
+    """Week-over-week growth placed against the 4-week context the analyzer saved.
+
+    A light previous week turns any training into a huge percentage
+    (2026-10-13: +1546 %), so growth of 100 % or more is said in words, and the
+    verdict follows the comparison with the three weeks before when it exists.
+    """
+    days = trend.window_days
+    change = trend.change_percent
+    head = (
+        f"近 {days} 天训练负荷比之前 {days} 天多一倍以上" if change >= 100
+        else f"近 {days} 天训练负荷比之前 {days} 天多 {change:.0f}%"
+    )
+    deviation = training.load_deviation if training is not None else None
+    if deviation is None or deviation.percent is None or deviation.direction not in {"above", "near", "below"}:
+        return f"{head}，{_LOAD_SPIKE_ADVICE}"
+    if deviation.direction == "above":
+        return f"{head}，也比前 3 周的周平均高 {deviation.percent:.0f}%，{_LOAD_SPIKE_ADVICE}"
+    context = "差不多" if deviation.direction == "near" else "还少"
+    return f"{head}，但和前 3 周的周平均相比{context}，属于回到平时的训练量。"
+
+
 def _period_summary(event_type: str, trend: TrendFeature) -> str:
     """The change in plain words: how big, what it means, and what to do next."""
     days = trend.window_days
     change = trend.change_percent
-    if event_type == "TRAINING_LOAD_SPIKE":
-        return (
-            f"近 {days} 天训练负荷比之前 {days} 天多 {change:.0f}%，加量偏快；"
-            "接下来几天先别再加量，留意疲劳和睡眠。"
-        )
     if event_type == "ACTIVITY_DROP":
         return f"近 {days} 天步数比之前 {days} 天少 {abs(change):.0f}%，日常活动明显减少。"
     if event_type == "ACTIVITY_SURGE":
@@ -326,13 +349,15 @@ def _period_event(
     event_type: str,
     metric: str,
     trend: TrendFeature,
+    *,
+    summary: str | None = None,
 ) -> HealthEvent:
     return _simple_event(
         user_id,
         event_type,
         target_day - timedelta(days=trend.window_days - 1),
         target_day,
-        _period_summary(event_type, trend),
+        summary or _period_summary(event_type, trend),
         trend.confidence,
         [
             HealthEventEvidence(

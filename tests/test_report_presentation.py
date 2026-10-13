@@ -367,3 +367,14 @@ def test_running_card_too_short_for_drift_keeps_zones_and_says_why():
     assert "心率区间分布（设备区间）：二区：耐力 100%。" in card["facts"][0]
     assert "时长不足 20 分钟，未计算心率漂移。" in card["limitations"]
     assert not any("漂移 " in fact for fact in card["facts"])
+
+
+def test_partial_day_steps_say_why_they_are_not_compared():
+    payload = _daily()
+    payload["report_context"]["target_day_complete"] = False
+    payload["features"]["activity"]["steps"] = {
+        "value": 8000, "deviation": {"percent": -20.0, "direction": "below", "baseline_reference": 10000},
+    }
+    steps = next(item for item in daily_presentation(payload)["metrics"] if item["key"] == "steps")
+    assert steps["comparison"] is None
+    assert steps["detail"] == "今天还没过完，暂不和平时比较。"

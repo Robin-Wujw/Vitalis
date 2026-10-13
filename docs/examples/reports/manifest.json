@@ -27,14 +27,14 @@
         "media_type": "text/markdown",
         "template": "markdown",
         "renderer_version": "4.0",
-        "content_sha256": "1022093ba0e9e06beaba687544a4d20e1a8e499fdc33e9afc372dc9820b65c3d"
+        "content_sha256": "5e4245f1829d2c594feac11edd7adeaf8b74e7bcc25d59584a1e574eaf3222ac"
       },
       "html": {
         "title": "Vitalis 日报 · 本地日完整事实快照",
         "media_type": "text/html",
         "template": "html",
         "renderer_version": "4.0",
-        "content_sha256": "594c60ce3e6fc352eb71810c1f942f59c84b66cc86bf930d100c28a623d95d67"
+        "content_sha256": "e8fd3e003136acd3d14a3894256ba02a039d4c96f911a5325d2c790a14e777c6"
       }
     },
     "evening": {
@@ -43,14 +43,14 @@
         "media_type": "text/markdown",
         "template": "markdown",
         "renderer_version": "4.0",
-        "content_sha256": "81a57e6fd0a4874ba842615527b002a30dfcf51fe73b5750b9e6feec00203a61"
+        "content_sha256": "d048cf14c7ee27d0a851b1695b595ea1045d1a63285ef47e0888132648896d87"
       },
       "html": {
         "title": "Vitalis 晚报 · 二头肌弯举总次数增加",
         "media_type": "text/html",
         "template": "html",
         "renderer_version": "4.0",
-        "content_sha256": "b88b546a846f6fcb96dd25ae0f625dd2b0a6e86bc24ebb7e29222957a5b1e9ec"
+        "content_sha256": "79b33b9b3038dd37b916205a18ae5262981fd9205cf5b5e0234e8de2b7423ba2"
       }
     },
     "weekly": {

@@ -286,14 +286,16 @@ def _daily_metrics(payload: dict[str, Any], *, morning: bool) -> list[dict[str, 
 
     steps = activity.get("steps") if isinstance(activity, dict) else None
     steps_value = _number(steps.get("value")) if isinstance(steps, dict) else None
+    day_complete = bool(_context(payload).get("target_day_complete", True))
     steps_comparison = _deviation_comparison(
-        _metric_deviation(steps), payload,
-        allow=bool(_context(payload).get("target_day_complete", True)),
+        _metric_deviation(steps), payload, allow=day_complete,
     )
     if steps_value is not None:
         output.append(_metric(
             "steps", "步数", steps_value, "steps", digits=0,
             comparison=steps_comparison,
+            # A partial day is never compared with full days.
+            detail=None if day_complete else "今天还没过完，暂不和平时比较。",
         ))
     strength_duration, session_count = _daily_strength_duration(training, target)
     if strength_duration is not None:

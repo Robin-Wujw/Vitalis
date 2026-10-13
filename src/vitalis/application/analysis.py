@@ -394,7 +394,7 @@ def build_daily_profile(
     from vitalis.intelligence.trend import TrendEngine
 
     trends = TrendEngine().calculate(raw)
-    events = HealthEventEngine().detect(raw, baselines, trends, hrv, recovery)
+    events = HealthEventEngine().detect(raw, baselines, trends, hrv, recovery, training)
     return DailyProfile(
         analysis_run_id=analysis_run_id,
         user_id=raw.user_id,

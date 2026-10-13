@@ -181,3 +181,31 @@ def test_event_lifecycle_and_acknowledgement_progress_independently():
         EventLifecycle.IMPROVING,
         EventLifecycle.RESOLVED,
     ]
+
+
+def _load_trend(change):
+    from types import SimpleNamespace
+
+    # The summary reads only the window and the week-over-week change.
+    return SimpleNamespace(window_days=7, change_percent=change)
+
+
+def test_load_spike_text_uses_the_four_week_context_and_never_a_runaway_percentage():
+    from vitalis.intelligence.contracts import Availability, Deviation, TrainingFeatures
+    from vitalis.intelligence.events import _load_spike_summary
+
+    def training(percent, direction):
+        return TrainingFeatures(status=Availability.AVAILABLE, load_deviation=Deviation(
+            metric="training_load_7d", baseline_window_days=21, percent=percent, direction=direction,
+        ))
+
+    light_week = _load_spike_summary(_load_trend(1545.5), None)
+    assert light_week == "近 7 天训练负荷比之前 7 天多一倍以上，加量偏快；接下来几天先别再加量，留意疲劳和睡眠。"
+    assert "%" not in light_week
+    assert _load_spike_summary(_load_trend(59.2), training(138.0, "above")) == (
+        "近 7 天训练负荷比之前 7 天多 59%，也比前 3 周的周平均高 138%，"
+        "加量偏快；接下来几天先别再加量，留意疲劳和睡眠。"
+    )
+    assert _load_spike_summary(_load_trend(40), training(4.0, "near")) == (
+        "近 7 天训练负荷比之前 7 天多 40%，但和前 3 周的周平均相比差不多，属于回到平时的训练量。"
+    )

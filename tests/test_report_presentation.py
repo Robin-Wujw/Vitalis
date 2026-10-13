@@ -340,3 +340,30 @@ def test_running_card_reuses_analytics_and_does_not_claim_same_heart_rate():
     assert "相近距离的近期配速对照" in text
     assert "同心率" not in text
     assert "同心率" not in " ".join(card["limitations"])
+
+
+def _running_card(session):
+    payload = _daily()
+    payload["features"]["training"]["running"]["recent_sessions"] = [{"date": "2026-10-07", **session}]
+    return next(item for item in daily_display_sections(payload) if item["key"] == "display_running_card")
+
+
+def test_running_card_without_heart_rate_detail_states_each_gap():
+    card = _running_card({"average_pace_seconds_per_km": 380})
+    assert card["facts"] == []
+    limitations = " ".join(card["limitations"])
+    assert "没有足够心率证据" in limitations
+    assert "未计算心率漂移" in limitations
+    assert "没有足够的相近距离历史样本" in limitations
+
+
+def test_running_card_too_short_for_drift_keeps_zones_and_says_why():
+    card = _running_card({
+        "confidence": "MODERATE",
+        "heart_rate_zone_source": "device_workout",
+        "heart_rate_zones": [{"zone": 2, "label": "二区：耐力", "share_percent": 100}],
+        "limitations": ["时长不足 20 分钟，未计算心率漂移。"],
+    })
+    assert "心率区间分布（设备区间）：二区：耐力 100%。" in card["facts"][0]
+    assert "时长不足 20 分钟，未计算心率漂移。" in card["limitations"]
+    assert not any("漂移 " in fact for fact in card["facts"])

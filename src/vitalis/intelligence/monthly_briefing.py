@@ -138,7 +138,7 @@ class MonthlyBriefingEngine:
                     and previous_days is not None and previous_days >= previous_comparison_days):
                 text += f"；两期均值变化 {percent(sleep['change_percent'])}"
             if sleep.get("bedtime_regularity_minutes") is not None:
-                text += f"；入睡时间离散度 {number(sleep['bedtime_regularity_minutes'])} 分钟"
+                text += f"；入睡时间每天大约相差 {number(sleep['bedtime_regularity_minutes'])} 分钟"
             lines.append(text + "。")
         streams = recovery.get("streams") or []
         counts = Counter(stream.get("metric") for stream in streams)

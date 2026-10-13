@@ -12,10 +12,10 @@ from vitalis.intelligence.contracts import SubjectiveFeedbackInput
 from vitalis.intelligence.open_health.readiness import compute_composite_readiness
 
 
-def test_internal_alert_scan_is_idempotent_and_does_not_change_heartbeat(monkeypatch):
-    from vitalis.scheduler import jobs
+def test_alert_check_is_idempotent_and_does_not_touch_the_heartbeat(monkeypatch):
+    from vitalis.scheduler.alerts import check_delivery_health
 
-    now = datetime(2026, 10, 13, 3, tzinfo=timezone.utc)
+    now = datetime(2026, 10, 13, 15, tzinfo=timezone.utc)
     user_id = "internal-alert-scan-owner"
     with session_scope() as db:
         HealthRepository(db).upsert_user(user_id)
@@ -25,9 +25,10 @@ def test_internal_alert_scan_is_idempotent_and_does_not_change_heartbeat(monkeyp
         else:
             row.last_seen_at = now.replace(tzinfo=None) - timedelta(hours=1)
     monkeypatch.setattr(settings, "push_user", user_id)
+    monkeypatch.setattr(settings, "pushplus_token", "offline-token")
     monkeypatch.setattr(settings, "timezone", "Asia/Shanghai")
-    assert jobs._evaluate_internal_alerts(now=now) >= 2
-    assert jobs._evaluate_internal_alerts(now=now + timedelta(minutes=1)) == 0
+    assert check_delivery_health(now=now)["new_alerts"] >= 2
+    assert check_delivery_health(now=now + timedelta(minutes=1))["new_alerts"] == 0
     with session_scope() as db:
         rows = list(db.scalars(select(DeliveryAlertEvent).where(DeliveryAlertEvent.user_id == user_id)))
         assert {row.reason for row in rows} == {"delivery_target_missed", "worker_heartbeat_stale"}

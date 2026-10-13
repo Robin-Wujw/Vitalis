@@ -25,17 +25,18 @@ DELIVERY_NOW = datetime(2026, 8, 29, 1, 45, 0, tzinfo=timezone.utc)
 
 def _expected_scheduled_morning_payload(payload):
     metadata = {
-        "scheduled_for": "2026-08-29T01:30:00Z",
-        "cutoff": "2026-08-29T01:30:00Z",
+        "scheduled_for": "2026-08-28T23:30:00Z",
+        "partial_fallback_after": "2026-08-29T03:00:00Z",
+        "late_after": "2026-08-29T03:30:00Z",
+        "delivery_target_at": "2026-08-29T03:30:00Z",
         "deadline_at": "2026-08-29T04:30:00Z",
-        "allowed_delay_seconds": 10800,
-        "partial_fallback_after": "2026-08-29T02:00:00Z",
+        "allowed_delay_seconds": 18000,
         "timezone": "Asia/Shanghai",
         "required_signals": ["sleep_complete", "prior_7d_training_history"],
         "as_of": None,
         "delivered_as_of": "2026-08-29T01:45:00Z",
         "late": False,
-        "delay_seconds": 900.0,
+        "delay_seconds": 8100.0,
         "missing_signals": [],
         "partial": False,
         "facts_only": False,

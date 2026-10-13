@@ -40,3 +40,18 @@ def test_service_units_share_nonroot_state_and_canonical_cli():
         assert config.get("Service", "WorkingDirectory") == "/var/lib/vitalis"
         assert config.get("Service", "ExecStart") == f"/opt/vitalis/.venv/bin/vitalis {command}"
         assert config.get("Service", "NoNewPrivileges") == "true"
+
+
+def test_alert_check_runs_as_its_own_timer_outside_the_worker():
+    root = Path(__file__).resolve().parents[1] / "deploy" / "systemd"
+    service = ConfigParser(interpolation=None)
+    assert service.read(root / "vitalis-alerts.service", encoding="utf-8")
+    assert service.get("Service", "Type") == "oneshot"
+    assert service.get("Service", "User") == "vitalis"
+    assert service.get("Service", "EnvironmentFile") == "/etc/vitalis/vitalis.env"
+    assert service.get("Service", "ExecStart") == "/opt/vitalis/.venv/bin/vitalis alerts check"
+    assert "vitalis-worker" not in service.get("Unit", "After", fallback="")
+    timer = ConfigParser(interpolation=None)
+    assert timer.read(root / "vitalis-alerts.timer", encoding="utf-8")
+    assert timer.get("Timer", "OnUnitActiveSec") == "10min"
+    assert timer.get("Install", "WantedBy") == "timers.target"

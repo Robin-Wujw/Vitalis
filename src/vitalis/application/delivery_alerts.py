@@ -1,16 +1,15 @@
-"""Pure internal delivery-alert evaluation.
+"""Pure delivery-alert evaluation.
 
 The evaluator only creates durable candidates. It never sends mail, Hermes, or
-PushPlus traffic. Persistence and the worker decide how candidates are stored.
+PushPlus traffic; the independent health check decides how they are stored.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Iterable, Literal
-from zoneinfo import ZoneInfo
-
+from typing import Literal
 
 AlertCategory = Literal["delivery", "worker", "analysis", "provider"]
 AlertReason = Literal[
@@ -20,13 +19,17 @@ AlertReason = Literal[
     "provider_rejected",
 ]
 
-DELIVERY_TARGETS = {"morning": (10, 30), "evening": (22, 30)}
 DEFAULT_HEARTBEAT_STALE_AFTER = timedelta(minutes=30)
+# Older failures stay auditable in their own ledgers; a new check (for example
+# the first one after a release) must not turn them into fresh alerts.
+RECENT_INCIDENT_WINDOW = timedelta(hours=24)
+# Why a report that has no delivery intent at its target was not sent.
+MISSING_CAUSES = ("worker_not_running", "snapshot_unavailable", "delivery_not_created")
 
 
 @dataclass(frozen=True)
 class DeliveryObservation:
-    """Sanitized delivery state needed by the pure target evaluator."""
+    """Sanitized delivery state needed by the target evaluator."""
 
     period: str
     target_date: date
@@ -54,6 +57,7 @@ class ProviderRejectionObservation:
     period: str
     target_date: date
     provider_status: str | None = None
+    rejected_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -76,30 +80,8 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def delivery_target_at(
-    target_date: date, period: str, timezone_name: str
-) -> datetime:
-    """Return the configured local 10:30/22:30 target as an aware UTC instant."""
-    try:
-        hour, minute = DELIVERY_TARGETS[period]
-    except KeyError as exc:
-        raise ValueError(f"unsupported delivery period: {period}") from exc
-    local = datetime(
-        target_date.year,
-        target_date.month,
-        target_date.day,
-        hour,
-        minute,
-        tzinfo=ZoneInfo(timezone_name),
-    )
-    return local.astimezone(timezone.utc)
-
-
-def delivery_target_reached(
-    now: datetime, target_date: date, period: str, timezone_name: str
-) -> bool:
-    """Return whether the delivery target has passed."""
-    return _as_utc(now) >= delivery_target_at(target_date, period, timezone_name)
+def _utc_text(value: datetime) -> str:
+    return _as_utc(value).isoformat().replace("+00:00", "Z")
 
 
 def heartbeat_age_seconds(last_seen_at: datetime | None, now: datetime) -> float | None:
@@ -120,23 +102,18 @@ def heartbeat_is_stale(
     return age is not None and age > max(0.0, stale_after.total_seconds())
 
 
-def analysis_failure_reason(status: str, error: str | None = None) -> str | None:
-    """Map persisted analysis state to its stable alert reason."""
-    return "analysis_failed" if status.upper() == "FAILED" or status == "failed" else None
+def _is_recent(value: datetime | None, now: datetime) -> bool:
+    return value is not None and _as_utc(now) - _as_utc(value) <= RECENT_INCIDENT_WINDOW
 
 
-def provider_rejection_reason(
-    status: str, last_error: str | None, provider_status: str | None = None
-) -> str | None:
-    """Map explicit provider rejection state without treating uncertainty as rejection."""
-    normalized_error = (last_error or "").strip().lower()
-    normalized_provider = (provider_status or "").strip().lower()
-    if normalized_error == "transport_rejected" or (
-        normalized_provider in {"rejected", "failed", "error"}
-        and status in {"failed", "uncertain"}
-    ):
-        return "provider_rejected"
-    return None
+def _provider_rejected(status: str | None, last_error: str | None, provider_status: str | None) -> bool:
+    """An explicit provider rejection; an uncertain transport is never one."""
+    if (last_error or "").strip().lower() == "transport_rejected":
+        return True
+    return (
+        (provider_status or "").strip().lower() in {"rejected", "failed", "error"}
+        and status == "failed"
+    )
 
 
 def evaluate_delivery_target(
@@ -144,49 +121,38 @@ def evaluate_delivery_target(
     *,
     period: str,
     target_date: date,
-    status: str | None,
+    target_at: datetime,
     now: datetime,
-    timezone_name: str,
-    last_error: str | None = None,
-    provider_status: str | None = None,
-    delivery_id: str | None = None,
+    delivery: DeliveryObservation | None = None,
+    missing_cause: str | None = None,
 ) -> AlertCandidate | None:
-    """Evaluate one delivery target, returning no event before or after success."""
-    if not delivery_target_reached(now, target_date, period, timezone_name):
+    """Raise one event when a report is not accepted by its target time."""
+    if _as_utc(now) < _as_utc(target_at):
         return None
+    status = delivery.status if delivery else None
     if status in {"accepted", "delivered"}:
         return None
-    if provider_rejection_reason(status or "", last_error, provider_status):
-        return _candidate(
-            user_id=user_id,
-            event_key=(
-                f"provider:{delivery_id or period + ':' + target_date.isoformat()}:rejected"
-            ),
-            category="provider",
-            reason="provider_rejected",
-            observed_at=now,
-            period=period,
-            target_date=target_date,
-            payload={
-                "delivery_id": delivery_id,
-                "provider_status": provider_status,
-            },
-        )
-    event_key = f"delivery:{period}:{target_date.isoformat()}:target-missed"
+    if delivery is not None and _provider_rejected(status, delivery.last_error, delivery.provider_status):
+        # The provider rejection is reported once by its own evaluator.
+        return None
+    cause = (
+        (delivery.last_error or delivery.status) if delivery is not None
+        else missing_cause if missing_cause in MISSING_CAUSES else "delivery_not_created"
+    )
     return _candidate(
         user_id=user_id,
-        event_key=event_key,
+        event_key=f"delivery:{period}:{target_date.isoformat()}:target-missed",
         category="delivery",
         reason="delivery_target_missed",
         observed_at=now,
         period=period,
         target_date=target_date,
         payload={
-            "target_at": delivery_target_at(
-                target_date, period, timezone_name
-            ).isoformat().replace("+00:00", "Z"),
-            "delivery_present": delivery_id is not None,
+            "target_at": _utc_text(target_at),
+            "delivery_present": delivery is not None,
             "delivery_status": status,
+            "delivery_id": delivery.delivery_id if delivery else None,
+            "cause": cause,
         },
     )
 
@@ -202,17 +168,15 @@ def evaluate_stale_heartbeat(
     if not heartbeat_is_stale(last_seen_at, now, stale_after=stale_after):
         return None
     age = heartbeat_age_seconds(last_seen_at, now)
-    marker = _as_utc(last_seen_at).isoformat() if last_seen_at else "missing"
-    event_key = f"worker:heartbeat-stale:{marker}"
     return _candidate(
         user_id=user_id,
-        event_key=event_key,
+        # One frozen worker keeps the same last heartbeat: one incident.
+        event_key=f"worker:heartbeat-stale:{_as_utc(last_seen_at).isoformat()}",
         category="worker",
         reason="worker_heartbeat_stale",
         observed_at=now,
         payload={
-            "last_seen_at": _as_utc(last_seen_at).isoformat().replace("+00:00", "Z")
-            if last_seen_at else None,
+            "last_seen_at": _utc_text(last_seen_at),
             "age_seconds": round(age, 3) if age is not None else None,
             "stale_after_seconds": stale_after.total_seconds(),
         },
@@ -220,61 +184,44 @@ def evaluate_stale_heartbeat(
 
 
 def evaluate_analysis_failure(
-    user_id: str,
-    *,
-    run_id: str,
-    target_date: date,
-    status: str,
-    now: datetime,
-    failed_at: datetime | None = None,
-    error: str | None = None,
+    user_id: str, failure: AnalysisFailureObservation, *, now: datetime,
 ) -> AlertCandidate | None:
-    """Evaluate one failed analysis run using only a stable error category."""
-    if analysis_failure_reason(status, error) is None:
+    """Evaluate one recent failed analysis run using only a stable error category."""
+    if not _is_recent(failure.failed_at, now):
         return None
-    safe_error = error if error in {
+    safe_error = failure.error if failure.error in {
         "analysis_failed", "analysis_input_changed", "analysis_attempt_limit",
     } else None
     return _candidate(
         user_id=user_id,
-        event_key=f"analysis:{run_id}:failed",
+        event_key=f"analysis:{failure.run_id}:failed",
         category="analysis",
         reason="analysis_failed",
-        observed_at=failed_at or now,
-        target_date=target_date,
-        payload={"analysis_run_id": run_id, "error": safe_error},
+        observed_at=failure.failed_at or now,
+        target_date=failure.target_date,
+        payload={"analysis_run_id": failure.run_id, "error": safe_error},
     )
 
 
 def evaluate_provider_rejection(
-    user_id: str,
-    *,
-    delivery_id: str,
-    period: str,
-    target_date: date,
-    status: str,
-    last_error: str | None,
-    now: datetime,
-    provider_status: str | None = None,
+    user_id: str, rejection: ProviderRejectionObservation, *, now: datetime,
 ) -> AlertCandidate | None:
-    """Evaluate an explicit provider rejection, excluding uncertain transport."""
-    if provider_rejection_reason(status, last_error, provider_status) is None:
+    """Evaluate one recent explicit provider rejection."""
+    if not _is_recent(rejection.rejected_at, now):
         return None
-    safe_status = (
-        provider_status.strip().lower()
-        if provider_status and provider_status.strip().lower()
-        in {"rejected", "failed", "error"}
-        else None
-    )
+    status = (rejection.provider_status or "").strip().lower()
     return _candidate(
         user_id=user_id,
-        event_key=f"provider:{delivery_id}:rejected",
+        event_key=f"provider:{rejection.delivery_id}:rejected",
         category="provider",
         reason="provider_rejected",
         observed_at=now,
-        period=period,
-        target_date=target_date,
-        payload={"delivery_id": delivery_id, "provider_status": safe_status},
+        period=rejection.period,
+        target_date=rejection.target_date,
+        payload={
+            "delivery_id": rejection.delivery_id,
+            "provider_status": status if status in {"rejected", "failed", "error"} else None,
+        },
     )
 
 
@@ -305,82 +252,48 @@ def evaluate_alert_candidates(
     user_id: str,
     *,
     now: datetime,
-    timezone_name: str,
+    local_day: date,
+    targets: Mapping[str, datetime] | None = None,
     deliveries: Iterable[DeliveryObservation] = (),
+    missing_causes: Mapping[str, str] | None = None,
     heartbeat_at: datetime | None = None,
     analysis_failures: Iterable[AnalysisFailureObservation] = (),
     provider_rejections: Iterable[ProviderRejectionObservation] = (),
     heartbeat_stale_after: timedelta = DEFAULT_HEARTBEAT_STALE_AFTER,
-    include_delivery_targets: bool = True,
 ) -> tuple[AlertCandidate, ...]:
-    """Evaluate all internal alert conditions and deduplicate by event key.
+    """Evaluate all alert conditions for one user and deduplicate by event key.
 
-    The target check is intentionally bounded to the current local day. Older
-    report periods remain auditable in their delivery rows and do not create a
-    new alert on every worker restart.
+    ``targets`` maps today's report periods to their alert instants; only the
+    delivery owner has targets. Older report periods remain auditable in their
+    delivery rows and do not create a new alert on every check.
     """
     if not isinstance(user_id, str) or not user_id:
         raise ValueError("user_id is required")
     current = _as_utc(now)
-    local_day = current.astimezone(ZoneInfo(timezone_name)).date()
     candidates: dict[str, AlertCandidate] = {}
-
     by_period = {
-        (item.period, item.target_date): item
-        for item in deliveries
-        if item.period in DELIVERY_TARGETS
+        item.period: item for item in deliveries
+        if item.target_date == local_day
     }
-    if include_delivery_targets:
-        for period in DELIVERY_TARGETS:
-            delivery = by_period.get((period, local_day))
-            candidate = evaluate_delivery_target(
-                user_id,
-                period=period,
-                target_date=local_day,
-                status=delivery.status if delivery else None,
-                last_error=delivery.last_error if delivery else None,
-                provider_status=delivery.provider_status if delivery else None,
-                delivery_id=delivery.delivery_id if delivery else None,
-                now=current,
-                timezone_name=timezone_name,
-            )
-            if candidate is not None:
-                candidates[candidate.event_key] = candidate
-
-    heartbeat_candidate = evaluate_stale_heartbeat(
-        user_id,
-        last_seen_at=heartbeat_at,
-        now=current,
-        stale_after=heartbeat_stale_after,
+    for period, target_at in (targets or {}).items():
+        candidate = evaluate_delivery_target(
+            user_id, period=period, target_date=local_day, target_at=target_at,
+            now=current, delivery=by_period.get(period),
+            missing_cause=(missing_causes or {}).get(period),
+        )
+        if candidate is not None:
+            candidates[candidate.event_key] = candidate
+    heartbeat = evaluate_stale_heartbeat(
+        user_id, last_seen_at=heartbeat_at, now=current, stale_after=heartbeat_stale_after,
     )
-    if heartbeat_candidate is not None:
-        candidates[heartbeat_candidate.event_key] = heartbeat_candidate
-
+    if heartbeat is not None:
+        candidates[heartbeat.event_key] = heartbeat
     for failure in analysis_failures:
-        candidate = evaluate_analysis_failure(
-            user_id,
-            run_id=failure.run_id,
-            target_date=failure.target_date,
-            status="FAILED",
-            failed_at=failure.failed_at,
-            error=failure.error,
-            now=current,
-        )
+        candidate = evaluate_analysis_failure(user_id, failure, now=current)
         if candidate is not None:
             candidates[candidate.event_key] = candidate
-
     for rejection in provider_rejections:
-        candidate = evaluate_provider_rejection(
-            user_id,
-            delivery_id=rejection.delivery_id,
-            period=rejection.period,
-            target_date=rejection.target_date,
-            status="failed",
-            last_error="transport_rejected",
-            provider_status=rejection.provider_status,
-            now=current,
-        )
+        candidate = evaluate_provider_rejection(user_id, rejection, now=current)
         if candidate is not None:
             candidates[candidate.event_key] = candidate
-
     return tuple(candidates.values())

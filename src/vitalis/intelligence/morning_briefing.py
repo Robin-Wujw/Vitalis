@@ -8,7 +8,7 @@ from typing import Any
 from vitalis.time import local_day
 
 from .contracts import DailyProfile, MorningBriefing
-from .public_reports import HISTORY_PENDING_NOTICE, SLEEP_PENDING_NOTICE
+from .public_reports import SYNC_PENDING_NOTICE, facts_only_notice
 from .report_presentation import daily_presentation, internal_sections
 from .report_formatting import (
     baseline_text,
@@ -97,15 +97,11 @@ class MorningBriefingEngine:
                 section["display"] = True
         observations = [fact for section in sections for fact in section["facts"]]
         report_context = self._facts_only_context(payload.get("report_context"), metadata)
-        history_notice = (
-            SLEEP_PENDING_NOTICE
-            if metadata.get("coverage_reason") == "sleep_incomplete"
-            else HISTORY_PENDING_NOTICE
-        )
+        notice = facts_only_notice(metadata, morning=True)
         cautions = []
-        if metadata.get("sync_degraded"):
+        if metadata.get("sync_degraded") and notice != SYNC_PENDING_NOTICE:
             cautions.append("本次同步未完整完成，仅使用已保存的数据。")
-        summary = [history_notice]
+        summary = [notice]
         presentation_payload = dict(payload)
         presentation_payload["report_context"] = report_context
         presentation = daily_presentation(presentation_payload, morning=True, facts_only=True)
@@ -365,7 +361,7 @@ class MorningBriefingEngine:
         if sleep.get("duration_deviation"):
             facts.append(f"睡眠时长与个人参照：{baseline_text(sleep['duration_deviation'])}。")
         if sleep.get("regularity_minutes") is not None:
-            facts.append(f"近期入睡时刻离散度 {number(sleep['regularity_minutes'])} 分钟")
+            facts.append(f"近期入睡时间每天大约相差 {number(sleep['regularity_minutes'])} 分钟")
         return facts or ["昨晚睡眠尚未同步。"]
 
     def _sleep_interpretation(self, sleep: dict[str, Any]) -> list[str]:

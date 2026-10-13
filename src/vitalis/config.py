@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import time
 import os
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -33,12 +34,10 @@ class Settings:
     sync_dispatcher_batch_chunks: int
     sync_lease_seconds: int
     sync_attempt_lease_seconds: int
-    morning_wake_start_hour: int
-    morning_wake_start_minute: int
-    morning_wake_end_hour: int
-    morning_wake_end_minute: int
+    morning_wake_start: time
+    morning_wake_end: time
     morning_wake_poll_interval_seconds: int
-    morning_wake_daily_request_limit: int
+    morning_wake_max_probes: int
     host: str
     port: int
     public_url: str
@@ -56,6 +55,10 @@ class Settings:
     monthly_report_enabled: bool
     monthly_report_hour: int
     monthly_report_minute: int
+
+    def morning_wake_window(self) -> tuple[time, time]:
+        """Local earliest/latest morning report times, shared by worker and delivery."""
+        return self.morning_wake_start, self.morning_wake_end
 
 
 def load_settings(environ: Mapping[str, str]) -> Settings:
@@ -122,6 +125,16 @@ def load_settings(environ: Mapping[str, str]) -> Settings:
     )))
     if public_origin and public_origin not in pairing_origins:
         pairing_origins = (*pairing_origins, public_origin)
+    morning_wake_start = time(
+        integer("MORNING_WAKE_START_HOUR", 7, 0, 23),
+        integer("MORNING_WAKE_START_MINUTE", 30, 0, 59),
+    )
+    morning_wake_end = time(
+        integer("MORNING_WAKE_END_HOUR", 11, 0, 23),
+        integer("MORNING_WAKE_END_MINUTE", 0, 0, 59),
+    )
+    if morning_wake_end <= morning_wake_start:
+        raise ValueError("MORNING_WAKE_END must be later than MORNING_WAKE_START")
     environment = environ.get("VITALIS_ENV", "dev").strip().lower()
     if environment not in {"dev", "test", "prod", "production"}:
         raise ValueError("VITALIS_ENV must be dev, test, prod or production")
@@ -163,12 +176,10 @@ def load_settings(environ: Mapping[str, str]) -> Settings:
         sync_dispatcher_batch_chunks=integer("SYNC_DISPATCHER_BATCH_CHUNKS", 16, 1, 1024),
         sync_lease_seconds=integer("SYNC_LEASE_SECONDS", 120, 1, 86400),
         sync_attempt_lease_seconds=integer("SYNC_ATTEMPT_LEASE_SECONDS", 300, 1, 86400),
-        morning_wake_start_hour=integer("MORNING_WAKE_START_HOUR", 7, 0, 23),
-        morning_wake_start_minute=integer("MORNING_WAKE_START_MINUTE", 30, 0, 59),
-        morning_wake_end_hour=integer("MORNING_WAKE_END_HOUR", 11, 0, 23),
-        morning_wake_end_minute=integer("MORNING_WAKE_END_MINUTE", 0, 0, 59),
+        morning_wake_start=morning_wake_start,
+        morning_wake_end=morning_wake_end,
         morning_wake_poll_interval_seconds=integer("MORNING_WAKE_POLL_INTERVAL_SECONDS", 900, 60, 1200),
-        morning_wake_daily_request_limit=integer("MORNING_WAKE_DAILY_REQUEST_LIMIT", 12, 1, 96),
+        morning_wake_max_probes=integer("MORNING_WAKE_MAX_PROBES", 14, 1, 96),
         host=environ.get("HOST", "127.0.0.1"),
         port=local_port,
         public_url=public_url,

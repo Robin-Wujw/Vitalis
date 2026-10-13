@@ -122,7 +122,11 @@ class WeeklyBriefingEngine:
             fact_lines.append(text + "。")
         regularity = sleep.get("bedtime_regularity_minutes")
         if regularity is not None:
-            fact_lines.append(f"入睡时刻离散度 {number(regularity, 0)} 分钟。")
+            fact_lines.append(f"入睡时间每天大约相差 {number(regularity, 0)} 分钟。")
+        midpoint = sleep.get("midpoint_minutes")
+        if midpoint is not None:
+            clock = int(round(midpoint)) % 1440
+            fact_lines.append(f"睡眠中点大约在 {clock // 60:02d}:{clock % 60:02d}。")
         late_bedtime_days = sleep.get("late_bedtime_days")
         if late_bedtime_days:
             fact_lines.append(f"有 {number(late_bedtime_days, 0)} 晚在凌晨 1 点后入睡。")
@@ -214,7 +218,12 @@ class WeeklyBriefingEngine:
         if training.get("load_change_percent") is not None:
             change = training["load_change_percent"]
             direction = "增加" if change > 0 else "减少"
-            return [f"设备训练负荷较前一期{direction} {abs(change):.1f}%。"]
+            verdict = (
+                "加量偏快，下周先别再加量" if change > 25
+                else "减少明显，如非计划内休整，下周可逐步恢复" if change < -25
+                else "变化不大，节奏平稳"
+            )
+            return [f"设备训练负荷较前一期{direction} {abs(change):.1f}%，{verdict}。"]
         return []
 
     def _activity_feedback(self, facts: dict[str, Any], inferences: dict[str, Any]) -> dict[str, Any]:

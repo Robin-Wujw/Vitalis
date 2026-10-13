@@ -225,6 +225,16 @@ def _sleep_facts(
         if period_start <= day <= raw.day
         and (value := _clock_minutes_of_day(item.get("bedtime"))) is not None
     )
+    # Minutes from midnight; an evening bedtime is negative, so a midpoint
+    # never wraps across noon.
+    midpoints = [
+        (bedtime + wake) / 2
+        for day, item in raw.sleep_by_day.items()
+        if period_start <= day <= raw.day
+        and (bedtime := _clock_minutes(item.get("bedtime"))) is not None
+        and (wake := _clock_minutes(item.get("wake_time"))) is not None
+        and wake > bedtime
+    ]
     return WeeklySleepFacts(
         available_days=len(current),
         previous_available_days=len(previous),
@@ -237,6 +247,7 @@ def _sleep_facts(
             _rounded(float(regularity)) if regularity is not None else None
         ),
         late_bedtime_days=late_bedtime_days,
+        midpoint_minutes=_rounded(float(median(midpoints))) if len(midpoints) >= 3 else None,
     )
 
 

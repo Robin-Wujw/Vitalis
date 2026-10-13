@@ -169,7 +169,8 @@ def test_facts_only_clears_metric_and_exercise_comparisons_and_factual_headline(
     assert all(not exercise.get("comparison") for block in report.blocks for workout in block.workouts for exercise in workout.get("exercises", []))
     for target in ("markdown", "html"):
         content = render_report(briefing, target).content
-        assert "延迟" in content and "部分" in content
+        assert "这份报告比计划晚发出" in content
+        assert "延迟报告" not in content and "部分报告" not in content
         assert "总次数增加" not in content and "较个人" not in content and "个人参照" not in content
         assert "主要安排" not in content and "下次训练重点" not in content
 

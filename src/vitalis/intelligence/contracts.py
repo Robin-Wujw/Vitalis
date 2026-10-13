@@ -1222,6 +1222,8 @@ class WeeklySleepFacts(BaseModel):
     change_percent: float | None = None
     bedtime_regularity_minutes: float | None = None
     late_bedtime_days: int = Field(default=0, ge=0, le=7)
+    # Median sleep midpoint in minutes from local midnight (negative before it).
+    midpoint_minutes: float | None = None
 
 
 class WeeklyRecoveryFacts(BaseModel):

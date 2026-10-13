@@ -328,9 +328,12 @@ class ZeppConnector(HealthConnector):
         workout_only: bool = False, detail_only: bool = False,
         detail_refresh_before: str | None = None,
         detail_limit: int | None = None,
+        sleep_only: bool = False,
         repository=None,
     ):
         """Create/reuse a durable attempt without doing network work."""
+        if sleep_only != (trigger == "morning_probe"):
+            raise ValueError("sleep_only is reserved for the morning wake probe")
         if (detail_backfill or workout_only or detail_only) and trigger != "manual":
             raise ValueError("historical workout options require a manual sync")
         if detail_refresh_before is not None and not detail_only:
@@ -359,6 +362,7 @@ class ZeppConnector(HealthConnector):
                 **({"detail_only": True} if detail_only else {}),
                 **({"detail_refresh_before": detail_refresh_before} if detail_refresh_before is not None else {}),
                 **({"detail_limit": detail_limit} if detail_limit is not None else {}),
+                **({"sleep_only": True} if sleep_only else {}),
                 "source_mode": self.source_mode,
             },
         )

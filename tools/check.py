@@ -357,9 +357,12 @@ def run_target(target: str, *, ci: bool, env: dict[str, str]) -> int:
             blocked = missing_check("docs:checker", checker)
             return status or blocked
         generated = ROOT / "tools" / "generate_api_reference.py"
+        examples = ROOT / "tools" / "generate_report_examples.py"
         return run_steps([
             Check("docs:checker", (PYTHON, "-B", str(checker)), timeout=180),
             Check("docs:api-reference", (PYTHON, "-B", str(generated), "--check"), timeout=60),
+            # The reader acceptance tests read these examples; keep them current.
+            Check("docs:report-examples", (PYTHON, "-B", str(examples), "--check"), timeout=180),
         ], env=env) or status
     if target == "package":
         return package_check(env)

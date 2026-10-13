@@ -198,41 +198,6 @@ class DailyMetric(Base):
     device_id: Mapped[str] = mapped_column(String(128), default="", nullable=False)
 
 
-class DailyFeature(Base):
-    """Derived day-level feature with explicit qualification and input cursor."""
-
-    __tablename__ = "daily_features"
-    __table_args__ = (
-        UniqueConstraint(
-            "user_id", "date", "feature", "source", "source_scope", "device_id",
-            name="uq_daily_feature_identity",
-        ),
-        Index("ix_daily_features_user_date", "user_id", "date"),
-        {"info": {"timescale": True}},
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[str] = mapped_column(String(64), index=True)
-    date: Mapped[date] = mapped_column(Date, index=True)
-    feature: Mapped[str] = mapped_column(String(96), index=True)
-    source: Mapped[str] = mapped_column(String(32), default="zepp")
-    source_scope: Mapped[str] = mapped_column(String(32), default="unknown")
-    device_id: Mapped[str] = mapped_column(String(128), default="", nullable=False)
-    unit: Mapped[str] = mapped_column(String(24), default="")
-    value: Mapped[float | None] = mapped_column(Float, nullable=True)
-    payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    status: Mapped[str] = mapped_column(String(24), default="UNKNOWN")
-    sample_count: Mapped[int] = mapped_column(Integer, default=0)
-    distinct_days: Mapped[int] = mapped_column(Integer, default=0)
-    expected_days: Mapped[int] = mapped_column(Integer, default=1)
-    coverage_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
-    observed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    as_of: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    input_revision: Mapped[int] = mapped_column(Integer, default=0)
-    algorithm_version: Mapped[str] = mapped_column(String(32), default="daily-feature-v1")
-
-
 class DenseDataFile(Base):
     """Indexed vendor file whose payload has not necessarily been decoded."""
 

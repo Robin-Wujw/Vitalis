@@ -124,44 +124,6 @@ def _delta(metric: dict[str, Any]) -> dict[str, str] | None:
     return {"text": f"{arrow} {abs(change):.1f}%", "tone": tone}
 
 
-def _state_notice(payload: dict[str, Any], context: dict[str, Any]) -> str | None:
-    """Explain only a saved state and explicitly recorded missing evidence."""
-    state = str(payload.get("state") or "current")
-    if state == "current":
-        return None
-    state_text = {
-        "stale": "新数据已经到达",
-        "queued": "更新尚未完成",
-        "running": "更新正在进行",
-        "failed": "这次更新没有完成",
-    }.get(state)
-    if state_text is None:
-        return None
-    missing = []
-    metadata = context.get("delivery_metadata") or {}
-    candidates = []
-    for value in (metadata.get("missing_signals"), metadata.get("coverage_reason")):
-        if isinstance(value, (list, tuple)):
-            candidates.extend(value)
-        elif value:
-            candidates.append(value)
-    for item in candidates:
-        text = str(item).strip()
-        if text and text not in missing:
-            missing.append(text)
-    reason_labels = {
-        "sleep_complete": "昨夜睡眠",
-        "prior_7d_training_history": "近 7 天训练记录",
-        "same_day_facts": "今天的记录",
-        "training_history": "训练历史",
-        "sleep_incomplete": "昨夜睡眠",
-        "stored_data_incomplete": "当天记录",
-    }
-    missing_text = "、".join(reason_labels.get(item, item) for item in missing)
-    detail = f"，缺少 {missing_text}" if missing_text else ""
-    return f"{state_text}{detail}；当前显示已保存版本。"
-
-
 def _subtitle(payload: dict[str, Any]) -> str:
     start, end = payload["period_start"], payload["period_end"]
     period = str(start) if start == end else f"{start}—{end}"
@@ -175,16 +137,10 @@ def _subtitle(payload: dict[str, Any]) -> str:
     else:
         period += " · 数据截至时间未记录"
     period += f" · {_SOURCE_MODE_LABELS.get(payload['source_mode'], '来源模式未标记')}"
-    notice = _state_notice(payload, context)
-    if notice:
-        period += f" · {notice}"
     if context.get("period_mode") == "rolling":
         period += " · 滚动窗口"
-    for key, label in (("late", "延迟报告"), ("partial", "部分报告"), ("facts_only", "仅展示事实")):
-        if payload.get(key):
-            period += f" · {label}"
-    if payload.get("delivered_as_of") and payload["delivered_as_of"] != cutoff:
-        period += f" · 投递截至 {timestamp_text(payload['delivered_as_of'], context.get('timezone') or 'UTC')}"
+    # Delivery and queue states are explained once, in words, by the report's
+    # opening notice; the header carries no system labels.
     return period
 
 

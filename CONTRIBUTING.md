@@ -27,4 +27,6 @@ git diff --check
 
 按改动范围运行 `backend`、`clients`、`package` 或 `all --ci`。`package` 会检查 wheel/sdist 内容和第三方声明；缺工具或依赖时如实记录阻塞。修改生成文档时改生成源后运行生成器，并检查生成文件无漂移。修改协议时同步更新对应测试和[唯一主责文档](docs/README.md)。提交说明列出行为变化、测试结果和文档更新；本仓库没有声明 Vitalis 自身许可证，第三方材料见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
+日常报告的读者验收在 `tests/test_report_acceptance.py`：用合成长历史生成的 `docs/examples/reports` 检查晨报、日报、晚报的可见字数、必有区块和不该出现的审计内容（28/60/90 天窗口、T+N 训练反应、q 值、逐信号来源）。样例变化时在提交说明里附上可见文字长度的前后对比（`visible_text_length`）。
+
 后端测试中的同步、分析和投递 dispatcher 必须按测试创建的用户/任务范围消费；共享内存库中的旧队列不能由后续测试代为清空。只验证读取聚合的测试不应先排完整同步任务。保持 `tools/check.py backend` 的 600 秒预算，修复队列隔离而不是提高超时。

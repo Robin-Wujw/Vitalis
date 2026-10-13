@@ -1,0 +1,23 @@
+[Unit]
+Description=Vitalis delivery health check (runs outside the worker)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=vitalis
+Group=vitalis
+StateDirectory=vitalis
+# Shares the data directory with the API and worker; never loosen its mode.
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/vitalis
+EnvironmentFile=/etc/vitalis/vitalis.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/vitalis/.venv/bin/vitalis alerts check
+TimeoutStartSec=120
+MemoryHigh=200M
+MemoryMax=256M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/vitalis

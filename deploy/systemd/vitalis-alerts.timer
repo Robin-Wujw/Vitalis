@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Vitalis delivery health check every 10 minutes
+
+[Timer]
+# Independent of the worker, so a frozen worker is still noticed.
+OnBootSec=5min
+OnUnitActiveSec=10min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

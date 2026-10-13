@@ -44,8 +44,8 @@ def test_scheduler_uses_configured_timezone_cron_and_single_dispatcher(monkeypat
     assert scheduler.timezone == "UTC"
     assert scheduler.started
     assert {item[2]["id"] for item in captured} == {
-        "nightly_sync", "morning_analysis", "evening_analysis", "sync_dispatcher",
-        "worker_heartbeat", "report_catch_up", "morning_wake_poll",
+        "nightly_sync", "evening_analysis", "sync_dispatcher",
+        "worker_heartbeat", "report_catch_up", "morning_wake",
     }
     catch_up = next(item for item in captured if item[2]["id"] == "report_catch_up")
     assert catch_up[0] is jobs.catch_up_scheduled_reports
@@ -55,10 +55,10 @@ def test_scheduler_uses_configured_timezone_cron_and_single_dispatcher(monkeypat
     assert nightly[0] is jobs.nightly_sync_job
     assert "hour='4'" in str(nightly[1])
     assert "minute='25'" in str(nightly[1])
-    morning = next(item for item in captured if item[2]["id"] == "morning_analysis")
-    assert morning[0] is jobs.morning_analysis_job
-    assert "hour='9'" in str(morning[1])
-    assert "minute='30'" in str(morning[1])
+    morning = next(item for item in captured if item[2]["id"] == "morning_wake")
+    assert morning[0] is jobs.morning_wake_job
+    assert morning[1].interval.total_seconds() == 60
+    assert abs((datetime.now(timezone.utc) - morning[2]["next_run_time"]).total_seconds()) < 5
     evening = next(item for item in captured if item[2]["id"] == "evening_analysis")
     assert evening[0] is jobs.evening_analysis_job
     assert "hour='21'" in str(evening[1])
@@ -214,8 +214,7 @@ def test_reconcile_deferred_daily_reports_queues_one_idempotent_reanalysis(
         assert jobs.reconcile_deferred_daily_reports() == 0
         with factory() as db:
             rows = db.query(AnalysisJob).all()
-            expected_analysis_jobs = 0 if reason == "sleep_incomplete" else expected
-            assert len(rows) == expected_analysis_jobs
+            assert len(rows) == expected
             if rows:
                 assert rows[0].target_date == day
                 assert rows[0].delivery_period is None
@@ -446,8 +445,8 @@ def _add_attempt(factory, attempt_id, trigger, created_at, trigger_ref="owner"):
 
 @pytest.mark.parametrize("local_now, expected", [
     ((2026, 10, 12, 9, 31), []),
-    ((2026, 10, 12, 10, 5), [("owner", 2, "morning")]),
-    ((2026, 10, 12, 12, 31), []),
+    ((2026, 10, 12, 10, 5), []),
+    ((2026, 10, 12, 21, 31), []),
     ((2026, 10, 12, 21, 45), [("owner", 1, "evening")]),
     ((2026, 10, 13, 0, 10), []),
 ])
@@ -464,24 +463,21 @@ def test_missed_report_sync_is_caught_up_once_inside_its_window(
 
 def test_catch_up_counts_only_todays_scheduled_sync(catch_up_database, monkeypatch):
     factory, queued = catch_up_database
-    _add_attempt(factory, "yesterday", "morning", _shanghai(2026, 10, 11, 9, 30))
+    _add_attempt(factory, "yesterday", "evening", _shanghai(2026, 10, 11, 21, 30))
     _add_attempt(
-        factory, "sleep-retry", "morning", _shanghai(2026, 10, 12, 9, 40),
-        trigger_ref="morning-sleep-retry:2026-10-12",
+        factory, "other-ref", "evening", _shanghai(2026, 10, 12, 21, 35),
+        trigger_ref="manual:2026-10-12",
     )
-    monkeypatch.setattr(jobs, "_utc_now", lambda: _shanghai(2026, 10, 12, 10, 5))
-    assert jobs.catch_up_scheduled_reports() == 1
-
-    _add_attempt(factory, "evening-cron", "evening", _shanghai(2026, 10, 12, 21, 30))
     monkeypatch.setattr(jobs, "_utc_now", lambda: _shanghai(2026, 10, 12, 21, 45))
+    assert jobs.catch_up_scheduled_reports() == 1
     assert jobs.catch_up_scheduled_reports() == 0
-    assert queued == [("owner", 2, "morning")]
+    assert queued == [("owner", 1, "evening")]
 
 
 def test_catch_up_needs_a_configured_delivery_owner(catch_up_database, monkeypatch):
     _factory, queued = catch_up_database
     monkeypatch.setattr(settings, "pushplus_token", "")
-    monkeypatch.setattr(jobs, "_utc_now", lambda: _shanghai(2026, 10, 12, 10, 5))
+    monkeypatch.setattr(jobs, "_utc_now", lambda: _shanghai(2026, 10, 12, 21, 45))
 
     assert jobs.catch_up_scheduled_reports() == 0
     assert queued == []

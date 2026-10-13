@@ -16,11 +16,11 @@
 | `VITALIS_TIMEZONE` | `Asia/Shanghai` | 本地日历边界和调度时区。 |
 | `HOST` / `PORT` | `127.0.0.1` / `8000` | API 监听地址。 |
 | `SYNC_CRON_HOUR` / `SYNC_CRON_MINUTE` | `02:00` | worker 自动同步时间。 |
-| `SYNC_DISPATCHER_INTERVAL_SECONDS` | `60`（最多 `900`） | 同步、分析和投递 dispatcher 间隔；晨报睡眠等待期要求不超过 15 分钟。 |
-| `MORNING_WAKE_START_HOUR` / `MORNING_WAKE_START_MINUTE` | `07:30` | 晨报醒来轮询窗口的最早本地时间。 |
-| `MORNING_WAKE_END_HOUR` / `MORNING_WAKE_END_MINUTE` | `11:00` | 晨报醒来轮询窗口的最晚本地时间；超时沿用事实兜底/期限策略。 |
-| `MORNING_WAKE_POLL_INTERVAL_SECONDS` | `900`（60–1200） | 醒来轮询间隔；每次只创建一个有幂等键的晨报同步尝试。 |
-| `MORNING_WAKE_DAILY_REQUEST_LIMIT` | `12` | 每用户每天醒来轮询的 Zepp 请求预算。 |
+| `SYNC_DISPATCHER_INTERVAL_SECONDS` | `60`（最多 `900`） | 同步、分析和投递 dispatcher 间隔；醒来探测和晨报同步也由它执行，建议保持 60 秒。 |
+| `MORNING_WAKE_START_HOUR` / `MORNING_WAKE_START_MINUTE` | `07:30` | 晨报窗口开始：最早从这一刻起探测睡眠、发送晨报。 |
+| `MORNING_WAKE_END_HOUR` / `MORNING_WAKE_END_MINUTE` | `11:00` | 晨报窗口结束：仍没有可信睡眠时按兜底规则发送；必须晚于开始时间。 |
+| `MORNING_WAKE_POLL_INTERVAL_SECONDS` | `900`（60–1200） | 两次“只拉睡眠”探测之间的最短间隔。 |
+| `MORNING_WAKE_MAX_PROBES` | `14` | 每用户每天最多探测次数；每次探测只发 1 个 Zepp 请求。 |
 | `VITALIS_WEEKLY_REPORT_ENABLED` | `false` | 周报自动投递开关。 |
 | `VITALIS_WEEKLY_REPORT_HOUR` / `MINUTE` | `10:00` | 周报投递本地时间。 |
 | `VITALIS_MONTHLY_REPORT_ENABLED` | `false` | 月报自动投递开关。 |
@@ -30,9 +30,19 @@
 | `PUSHPLUS_QUERY_MAX_ATTEMPTS` | `3` | 状态查询最多轮询次数；不会重发原消息。 |
 | `PUSHPLUS_QUERY_INTERVAL_SECONDS` | `60` | 状态查询间隔秒数；只影响状态查询。 |
 
-晨报 `09:30`、晚报 `21:30` 的调度由当前 worker 任务定义；配置和时区不要在其它文档复制成另一套默认值。晨报需要完整睡眠和已核实的前 7 天训练记录，睡眠未到齐时最多再等 30 分钟，并在等待期内自动补同步一次（每天只补一次，失败不重试）；晚报需要当天事实和训练记录。必需数据缺失、同步降级或发送比调度时刻晚 30 分钟以上时，只发仅事实版本（不带训练安排、建议和变化），睡眠仍缺的晨报开头写明“昨夜睡眠还没同步”；没有当天事实时不发并保留延期记录，`/api/deliveries` 的 `failure_code` 给出原因。调度时刻后晨报 3 小时、晚报 6 小时内仍未发出的，本次投递作废（`delivery_deadline_expired`）。这些规则在 `src/vitalis/application/delivery_policy.py` 和 worker 的延期投递协调中执行。真实模式还需要有效的 `VITALIS_TOKEN_ENCRYPTION_KEY`，并将其与数据库分开保存。
+晨报跟着醒来时间走，晚报是 `21:30` 的定时任务；配置和时区不要在其它文档复制成另一套默认值。worker 每分钟检查一次晨报窗口：窗口内至多每隔 `MORNING_WAKE_POLL_INTERVAL_SECONDS` 只拉一次当天的睡眠（每天至多 `MORNING_WAKE_MAX_PROBES` 次）；库里一出现可信的昨夜主睡眠，就排一次完整的晨报同步，同步结束后分析并投递。可信指有醒来时间、睡眠至少 3 小时、醒来不早于窗口开始前 3 小时：手机夜里同步时 Zepp 会留下以上传时刻为“醒来”的半截睡眠（2026-10-11 02:00 的记录一直保留到 09:57 醒来后才更新），不能据此发晨报。到窗口结束仍没有可信睡眠，也排这次同步并按兜底规则发送；晨报同步失败或取消且没写入任何记录时再试一次。worker 重启后按已保存的探测和同步记录续跑，晨报不需要补建。
 
-当前第二告警通道暂未配置：worker 只在当前数据库持久化内部告警，不发送邮件、Hermes 或其它网络告警。使用 `GET /api/delivery-alerts` 查看按用户隔离的 `pending`、`suppressed` 和 `acknowledged` 事件；告警不会替代 `/api/deliveries` 的投递账本。`GET /api/data-status` 的每个流还会返回预期间隔、实际观测年龄、`freshness` 和基于真实存储观测的近 7 天覆盖；没有观测时显示未知，不补零。
+晨报需要完整睡眠和已核实的前 7 天训练记录，窗口结束前睡眠没到齐就继续等；晚报需要当天事实和训练记录。窗口结束后睡眠仍缺、必需数据缺失、同步降级，或发送比计划晚 30 分钟以上（晨报以窗口结束、晚报以 21:30 计）时，只发仅事实版本（不带训练安排、建议和变化），开头一句话说明原因，例如“昨夜睡眠还没同步”；没有当天事实时不发并保留延期记录，`/api/deliveries` 的 `failure_code` 给出原因。晨报在窗口结束后 90 分钟（默认 12:30）、晚报在 21:30 后 6 小时仍未发出的，本次投递作废（`delivery_deadline_expired`）。这些规则在 `src/vitalis/application/delivery_policy.py`、worker 的晨报窗口任务和延期投递协调中执行。真实模式还需要有效的 `VITALIS_TOKEN_ENCRYPTION_KEY`，并将其与数据库分开保存。
+
+`GET /api/data-status` 的每个流还会返回预期间隔、实际观测年龄、`freshness` 和基于真实存储观测的近 7 天覆盖；没有观测时显示未知，不补零。
+
+## 投递目标与告警
+
+目标是晨报在窗口结束后 30 分钟内（默认 11:30）、晚报在 22:30 前被 PushPlus 受理（业务 `code=200`）。告警检查不在 worker 里：`vitalis-alerts.timer` 每 10 分钟启动一次 `vitalis alerts check`，独立进程，worker 冻住时照样运行。到目标仍未受理、PushPlus 明确拒绝、24 小时内分析失败，或 worker 心跳超过 30 分钟未更新时各记一次事件，同一事件不重复。没有投递意图的漏发在 `GET /api/deliveries` 里显示为 `status=missed` 的记录，`failure_code` 为 `worker_not_running`、`snapshot_unavailable` 或 `delivery_not_created`。
+
+第二告警通道（邮件或 Hermes）尚待用户确认：目前事件只写入当前数据库，用 `GET /api/delivery-alerts` 查看，`external_channel` 为 `unconfigured`；`journalctl -u vitalis-alerts` 里每个新事件一行，只含原因类别和日期。
+
+漏发按这个顺序查：`GET /api/delivery-alerts` 的原因 → `GET /api/deliveries` 当天记录的 `status` 和 `failure_code` → `systemctl status vitalis-worker` 与 `vitalis doctor` 的心跳 → `journalctl -u vitalis-worker --since 07:25` 里的晨报探测、同步结束（睡眠分片状态）、分析和投递日志 → `GET /api/data-status` 的数据新鲜度。
 
 ## 初始化与进程
 
@@ -53,11 +63,11 @@ uv run --locked --extra dev vitalis worker
 
 API 的 `/live` 只表示进程存活，`/ready` 检查当前 schema；`doctor` 的 `not_seen` 表示 worker 尚未写心跳，不等于 API 故障。调度器只在 `worker` 进程启动，不能从 API 应用或普通 GET 触发。
 
-worker 把 `vitalis.*` 的 INFO 日志写到 stderr（systemd 下即 journal），APScheduler 只记警告。日志包含：晨报/晚报任务开始，同步结束（每个睡眠日分片的解析状态，`empty` 表示来源当时还没有睡眠），每个分析任务的开始、耗时和处理后的内存，每次投递的状态和原因，延期投递的处理结果，以及约每 10 分钟一行的内存（进程 RSS/swap、cgroup 用量与 `memory.high` 触发次数）。按时间段查看：`journalctl -u vitalis-worker --since 09:25 --until 10:05`。
+worker 把 `vitalis.*` 的 INFO 日志写到 stderr（systemd 下即 journal），APScheduler 只记警告。日志包含：晨报/晚报任务开始，同步结束（每个睡眠日分片的解析状态，`empty` 表示来源当时还没有睡眠），每个分析任务的开始、耗时和处理后的内存，每次投递的状态和原因，延期投递的处理结果，以及约每 10 分钟一行的内存（进程 RSS/swap、cgroup 用量与 `memory.high` 触发次数）。晨报探测和同步各记一行（`morning_probe queued`、`morning report sync queued: … reason=sleep_found|window_end`）。按时间段查看：`journalctl -u vitalis-worker --since 07:25 --until 11:30`。
 
 worker 的内存上限写在 `deploy/systemd/vitalis-worker.service`：单次分析实测峰值约 360 MB，超过 `MemoryHigh` 时内核会节流整个进程，所以设 `MemoryHigh=500M`、`MemoryMax=640M`（超过后被 OOM 结束并自动重启）。分析日志行里的 `cgroup` 用量和 `high_events` 增长说明正在逼近上限。
 
-每次写入心跳都会喂 systemd 看门狗（unit 设 `WatchdogSec=600`）：进程 10 分钟没有心跳（例如超过 `MemoryHigh` 后被内核节流到停住）会被中止并按 `Restart=on-failure` 重启，中止时 faulthandler 把所有线程的 Python 调用栈打进 journal；未完成的分析在租约过期后重跑。worker 漏掉 09:30/21:30 定时任务时（冻结或在调度时刻之后才启动），启动时和之后每 5 分钟检查一次：配置了 PushPlus 投递且当天该时段还没有定时同步或投递记录时，为投递对象补建一次同步，补跑在投递期限和当天午夜之前停止。
+每次写入心跳都会喂 systemd 看门狗（unit 设 `WatchdogSec=600`）：进程 10 分钟没有心跳（例如超过 `MemoryHigh` 后被内核节流到停住）会被中止并按 `Restart=on-failure` 重启，中止时 faulthandler 把所有线程的 Python 调用栈打进 journal；未完成的分析在租约过期后重跑。worker 漏掉 21:30 晚报定时任务时（冻结或在调度时刻之后才启动），启动时和之后每 5 分钟检查一次：配置了 PushPlus 投递且当天还没有晚报定时同步或投递记录时，为投递对象补建一次同步，补跑在投递期限和当天午夜之前停止。
 
 ## 发布入口
 
@@ -102,7 +112,7 @@ PushPlus 的 HTTP 200 只表示请求完成；只有业务 `code=200` 且有有�
 | worker 无心跳 | 确认独立 worker 进程、同一环境和数据库；查看进程退出原因。 |
 | 报告 404 | 指定日期没有已保存快照；创建分析任务并等待 worker，不要把 404 当零数据。 |
 | 同步需要认证 | 重新走官方 Zepp 配对；不要在日志或聊天中传 Cookie/apptoken。 |
-| 报告延期 | 从 `/api/deliveries` 的 `failure_code` 看原因（如 `sleep_incomplete`、`morning_sleep_retry_queued`、`morning_sleep_retry_failed`、`morning_fallback_no_facts`、`stale_plan_expired`），再查看数据覆盖和 required signals；可用已保存事实时只生成合资格内容。 |
+| 报告延期或漏发 | 从 `/api/deliveries` 的 `failure_code` 看原因（如 `sleep_incomplete`、`stored_data_incomplete`、`morning_fallback_no_facts`、`stale_plan_expired`；`missed` 记录为 `worker_not_running`、`snapshot_unavailable`、`delivery_not_created`），再按上文“漏发排查顺序”查；可用已保存事实时只生成合资格内容。 |
 | 投递 uncertain | 保留不确定状态。响应丢失且没有流水号时无法自动查询，需在供应商侧人工核对；不创建新意图盲重发。 |
 | 投递 failed | 从 `/api/deliveries` 查看 `provider_status`、`send_attempt_count` 和 `next_attempt_at`，结合 worker 的非敏感错误类别排查凭据/模板/目标；明确拒绝的意图由 worker 按退避和最大次数重试。 |
 

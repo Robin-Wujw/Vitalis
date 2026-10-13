@@ -399,3 +399,25 @@ def test_weekly_sleep_trend_uses_the_same_five_day_gate_as_sleep_facts():
     assert profile.facts.sleep.available_days == 4
     assert profile.facts.sleep.change_percent is None
     assert not any("睡眠时长" in item for item in profile.inferences.key_changes)
+
+
+def test_weekly_report_names_the_sleep_midpoint_and_repeated_late_nights():
+    from vitalis.intelligence.report_rendering import render_report
+    from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
+
+    raw = RawDailyProfile(user_id="midpoint-week", day=TARGET)
+    for offset in range(7):
+        raw.sleep_by_day[TARGET - timedelta(days=offset)] = {
+            "sleep_duration": 420,
+            "bedtime": "01:30" if offset < 4 else "23:00",
+            "wake_time": "08:30",
+        }
+
+    profile = WeeklyProfileEngine().build("midpoint-run", raw, [], [], period_mode="rolling")
+
+    # Four nights 01:30–08:30 (midpoint 05:00), three nights 23:00–08:30 (03:45).
+    assert profile.facts.sleep.midpoint_minutes == 300
+    assert profile.facts.sleep.late_bedtime_days == 4
+    text = render_report(WeeklyBriefingEngine().build(profile), "markdown").content
+    assert "睡眠中点大约在 05:00。" in text
+    assert "本周有多晚在凌晨 1 点后入睡" in text

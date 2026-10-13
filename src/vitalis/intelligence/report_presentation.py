@@ -144,18 +144,31 @@ def _period_comparison(
     }
 
 
+# Amounts read as more/less; rates and scores as higher/lower.
+_AMOUNT_METRICS = {"sleep", "steps", "distance", "active_minutes", "strength", "running", "training"}
+JUDGEMENT_PREFIXES = ("正常：", "偏高：", "偏低：", "偏多：", "偏少：", "无法判断：")
+
+
 def _metric_judgement(key: str, comparison: dict[str, Any] | None) -> str | None:
-    """Use saved comparison direction only; never turn a percentage heuristic into advice."""
+    """One plain verdict with its basis, from the saved comparison direction only.
+
+    The direction comes from the baseline engine (robust z beyond 0.75); no
+    percentage threshold here turns into advice.
+    """
     if not isinstance(comparison, dict):
         return None
     reference = _number(comparison.get("reference_value"))
     direction = str(comparison.get("direction") or "").lower()
     if not direction and str(comparison.get("label") or "") != "个人参照":
         return None
-    labels = {"above": "高于个人参照", "below": "低于个人参照", "near": "接近个人参照"}
-    if reference is None or direction not in labels:
-        return "判断：个人参照证据不足，无法判断。"
-    return f"判断：{labels[direction]}。"
+    if reference is None or direction not in {"above", "below", "near"}:
+        return "无法判断：近期个人参照还不够。"
+    if direction == "near":
+        return "正常：在你近期的个人范围内。"
+    amount = key in _AMOUNT_METRICS
+    if direction == "above":
+        return f"{'偏多' if amount else '偏高'}：超出你近期的个人范围。"
+    return f"{'偏少' if amount else '偏低'}：低于你近期的个人范围。"
 
 
 def _metric(
@@ -890,8 +903,10 @@ def daily_presentation(payload: Any, *, morning: bool = False, facts_only: bool 
             item = dict(metric)
             item["comparison"] = None
             detail = item.get("detail")
-            if isinstance(detail, str) and "判断：" in detail:
-                detail = "；".join(part for part in detail.split("；") if not part.startswith("判断：")) or None
+            if isinstance(detail, str) and any(prefix in detail for prefix in JUDGEMENT_PREFIXES):
+                detail = "；".join(
+                    part for part in detail.split("；") if not part.startswith(JUDGEMENT_PREFIXES)
+                ) or None
             item["detail"] = detail
             factual_metrics.append(item)
         metrics = factual_metrics
@@ -1044,7 +1059,7 @@ def _daily_sleep_section(features: dict[str, Any]) -> dict[str, Any]:
     if sleep.get("vendor_sleep_score") is not None:
         facts.append(f"设备睡眠评分 {number(sleep['vendor_sleep_score'], 0)}/100")
     if sleep.get("regularity_minutes") is not None:
-        facts.append(f"近期入睡时刻离散度 {number(sleep['regularity_minutes'])} 分钟")
+        facts.append(f"近期入睡时间每天大约相差 {number(sleep['regularity_minutes'])} 分钟")
     if not facts:
         facts.append("昨夜睡眠尚未同步。")
     return {"key": "daily_sleep", "title": "睡眠事实", "facts": facts, "interpretation": [], "limitations": [], "display": True}

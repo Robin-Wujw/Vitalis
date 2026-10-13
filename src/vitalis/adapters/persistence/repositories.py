@@ -857,6 +857,16 @@ class HealthRepository:
         ).scalar_one_or_none()
         return row.data if row else None
 
+    def sleep_wake_summary(self, user_id: str, day: date) -> tuple[str | None, float | None]:
+        """Stored wake time and asleep minutes of the main sleep ending on ``day``."""
+        data = self.get_sleep(user_id, day) or {}
+        wake_time = data.get("wake_time")
+        minutes = data.get("sleep_duration")
+        return (
+            wake_time if isinstance(wake_time, str) and wake_time.strip() else None,
+            float(minutes) if isinstance(minutes, (int, float)) and not isinstance(minutes, bool) else None,
+        )
+
     def sleep_range(self, user_id: str, start: date, end: date) -> list[dict]:
         rows = self.db.execute(
             select(orm.SleepRecord).where(
@@ -1328,56 +1338,6 @@ class HealthRepository:
         if metric:
             stmt = stmt.where(orm.DailyMetric.metric == metric)
         return list(self.db.execute(stmt.order_by(orm.DailyMetric.date, orm.DailyMetric.metric)).scalars().all())
-
-    def upsert_daily_features(self, features: list[dict]) -> int:
-        """Persist qualified derived day features without inventing missing values."""
-        changed = 0
-        for item in features:
-            values = {
-                "user_id": item["user_id"], "date": item["date"],
-                "feature": item["feature"], "source": item.get("source", "vitalis"),
-                "source_scope": item.get("source_scope", "derived"),
-                "device_id": item.get("device_id") or "", "unit": item.get("unit", ""),
-                "value": item.get("value"), "payload": item.get("payload") or {},
-                "status": item.get("status", "UNKNOWN"),
-                "sample_count": int(item.get("sample_count", 0)),
-                "distinct_days": int(item.get("distinct_days", 0)),
-                "expected_days": int(item.get("expected_days", 1)),
-                "coverage_ratio": item.get("coverage_ratio"),
-                "observed_at": _naive_utc(item["observed_at"]) if item.get("observed_at") else None,
-                "fetched_at": _naive_utc(item["fetched_at"]) if item.get("fetched_at") else None,
-                "as_of": _naive_utc(item["as_of"]) if item.get("as_of") else None,
-                "input_revision": int(item.get("input_revision", 0)),
-                "algorithm_version": item.get("algorithm_version", "daily-feature-v1"),
-            }
-            row = self.db.execute(select(orm.DailyFeature).where(
-                orm.DailyFeature.user_id == values["user_id"],
-                orm.DailyFeature.date == values["date"],
-                orm.DailyFeature.feature == values["feature"],
-                orm.DailyFeature.source == values["source"],
-                orm.DailyFeature.source_scope == values["source_scope"],
-                orm.DailyFeature.device_id == values["device_id"],
-            )).scalar_one_or_none()
-            if row is None:
-                self.db.add(orm.DailyFeature(**values))
-                changed += 1
-                continue
-            if any(getattr(row, key) != value for key, value in values.items() if key not in {"user_id", "date", "feature", "source", "source_scope", "device_id"}):
-                for key, value in values.items():
-                    if key not in {"user_id", "date", "feature", "source", "source_scope", "device_id"}:
-                        setattr(row, key, value)
-                changed += 1
-        self.db.flush()
-        return changed
-
-    def daily_features(self, user_id: str, start: date, end: date, feature: str | None = None) -> list[orm.DailyFeature]:
-        statement = select(orm.DailyFeature).where(
-            orm.DailyFeature.user_id == user_id,
-            orm.DailyFeature.date.between(start, end),
-        )
-        if feature:
-            statement = statement.where(orm.DailyFeature.feature == feature)
-        return list(self.db.execute(statement.order_by(orm.DailyFeature.date, orm.DailyFeature.feature)).scalars().all())
 
     # ---- 密集数据文件索引 ----
 
@@ -2566,22 +2526,23 @@ class HealthRepository:
             return None
         return row
 
-    def sync_attempt_for_trigger_ref(
-        self,
-        user_id: str,
-        source: str,
-        trigger: str,
-        trigger_ref: str,
-    ) -> orm.SyncAttempt | None:
-        """Find a retry attempt across active and terminal ledger states."""
-        return self.db.execute(select(orm.SyncAttempt).where(
+    def sync_attempts_for_trigger_prefix(
+        self, user_id: str, source: str, prefixes: dict[str, str],
+    ) -> list[orm.SyncAttempt]:
+        """Attempts whose ``trigger`` maps to a ``trigger_ref`` prefix, oldest first."""
+        if not prefixes:
+            return []
+        return list(self.db.execute(select(orm.SyncAttempt).where(
             orm.SyncAttempt.user_id == user_id,
             orm.SyncAttempt.source == source,
-            orm.SyncAttempt.trigger == trigger,
-            orm.SyncAttempt.trigger_ref == trigger_ref,
-        ).order_by(
-            orm.SyncAttempt.created_at.desc(), orm.SyncAttempt.id.desc()
-        ).limit(1)).scalar_one_or_none()
+            or_(*(
+                and_(
+                    orm.SyncAttempt.trigger == trigger,
+                    orm.SyncAttempt.trigger_ref.startswith(prefix, autoescape=True),
+                )
+                for trigger, prefix in prefixes.items()
+            )),
+        ).order_by(orm.SyncAttempt.created_at, orm.SyncAttempt.id)).scalars().all())
 
     def sync_attempts(
         self, user_id: str, source: str | None = None, statuses: tuple[str, ...] | None = None,
@@ -5220,8 +5181,6 @@ class HealthRepository:
         "stale_plan_expired",
         "sleep_incomplete",
         "stored_data_incomplete",
-        "morning_sleep_retry_queued",
-        "morning_sleep_retry_failed",
         "morning_fallback_no_facts",
         "unusable_sync_state",
         "transport_ambiguous",
@@ -5238,7 +5197,7 @@ class HealthRepository:
     }
     _DELIVERY_ALERT_STATUSES = {"pending", "suppressed", "acknowledged"}
     _DELIVERY_ALERT_PAYLOAD_KEYS = {
-        "target_at", "delivery_present", "delivery_status", "last_seen_at",
+        "target_at", "delivery_present", "delivery_status", "cause", "last_seen_at",
         "age_seconds", "stale_after_seconds", "analysis_run_id", "error",
         "delivery_id", "provider_status",
     }
@@ -5570,44 +5529,6 @@ class HealthRepository:
         self.db.flush()
         return result.rowcount
 
-    def claim_morning_sleep_retry(
-        self, user_id: str, target_date: date, *, now: datetime | None = None
-    ) -> bool:
-        """Claim the one in-window morning sync retry for a deferred intent."""
-        current = _naive_utc(now or datetime.now(timezone.utc))
-        result = self.db.execute(update(orm.NotificationDelivery).where(
-            orm.NotificationDelivery.user_id == user_id,
-            orm.NotificationDelivery.target_date == target_date,
-            orm.NotificationDelivery.period == "morning",
-            orm.NotificationDelivery.status == "deferred",
-            orm.NotificationDelivery.last_error == "sleep_incomplete",
-        ).values(
-            last_error="morning_sleep_retry_queued",
-            updated_at=current,
-        ))
-        self.db.flush()
-        return bool(result.rowcount)
-
-    def mark_morning_sleep_retry_failed(
-        self, user_id: str, target_date: date, *, now: datetime | None = None
-    ) -> bool:
-        """Close a failed retry claim so the dispatcher cannot repeat it."""
-        current = _naive_utc(now or datetime.now(timezone.utc))
-        result = self.db.execute(update(orm.NotificationDelivery).where(
-            orm.NotificationDelivery.user_id == user_id,
-            orm.NotificationDelivery.target_date == target_date,
-            orm.NotificationDelivery.period == "morning",
-            orm.NotificationDelivery.status == "deferred",
-            orm.NotificationDelivery.last_error.in_(
-                ("sleep_incomplete", "morning_sleep_retry_queued")
-            ),
-        ).values(
-            last_error="morning_sleep_retry_failed",
-            updated_at=current,
-        ))
-        self.db.flush()
-        return bool(result.rowcount)
-
     def mark_morning_fallback_no_facts(
         self, user_id: str, target_date: date, *, now: datetime | None = None
     ) -> bool:
@@ -5618,13 +5539,7 @@ class HealthRepository:
             orm.NotificationDelivery.target_date == target_date,
             orm.NotificationDelivery.period == "morning",
             orm.NotificationDelivery.status == "deferred",
-            orm.NotificationDelivery.last_error.in_(
-                (
-                    "sleep_incomplete",
-                    "morning_sleep_retry_queued",
-                    "morning_sleep_retry_failed",
-                )
-            ),
+            orm.NotificationDelivery.last_error == "sleep_incomplete",
         ).values(
             last_error="morning_fallback_no_facts",
             updated_at=current,
@@ -5647,8 +5562,6 @@ class HealthRepository:
                     "snapshot_unavailable",
                     "sleep_incomplete",
                     "stored_data_incomplete",
-                    "morning_sleep_retry_queued",
-                    "morning_sleep_retry_failed",
                 )
             ),
         ).values(
@@ -5675,13 +5588,7 @@ class HealthRepository:
             orm.NotificationDelivery.target_date == target_date,
             orm.NotificationDelivery.period == "morning",
             orm.NotificationDelivery.status == "deferred",
-            orm.NotificationDelivery.last_error.in_(
-                (
-                    "sleep_incomplete",
-                    "morning_sleep_retry_queued",
-                    "morning_sleep_retry_failed",
-                )
-            ),
+            orm.NotificationDelivery.last_error == "sleep_incomplete",
         ).values(
             analysis_run_id=analysis_run_id,
             status="pending",

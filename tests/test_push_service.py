@@ -441,7 +441,7 @@ def test_facts_only_morning_mentions_unknown_history_once():
     message = _sent(lambda service: service.push_daily_profile("test-user", daily, period="morning"))
     text = _visible_text(message.body)
 
-    assert "部分运动记录来源还未查全" not in text
+    assert text.count("部分运动记录来源还未查全") == 1
     assert message.extras["summary"].count(
         "部分运动记录来源还未查全；已记录的训练照常展示，今天暂不生成训练安排。"
     ) == 1

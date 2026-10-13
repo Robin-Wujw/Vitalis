@@ -1,4 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime
 
 import pytest
@@ -117,7 +116,7 @@ def _delivery(factory) -> NotificationDelivery:
         return db.query(NotificationDelivery).one()
 
 
-def test_morning_sleep_retry_is_queued_once(isolated_database, monkeypatch):
+def test_waiting_inside_the_wake_window_queues_no_extra_sync(isolated_database, monkeypatch):
     _seed(
         isolated_database,
         _payload(sleep_complete=False, same_day_facts=True),
@@ -129,127 +128,11 @@ def test_morning_sleep_retry_is_queued_once(isolated_database, monkeypatch):
         lambda: datetime(2026, 8, 29, 1, 45, tzinfo=UTC),
     )
 
-    assert jobs.reconcile_deferred_daily_reports() == 1
-    with isolated_database() as db:
-        attempts = db.query(SyncAttempt).all()
-        assert len(attempts) == 1
-        assert attempts[0].trigger == "morning"
-        assert attempts[0].trigger_ref == "morning-sleep-retry:2026-08-29"
-    assert jobs.reconcile_deferred_daily_reports() == 0
-    with isolated_database() as db:
-        assert db.query(SyncAttempt).count() == 1
-    assert _delivery(isolated_database).last_error == "morning_sleep_retry_queued"
-
-
-@pytest.mark.parametrize("terminal_status", ["succeeded", "partial", "failed"])
-def test_retry_history_prevents_repeat_when_delivery_returns_to_sleep_wait(
-    isolated_database, monkeypatch, terminal_status,
-):
-    _seed(
-        isolated_database,
-        _payload(sleep_complete=False, same_day_facts=True),
-        "sleep_incomplete",
-    )
-    monkeypatch.setattr(
-        jobs, "_utc_now",
-        lambda: datetime(2026, 8, 29, 1, 45, tzinfo=UTC),
-    )
-    assert jobs.reconcile_deferred_daily_reports() == 1
-    with isolated_database.begin() as db:
-        db.query(SyncAttempt).one().status = terminal_status
-        db.query(NotificationDelivery).one().last_error = "sleep_incomplete"
-
-    assert jobs.reconcile_deferred_daily_reports() == 1
-    with isolated_database() as db:
-        assert db.query(SyncAttempt).count() == 1
-
-
-def test_failed_enqueue_rolls_back_partial_sync_attempt(
-    isolated_database, monkeypatch,
-):
-    _seed(
-        isolated_database,
-        _payload(sleep_complete=False, same_day_facts=True),
-        "sleep_incomplete",
-    )
-    monkeypatch.setattr(
-        jobs, "_utc_now",
-        lambda: datetime(2026, 8, 29, 1, 45, tzinfo=UTC),
-    )
-    original = jobs._sync_user
-
-    def fail_after_insert(*args, **kwargs):
-        original(*args, **kwargs)
-        raise RuntimeError("synthetic failure after insert")
-
-    monkeypatch.setattr(jobs, "_sync_user", fail_after_insert)
     assert jobs.reconcile_deferred_daily_reports() == 0
     with isolated_database() as db:
         assert db.query(SyncAttempt).count() == 0
-    assert _delivery(isolated_database).last_error == "morning_sleep_retry_failed"
-
-
-def test_concurrent_reconcile_queues_one_retry(isolated_database, monkeypatch):
-    _seed(
-        isolated_database,
-        _payload(sleep_complete=False, same_day_facts=True),
-        "sleep_incomplete",
-    )
-    monkeypatch.setattr(
-        jobs, "_utc_now",
-        lambda: datetime(2026, 8, 29, 1, 45, tzinfo=UTC),
-    )
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(lambda _: jobs.reconcile_deferred_daily_reports(), range(2)))
-    assert sum(results) == 1
-    with isolated_database() as db:
-        assert db.query(SyncAttempt).count() == 1
-
-
-def test_queued_retry_without_snapshot_does_not_create_recovery_analysis(
-    isolated_database, monkeypatch,
-):
-    _seed(
-        isolated_database,
-        _payload(sleep_complete=False, same_day_facts=True),
-        "morning_sleep_retry_queued",
-    )
-    with isolated_database.begin() as db:
-        db.query(AnalysisSnapshot).delete()
-    monkeypatch.setattr(
-        jobs,
-        "_utc_now",
-        lambda: datetime(2026, 8, 29, 1, 45, tzinfo=UTC),
-    )
-
-    assert jobs.reconcile_deferred_daily_reports() == 0
-    with isolated_database() as db:
-        from vitalis.adapters.persistence.models import AnalysisJob
-        assert db.query(AnalysisJob).count() == 0
-
-
-def test_failed_morning_sleep_retry_is_not_repeated(
-    isolated_database, monkeypatch,
-):
-    _seed(
-        isolated_database,
-        _payload(sleep_complete=False, same_day_facts=True),
-        "sleep_incomplete",
-    )
-    monkeypatch.setattr(
-        jobs,
-        "_utc_now",
-        lambda: datetime(2026, 8, 29, 1, 45, tzinfo=UTC),
-    )
-
-    def fail_retry(*args, **kwargs):
-        raise RuntimeError("synthetic retry failure")
-
-    monkeypatch.setattr(jobs, "_sync_user", fail_retry)
-    assert jobs.reconcile_deferred_daily_reports() == 0
-    assert _delivery(isolated_database).last_error == "morning_sleep_retry_failed"
-    assert jobs.reconcile_deferred_daily_reports() == 0
-    assert _delivery(isolated_database).last_error == "morning_sleep_retry_failed"
+    row = _delivery(isolated_database)
+    assert (row.status, row.last_error) == ("deferred", "sleep_incomplete")
 
 
 def test_sleep_arrival_rearms_and_sends_full_morning_report(
@@ -258,7 +141,7 @@ def test_sleep_arrival_rearms_and_sends_full_morning_report(
     _seed(
         isolated_database,
         _payload(sleep_complete=True, same_day_facts=True),
-        "morning_sleep_retry_queued",
+        "sleep_incomplete",
     )
     monkeypatch.setattr(
         jobs,
@@ -292,18 +175,18 @@ def test_sleep_arrival_rearms_and_sends_full_morning_report(
     assert _delivery(isolated_database).status == "accepted"
 
 
-def test_fallback_after_waiting_period_sends_facts_only(
+def test_fallback_after_the_wake_window_sends_facts_only(
     isolated_database, monkeypatch,
 ):
     _seed(
         isolated_database,
         _payload(sleep_complete=False, same_day_facts=True),
-        "morning_sleep_retry_queued",
+        "sleep_incomplete",
     )
     monkeypatch.setattr(
         jobs,
         "_utc_now",
-        lambda: datetime(2026, 8, 29, 2, 5, tzinfo=UTC),
+        lambda: datetime(2026, 8, 29, 3, 5, tzinfo=UTC),
     )
     sent = []
 
@@ -319,7 +202,7 @@ def test_fallback_after_waiting_period_sends_facts_only(
     monkeypatch.setattr(
         daily_push,
         "_delivery_now",
-        lambda: datetime(2026, 8, 29, 2, 5, tzinfo=UTC),
+        lambda: datetime(2026, 8, 29, 3, 5, tzinfo=UTC),
     )
     monkeypatch.setattr(daily_push, "local_today", lambda: DAY)
 
@@ -337,12 +220,12 @@ def test_fallback_without_same_day_facts_keeps_a_missed_record(
     _seed(
         isolated_database,
         _payload(sleep_complete=False, same_day_facts=False),
-        "morning_sleep_retry_queued",
+        "sleep_incomplete",
     )
     monkeypatch.setattr(
         jobs,
         "_utc_now",
-        lambda: datetime(2026, 8, 29, 2, 5, tzinfo=UTC),
+        lambda: datetime(2026, 8, 29, 3, 5, tzinfo=UTC),
     )
     monkeypatch.setattr(
         daily_push,
@@ -381,7 +264,7 @@ def test_morning_deadline_closes_a_deferred_record(
     _seed(
         isolated_database,
         _payload(sleep_complete=False, same_day_facts=True),
-        "morning_sleep_retry_queued",
+        "sleep_incomplete",
     )
     monkeypatch.setattr(
         jobs,

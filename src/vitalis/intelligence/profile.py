@@ -205,7 +205,6 @@ class ProfileLoader:
         self._add_energy_observations(raw)
         raw.facts = facts_for_day(raw)
         raw.data_quality = self._quality(raw)
-        self._persist_daily_features(raw)
         raw.report_context = {
             "source_mode": self.repo.source_mode(user_id),
             "as_of": cutoff.isoformat(),
@@ -220,40 +219,6 @@ class ProfileLoader:
             "observation_time_note": "日期级汇总仅表示所属日期，不代表精确测量时刻；生成时间不等于数据更新时间。",
         }
         return raw
-
-    def _persist_daily_features(self, raw: RawDailyProfile) -> None:
-        """Persist bounded target-day features without changing analysis inputs."""
-        writer = getattr(self.repo, "upsert_daily_features", None)
-        if not callable(writer):
-            return
-        revision = self.repo.analysis_input_revision(raw.user_id)
-        features: list[dict] = []
-        for metric, points in raw.series.items():
-            target = [point for point in points if point.day == raw.day]
-            if not target:
-                continue
-            values = [point.value for point in target]
-            selected = max(target, key=lambda item: _observed_key(item.observed_at))
-            features.append({
-                "user_id": raw.user_id,
-                "date": raw.day,
-                "feature": metric,
-                "source": selected.source,
-                "source_scope": selected.source_scope,
-                "device_id": selected.device_id,
-                "unit": selected.unit,
-                "value": float(median(values)),
-                "status": "AVAILABLE",
-                "sample_count": len(values),
-                "distinct_days": 1,
-                "expected_days": 1,
-                "coverage_ratio": 1.0,
-                "observed_at": selected.observed_at if isinstance(selected.observed_at, datetime) else None,
-                "as_of": raw.as_of,
-                "input_revision": revision,
-            })
-        if features:
-            writer(features)
 
     def _add_open_health_inputs(self, raw: RawDailyProfile) -> None:
         """Build isolated nightly observations and the explicit 42-day load input."""

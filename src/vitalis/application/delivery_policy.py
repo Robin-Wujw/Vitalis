@@ -16,25 +16,89 @@ ReportPeriod = Literal["morning", "evening"]
 
 
 _UNUSABLE_SYNC_STATES = {"needs_reauth", "token_required", "failed", "cancelled"}
-SCHEDULED_DELAY_SECONDS = {"morning": 3 * 3600, "evening": 6 * 3600}
-PARTIAL_FALLBACK_DELAY_SECONDS = 30 * 60
+# Mornings follow the wake time: the report may go out from the window start,
+# stops waiting for sleep at the window end, and only then turns late.
+DEFAULT_MORNING_WINDOW = (time(7, 30), time(11, 0))
+EVENING_SCHEDULE = time(21, 30)
+LATE_AFTER_SECONDS = 30 * 60
+MORNING_DEADLINE_AFTER_WINDOW_SECONDS = 90 * 60
+EVENING_DEADLINE_SECONDS = 6 * 3600
+EVENING_DELIVERY_TARGET_SECONDS = 60 * 60
+# A main sleep shorter than this, or ending this long before the window start,
+# is treated as a record the phone uploaded while the user was still asleep.
+MORNING_MIN_MAIN_SLEEP_MINUTES = 180
+MORNING_EARLIEST_WAKE_BEFORE_WINDOW = timedelta(hours=3)
 
 
-def scheduled_report_window(target: date, period: ReportPeriod, timezone: str) -> dict:
-    """A local cutoff plus a finite amount of real elapsed time in UTC."""
-    cutoff = time(9, 30) if period == "morning" else time(21, 30)
-    scheduled = datetime.combine(target, cutoff, tzinfo=ZoneInfo(timezone)).astimezone(UTC)
-    deadline = scheduled + timedelta(seconds=SCHEDULED_DELAY_SECONDS[period])
+def _utc_text(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def scheduled_report_window(
+    target: date,
+    period: ReportPeriod,
+    timezone: str,
+    *,
+    morning_window: tuple[time, time] = DEFAULT_MORNING_WINDOW,
+) -> dict:
+    """Local report times expressed as finite real elapsed time in UTC.
+
+    ``scheduled_for`` is the earliest send time, ``partial_fallback_after`` ends
+    the wait for required data, ``late_after`` turns a send into a facts-only
+    report, ``delivery_target_at`` is the alert target, and ``deadline_at``
+    abandons the report.
+    """
+    zone = ZoneInfo(timezone)
+    # Local wall-clock anchors; every offset below is real elapsed time in UTC.
+    if period == "morning":
+        start, end = morning_window
+        if end <= start:
+            raise ValueError("morning window end must be later than its start")
+        scheduled = datetime.combine(target, start, tzinfo=zone).astimezone(UTC)
+        fallback = datetime.combine(target, end, tzinfo=zone).astimezone(UTC)
+        late_after = fallback + timedelta(seconds=LATE_AFTER_SECONDS)
+        target_at = late_after
+        deadline = fallback + timedelta(seconds=MORNING_DEADLINE_AFTER_WINDOW_SECONDS)
+    else:
+        scheduled = datetime.combine(target, EVENING_SCHEDULE, tzinfo=zone).astimezone(UTC)
+        fallback = late_after = scheduled + timedelta(seconds=LATE_AFTER_SECONDS)
+        target_at = scheduled + timedelta(seconds=EVENING_DELIVERY_TARGET_SECONDS)
+        deadline = scheduled + timedelta(seconds=EVENING_DEADLINE_SECONDS)
     return {
-        "scheduled_for": scheduled.isoformat().replace("+00:00", "Z"),
-        "cutoff": scheduled.isoformat().replace("+00:00", "Z"),
-        "deadline_at": deadline.isoformat().replace("+00:00", "Z"),
-        "allowed_delay_seconds": SCHEDULED_DELAY_SECONDS[period],
-        "partial_fallback_after": (scheduled + timedelta(seconds=PARTIAL_FALLBACK_DELAY_SECONDS)).isoformat().replace("+00:00", "Z"),
+        "scheduled_for": _utc_text(scheduled),
+        "partial_fallback_after": _utc_text(fallback),
+        "late_after": _utc_text(late_after),
+        "delivery_target_at": _utc_text(target_at),
+        "deadline_at": _utc_text(deadline),
+        "allowed_delay_seconds": int((deadline - scheduled).total_seconds()),
         "timezone": timezone,
         "required_signals": ["sleep_complete", "prior_7d_training_history"]
         if period == "morning" else ["same_day_facts", "training_history"],
     }
+
+
+def wake_time_is_plausible(
+    target: date,
+    wake_time: str | time | None,
+    sleep_minutes: float | None,
+    *,
+    morning_window: tuple[time, time] = DEFAULT_MORNING_WINDOW,
+) -> bool:
+    """Whether a stored main sleep is finished enough to trigger the morning report.
+
+    Zepp keeps a sleep the phone uploaded mid-night with the upload time as its
+    wake time (2026-10-11: a record fetched at 02:00 stayed unchanged until the
+    09:57 wake). Such a record is short or ends long before the window.
+    """
+    if wake_time is None or sleep_minutes is None or sleep_minutes < MORNING_MIN_MAIN_SLEEP_MINUTES:
+        return False
+    if isinstance(wake_time, str):
+        try:
+            wake_time = time.fromisoformat(wake_time.strip())
+        except ValueError:
+            return False
+    earliest = datetime.combine(target, morning_window[0]) - MORNING_EARLIEST_WAKE_BEFORE_WINDOW
+    return datetime.combine(target, wake_time) >= earliest
 
 
 def retrospective_age(
@@ -180,6 +244,7 @@ def prepare_delivery(
     plan_expires_at: datetime | None = None,
     retrospective: bool = False,
     scheduled_delivery: bool = False,
+    morning_window: tuple[time, time] = DEFAULT_MORNING_WINDOW,
 ) -> dict:
     """Apply delivery gates and return either a deferred result or send payload.
 
@@ -199,6 +264,7 @@ def prepare_delivery(
             daily, period=period, target=current_date, as_of=as_of, timezone=timezone,
             test_delivery=test_delivery, sync_degraded=sync_degraded,
             sync_status=sync_status, plan_expires_at=plan_expires_at,
+            morning_window=morning_window,
         )
     if retrospective:
         retrospective_age(target_date, today, period, test_delivery)
@@ -286,17 +352,19 @@ def _prepare_scheduled_delivery(
     daily: dict, *, period: ReportPeriod, target: date, as_of: datetime,
     timezone: str, test_delivery: bool, sync_degraded: bool,
     sync_status: str | None, plan_expires_at: datetime | None,
+    morning_window: tuple[time, time] = DEFAULT_MORNING_WINDOW,
 ) -> dict:
-    window = scheduled_report_window(target, period, timezone)
+    window = scheduled_report_window(target, period, timezone, morning_window=morning_window)
     now = _as_aware(as_of, timezone).astimezone(UTC)
     scheduled = datetime.fromisoformat(window["scheduled_for"].replace("Z", "+00:00"))
     deadline = datetime.fromisoformat(window["deadline_at"].replace("Z", "+00:00"))
     fallback = datetime.fromisoformat(window["partial_fallback_after"].replace("Z", "+00:00"))
+    late_after = datetime.fromisoformat(window["late_after"].replace("Z", "+00:00"))
     context = daily.get("report_context") or {}
     metadata = {
         **window, "as_of": context.get("as_of"),
         "delivered_as_of": now.isoformat().replace("+00:00", "Z"),
-        "late": now >= fallback,
+        "late": now >= late_after,
         "delay_seconds": max(0, (now - scheduled).total_seconds()),
     }
     result = {"period": period, "date": target.isoformat(), "delivery_metadata": metadata}

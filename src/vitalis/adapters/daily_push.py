@@ -150,6 +150,7 @@ def deliver_daily_report(
             already_sent=False, sync_degraded=sync_degraded, sync_status=sync_status,
             sync_detail=sync_detail, plan_expires_at=plan_expires_at,
             retrospective=retrospective, scheduled_delivery=scheduled_delivery,
+            morning_window=settings.morning_wake_window(),
         )
         if decision["status"] != "ready":
             return decision
@@ -179,6 +180,7 @@ def deliver_daily_report(
         already_sent=False, sync_degraded=sync_degraded, sync_status=sync_status,
         sync_detail=sync_detail, plan_expires_at=plan_expires_at,
         retrospective=retrospective, scheduled_delivery=scheduled_delivery,
+        morning_window=settings.morning_wake_window(),
     )
     if decision["status"] != "ready":
         return decision

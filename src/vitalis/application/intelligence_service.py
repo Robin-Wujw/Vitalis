@@ -81,9 +81,9 @@ _DELIVERY_FAILURE_CODES = frozenset({
     "stale_plan_expired",
     "sleep_incomplete",
     "stored_data_incomplete",
-    "morning_sleep_retry_queued",
-    "morning_sleep_retry_failed",
     "morning_fallback_no_facts",
+    "worker_not_running",
+    "delivery_not_created",
     "unusable_sync_state",
     "transport_ambiguous",
     "transport_rejected",
@@ -776,10 +776,44 @@ class IntelligenceQuery:
             return PersonalAssociationProfile.model_validate(row.payload) if row else None
 
     def deliveries(self, user_id: str, limit: int = 100) -> list[dict]:
-        """Return user-scoped delivery state without lease or provider errors."""
+        """Return user-scoped delivery state without lease or provider errors.
+
+        A report that never got a delivery intent (worker down, no analysis)
+        appears as ``missed`` from its stored target-missed alert.
+        """
         with self._uow_factory() as uow:
             rows = uow.repository.notification_deliveries(user_id, limit=limit)
-            return [
+            known = {(row.period, row.target_date) for row in rows}
+            missed = [
+                {
+                    "delivery_id": None,
+                    "analysis_run_id": None,
+                    "target_date": alert.target_date,
+                    "period": alert.period,
+                    "status": "missed",
+                    "failure_code": (
+                        cause if (cause := (alert.payload or {}).get("cause"))
+                        in _DELIVERY_FAILURE_CODES else None
+                    ),
+                    "provider_id": None,
+                    "provider_status": None,
+                    "template": None,
+                    "renderer_version": None,
+                    "content_sha256": None,
+                    "attempt_count": 0,
+                    "send_attempt_count": 0,
+                    "poll_attempt_count": 0,
+                    "next_attempt_at": None,
+                    "next_poll_at": None,
+                    "created_at": alert.created_at,
+                    "updated_at": alert.updated_at,
+                }
+                for alert in uow.repository.delivery_alerts(user_id, limit=limit)
+                if alert.reason == "delivery_target_missed"
+                and (alert.period, alert.target_date) not in known
+                and (alert.payload or {}).get("delivery_present") is False
+            ]
+            delivered = [
                 {
                     "delivery_id": row.id,
                     "analysis_run_id": row.analysis_run_id,
@@ -805,6 +839,14 @@ class IntelligenceQuery:
                 }
                 for row in rows
             ]
+            if not missed:
+                return delivered
+            merged = sorted(
+                delivered + missed,
+                key=lambda item: (item["target_date"], item["period"]),
+            )
+            merged.sort(key=lambda item: item["target_date"], reverse=True)
+            return merged[:limit]
 
 
 class IntelligenceAction:

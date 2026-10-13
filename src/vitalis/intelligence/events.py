@@ -304,6 +304,22 @@ def _persistent_deviation_event(
     )]
 
 
+def _period_summary(event_type: str, trend: TrendFeature) -> str:
+    """The change in plain words: how big, what it means, and what to do next."""
+    days = trend.window_days
+    change = trend.change_percent
+    if event_type == "TRAINING_LOAD_SPIKE":
+        return (
+            f"近 {days} 天训练负荷比之前 {days} 天多 {change:.0f}%，加量偏快；"
+            "接下来几天先别再加量，留意疲劳和睡眠。"
+        )
+    if event_type == "ACTIVITY_DROP":
+        return f"近 {days} 天步数比之前 {days} 天少 {abs(change):.0f}%，日常活动明显减少。"
+    if event_type == "ACTIVITY_SURGE":
+        return f"近 {days} 天步数比之前 {days} 天多 {change:.0f}%，日常活动明显增加。"
+    return f"{trend.metric_label}较前一周期变化 {change:+.1f}%。"
+
+
 def _period_event(
     user_id: str,
     target_day: date,
@@ -316,7 +332,7 @@ def _period_event(
         event_type,
         target_day - timedelta(days=trend.window_days - 1),
         target_day,
-        f"{trend.metric_label}较前一周期变化 {trend.change_percent:+.1f}%。",
+        _period_summary(event_type, trend),
         trend.confidence,
         [
             HealthEventEvidence(

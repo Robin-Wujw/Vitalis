@@ -7,7 +7,7 @@
 ## 发布原则
 
 - 只部署已经提交、经过本地验证的候选 commit SHA；服务器验收完成前不合并 `main`。
-- API、worker 和其它 Vitalis 服务使用同一个 SHA、同一套锁定依赖和一致的数据库、时区配置。
+- API、worker、告警检查（`vitalis-alerts.service` 及其 timer）和其它 Vitalis 服务使用同一个 SHA、同一套锁定依赖和一致的数据库、时区配置。
 - 本地未提交文件不能复制进运行目录；候选代码使用独立 release 目录，禁止在运行目录直接 `git pull`。
 - 数据库无变化时保留现库；能用加字段解决时不重建；确实需要破坏性变更时备份、验证候选库、切换，并删除被替代的旧工作数据库。
 - 服务器只保留当前数据库。备份只用于本次发布失败时回滚：切换前生成，验收通过后和 unit/环境回滚副本、更早的备份一起删除，不长期保留（用户已统一授权）。
@@ -64,9 +64,9 @@ UV_PROJECT_ENVIRONMENT=/opt/vitalis/venvs/<candidate_sha> uv sync --python <pyth
 候选验证完成后保存当前 unit/drop-in、release 路径和环境配置的私密回滚副本。确认所有 Vitalis 服务的实际状态，然后停止 API 和 worker，等待进程退出：
 
 ```bash
-systemctl show vitalis-api vitalis-worker --property=ActiveState,SubState,MainPID,ExecStart,WorkingDirectory,EnvironmentFiles
-sudo systemctl stop vitalis-worker vitalis-api
-systemctl is-active vitalis-api vitalis-worker
+systemctl show vitalis-api vitalis-worker vitalis-alerts.service --property=ActiveState,SubState,MainPID,ExecStart,WorkingDirectory,EnvironmentFiles
+sudo systemctl stop vitalis-alerts.timer vitalis-worker vitalis-api
+systemctl is-active vitalis-api vitalis-worker vitalis-alerts.timer
 ```
 
 SQLite 使用当前版本的备份命令或等价的 WAL-safe 流程，目标必须为新的带 SHA 和时间戳的文件。备份不能位于仓库或 release 目录：
@@ -99,14 +99,17 @@ service unit 可能通过 drop-in 覆盖启动命令，环境文件也可能固�
 ```ini
 ExecStart=/opt/vitalis/venvs/<candidate_sha>/bin/vitalis serve
 ExecStart=/opt/vitalis/venvs/<candidate_sha>/bin/vitalis worker
+ExecStart=/opt/vitalis/venvs/<candidate_sha>/bin/vitalis alerts check
 ```
+
+告警检查是 oneshot service 加 timer（`deploy/systemd/vitalis-alerts.service`、`vitalis-alerts.timer`），首次部署时从模板安装并 `systemctl enable vitalis-alerts.timer`，之后每次发布和 API、worker 一起切换 `ExecStart`。
 
 如果部署使用 `uvicorn` 启动 API，保留已经验证的绑定地址、端口和日志参数。相对数据库路径按实际 `WorkingDirectory` 解释。用户数据仍位于私密数据目录，环境文件与加密密钥保留在原位置。
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl start vitalis-api vitalis-worker
-systemctl show vitalis-api vitalis-worker --property=ActiveState,SubState,MainPID,ExecStart
+sudo systemctl start vitalis-api vitalis-worker vitalis-alerts.timer
+systemctl show vitalis-api vitalis-worker vitalis-alerts.service --property=ActiveState,SubState,MainPID,ExecStart
 ```
 
 检查所有实际 Vitalis 服务，不能只更新某个 Git 仓库或只重启 API。确认进程虚拟环境、工作目录、`PYTHONPATH`、已安装包路径和 release SHA 对齐：从 `/proc/<pid>/environ` 读出 `PYTHONPATH`，并在服务环境下导入 `vitalis` 确认实际加载路径。worker unit 的 `WatchdogSec` 等资源设置以 `deploy/systemd/` 模板为准，改动模板时同步更新服务器上的 unit。
@@ -117,7 +120,8 @@ systemctl show vitalis-api vitalis-worker --property=ActiveState,SubState,MainPI
 curl --noproxy '*' --fail http://127.0.0.1:8000/live
 curl --noproxy '*' --fail http://127.0.0.1:8000/ready
 <release-venv>/bin/vitalis doctor
-systemctl is-active vitalis-api vitalis-worker
+systemctl is-active vitalis-api vitalis-worker vitalis-alerts.timer
+sudo systemctl start vitalis-alerts.service && systemctl show vitalis-alerts.service --property=Result
 ```
 
 `doctor` 同样加载实际服务配置。绕过 shell 代理检查回环地址，避免代理 502 被误判成应用错误。继续核对：

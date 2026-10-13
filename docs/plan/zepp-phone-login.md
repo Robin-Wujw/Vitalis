@@ -10,6 +10,8 @@ Zepp 官方网页登录（`user.zepp.com/universalLogin`）对手机号账号使
 
 ## 改什么（提案）
 
+候选分支已有手机页和两步登录的服务端边界（`/api/connect/zepp/phone`、`src/vitalis/adapters/zepp/login.py`），但 API 只在本机监听，没有公网 HTTPS 入口，手机打不开；用户确认方案前不对外开放，也不删除浏览器插件。
+
 - 配对链接由 `vitalis connect zepp` 命令或 Hermes 生成，发到手机。
 - 链接打开 Vitalis 的手机页：输入 Zepp 手机号（或邮箱）和密码，服务端按官方网页相同的两步换取令牌，验证后加密保存；密码只在内存中用一次，不落库、不进日志和响应。
 - 没有密码的账号：页面链接到 Zepp 官方“忘记密码”，用手机验证码设置密码后回来登录。

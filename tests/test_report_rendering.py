@@ -282,33 +282,54 @@ def test_daily_fact_dates_keep_their_time_precision(observed_at, expected):
         assert "08:00" not in section["facts"][0]
 
 
+_SYSTEM_LABELS = (
+    "部分报告", "延迟报告", "仅展示事实", "投递截至", "排队", "重算", "快照",
+    "显示上一版结果", "当前显示已保存版本", "更新正在进行", "更新尚未完成",
+)
+
+
 @pytest.mark.parametrize("state, expected", [
-    ("stale", "新数据已经到达；当前显示已保存版本"),
-    ("queued", "更新尚未完成；当前显示已保存版本"),
-    ("running", "更新正在进行；当前显示已保存版本"),
-    ("failed", "这次更新没有完成；当前显示已保存版本"),
+    ("current", None),
+    ("stale", "下面是截至 10-07 21:20 的数据；之后同步到的数据还没算进来。"),
+    ("queued", "下面是截至 10-07 21:20 的数据；之后同步到的数据还没算进来。"),
+    ("running", "下面是截至 10-07 21:20 的数据；之后同步到的数据还没算进来。"),
+    ("failed", "下面是截至 10-07 21:20 的数据；之后同步到的数据这次没有算完。"),
 ])
-def test_last_good_report_state_is_human_and_does_not_invent_missing_data_or_promises(state, expected):
-    briefing = _briefing(report_context={"report_state": {"state": state}})
+def test_report_state_is_one_reading_sentence_without_system_labels(state, expected):
+    briefing = _briefing(report_context={"timezone": "Asia/Shanghai", "report_state": {"state": state}})
     for target in ("markdown", "html"):
         content = render_report(briefing, target).content
-        assert expected in content
-        assert "部分新数据" not in content
-        assert "自动更新" not in content
-        assert "显示上一版结果" not in content
-        assert "更新已排队" not in content
+        text, _ = _text(markdown(content) if target == "markdown" else content)
+        if expected is None:
+            assert "下面是" not in text
+        else:
+            assert text.count(expected) == 1
+        assert not any(label in text for label in _SYSTEM_LABELS)
+        assert "自动更新" not in text
 
 
-def test_report_state_notice_uses_only_explicit_missing_signal_metadata():
-    briefing = _briefing(report_context={
-        "report_state": {"state": "queued"},
-        "delivery_metadata": {"missing_signals": ["sleep_complete"]},
-    })
-
-    content = render_report(briefing, "markdown").content
-
-    assert "缺少 昨夜睡眠" in content
-    assert "自动更新" not in content
+@pytest.mark.parametrize("metadata, expected", [
+    ({"facts_only": True, "late": True, "coverage_reason": "late_report"}, "这份报告比计划晚发出"),
+    ({"facts_only": True, "sync_degraded": True, "coverage_reason": "sync_degraded"}, "这次同步没有全部完成"),
+    ({"facts_only": True, "coverage_reason": "training_history"}, "部分运动记录来源还未查全"),
+    ({"partial": True}, None),
+])
+def test_delivery_flags_become_one_notice_and_never_header_labels(metadata, expected):
+    context = {
+        "timezone": "Asia/Shanghai", "target_day_complete": False,
+        "delivery_metadata": {"delivered_as_of": "2026-10-07T14:05:00Z", **metadata},
+    }
+    briefing = _briefing(report_context=context, delivery_metadata=context["delivery_metadata"])
+    for target in ("markdown", "html"):
+        content = render_report(briefing, target).content
+        text, _ = _text(markdown(content) if target == "markdown" else content)
+        header = content.splitlines()[2] if target == "markdown" else text[:120]
+        assert not any(label in header for label in _SYSTEM_LABELS)
+        assert not any(label in text for label in _SYSTEM_LABELS)
+        if expected is None:
+            assert "以下只列" not in text and "部分运动记录" not in text
+        else:
+            assert text.count(expected) == 1
 
 
 def test_generated_daily_and_evening_examples_are_distinct_named_reports():

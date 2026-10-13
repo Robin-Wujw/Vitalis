@@ -401,6 +401,9 @@ def main(argv: list[str] | None = None) -> int:
     subcommands.add_parser("serve", help="Start the loopback API process")
     subcommands.add_parser("worker", help="Start scheduled synchronization and delivery")
     subcommands.add_parser("doctor", help="Check configuration and schema without exposing secrets")
+    alerts = subcommands.add_parser("alerts", help="Check report delivery health outside the worker")
+    alert_commands = alerts.add_subparsers(dest="alerts_command", required=True)
+    alert_commands.add_parser("check", help="Store new delivery alerts once and print a summary")
     user = subcommands.add_parser("user", help="Manage local users")
     user_commands = user.add_subparsers(dest="user_command", required=True)
     create_user = user_commands.add_parser("create", help="Create a local user")
@@ -470,6 +473,12 @@ def main(argv: list[str] | None = None) -> int:
             worker()
         elif args.command == "doctor":
             return _doctor()
+        elif args.command == "alerts":
+            from vitalis.adapters.persistence.database import check_schema
+            from vitalis.scheduler.alerts import check_delivery_health
+
+            check_schema()
+            print(json.dumps(check_delivery_health(), ensure_ascii=False))
         elif args.command == "user":
             _create_user(args.id)
             print("local user ready")

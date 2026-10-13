@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from .report_formatting import energy_label, metric_label, number, payload_of, unique
+from .report_formatting import energy_label, metric_label, number, payload_of, timestamp_text, unique
 from .report_presentation import daily_profile_presentation
 
 
@@ -19,6 +19,38 @@ PublicKind = Literal["daily", "morning", "evening", "weekly", "monthly"]
 # push must say the same thing.
 SLEEP_PENDING_NOTICE = "昨夜睡眠还没同步；以下仅展示已记录事实，今天暂不生成训练安排。"
 HISTORY_PENDING_NOTICE = "部分运动记录来源还未查全；已记录的训练照常展示，今天暂不生成训练安排。"
+LATE_NOTICE = "这份报告比计划晚发出；为免安排过时，以下只列已记录的事实。"
+SYNC_PENDING_NOTICE = "这次同步没有全部完成；以下只列已记录的事实。"
+FACTS_ONLY_NOTICE = "以下只列已记录的事实。"
+
+
+def facts_only_notice(metadata: dict[str, Any] | None, *, morning: bool) -> str:
+    """One sentence telling the reader why only recorded facts are shown."""
+    metadata = metadata or {}
+    reason = metadata.get("coverage_reason") or (
+        "late_report" if metadata.get("late")
+        else "sync_degraded" if metadata.get("sync_degraded") else None
+    )
+    if reason == "sleep_incomplete":
+        return SLEEP_PENDING_NOTICE
+    if reason == "late_report":
+        return LATE_NOTICE
+    if reason == "sync_degraded":
+        return SYNC_PENDING_NOTICE
+    if morning or reason:
+        return HISTORY_PENDING_NOTICE if morning else "部分运动记录来源还未查全；已记录的训练照常展示，暂不给出建议。"
+    return FACTS_ONLY_NOTICE
+
+
+def version_notice(state: str | None, as_of: Any, zone: str | None) -> str | None:
+    """Explain an older saved version in reading terms; queue states stay in the API."""
+    if state not in {"stale", "queued", "running", "failed"}:
+        return None
+    shown = timestamp_text(as_of, zone, short=True) if as_of else None
+    version = f"下面是截至 {shown} 的数据" if shown and shown != "时间未确认" else "下面是已保存的版本"
+    if state == "failed":
+        return f"{version}；之后同步到的数据这次没有算完。"
+    return f"{version}；之后同步到的数据还没算进来。"
 
 
 SignalStatus = Literal["AVAILABLE", "PARTIAL", "STALE", "UNKNOWN", "INSUFFICIENT"]
@@ -108,7 +140,7 @@ _METRIC_LABELS = {
     "sleep_duration": "睡眠时长", "sleep_score": "设备睡眠评分",
     "deep_sleep": "深睡", "light_sleep": "浅睡", "rem_sleep": "快速眼动睡眠",
     "awake": "夜间清醒", "sleep_awake": "夜间清醒", "sleep_wake_count": "夜间醒来次数",
-    "sleep_regularity": "入睡时刻离散度", "bedtime": "入睡", "wake_time": "醒来",
+    "sleep_regularity": "入睡时间波动", "bedtime": "入睡", "wake_time": "醒来",
     "sleep_efficiency": "睡眠效率", "sleep_hrv": "睡眠 HRV", "hrv": "HRV",
     "oxygen": "夜间血氧中位数", "spo2": "血氧", "spo2_median": "夜间血氧中位数",
     "odi": "设备记录血氧下降频率", "skin_temperature": "皮肤温度",
@@ -830,8 +862,10 @@ def to_public_report_view(value: Any, kind: PublicKind | None = None) -> PublicR
     audit = {key: deepcopy(item) for key, item in (raw.get("metadata") or {}).items() if key in {"profile_revision_used", "input_revision_used", "correction_chain", "supersedes"}}
     summary = []
     if facts_only:
-        reason = metadata.get("coverage_reason")
-        summary = [SLEEP_PENDING_NOTICE if reason == "sleep_incomplete" else HISTORY_PENDING_NOTICE if reason else "仅展示已保存事实。"]
+        summary = [facts_only_notice(metadata, morning=inferred == "morning")]
+    notice = version_notice(state.get("state"), as_of, context.get("timezone"))
+    if notice:
+        summary.append(notice)
     title = "已记录昨夜事实" if inferred == "morning" and facts_only else "已记录本日事实" if inferred in {"daily", "evening"} and facts_only else "已记录周期事实" if facts_only else str(presentation.get("headline") or "已记录数据回顾")
     return PublicReportView(
         analysis_run_id=str(raw.get("analysis_run_id") or ""), analysis={"versions": versions, **audit}, user_id=str(raw.get("user_id") or ""),

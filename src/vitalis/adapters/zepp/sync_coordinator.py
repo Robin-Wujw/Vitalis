@@ -331,6 +331,20 @@ class ZeppSyncCoordinator:
             params={"workout_id": workout.workout_id, "source": workout.vendor_source},
         )
 
+    @classmethod
+    def _sleep_spec(
+        cls, daily_window: FetchWindow, timezone_name: str, ordinal: int,
+    ) -> dict[str, Any]:
+        return cls._spec(
+            "sleep", "sleep", daily_window, health_stream="sleep", ordinal=ordinal,
+            allow_unavailable=True, operation="fetch_band_data",
+            params={
+                "from_date": daily_window.start_day(timezone_name),
+                "to_date": daily_window.end_day(timezone_name),
+                "query_type": "detail",
+            },
+        )
+
     def _manifest(
         self,
         window: FetchWindow,
@@ -340,6 +354,15 @@ class ZeppSyncCoordinator:
         if options.get("workout_only") is True:
             return self._workout_specs(window)
         timezone_name = timezone_name or self._configured_timezone()
+        if options.get("sleep_only") is True:
+            # A morning wake probe asks only for the band summary that carries
+            # last night's sleep; everything else waits for the morning sync.
+            return [
+                self._sleep_spec(daily_window, timezone_name, ordinal)
+                for ordinal, daily_window in enumerate(
+                    self._local_windows(window, timezone_name, 1)
+                )
+            ]
         chunks = self._local_windows(window, timezone_name)
         manifest: list[dict[str, Any]] = []
         ordinal = 0
@@ -354,11 +377,7 @@ class ZeppSyncCoordinator:
                 params={"cursor": start_ts, "end": end_ts, "limit": HEART_RATE_PAGE_LIMIT, "hr_type": 2},
             )); ordinal += 1
             for daily_window in self._local_windows(item, timezone_name, 1):
-                manifest.append(self._spec(
-                    "sleep", "sleep", daily_window, health_stream="sleep", ordinal=ordinal,
-                    allow_unavailable=True, operation="fetch_band_data",
-                    params={"from_date": daily_window.start_day(timezone_name), "to_date": daily_window.end_day(timezone_name), "query_type": "detail"},
-                )); ordinal += 1
+                manifest.append(self._sleep_spec(daily_window, timezone_name, ordinal)); ordinal += 1
             manifest.append(self._spec(
                 "hrv", "hrv", item, health_stream="hrv", ordinal=ordinal,
                 allow_unavailable=True, operation="fetch_hrv",
@@ -479,11 +498,19 @@ class ZeppSyncCoordinator:
         if options.get("source_mode", mode) != mode:
             raise ZeppAuthError("同步请求来源模式与连接器不一致", kind="invalid_request")
         options["source_mode"] = mode
-        for name in ("workout_only", "detail_only"):
+        for name in ("workout_only", "detail_only", "sleep_only"):
             if not isinstance(options.get(name, False), bool):
                 raise ZeppAuthError(f"{name} 必须是布尔值", kind="invalid_request")
         workout_only = options.get("workout_only") is True
         detail_only = options.get("detail_only") is True
+        sleep_only = options.get("sleep_only") is True
+        if sleep_only != (trigger == "morning_probe"):
+            raise ZeppAuthError("仅睡眠同步只用于晨报醒来探测", kind="invalid_request")
+        if sleep_only and any(
+            options.get(name) is True
+            for name in ("workout_only", "detail_only", "detail_backfill", "decode_dense_files")
+        ):
+            raise ZeppAuthError("醒来探测只能同步睡眠", kind="invalid_request")
         if (workout_only or detail_only) and trigger != "manual":
             raise ZeppAuthError("仅运动/明细同步只能用于手动同步", kind="invalid_request")
         if workout_only and detail_only:

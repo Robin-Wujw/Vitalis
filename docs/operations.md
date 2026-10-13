@@ -86,7 +86,7 @@ uv run --locked --extra dev vitalis db restore --backup C:\secure\vitalis-backup
 
 命令会检查 schema、完整性、外键和 sidecar；备份、恢复目标和凭据文件不要放入仓库。restore 不覆盖已有文件，也拒绝把备份直接写回当前配置库。恢复后把 `DATABASE_URL` 指向新库，先运行 `doctor`，再启动服务和 worker。不要用文件复制代替带 WAL/SHM 检查的备份。
 
-生产服务器不长期保留备份：发布前生成的备份在验收通过后删除，服务器只保留当前数据库，见[发布与部署 SOP](deployment.md)。原始响应回放仅在离线隔离环境进行；原始响应使用加密不可变 journal 保存，回放副本和临时生产只读副本放在仓库外的受控目录，回放/等价性验收完成后校验删除，不保留凭据、Cookie、PushPlus 内容或未脱敏个人样例。
+生产服务器不长期保留备份：只有破坏性迁移的发布才在切换前备份，验收通过后删除；服务器只保留当前数据库，见[发布与部署 SOP](deployment.md)。原始响应回放仅在离线隔离环境进行；原始响应使用加密不可变 journal 保存，回放副本和临时生产只读副本放在仓库外的受控目录，回放/等价性验收完成后校验删除，不保留凭据、Cookie、PushPlus 内容或未脱敏个人样例。
 
 开发环境若明确要丢弃一个非当前配置的 `.db`/`.sqlite` 文件，必须使用 `db reset --database PATH --confirm-discard-local-data`；生产环境和当前配置库会被拒绝。
 

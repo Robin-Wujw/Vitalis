@@ -41,8 +41,9 @@ _FACT_TABLES = (
 class SourceReplayAdapter:
     """One transaction per explicitly selected replay projection."""
 
-    def __init__(self, *, session_factory=None):
+    def __init__(self, *, session_factory=None, allow_production: bool = False):
         self.session_factory = session_factory or SessionLocal
+        self.allow_production = allow_production
 
     def replay(self, command: ReplayCommand) -> ReplayResult:
         with self.session_factory() as db:
@@ -59,6 +60,7 @@ class SourceReplayAdapter:
                 dataset = _target_dataset(
                     db, command.target_user_id, origin_kind="journal", origin_user_id=command.source_user_id,
                     origin_source="zepp", origin_source_mode=source_user.source_mode,
+                    allow_production=self.allow_production,
                 )
                 cached = _cached_run(db, dataset, manifest, command.parser_version)
                 if cached is not None:
@@ -101,15 +103,23 @@ def replay_source_records(
     parser_version: str = CURRENT_PARSER_VERSION,
     timezone_name: str = "UTC",
     session_factory=None,
+    allow_production: bool = False,
 ) -> ReplayResult:
-    """CLI composition function; caller supplies explicit independent users."""
+    """CLI composition function; caller supplies explicit independent users.
+
+    ``allow_production`` lets an operator replay into a new independent user
+    of the production database, so a parser fix can be compared and applied
+    (``vitalis.adapters.replay_apply``) without leaving the live store.
+    """
     command = ReplayCommand(
         source_user_id=source_user_id, target_user_id=target_user_id,
         start_date=start_date, end_date=end_date, as_of=as_of,
         journal_ids=tuple(journal_ids) if journal_ids is not None else None,
         parser_version=parser_version, timezone_name=timezone_name,
     )
-    return ReplayService(SourceReplayAdapter(session_factory=session_factory)).replay(command)
+    return ReplayService(SourceReplayAdapter(
+        session_factory=session_factory, allow_production=allow_production,
+    )).replay(command)
 
 
 def replay_fixture(
@@ -157,10 +167,13 @@ def replay_fixture(
             raise ReplayError("source fixture replay transaction failed") from None
 
 
-def _target_dataset(db, user_id, *, origin_kind, origin_user_id, origin_source, origin_source_mode):
+def _target_dataset(
+    db, user_id, *, origin_kind, origin_user_id, origin_source, origin_source_mode,
+    allow_production: bool = False,
+):
     if not isinstance(user_id, str) or not user_id.strip() or len(user_id) > 64:
         raise ReplayError("replay target user is invalid")
-    if settings.env not in {"dev", "test"}:
+    if settings.env not in {"dev", "test"} and not (allow_production and origin_kind == "journal"):
         raise ReplayError("offline replay requires a development or test dataset")
     repo = HealthRepository(db)
     user = db.get(orm.User, user_id)

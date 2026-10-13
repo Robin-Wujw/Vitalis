@@ -182,11 +182,14 @@ def detect_body_signal_warning(
     signals: dict[str, dict],
     *,
     minimum_deviation_percent: float = 10.0,
+    minimum_robust_z: float = 1.5,
 ) -> HealthEvent | None:
     """Return a non-diagnostic warning only when two qualified signals agree.
 
     The caller supplies already-qualified personal-baseline deviations. A single
-    missing, stale, or shadow-only signal cannot trigger the warning.
+    missing, stale, or shadow-only signal cannot trigger the warning.  Signals
+    without a meaningful percentage (a temperature delta near zero) qualify by
+    their robust z-score instead.
     """
     evidence = []
     for metric, item in signals.items():
@@ -195,15 +198,24 @@ def detect_body_signal_warning(
         deviation = item.get("deviation") if isinstance(item.get("deviation"), dict) else item
         direction = deviation.get("direction")
         percent = deviation.get("percent")
-        if direction not in {"above", "below"} or not isinstance(percent, (int, float)):
+        robust_z = deviation.get("robust_z")
+        if direction not in {"above", "below"}:
             continue
-        if abs(float(percent)) < minimum_deviation_percent:
+        if isinstance(percent, (int, float)) and abs(float(percent)) >= minimum_deviation_percent:
+            value, unit = float(percent), "%"
+        elif (
+            not isinstance(percent, (int, float))
+            and isinstance(robust_z, (int, float))
+            and abs(float(robust_z)) >= minimum_robust_z
+        ):
+            value, unit = float(robust_z), "z"
+        else:
             continue
         evidence.append(HealthEventEvidence(
             fact=metric,
             fact_label=METRIC_LABELS.get(metric, metric),
-            value=round(float(percent), 2),
-            unit="%",
+            value=round(value, 2),
+            unit=unit,
         ))
     if len(evidence) < 2:
         return None
@@ -212,11 +224,15 @@ def detect_body_signal_warning(
         for metric, item in signals.items()
         if isinstance(item, dict) and item.get("status") == "AVAILABLE"
     }
-    hrv_down = any(name in directions and directions[name] == "below" for name in ("hrv", "hrv_rmssd", "sleep_hrv"))
-    systemic_up = sum(
-        directions.get(name) == "above"
-        for name in ("resting_hr", "rhr", "respiratory_rate", "skin_temperature", "skin_temperature_delta", "spo2")
+    qualified = {item.fact for item in evidence}
+    hrv_down = any(
+        directions.get(name) == "below" and name in qualified
+        for name in ("hrv", "hrv_rmssd", "sleep_hrv")
     )
+    systemic_up = sum(
+        directions.get(name) == "above" and name in qualified
+        for name in ("resting_hr", "rhr", "respiratory_rate", "skin_temperature", "skin_temperature_delta")
+    ) + int(directions.get("spo2") == "below" and "spo2" in qualified)
     if not ((hrv_down and systemic_up >= 1) or systemic_up >= 2):
         return None
     return _simple_event(

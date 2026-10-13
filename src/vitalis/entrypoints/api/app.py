@@ -18,6 +18,7 @@ from .errors import ERROR_RESPONSES, error_response
 from .routes import (
     connect_router,
     current_router,
+    feedback_router,
     health_router,
     intelligence_router,
     product_router,
@@ -33,6 +34,7 @@ api.include_router(zepp_pairing_router)
 api.include_router(health_router)
 api.include_router(intelligence_router)
 api.include_router(product_router)
+api.include_router(feedback_router)
 
 
 @asynccontextmanager

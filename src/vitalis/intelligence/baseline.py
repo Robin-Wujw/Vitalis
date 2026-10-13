@@ -76,7 +76,7 @@ class BaselineEngine:
             unit=unit,
             window_days=window_days,
             transform=transform,
-            sample_count=sum(1 for point in points if start <= point.day < target_day),
+            sample_count=sum(point.sample_count for point in points if start <= point.day < target_day),
             distinct_days=len(values),
             minimum_days=minimum_days,
             coverage_ratio=round(len(values) / window_days, 4),

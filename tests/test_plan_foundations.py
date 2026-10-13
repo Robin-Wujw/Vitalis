@@ -78,3 +78,11 @@ def test_body_warning_does_not_treat_good_directions_or_partial_data_as_illness(
         "respiratory_rate": {**common, "status": "PARTIAL"},
         "resting_hr": common,
     }) is None
+
+
+def test_analysis_budget_counts_memory_added_by_the_run():
+    from vitalis.application.intelligence_service import analysis_cost
+
+    assert analysis_cost(8.0, 230.0, 110.0)["budget_exceeded"] is None
+    assert analysis_cost(8.0, 300.0, 110.0)["budget_exceeded"] == "memory>150MB"
+    assert analysis_cost(31.0, None)["budget_exceeded"] == "time>30s"

@@ -25,13 +25,13 @@ Mock 生成同构的睡眠、活动、训练和来源元信息，可离线执行
 
 网页登录完成后，当前适配器使用官方页面产生的 `apptoken`、源用户 ID 和允许的区域主机。区域主机必须是 HTTPS 的 `api-mifit*.zepp.com` 或 `api-mifit*.huami.com`，不接受凭据、路径、查询或任意端口。常见中国区域是 `api-mifitcn.zepp.com`；实际区域按账号返回值和配置决定，不要手工猜测其它用户区域。
 
-### 手机登录（未启用）
+### 手机登录
 
-不用插件、在手机上用 Zepp 账号密码连接的登录页（配对会话返回的 `phone_url`）已在代码里，“密码只经过自己的 Vitalis 服务器一次、不保存”的方案已于 2026-10-13 经用户确认，配好公网 HTTPS 入口后启用；生产 API 只在本机监听，在此之前仍按上面的插件流程配对，见[改动计划](plan/zepp-phone-login.md)。
+不用插件、在手机上用 Zepp 账号密码连接：`vitalis connect zepp --user <用户> --push` 生成配对会话的 `phone_url` 并经 PushPlus 发到手机。“密码只经过自己的 Vitalis 服务器一次、不保存”的方案已于 2026-10-13 经用户确认。生产 API 只在本机监听，手机经 ZeroTier 私有网络访问（2026-10-14 用户决定），入口配置见[运维](operations.md)；真实账号在手机上走通前保留浏览器插件，见[改动计划](plan/zepp-phone-login.md)。
 
 手机页按 Zepp `user.zepp.com/universalLogin` 当前生产 JavaScript 使用的两步表单流程：先向 `api-user.huami.com/registrations/{account}/tokens` 换取 `access`，再向 `account.huami.com/v2/client/login` 换取 `app_token`、`login_token` 和 `user_id`。成功必须同时满足第二步 `result=ok` 和三项令牌字段存在；任何未知响应都不会被当作成功。这个 legacy 网页协议不是 Zepp 官方 OAuth API，实际部署仍需目标环境单独验收。
 
-`app_token` 保存为加密 access token，`login_token` 保存为加密 `AuthToken.refresh_token`。当前没有经过验证的 legacy `login_token` 续期协议；不能把标准 OAuth refresh endpoint 套到它上面。令牌失效或续期语义未知时状态必须是 `needs_reauth`，用户回到官方忘记密码/登录页，而不是伪造刷新成功。验证码请求被拒绝，页面只引导到 Zepp 官方重置页。
+`app_token` 保存为加密 access token，`login_token` 保存为加密 `AuthToken.refresh_token`。同步返回需要重新认证时，worker 用 `GET account.huami.com/v1/client/app_tokens?login_token=…` 换新的 `app_token`（Zepp 应用使用的接口，不在公开文档里，尚待真实账号验证）；响应缺令牌或属于别的账号时视为失败，状态保持 `needs_reauth` 并发重新登录链接，不伪造刷新成功。验证码请求被拒绝，页面只引导到 Zepp 官方重置页。
 
 ## 同步与任务
 

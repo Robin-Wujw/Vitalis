@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from vitalis.config import settings
 
-SCHEMA_REVISION = "2026-10-alerts-and-strength-capacity"
+SCHEMA_REVISION = "2026-10-daily-features"
 
 
 class SchemaMismatch(RuntimeError):

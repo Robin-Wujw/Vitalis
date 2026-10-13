@@ -1316,7 +1316,7 @@ class ZeppSyncCoordinator:
         }:
             return
         trigger = attempt.get("trigger")
-        if trigger == "nightly":
+        if trigger in {"nightly", "freshness"}:
             delivery_period = None
         elif trigger in {"morning", "evening", "weekly", "monthly"}:
             delivery_period = trigger

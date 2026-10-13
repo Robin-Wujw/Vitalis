@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 import logging
 from statistics import median
+import sys
 from typing import TYPE_CHECKING
 
 from vitalis.intelligence.contracts import (
@@ -27,6 +28,7 @@ from vitalis.intelligence.contracts import (
 if TYPE_CHECKING:
     from vitalis.adapters.persistence import HealthRepository
 
+from vitalis.domain.features import DAILY_FEATURE_METRICS, DETAIL_DAYS
 from vitalis.time import local_day, local_day_utc_bounds, local_sleep_window, local_timezone
 from .facts import facts_for_day
 from .localization import QUALITY_LABELS, SIGNAL_LABELS, labels
@@ -34,11 +36,29 @@ from .open_health.common import OpenHealthObservation
 from .report_periods import resolve_month_period
 
 
-SAMPLE_METRICS = (
+PROFILE_SAMPLE_METRICS = (
     "hrv_rmssd",
     "hrv_sdnn",
     "spo2",
     "spo2_apnea_low",
+    "readiness",
+    "physical_readiness",
+    "mental_readiness",
+    "hrv_readiness",
+    "rhr_readiness",
+    "skin_temp_readiness",
+    "ahi_readiness",
+    "afib_readiness",
+    "skin_temp_delta",
+    "skin_temp_baseline_delta",
+    "sleep_hrv",
+    "sleep_rhr",
+    "hrv_baseline",
+    "rhr_baseline",
+    "hybrid_charge",
+    "physical_charge",
+    "mental_charge",
+    "stress",
 )
 VENDOR_FUSED_DAILY_METRICS = {
     "sleep_hrv",
@@ -46,14 +66,12 @@ VENDOR_FUSED_DAILY_METRICS = {
     "hrv_baseline",
     "rhr_baseline",
 }
-MAX_SAMPLES_PER_METRIC = 50_000
-MAX_PROFILE_SAMPLE_POINTS = 100_000
 PROFILE_HISTORY_DAYS = 180
 DETAIL_WORKOUTS_PER_FAMILY = 8
 log = logging.getLogger("vitalis.intelligence.profile")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SeriesPoint:
     metric: str
     value: float
@@ -64,6 +82,16 @@ class SeriesPoint:
     source_scope: str
     device_id: str | None = None
     source_field: str | None = None
+    # A daily feature stands for ``sample_count`` samples of one local day;
+    # a single sample leaves the summary fields unset.
+    sample_count: int = 1
+    observed_minutes: int | None = None
+    last_value: float | None = None
+    first_observed_at: datetime | None = None
+
+    @property
+    def is_daily_feature(self) -> bool:
+        return self.observed_minutes is not None
 
 
 @dataclass
@@ -94,7 +122,6 @@ class RawDailyProfile:
     open_health_load_queried_days: list[date] = field(default_factory=list)
     open_health_load_upstream_coverage_verified: bool = False
     open_health_load_truncated: bool = False
-    sample_budget_exhausted: bool = False
     open_health_rhr_by_day: dict[date, float] = field(default_factory=dict)
     open_health_input_failed: bool = False
 
@@ -102,8 +129,18 @@ class RawDailyProfile:
 class ProfileLoader:
     """Build one local identity's profile without cross-user reconciliation."""
 
-    def __init__(self, repo: HealthRepository):
+    def __init__(
+        self,
+        repo: HealthRepository,
+        *,
+        detail_days: int = DETAIL_DAYS,
+        shadow_inputs: bool = False,
+    ):
+        """``shadow_inputs`` adds the open-health inputs the off-peak batch
+        needs; the daily report path leaves them out."""
         self.repo = repo
+        self.detail_days = max(1, detail_days)
+        self.shadow_inputs = shadow_inputs
 
     def load(
         self,
@@ -147,12 +184,13 @@ class ProfileLoader:
         self._add_sample_metrics(raw, start)
         self._add_heart_rate_samples(raw, start)
         self._add_sample_window_summaries(raw)
-        try:
-            self._add_open_health_inputs(raw)
-        except Exception:
-            # Shadow-only inputs must never prevent the core profile from loading.
-            raw.open_health_input_failed = True
-            log.exception("open health input loading failed: user=%s day=%s", user_id, day)
+        if self.shadow_inputs:
+            try:
+                self._add_open_health_inputs(raw)
+            except Exception:
+                # Shadow-only inputs must never prevent the core profile from loading.
+                raw.open_health_input_failed = True
+                log.exception("open health input loading failed: user=%s day=%s", user_id, day)
         self._add_device_context(raw)
         workout_rows = [
             row
@@ -594,36 +632,38 @@ class ProfileLoader:
         end_at = min(end_at - timedelta(microseconds=1), raw.as_of)
         if end_at < start_at:
             return
-        sample_metrics = SAMPLE_METRICS + (
-            "readiness",
-            "physical_readiness",
-            "mental_readiness",
-            "hrv_readiness",
-            "rhr_readiness",
-            "skin_temp_readiness",
-            "ahi_readiness",
-            "afib_readiness",
-            "skin_temp_delta",
-            "skin_temp_baseline_delta",
-            "sleep_hrv",
-            "sleep_rhr",
-            "hrv_baseline",
-            "rhr_baseline",
-            "hybrid_charge",
-            "physical_charge",
-            "mental_charge",
-            "stress",
-        )
-        remaining = MAX_PROFILE_SAMPLE_POINTS
-        for metric in sample_metrics:
-            if remaining <= 0:
-                raw.sample_budget_exhausted = True
-                break
-            limit = min(MAX_SAMPLES_PER_METRIC, remaining)
-            rows = self.repo.metric_samples(
-                raw.user_id, metric, start_at, end_at, limit=limit
-            )
-            for row in rows:
+        # Dense streams read full samples only for the detail days; older
+        # days come from the daily features written with the samples.
+        detail_start = max(start, raw.day - timedelta(days=self.detail_days - 1))
+        detail_start_at, _ = local_day_utc_bounds(detail_start, raw.timezone_name)
+        for metric in PROFILE_SAMPLE_METRICS:
+            sample_start_at = start_at
+            if metric in DAILY_FEATURE_METRICS:
+                sample_start_at = detail_start_at
+                for row in self.repo.daily_features(
+                    raw.user_id, metric, start, detail_start - timedelta(days=1),
+                    timezone_name=raw.timezone_name,
+                ):
+                    raw.series.setdefault(metric, []).append(SeriesPoint(
+                        metric=metric,
+                        value=row.median,
+                        unit=_intern(row.unit),
+                        day=row.day,
+                        observed_at=row.last_observed_at,
+                        source=_intern(row.source),
+                        source_scope=_intern(row.source_scope),
+                        device_id=_intern(row.device_id or None),
+                        source_field=f"sample.{metric}",
+                        sample_count=row.sample_count,
+                        observed_minutes=row.observed_minutes,
+                        last_value=row.last_value,
+                        first_observed_at=row.first_observed_at,
+                    ))
+            if end_at < sample_start_at:
+                continue
+            for row in self.repo.metric_sample_rows(
+                raw.user_id, metric, sample_start_at, end_at
+            ):
                 _append(
                     raw,
                     row.metric,
@@ -637,9 +677,6 @@ class ProfileLoader:
                     positive=False,
                     source_field=f"sample.{row.metric}",
                 )
-            remaining -= len(rows)
-            if remaining <= 0:
-                raw.sample_budget_exhausted = True
 
     def _add_energy_observations(self, raw: RawDailyProfile) -> None:
         """Materialize one canonical daily energy stream plus separate workouts."""
@@ -808,12 +845,12 @@ class ProfileLoader:
             SeriesPoint(
                 metric="heart_rate",
                 value=float(value),
-                unit=unit,
+                unit=_intern(unit),
                 day=local_day(minute, raw.timezone_name),
                 observed_at=minute,
-                source=source,
-                source_scope=source_scope,
-                device_id=device_id,
+                source=_intern(source),
+                source_scope=_intern(source_scope),
+                device_id=_intern(device_id),
             )
             for (minute, source, source_scope, device_id, unit), value
             in sorted(
@@ -850,7 +887,7 @@ class ProfileLoader:
             observed = sorted((point.observed_at for point in points), key=_observed_key)
             coverage.append(Coverage(
                 metric=metric,
-                sample_count=len(points),
+                sample_count=sum(point.sample_count for point in points),
                 distinct_days=len({point.day for point in points}),
                 first_observed_at=observed[0],
                 last_observed_at=observed[-1],
@@ -885,23 +922,6 @@ class ProfileLoader:
                 severity="warning",
                 detail="部分设备级观测值缺少设备标识。",
             ))
-        if raw.sample_budget_exhausted:
-            flags.append(QualityFlag(
-                code="PROFILE_SAMPLE_BUDGET_REACHED",
-                severity="error",
-                detail=(
-                    f"分析样本达到 profile 上限 {MAX_PROFILE_SAMPLE_POINTS} 条；"
-                    "相关趋势和覆盖按部分数据计算。"
-                ),
-            ))
-        for metric, points in raw.series.items():
-            sample_points = [point for point in points if isinstance(point.observed_at, datetime)]
-            if len(sample_points) >= MAX_SAMPLES_PER_METRIC:
-                flags.append(QualityFlag(
-                    code="SAMPLE_LIMIT_REACHED",
-                    severity="error",
-                    detail=f"指标 {metric} 的查询已达到 {MAX_SAMPLES_PER_METRIC} 条样本上限。",
-                ))
         device_ids = sorted({
             point.device_id
             for points in raw.series.values()
@@ -1122,6 +1142,11 @@ def _device_validity(raw: RawDailyProfile, device_id: str) -> DeviceValidity:
     )
 
 
+def _intern(value):
+    """Share the few distinct source/unit/device strings across many points."""
+    return sys.intern(value) if isinstance(value, str) else value
+
+
 def _append(
     raw: RawDailyProfile,
     metric: str,
@@ -1142,15 +1167,15 @@ def _append(
     if positive and numeric <= 0:
         return
     raw.series.setdefault(metric, []).append(SeriesPoint(
-        metric=metric,
+        metric=_intern(metric),
         value=numeric,
-        unit=unit,
+        unit=_intern(unit),
         day=day,
         observed_at=observed_at or day,
-        source=source,
-        source_scope=source_scope,
-        device_id=device_id,
-        source_field=source_field,
+        source=_intern(source),
+        source_scope=_intern(source_scope),
+        device_id=_intern(device_id),
+        source_field=_intern(source_field),
     ))
 
 

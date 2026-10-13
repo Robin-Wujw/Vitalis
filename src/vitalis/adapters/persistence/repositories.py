@@ -36,6 +36,7 @@ from vitalis.domain import (
     WORKOUT_DETAIL_SCHEMA_VERSION,
     WorkoutMetricSample,
 )
+from vitalis.domain.features import DAILY_FEATURE_METRICS, summarize_day
 from vitalis.intelligence.contracts import (
     HealthEvent,
     HealthEventObservation,
@@ -64,7 +65,7 @@ from vitalis.intelligence.contracts import (
     UserProfilePatch,
 )
 
-from vitalis.time import local_day, local_day_utc_bounds
+from vitalis.time import local_day, local_day_utc_bounds, local_timezone
 
 from . import models as orm
 
@@ -922,6 +923,89 @@ class HealthRepository:
         return written
 
     def _save_metric_samples(self, samples: list[MetricSample]) -> tuple[int, set[str]]:
+        result = self._write_metric_samples(samples)
+        # Daily features live in the same transaction as their samples, so a
+        # rolled-back sync never leaves a summary without its source rows.
+        touched = {
+            (sample.user_id, sample.metric, local_day(sample.timestamp))
+            for sample in samples
+            if sample.metric in DAILY_FEATURE_METRICS
+        }
+        for user_id, metric, day in sorted(touched):
+            self.refresh_daily_features(user_id, metric, day)
+        return result
+
+    def refresh_daily_features(
+        self, user_id: str, metric: str, day: date, *, timezone_name: str | None = None,
+    ) -> int:
+        """Recompute one local day of one dense stream from its stored samples."""
+        zone_name = timezone_name or str(local_timezone())
+        start, end = local_day_utc_bounds(day, zone_name)
+        rows = self.db.execute(
+            select(
+                orm.MetricSample.timestamp, orm.MetricSample.value,
+                orm.MetricSample.source, orm.MetricSample.source_scope,
+                orm.MetricSample.device_id, orm.MetricSample.unit,
+            ).where(
+                orm.MetricSample.user_id == user_id,
+                orm.MetricSample.metric == metric,
+                orm.MetricSample.timestamp >= _naive_utc(start),
+                orm.MetricSample.timestamp < _naive_utc(end),
+            )
+        ).all()
+        self.db.execute(delete(orm.DailySignalFeature).where(
+            orm.DailySignalFeature.user_id == user_id,
+            orm.DailySignalFeature.metric == metric,
+            orm.DailySignalFeature.day == day,
+            orm.DailySignalFeature.timezone == zone_name,
+        ))
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        features = summarize_day(metric, day, [tuple(row) for row in rows])
+        for feature in features:
+            self.db.add(orm.DailySignalFeature(
+                user_id=user_id, metric=metric, day=day, timezone=zone_name,
+                source=feature.source, source_scope=feature.source_scope,
+                device_id=feature.device_id, unit=feature.unit,
+                sample_count=feature.sample_count,
+                rejected_count=feature.rejected_count,
+                observed_minutes=feature.observed_minutes, median=feature.median,
+                minimum=feature.minimum, maximum=feature.maximum,
+                last_value=feature.last_value,
+                first_observed_at=feature.first_observed_at,
+                last_observed_at=feature.last_observed_at,
+                updated_at=now,
+            ))
+        self.db.flush()
+        return len(features)
+
+    def daily_features(
+        self, user_id: str, metric: str, start: date, end: date, *, timezone_name: str,
+    ) -> list[orm.DailySignalFeature]:
+        return list(self.db.execute(
+            select(orm.DailySignalFeature).where(
+                orm.DailySignalFeature.user_id == user_id,
+                orm.DailySignalFeature.metric == metric,
+                orm.DailySignalFeature.day.between(start, end),
+                orm.DailySignalFeature.timezone == timezone_name,
+            ).order_by(
+                orm.DailySignalFeature.day, orm.DailySignalFeature.source,
+                orm.DailySignalFeature.source_scope, orm.DailySignalFeature.device_id,
+            )
+        ).scalars())
+
+    def sample_days(self, user_id: str, metric: str, *, timezone_name: str) -> set[date]:
+        """Local days that have at least one stored sample, for feature backfill."""
+        days: set[date] = set()
+        for (timestamp,) in self.db.execute(
+            select(orm.MetricSample.timestamp).where(
+                orm.MetricSample.user_id == user_id,
+                orm.MetricSample.metric == metric,
+            ).execution_options(yield_per=20_000)
+        ):
+            days.add(local_day(timestamp, timezone_name))
+        return days
+
+    def _write_metric_samples(self, samples: list[MetricSample]) -> tuple[int, set[str]]:
         deduplicated: dict[
             tuple[str, str, str, datetime, str, str, str, int], MetricSample
         ] = {}
@@ -1645,6 +1729,32 @@ class HealthRepository:
                     reason="derived training days changed",
                 )
         return written
+
+    def workout_detail_coverage(self, user_id: str, source: str = "zepp") -> dict:
+        """Count workouts with and without stored detail, and recent size skips."""
+        rows = self.db.execute(
+            select(orm.Workout.detail_synced, func.count(), func.min(orm.Workout.started_at))
+            .where(orm.Workout.user_id == user_id, orm.Workout.source == source)
+            .group_by(orm.Workout.detail_synced)
+        ).all()
+        counts = {bool(synced): (count, oldest) for synced, count, oldest in rows}
+        missing, oldest_missing = counts.get(False, (0, None))
+        last_limit = self.db.scalar(
+            select(func.max(orm.SyncChunk.finished_at)).join(
+                orm.SyncAttempt, orm.SyncAttempt.id == orm.SyncChunk.attempt_id,
+            ).where(
+                orm.SyncAttempt.user_id == user_id,
+                orm.SyncChunk.stream == "workout_detail",
+                orm.SyncChunk.error_kind == "resource_limit",
+            )
+        )
+        return {
+            "workouts": missing + counts.get(True, (0, None))[0],
+            "with_detail": counts.get(True, (0, None))[0],
+            "missing_detail": missing,
+            "oldest_missing_started_at": oldest_missing,
+            "last_resource_limit_at": last_limit,
+        }
 
     def pending_workout_details(
         self,
@@ -4125,13 +4235,20 @@ class HealthRepository:
         self.db.flush()
         return row
 
-    def complete_analysis_run(self, run_id: str, status: str, error: str | None = None):
+    def complete_analysis_run(
+        self, run_id: str, status: str, error: str | None = None, *,
+        cost: dict | None = None,
+    ):
         row = self.db.get(orm.AnalysisRun, run_id)
         if row is None:
             raise ValueError("分析运行不存在")
         row.status = status
         row.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         row.error = error[:1024] if error else None
+        if cost:
+            row.compute_seconds = cost.get("compute_seconds")
+            row.peak_rss_mb = cost.get("peak_rss_mb")
+            row.budget_exceeded = cost.get("budget_exceeded")
         self.db.flush()
         return row
 
@@ -4230,6 +4347,68 @@ class HealthRepository:
                 orm.UserProfile.user_id == orm.AnalysisRun.user_id,
             ))
         )
+
+    def create_feedback_link(
+        self, user_id: str, token_digest: str, target_date: date, period: str,
+        *, expires_at: datetime, now: datetime,
+    ) -> orm.FeedbackLink:
+        row = orm.FeedbackLink(
+            id=uuid4().hex, user_id=user_id, token_digest=token_digest,
+            target_date=target_date, period=period,
+            expires_at=_naive_utc(expires_at), created_at=_naive_utc(now),
+        )
+        self.db.add(row)
+        self.db.flush()
+        return row
+
+    def feedback_link(self, token_digest: str) -> orm.FeedbackLink | None:
+        return self.db.execute(select(orm.FeedbackLink).where(
+            orm.FeedbackLink.token_digest == token_digest,
+        )).scalar_one_or_none()
+
+    def claim_feedback_link(self, link_id: str, *, now: datetime) -> bool:
+        """Mark a link used exactly once; False when used or expired."""
+        result = self.db.execute(update(orm.FeedbackLink).where(
+            orm.FeedbackLink.id == link_id,
+            orm.FeedbackLink.used_at.is_(None),
+            orm.FeedbackLink.expires_at > _naive_utc(now),
+        ).values(used_at=_naive_utc(now)))
+        self.db.flush()
+        return bool(result.rowcount)
+
+    def save_shadow_result(
+        self, user_id: str, day: date, kind: str, version: str, payload: dict,
+    ) -> None:
+        row = self.db.execute(select(orm.ShadowResult).where(
+            orm.ShadowResult.user_id == user_id,
+            orm.ShadowResult.day == day,
+            orm.ShadowResult.kind == kind,
+        )).scalar_one_or_none()
+        if row is None:
+            row = orm.ShadowResult(user_id=user_id, day=day, kind=kind)
+            self.db.add(row)
+        row.version = version
+        row.payload = payload
+        row.computed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        self.db.flush()
+
+    def shadow_results(
+        self, user_id: str, kind: str, start: date, end: date,
+    ) -> list[orm.ShadowResult]:
+        return list(self.db.execute(select(orm.ShadowResult).where(
+            orm.ShadowResult.user_id == user_id,
+            orm.ShadowResult.kind == kind,
+            orm.ShadowResult.day.between(start, end),
+        ).order_by(orm.ShadowResult.day)).scalars())
+
+    def latest_shadow_result(
+        self, user_id: str, kind: str, on_or_before: date,
+    ) -> orm.ShadowResult | None:
+        return self.db.execute(select(orm.ShadowResult).where(
+            orm.ShadowResult.user_id == user_id,
+            orm.ShadowResult.kind == kind,
+            orm.ShadowResult.day <= on_or_before,
+        ).order_by(orm.ShadowResult.day.desc())).scalars().first()
 
     def latest_analysis_snapshot(
         self,
@@ -5194,12 +5373,16 @@ class HealthRepository:
         "worker_heartbeat_stale",
         "analysis_failed",
         "provider_rejected",
+        "stream_refetch_queued",
+        "stream_stale",
+        "credential_expired",
     }
     _DELIVERY_ALERT_STATUSES = {"pending", "suppressed", "acknowledged"}
     _DELIVERY_ALERT_PAYLOAD_KEYS = {
         "target_at", "delivery_present", "delivery_status", "cause", "last_seen_at",
         "age_seconds", "stale_after_seconds", "analysis_run_id", "error",
-        "delivery_id", "provider_status",
+        "delivery_id", "provider_status", "stream", "last_sample_at",
+        "expected_interval_seconds", "attempt_id",
     }
 
     @classmethod
@@ -5292,6 +5475,16 @@ class HealthRepository:
                 orm.DeliveryAlertEvent.event_key == event_id,
             )).scalar_one_or_none()
         return row if row is not None and row.user_id == user_id else None
+
+    def delivery_alert_markers(self, user_id: str, prefixes: tuple[str, ...]) -> dict[str, datetime]:
+        """Stored event keys with one of ``prefixes`` and when they were stored."""
+        rows = self.db.execute(select(
+            orm.DeliveryAlertEvent.event_key, orm.DeliveryAlertEvent.observed_at,
+        ).where(
+            orm.DeliveryAlertEvent.user_id == user_id,
+            or_(*(orm.DeliveryAlertEvent.event_key.startswith(prefix) for prefix in prefixes)),
+        )).all()
+        return {key: observed.replace(tzinfo=timezone.utc) for key, observed in rows}
 
     def delivery_alerts(
         self,
@@ -5937,14 +6130,14 @@ class HealthRepository:
         ).with_for_update()).scalar_one_or_none()
         for model in (
             orm.Device, orm.SleepRecord, orm.ActivityRecord, orm.TrainingRecord,
-            orm.MetricSample, orm.DailyMetric, orm.DenseDataFile,
+            orm.MetricSample, orm.DailySignalFeature, orm.ShadowResult, orm.DailyMetric, orm.DenseDataFile,
             orm.WorkoutMetricSample, orm.StrengthExercise, orm.StrengthCorrectionRevision, orm.Workout,
             orm.TrainingPreference,
             orm.UserProfileRevision, orm.UserProfile,
             orm.HealthEventObservation, orm.HealthEventRecord, orm.AnalysisSnapshot,
             orm.RecommendationInstance, orm.AnalysisJob,
             orm.NotificationDelivery, orm.AnalysisRun,
-            orm.FeedbackRequest, orm.SubjectiveFeedback,
+            orm.FeedbackRequest, orm.SubjectiveFeedback, orm.FeedbackLink,
             orm.SyncStreamState,
             orm.ZeppBrowserLink, orm.ZeppPairingSession,
             orm.AccessToken, orm.AuthToken, orm.OAuthState, orm.SourceAccount,

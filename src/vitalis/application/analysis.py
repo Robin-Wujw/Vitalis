@@ -46,7 +46,6 @@ from vitalis.intelligence.events import HealthEventEngine
 from vitalis.intelligence.lifecycle import EventLifecycleEngine
 from vitalis.intelligence.monthly import MonthlyProfileEngine
 from vitalis.intelligence.morning_briefing import MorningBriefingEngine
-from vitalis.intelligence.open_health import OpenHealthEngine
 from vitalis.intelligence.personal import PersonalModelEngine
 from vitalis.intelligence.facts import facts_for_day
 from vitalis.intelligence.profile import RawDailyProfile
@@ -84,7 +83,6 @@ class AnalysisPolicy:
     intelligence_version: str = INTELLIGENCE_VERSION
     decision_policy_version: str = DECISION_POLICY_VERSION
     evidence_version: str = EVIDENCE_VERSION
-    open_health_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -155,39 +153,9 @@ def analyze_with_trace(
         ),
     })
 
+    # Open-health insights are shadow-only and computed by the off-peak batch
+    # (``vitalis.application.shadow_batch``), never on the daily path.
     open_health_bundle = None
-    open_health_failed = raw.open_health_input_failed
-    if policy.open_health_enabled and not raw.open_health_input_failed:
-        try:
-            open_health_engine = OpenHealthEngine()
-            open_health_bundle = open_health_engine.analyze(
-                raw.open_health_observations,
-                raw.user_profile,
-                target_date=request.target_date,
-            )
-            open_health_load = open_health_engine.analyze_load(
-                raw.open_health_load_workouts,
-                raw.user_profile,
-                target_date=request.target_date,
-                period_start=request.target_date - timedelta(days=41),
-                queried_days=raw.open_health_load_queried_days,
-                rhr_by_day=raw.open_health_rhr_by_day,
-                upstream_coverage_verified=raw.open_health_load_upstream_coverage_verified,
-                input_truncated=raw.open_health_load_truncated,
-                timezone_name=policy.timezone,
-            )
-            open_health_bundle = open_health_bundle.model_copy(
-                update={"training_load": open_health_load}
-            )
-        except Exception:
-            # Shadow-only calculations never change the core report or raise.
-            open_health_failed = True
-    if open_health_bundle is not None:
-        daily = daily.model_copy(update={"open_health_insights": open_health_bundle})
-    elif open_health_failed:
-        metadata = dict(daily.metadata)
-        metadata["open_health_status"] = "REFUSED_INTERNAL_ERROR"
-        daily = daily.model_copy(update={"metadata": metadata})
 
     response_feedback = list(dataset.response_feedback)
     training_responses = TrainingResponseEngine().build(

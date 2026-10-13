@@ -2,8 +2,10 @@
 
 from datetime import date, datetime, timedelta, timezone
 import hashlib
+import logging
 import json
 from typing import Callable
+from time import perf_counter
 from uuid import uuid4
 
 from vitalis.application.analysis import (
@@ -45,6 +47,7 @@ from vitalis.intelligence.contracts import (
     HealthTimeline,
     MonthlyProfile,
     MorningBriefing,
+    OpenHealthBundle,
     PersonalModel,
     PersonalAssociationProfile,
     RecommendationInstance,
@@ -67,6 +70,9 @@ from vitalis.intelligence.morning_briefing import MorningBriefingEngine
 from vitalis.intelligence.profile import ProfileLoader
 from vitalis.intelligence.strength import normalize_exercise
 from vitalis.intelligence.timeline import HealthTimelineEngine
+from vitalis.resource_usage import current_rss_mb, peak_rss_mb, reset_peak_rss
+
+log = logging.getLogger("vitalis.analysis")
 
 
 class AnalysisInputChangedError(RuntimeError):
@@ -101,6 +107,35 @@ def _feedback_request_hash(feedback_input: SubjectiveFeedbackInput) -> str:
         allow_nan=False,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+DAILY_ANALYSIS_BUDGET_SECONDS = 30.0
+DAILY_ANALYSIS_BUDGET_MB = 150.0
+
+
+def analysis_cost(seconds: float, peak_mb: float | None, start_mb: float | None = None) -> dict:
+    """Record one run's cost and name each daily-path budget it exceeded.
+
+    ``peak_rss_mb`` is the process peak during the run; the memory budget
+    applies to what the analysis added over the resident size at its start,
+    so a larger long-lived worker does not count against the analysis.
+    """
+    exceeded = []
+    if seconds > DAILY_ANALYSIS_BUDGET_SECONDS:
+        exceeded.append(f"time>{DAILY_ANALYSIS_BUDGET_SECONDS:g}s")
+    added = peak_mb - start_mb if peak_mb is not None and start_mb is not None else peak_mb
+    if added is not None and added > DAILY_ANALYSIS_BUDGET_MB:
+        exceeded.append(f"memory>{DAILY_ANALYSIS_BUDGET_MB:g}MB")
+    if exceeded:
+        log.warning(
+            "daily analysis over budget: %s (%.1fs, peak %s MB)",
+            ",".join(exceeded), seconds, peak_mb,
+        )
+    return {
+        "compute_seconds": round(seconds, 2),
+        "peak_rss_mb": peak_mb,
+        "budget_exceeded": ",".join(exceeded) or None,
+    }
 
 
 class IntelligenceCommand:
@@ -142,6 +177,9 @@ class IntelligenceCommand:
             status=AnalysisRunStatus.RUNNING,
             started_at=self._now_factory(),
         )
+        clock_start = perf_counter()
+        reset_peak_rss()
+        start_rss = current_rss_mb()
         try:
             with self._uow_factory() as uow:
                 repo = uow.repository
@@ -215,6 +253,12 @@ class IntelligenceCommand:
                     if self._product_context_factory is not None
                     else {}
                 )
+                model_row = repo.latest_shadow_result(user_id, "response_model", target)
+                tracking_row = repo.latest_shadow_result(user_id, "tracking", target)
+                prediction_quality = {
+                    "response_model": model_row.payload if model_row is not None else None,
+                    "tracking": tracking_row.payload if tracking_row is not None else None,
+                }
 
             trace = analyze_with_trace(
                 AnalysisDataset(
@@ -228,7 +272,7 @@ class IntelligenceCommand:
                     product_contexts={
                         "daily": product_context,
                         "weekly": product_context,
-                        "monthly": product_context,
+                        "monthly": {**product_context, "prediction_quality": prediction_quality},
                     },
                 ),
                 AnalysisRequest(
@@ -349,7 +393,10 @@ class IntelligenceCommand:
                         user_id, target, run.id,
                         input_revision=run.input_revision_used,
                     )
-                row = repo.complete_analysis_run(run.id, AnalysisRunStatus.SUCCEEDED.value)
+                row = repo.complete_analysis_run(
+                    run.id, AnalysisRunStatus.SUCCEEDED.value,
+                    cost=analysis_cost(perf_counter() - clock_start, peak_rss_mb(), start_rss),
+                )
                 for delivery_period in ("morning", "evening"):
                     repo.rearm_unavailable_notification_deliveries(
                         user_id,
@@ -397,7 +444,8 @@ class IntelligenceCommand:
                         else "analysis_failed"
                     )
                     repo.complete_analysis_run(
-                        run.id, AnalysisRunStatus.FAILED.value, safe_error
+                        run.id, AnalysisRunStatus.FAILED.value, safe_error,
+                        cost=analysis_cost(perf_counter() - clock_start, peak_rss_mb(), start_rss),
                     )
                     uow.commit()
             raise
@@ -675,6 +723,13 @@ class IntelligenceQuery:
             daily = DailyProfile.model_validate(daily_row.payload)
             weekly = WeeklyProfile.model_validate(weekly_row.payload)
             personal_model = PersonalModel.model_validate(model_row.payload)
+            # Open-health insights come from the off-peak shadow batch; the
+            # context marks them stale when they are not for this day.
+            shadow_row = repo.latest_shadow_result(user_id, "open_health", target)
+            if shadow_row is not None:
+                daily = daily.model_copy(update={
+                    "open_health_insights": OpenHealthBundle.model_validate(shadow_row.payload),
+                })
             weekly_period = resolve_week_period(target)
             feedback = repo.subjective_feedback(
                 user_id, weekly_period.start, weekly_period.end

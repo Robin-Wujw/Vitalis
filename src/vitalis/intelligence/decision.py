@@ -295,6 +295,9 @@ class DecisionEngine:
         primary, optional, relationship = self._sessions(
             day, primary_type, intensity, training, preferences, balance, conflicts
         )
+        primary, optional, relationship = self._apply_weekly_load(
+            training.weekly_load, preferences, primary, optional, relationship
+        )
         rule = {
             DecisionAction.TRAIN_HARD: "DECISION.CONCURRENT_GOOD_RECOVERY",
             DecisionAction.TRAIN_NORMAL: "DECISION.CONCURRENT_BALANCE",
@@ -793,6 +796,30 @@ class DecisionEngine:
             progression=["本次完成轻松且次日恢复正常时，下次只增加时长或强度其中一项。"],
             stop_conditions=["出现胸痛、异常气短、头晕、步态改变或持续疼痛时立即停止。"],
         )
+
+    def _apply_weekly_load(self, weekly, preferences, primary, optional, relationship):
+        """Size today's session from what is left of this week's load target."""
+        if weekly is None or primary is None:
+            return primary, optional, relationship
+        if weekly.status == "OVER" and primary.session_type in {"RUNNING", "STRENGTH"}:
+            recovery = self._recovery(preferences, "本周负荷已超过目标")
+            recovery.personalization_reasons.append(weekly.reason)
+            return recovery, None, "NONE"
+        if (
+            primary.session_type == "RUNNING"
+            and primary.intensity != "high"
+            and weekly.today_minutes is not None
+        ):
+            cap = preferences.max_session_minutes or 90
+            low = max(20, min(cap, int(round(weekly.today_minutes * 0.9))))
+            high = max(low, min(cap, int(round(weekly.today_minutes * 1.1))))
+            primary.total_duration_minutes = (low, high)
+            if len(primary.steps) == 3:
+                main = primary.steps[1]
+                primary.steps = self._continuous_run_steps((low, high), main.name, main.intensity or "", None)
+                primary.steps[1].instructions = list(main.instructions)
+        primary.personalization_reasons.append(weekly.reason)
+        return primary, optional, relationship
 
     @staticmethod
     def _easy_zone(threshold: float | None, recovery: bool = False) -> str:

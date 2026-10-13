@@ -319,10 +319,13 @@ class ConnectionService:
             raise
         return user_id, token, attempt
 
-    def create_pairing(self, user_id: str, sync_days: int = INITIAL_SYNC_DAYS) -> dict:
+    def create_pairing(
+        self, user_id: str, sync_days: int = INITIAL_SYNC_DAYS, *, ttl_minutes: int | None = None,
+    ) -> dict:
         sync_days = self._sync_days(sync_days)
         pairing_id = secrets.token_urlsafe(24)
-        expires_at = self._now() + timedelta(minutes=max(1, self.pairing_ttl_minutes))
+        ttl = ttl_minutes if ttl_minutes is not None else self.pairing_ttl_minutes
+        expires_at = self._now() + timedelta(minutes=max(1, min(ttl, 1440)))
         with self._unit_of_work_factory() as unit_of_work:
             unit_of_work.repository.create_pairing_session(
                 pairing_id, user_id, expires_at, sync_days
@@ -511,6 +514,33 @@ class ConnectionService:
             "sync_status": "queued" if attempt_id else None,
             "progress_url": "/api/connect/zepp/progress",
         }
+
+    def refresh_login(self, user_id: str, login_provider: Any) -> str | None:
+        """Renew a saved phone-login credential and queue a sync with it."""
+        claim = self._claim_source(user_id)
+        with self._unit_of_work_factory() as unit_of_work:
+            current = unit_of_work.repository.get_token(user_id, self.source)
+        if current is None:
+            raise ConnectionOperationError("没有已保存的 Zepp 凭据", kind="not_found")
+        try:
+            result = login_provider.refresh(current)
+        except Exception as exc:
+            raise self._provider_error(exc, fallback="Zepp 续期失败，请重新登录") from None
+        token = result.to_auth_token(user_id)
+        with self._unit_of_work_factory() as unit_of_work:
+            repository = unit_of_work.repository
+            repository.save_token(
+                token,
+                allow_create_user=False,
+                allow_reactivate=True,
+                expected_account_id=claim.account_id,
+                expected_fence_epoch=claim.fence_epoch,
+            )
+            attempt = self._attempt(
+                repository, user_id, days=2, trigger="manual", trigger_ref=f"token-refresh-{secrets.token_hex(8)}",
+            )
+            unit_of_work.commit()
+        return self._attempt_id(attempt)
 
     def submit_pairing(self, pairing_id: str, raw_cookie: str) -> dict:
         claim = self.claim_pairing(pairing_id)

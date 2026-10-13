@@ -35,9 +35,10 @@ def attach_report_context(
         if period_start <= response.exposure.date <= period_end
     ]
     selected_feedback = [item for item in feedback if period_start <= item.date <= period_end]
+    prediction_quality = product_context.get("prediction_quality")
     product = calculate_progress(
-        {**dict(product_context), "user_id": raw.user_id, "day": period_end,
-         "observed_as_of": raw.as_of},
+        {**{key: value for key, value in product_context.items() if key != "prediction_quality"},
+         "user_id": raw.user_id, "day": period_end, "observed_as_of": raw.as_of},
         raw.series,
     ).as_dict()
     events = []
@@ -69,5 +70,6 @@ def attach_report_context(
         "training_response_summary": summary,
         "personal_associations": [item.model_dump(mode="json") for item in associations],
         "product_summary": product,
+        **({"prediction_quality": prediction_quality} if prediction_quality is not None else {}),
     }
     return profile.model_copy(update={"report_context": context})

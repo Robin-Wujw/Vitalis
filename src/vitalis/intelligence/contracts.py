@@ -981,6 +981,35 @@ class TrainingStatusFeatures(BaseModel):
     limitations: list[str] = Field(default_factory=list)
 
 
+class WeeklyLoadPlan(BaseModel):
+    """This calendar week's load target, progress and today's share.
+
+    Loads are the vendor training-load index summed per local day.  The target
+    follows the last four complete weeks; unknown days keep the plan absent
+    rather than counting as rest.
+    """
+
+    week_start: date
+    week_end: date
+    target_load: float = Field(ge=0)
+    chronic_weekly_load: float = Field(ge=0)
+    done_load: float = Field(ge=0)
+    today_load: float | None = Field(default=None, ge=0)
+    remaining_load: float = Field(ge=0)
+    progress_ratio: float = Field(ge=0)
+    days_left: int = Field(ge=0)
+    sessions_left: int = Field(ge=0)
+    status: Literal["WEEK_START", "ON_TRACK", "CATCH_UP", "OVER"]
+    status_label: str
+    acute_chronic_ratio: float | None = None
+    load_tier: Literal["BUILDING", "MAINTAINING", "EXCESSIVE"] | None = None
+    load_tier_label: str | None = None
+    today_target_load: float | None = Field(default=None, ge=0)
+    today_minutes: int | None = Field(default=None, ge=0)
+    load_per_minute: float | None = Field(default=None, gt=0)
+    reason: str
+
+
 class TrainingFeatures(BaseModel):
     status: Availability
     status_label: str = ""
@@ -1003,6 +1032,7 @@ class TrainingFeatures(BaseModel):
     running: RunningAnalysis | None = None
     strength: StrengthAnalysis | None = None
     training_status: TrainingStatusFeatures | None = None
+    weekly_load: WeeklyLoadPlan | None = None
     load_deviation: Deviation | None = None
     load_state: LoadState = LoadState.INSUFFICIENT_DATA
     load_state_label: str = ""

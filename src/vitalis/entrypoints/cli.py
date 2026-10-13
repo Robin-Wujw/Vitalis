@@ -366,7 +366,8 @@ def _replay_fixture_command(path: Path, target_user_id: str, parser_version: str
 
 
 def _replay_source_journal_command(args: argparse.Namespace) -> None:
-    _require_offline_replay_environment()
+    if not args.allow_production:
+        _require_offline_replay_environment()
     from vitalis.adapters.replay import replay_source_records
     from vitalis.adapters.persistence.source_journal import CURRENT_PARSER_VERSION
 
@@ -384,8 +385,32 @@ def _replay_source_journal_command(args: argparse.Namespace) -> None:
         journal_ids=args.journal_ids,
         parser_version=args.parser_version or CURRENT_PARSER_VERSION,
         timezone_name=args.timezone,
+        allow_production=args.allow_production,
     )
     print(json.dumps(result.as_dict(), ensure_ascii=False))
+
+
+def _replay_apply_command(args: argparse.Namespace) -> dict:
+    from vitalis.adapters import replay_apply
+    from vitalis.adapters.persistence import session_scope
+    from vitalis.adapters.persistence.database import check_schema
+
+    check_schema()
+    with session_scope() as db:
+        if args.replay_command == "undo":
+            if not args.confirm:
+                raise ValueError("undo rewrites user facts; pass --confirm")
+            return replay_apply.undo(db, args.application)
+        start, end = date.fromisoformat(args.start_date), date.fromisoformat(args.end_date)
+        if args.replay_command == "diff":
+            return replay_apply.diff(
+                db, args.source_user_id, args.replay_user_id, start, end, timezone_name=args.timezone,
+            )
+        if not args.confirm:
+            raise ValueError("apply rewrites user facts; review `replay diff`, then pass --confirm")
+        return replay_apply.apply(
+            db, args.source_user_id, args.replay_user_id, start, end, timezone_name=args.timezone,
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -428,6 +453,42 @@ def main(argv: list[str] | None = None) -> int:
     restore = db_commands.add_parser("restore", help="Restore a current backup to a new SQLite database")
     restore.add_argument("--backup", type=Path, required=True)
     restore.add_argument("--database", type=Path, required=True)
+    db_commands.add_parser(
+        "rebuild-features",
+        help="Recompute daily features of dense sample streams from stored samples",
+    )
+    connect = subcommands.add_parser("connect", help="Create a phone login link for a data source")
+    connect.add_argument("source", choices=("zepp",))
+    connect.add_argument("--user", required=True)
+    connect.add_argument("--minutes", type=int, default=60, help="Link lifetime, up to 1440")
+    connect.add_argument("--push", action="store_true", help="Also send the link through PushPlus")
+    wake = subcommands.add_parser("wake-check", help="Review how soon morning reports followed waking")
+    wake.add_argument("--user", required=True)
+    wake.add_argument("--days", type=int, default=7)
+    wake.add_argument("--end", help="Last local date in YYYY-MM-DD format (default: today)")
+    sync = subcommands.add_parser("sync", help="Operator synchronization tasks")
+    sync_commands = sync.add_subparsers(dest="sync_command", required=True)
+    details = sync_commands.add_parser(
+        "details",
+        help="Fetch missing workout details in bounded attempts until none remain",
+    )
+    details.add_argument("--user", required=True)
+    details.add_argument("--days", type=int, default=730)
+    details.add_argument("--max-attempts", type=int, default=60)
+    details.add_argument("--attempt-timeout", type=int, default=900, help="Seconds to wait per attempt")
+    shadow = subcommands.add_parser("shadow", help="Run or summarize off-peak shadow analysis")
+    shadow_commands = shadow.add_subparsers(dest="shadow_command", required=True)
+    shadow_run = shadow_commands.add_parser("run", help="Compute shadow results for one closed day")
+    shadow_run.add_argument("--day", help="Last local date in YYYY-MM-DD format (default: yesterday)")
+    shadow_run.add_argument(
+        "--days", type=int, default=1,
+        help="Replay the shadow modules over this many days ending at --day",
+    )
+    shadow_report = shadow_commands.add_parser("report", help="Summarize a shadow period as JSON")
+    shadow_report.add_argument("kind", choices=("readiness", "body_signal"))
+    shadow_report.add_argument("--user", required=True)
+    shadow_report.add_argument("--days", type=int, default=14)
+    shadow_report.add_argument("--end", help="Last local date in YYYY-MM-DD format (default: yesterday)")
     demo = subcommands.add_parser("demo", help="Create synthetic data in a new SQLite database")
     demo.add_argument("--database", type=Path, required=True)
     demo.add_argument("--day", help="Local date in YYYY-MM-DD format")
@@ -458,6 +519,25 @@ def main(argv: list[str] | None = None) -> int:
     journal_replay.add_argument("--timezone", default="UTC")
     journal_replay.add_argument("--journal-id", "--journal-ids", dest="journal_ids", action="append")
     journal_replay.add_argument("--parser-version")
+    journal_replay.add_argument(
+        "--allow-production", action="store_true",
+        help="Replay into a new independent user of a production database",
+    )
+    for name, help_text in (
+        ("diff", "List fact differences between a source user and its replay user"),
+        ("apply", "Replace a source user's window facts with its replay user's facts"),
+    ):
+        command = replay_commands.add_parser(name, help=help_text)
+        command.add_argument("--source-user", dest="source_user_id", required=True)
+        command.add_argument("--replay-user", dest="replay_user_id", required=True)
+        command.add_argument("--start-date", "--start", dest="start_date", required=True)
+        command.add_argument("--end-date", "--end", dest="end_date", required=True)
+        command.add_argument("--timezone", default=settings.timezone)
+        if name == "apply":
+            command.add_argument("--confirm", action="store_true")
+    undo_replay = replay_commands.add_parser("undo", help="Restore the facts a replay application replaced")
+    undo_replay.add_argument("--application", required=True)
+    undo_replay.add_argument("--confirm", action="store_true")
     args = parser.parse_args(argv)
     try:
         if args.command == "serve":
@@ -498,8 +578,18 @@ def main(argv: list[str] | None = None) -> int:
                 print("development database reset")
             elif args.db_command == "backup":
                 _backup(args.output)
+            elif args.db_command == "rebuild-features":
+                print(json.dumps(_rebuild_features(), ensure_ascii=False))
             else:
                 _restore(args.backup, args.database)
+        elif args.command == "connect":
+            print(json.dumps(_connect_link(args), ensure_ascii=False))
+        elif args.command == "wake-check":
+            print(json.dumps(_wake_check(args), ensure_ascii=False, indent=2))
+        elif args.command == "sync":
+            print(json.dumps(_sync_details(args), ensure_ascii=False))
+        elif args.command == "shadow":
+            print(json.dumps(_shadow_command(args), ensure_ascii=False, indent=2))
         elif args.command == "demo":
             _demo(args.database, args.day)
         elif args.command == "report":
@@ -512,12 +602,165 @@ def main(argv: list[str] | None = None) -> int:
                 if path is None:
                     raise ValueError("replay fixture requires --input PATH")
                 _replay_fixture_command(path, args.target_user_id, args.parser_version)
+            elif args.replay_command in {"diff", "apply", "undo"}:
+                print(json.dumps(_replay_apply_command(args), ensure_ascii=False, indent=2, default=str))
             else:
                 _replay_source_journal_command(args)
     except (ValueError, RuntimeError, OSError) as exc:
         print(f"vitalis: {exc}", file=sys.stderr)
         return 1
     return 0
+
+
+def _wake_check(args) -> dict:
+    from vitalis.adapters.persistence import HealthRepository, session_scope
+    from vitalis.adapters.persistence.database import check_schema
+    from vitalis.application.wake_check import collect, summarize
+    from vitalis.time import local_today
+
+    check_schema()
+    end = date.fromisoformat(args.end) if args.end else local_today()
+    with session_scope() as db:
+        days = collect(HealthRepository(db), args.user, end, max(1, args.days))
+    return summarize(
+        days, timezone_name=settings.timezone,
+        poll_interval_seconds=settings.morning_wake_poll_interval_seconds,
+        window_end=settings.morning_wake_window()[1],
+    )
+
+
+def _connect_link(args) -> dict:
+    """Pairing link for the phone login page; the password never touches the CLI."""
+    from vitalis.adapters.persistence.database import check_schema
+    from vitalis.bootstrap import get_connection_service
+
+    check_schema()
+    if not settings.public_url:
+        raise ValueError("VITALIS_PUBLIC_URL is not configured; the phone cannot reach the login page")
+    pairing = get_connection_service().create_pairing(args.user, ttl_minutes=args.minutes)
+    url = f"{settings.public_url}{pairing['phone_url']}"
+    if args.push:
+        from vitalis.adapters.notifications import PushMessage, PushService
+
+        PushService().push(PushMessage(
+            title="Vitalis · 连接 Zepp",
+            body=f"用手机打开下面的链接，输入 Zepp 账号和密码完成连接：\n\n[连接 Zepp]({url})\n",
+            user_id=args.user,
+        ))
+    return {"phone_url": url, "expires_at": pairing["expires_at"], "pushed": bool(args.push)}
+
+
+def _sync_details(args) -> dict:
+    """Queue detail-only attempts for the running worker and wait for each.
+
+    Every attempt fetches at most four details; progress is the drop in
+    ``missing_detail``.  Stops when nothing is missing or an attempt makes no
+    progress.
+    """
+    import time
+    from uuid import uuid4
+
+    from vitalis.adapters.persistence import HealthRepository, session_scope
+    from vitalis.adapters.persistence.database import check_schema
+    from vitalis.bootstrap import get_connector
+
+    check_schema()
+    connector = get_connector("zepp")
+
+    def coverage() -> dict:
+        with session_scope() as db:
+            return HealthRepository(db).workout_detail_coverage(args.user)
+
+    before = coverage()
+    attempts = []
+    for _ in range(max(1, args.max_attempts)):
+        missing = coverage()["missing_detail"]
+        if missing == 0:
+            break
+        attempt = connector.create_attempt(
+            args.user, days=min(max(args.days, 1), 730), trigger="manual",
+            trigger_ref=f"cli-details-{uuid4().hex}", detail_only=True,
+        )
+        if attempt is None:
+            break
+        deadline = time.monotonic() + max(60, args.attempt_timeout)
+        status = "queued"
+        while time.monotonic() < deadline:
+            with session_scope() as db:
+                row = HealthRepository(db).sync_attempt(attempt.id)
+                status = row.status if row is not None else "missing"
+            if status not in {"queued", "running", "retry_wait"}:
+                break
+            time.sleep(5)
+        after = coverage()["missing_detail"]
+        attempts.append({"attempt_id": attempt.id, "status": status, "missing_after": after})
+        print(json.dumps(attempts[-1], ensure_ascii=False), file=sys.stderr, flush=True)
+        if after >= missing:
+            break
+    final = coverage()
+    return {
+        "before_missing": before["missing_detail"],
+        "after_missing": final["missing_detail"],
+        "attempts": len(attempts),
+        "last_resource_limit_at": (
+            final["last_resource_limit_at"].isoformat()
+            if final["last_resource_limit_at"] else None
+        ),
+    }
+
+
+def _shadow_command(args) -> dict:
+    from datetime import date, timedelta
+
+    from vitalis.adapters.persistence import HealthRepository, session_scope
+    from vitalis.adapters.persistence.database import check_schema
+    from vitalis.time import local_today
+
+    check_schema()
+    if args.shadow_command == "run":
+        from vitalis.scheduler.jobs import shadow_batch_job
+
+        end = date.fromisoformat(args.day) if args.day else local_today() - timedelta(days=1)
+        days = [end - timedelta(days=offset) for offset in range(max(1, args.days) - 1, -1, -1)]
+        return {"days": len(days), "user_runs": sum(shadow_batch_job(day) for day in days)}
+    from vitalis.application.shadow_batch import shadow_report
+
+    end = date.fromisoformat(args.end) if args.end else local_today() - timedelta(days=1)
+    start = end - timedelta(days=max(1, args.days) - 1)
+    with session_scope() as db:
+        rows = [
+            (row.day, row.payload)
+            for row in HealthRepository(db).shadow_results(args.user, args.kind, start, end)
+        ]
+    return shadow_report(args.kind, rows)
+
+
+def _rebuild_features() -> dict:
+    """Backfill every user's daily features, one committed day at a time."""
+    from vitalis.adapters.persistence import HealthRepository, session_scope
+    from vitalis.adapters.persistence import models as orm
+    from vitalis.adapters.persistence.database import check_schema
+    from vitalis.domain.features import DAILY_FEATURE_METRICS
+    from vitalis.time import local_timezone
+
+    check_schema()
+    zone = str(local_timezone())
+    with session_scope() as db:
+        users = [row[0] for row in db.query(orm.User.id).all()]
+    days = rows = 0
+    for user_id in users:
+        for metric in DAILY_FEATURE_METRICS:
+            with session_scope() as db:
+                metric_days = sorted(HealthRepository(db).sample_days(
+                    user_id, metric, timezone_name=zone,
+                ))
+            for day in metric_days:
+                with session_scope() as db:
+                    rows += HealthRepository(db).refresh_daily_features(
+                        user_id, metric, day, timezone_name=zone,
+                    )
+                days += 1
+    return {"users": len(users), "metric_days": days, "feature_rows": rows, "timezone": zone}
 
 
 if __name__ == "__main__":

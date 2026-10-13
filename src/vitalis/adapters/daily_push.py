@@ -113,6 +113,19 @@ def run_daily_push(
 
 
 
+def _feedback_url(user_id: str, day: date, period: str, retrospective: bool) -> str | None:
+    """Issue a one-time feedback link when the API has a reachable address."""
+    if not settings.public_url or retrospective or period not in {"morning", "evening"}:
+        return None
+    from vitalis.bootstrap import get_feedback_link_service
+
+    try:
+        token = get_feedback_link_service().issue(user_id, day, period)
+    except Exception:  # noqa: BLE001 - a missing link must not block the report
+        return None
+    return f"{settings.public_url}/api/feedback/{token}"
+
+
 def deliver_daily_report(
     user_id: str,
     pushplus_token: str,
@@ -215,6 +228,7 @@ def deliver_daily_report(
             pushplus_token=pushplus_token,
             pushplus_access_key=getattr(settings, "pushplus_access_key", ""),
             send_attempt_id=claim.get("send_attempt_id") if claim else send_attempt_id,
+            feedback_url=_feedback_url(user_id, current_date, period, retrospective),
         )
     except TypeError:
         service = PushService(pushplus_token=pushplus_token)

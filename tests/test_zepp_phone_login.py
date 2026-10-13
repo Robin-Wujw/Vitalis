@@ -230,3 +230,90 @@ def test_phone_login_validation_does_not_echo_password(client):
     assert response.status_code == 422
     assert secret not in response.text
     assert "input" not in response.text
+
+
+def _saved_token(**changes):
+    values = dict(
+        user_id="local-synthetic", source="zepp", access_token="old-app-token",
+        refresh_token="synthetic-login-token", source_user_id="vendor-synthetic-1",
+        region_host="api-mifitcn.zepp.com",
+    )
+    values.update(changes)
+    return AuthToken(**values)
+
+
+def test_login_token_renews_the_app_token_for_the_same_vendor_user():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET" and request.url.path == "/v1/client/app_tokens"
+        assert request.url.params["login_token"] == "synthetic-login-token"
+        return httpx.Response(200, json={"token_info": {
+            "app_token": "new-app-token", "user_id": "vendor-synthetic-1",
+        }}, request=request)
+
+    with _adapter(handler) as adapter:
+        result = adapter.refresh(_saved_token())
+    auth = result.to_auth_token("local-synthetic")
+    assert auth.access_token == "new-app-token"
+    assert auth.refresh_token == "synthetic-login-token"
+    assert auth.region_host == "api-mifitcn.zepp.com"
+
+
+def test_renewal_for_another_vendor_user_asks_for_a_new_login():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"token_info": {
+            "app_token": "new-app-token", "user_id": "someone-else",
+        }}, request=request)
+
+    with _adapter(handler) as adapter, pytest.raises(ZeppLoginError) as caught:
+        adapter.refresh(_saved_token())
+    assert caught.value.failure_code == "reauth_required"
+
+
+def test_plain_http_is_allowed_only_for_a_private_network_address():
+    assert connect._private_origin("10.217.48.211") is True
+    assert connect._private_origin("192.168.1.5") is True
+    assert connect._private_origin("45.62.172.81") is False
+    assert connect._private_origin("127.0.0.1") is False
+    assert connect._private_origin("vitalis.example.com") is False
+
+
+def test_expired_credential_without_renewal_sends_one_relogin_link_per_day(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from vitalis.adapters import notifications
+    from vitalis.config import settings
+    from vitalis.scheduler import jobs
+
+    user_id = "relogin-synthetic"
+    with session_scope() as db:
+        HealthRepository(db).upsert_user(user_id)
+    sent = []
+
+    class Repo:
+        def __init__(self, _db):
+            self._real = HealthRepository(_db)
+
+        def sync_attempts(self, *_args, **_kwargs):
+            return [SimpleNamespace(status="needs_reauth")]
+
+        def get_token(self, *_args):
+            return _saved_token(refresh_token="")
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    class Service:
+        def create_pairing(self, user, ttl_minutes):
+            assert ttl_minutes == 24 * 60
+            return {"phone_url": "/api/connect/zepp/phone?code=synthetic"}
+
+    monkeypatch.setattr("vitalis.adapters.persistence.HealthRepository", Repo)
+    monkeypatch.setattr(jobs, "_get_authorized_users", lambda: {user_id})
+    monkeypatch.setattr("vitalis.bootstrap.get_connection_service", lambda: Service())
+    monkeypatch.setattr(settings, "public_url", "http://10.217.48.211")
+    monkeypatch.setattr(notifications.PushService, "push", lambda self, message: sent.append(message) or {})
+    now = datetime(2026, 10, 14, 2, tzinfo=timezone.utc)
+    assert jobs.reauth_job(now) == 1
+    assert jobs.reauth_job(now + timedelta(hours=1)) == 0
+    assert len(sent) == 1 and "http://10.217.48.211/api/connect/zepp/phone?code=synthetic" in sent[0].body

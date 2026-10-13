@@ -153,6 +153,17 @@ def validate_push_message(message: PushMessage) -> None:
         raise ValueError("notification content digest does not match body")
 
 
+def _feedback_link(url: str | None, template: str) -> str:
+    """The one-time feedback link appended after the report body."""
+    if not url:
+        return ""
+    from html import escape
+
+    if template == "html":
+        return f'<p><a href="{escape(url, quote=True)}">记录今天的感觉（可选）</a></p>'
+    return f"\n\n[记录今天的感觉（可选）]({url})\n"
+
+
 class PushService:
     """Transport service; report engines remain the single content projection."""
 
@@ -166,7 +177,9 @@ class PushService:
         query_max_attempts: int | None = None,
         query_interval_seconds: float | None = None,
         send_attempt_id: str | None = None,
+        feedback_url: str | None = None,
     ) -> None:
+        self.feedback_url = feedback_url
         if template not in _ALLOWED_TEMPLATES:
             raise ValueError("notification template must be markdown or html")
         self.webhook_url = webhook_url
@@ -248,17 +261,22 @@ class PushService:
     def _render_and_push(self, user_id: str, briefing: object) -> dict[str, Any]:
         from vitalis.intelligence.report_rendering import render_report
 
+        link = _feedback_link(self.feedback_url, self.template)
+        measure = pushplus_content_length(self.template)
         rendered = render_report(
             briefing, target=self.template,
-            max_length=PUSHPLUS_CONTENT_BUDGET if self.pushplus_token else None,
-            measure=pushplus_content_length(self.template),
+            max_length=(
+                PUSHPLUS_CONTENT_BUDGET - (measure(link) if link else 0)
+                if self.pushplus_token else None
+            ),
+            measure=measure,
         )
         metadata = _render_metadata(rendered)
         payload = _payload_for_extras(briefing)
         payload.update(metadata)
         message = PushMessage(
             title=str(getattr(rendered, "title", "Vitalis 报告")),
-            body=str(getattr(rendered, "content", "")),
+            body=str(getattr(rendered, "content", "")) + link,
             user_id=user_id,
             template=str(getattr(rendered, "template", self.template)),
             extras={**payload, **metadata, **({"send_attempt_id": self.send_attempt_id} if self.send_attempt_id else {})},

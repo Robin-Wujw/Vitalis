@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, datetime, time, timedelta, timezone
 
 import pytest
@@ -248,13 +249,11 @@ def test_training_status_uses_vo2max_threshold_and_pai_without_combining_scores(
         "pai_high_zone": _series("pai_high_zone", [4] * 7, unit="pai"),
     })
     # Historical reference must be at least seven days before the latest value.
-    raw.series["vo2max"][1] = raw.series["vo2max"][1].__class__(
-        **{**raw.series["vo2max"][1].__dict__, "day": TARGET - timedelta(days=14),
-           "observed_at": TARGET - timedelta(days=14)}
+    raw.series["vo2max"][1] = replace(
+        raw.series["vo2max"][1], day=TARGET - timedelta(days=14), observed_at=TARGET - timedelta(days=14),
     )
-    raw.series["lactate_threshold_pace"][1] = raw.series["lactate_threshold_pace"][1].__class__(
-        **{**raw.series["lactate_threshold_pace"][1].__dict__, "day": TARGET - timedelta(days=14),
-           "observed_at": TARGET - timedelta(days=14)}
+    raw.series["lactate_threshold_pace"][1] = replace(
+        raw.series["lactate_threshold_pace"][1], day=TARGET - timedelta(days=14), observed_at=TARGET - timedelta(days=14),
     )
 
     status = TrainingAnalyzer().analyze(

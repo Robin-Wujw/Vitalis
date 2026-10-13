@@ -90,7 +90,10 @@ class MonthlyBriefingEngine:
             data_quality=payload.get("data_quality") or {},
             **presentation,
             summary=self._summary(payload),
-            sections=internal_sections(sections),
+            sections=internal_sections(sections) + [
+                {**item, "display": True}
+                for item in [self._prediction_quality(payload)] if item is not None
+            ],
         ).model_dump(mode="json")
 
     def build(self, profile: Any) -> ReportBriefing:
@@ -286,6 +289,38 @@ class MonthlyBriefingEngine:
                 facts.append(f"{item.get('predictor_metric_label', '指标')} 与 {item.get('outcome_metric_label', '结果')}：配对 {item.get('paired_days', 0)} 天，{item.get('direction_label', '方向未确定')}（个人数据关联）。")
             limitations.extend(item.get("limitations") or [])
         return {"key": "associations", "title": "个人数据关联", "facts": facts, "interpretation": [], "limitations": unique(limitations)}
+
+    def _prediction_quality(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        quality = (payload.get("report_context") or {}).get("prediction_quality")
+        if not isinstance(quality, dict):
+            return None
+        model = quality.get("response_model") or {}
+        tracking = quality.get("tracking") or {}
+        facts = []
+        if not model.get("enabled"):
+            facts.append(
+                f"个人反应模型还在积累：已有 {number(model.get('feedback_days', 0), 0)} 天带反馈的数据，"
+                f"需要 {number(model.get('required_feedback_days', 60), 0)} 天才开始预测。"
+            )
+        else:
+            labels = {"hrv": "次日 HRV", "resting_hr": "次日静息心率", "feeling": "次日主观精力"}
+            for key, label in labels.items():
+                item = (model.get("targets") or {}).get(key) or {}
+                if not item.get("evaluated_days"):
+                    continue
+                verdict = "比“明天和今天一样”更准，已用于预测" if item.get("usable") else "还不如“明天和今天一样”，暂不使用"
+                facts.append(f"{label}：模型平均误差 {number(item.get('model_mae'))}，朴素基线 {number(item.get('naive_mae'))}，{verdict}。")
+        if tracking.get("plan_execution_rate_7d") is not None:
+            facts.append(f"近 7 天计划执行率 {tracking['plan_execution_rate_7d']:.0%}。")
+        if tracking.get("warnings_28d"):
+            facts.append(
+                f"近 28 天身体信号预警 {tracking['warnings_28d']} 次，其中 {tracking.get('warnings_unconfirmed_28d', 0)} 次没有得到反馈印证。"
+            )
+        if tracking.get("feedback_useful_rate") is not None:
+            facts.append(f"反馈有用率 {tracking['feedback_useful_rate']:.0%}。")
+        if not facts:
+            return None
+        return {"key": "prediction_quality", "title": "系统对你的预测准不准", "facts": facts, "interpretation": [], "limitations": []}
 
     def _actions(self, payload: dict[str, Any]) -> dict[str, Any]:
         inferences = payload.get("inferences") or {}

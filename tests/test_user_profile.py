@@ -7,7 +7,7 @@ from vitalis.intelligence.contracts import (
     Sex,
     UserProfilePatch,
 )
-from vitalis.bootstrap import get_intelligence_action, get_intelligence_command, get_intelligence_query
+from vitalis.bootstrap import get_intelligence_action, get_intelligence_command, get_intelligence_query, get_shadow_batch
 from vitalis.adapters.persistence import HealthRepository, session_scope
 from vitalis.adapters.persistence.models import AnalysisRun, UserProfile, UserProfileRevision
 
@@ -184,11 +184,13 @@ def test_shadow_open_health_failure_does_not_abort_core_analysis(monkeypatch):
         HealthRepository, "open_health_load_inputs", fail_shadow_loader
     )
     result = get_intelligence_command().analyze(user_id, TARGET)
+    stored = get_shadow_batch().run(user_id, TARGET)
 
     assert result.run.status.value == "SUCCEEDED"
     assert result.daily.open_health_insights is None
-    assert result.daily.metadata["open_health_status"] == "REFUSED_INTERNAL_ERROR"
     assert result.daily.decision.action is not None
+    assert "open_health" not in stored
+    assert {"readiness", "body_signal"} <= set(stored)
 
 
 def test_open_health_profile_inputs_do_not_change_decision_state_or_plan():
@@ -210,5 +212,5 @@ def test_open_health_profile_inputs_do_not_change_decision_state_or_plan():
     assert before.confidence == after.confidence
     assert before.rule_ids == after.rule_ids
     assert before.action_plan == after.action_plan
-    assert after_result.open_health_insights is not None
-    assert after_result.open_health_insights.training_load is not None
+    assert after_result.open_health_insights is None
+    assert "open_health" in get_shadow_batch().run(user_id, TARGET)

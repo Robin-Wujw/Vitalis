@@ -226,9 +226,11 @@ def _observation(key, baseline, points, day, cutoff, due, workout_end, same_day,
     matches = [point for point in points if point.day == day and _point_key(point) == key]
     limitations = []
     if same_day:
+        # A daily feature only counts after the workout when all of its
+        # samples were taken after the workout ended.
         matches = [point for point in matches
                    if workout_end is not None and isinstance(point.observed_at, datetime)
-                   and _utc(point.observed_at) >= workout_end]
+                   and _utc(point.first_observed_at or point.observed_at) >= workout_end]
     if not due:
         matches = []
     value = float(median(point.value for point in matches)) if matches else None

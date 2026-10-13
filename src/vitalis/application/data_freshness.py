@@ -112,3 +112,64 @@ def stream_freshness(
         "freshness": freshness,
         "coverage_7d": coverage_7d(observed_dates, window_end),
     }
+
+
+# Streams that are event-driven rather than periodic, so silence is normal:
+# Zepp's ``hrv`` endpoint carries manual spot measurements (SDNN) only, the
+# minute heart-rate endpoint is empty for watches that upload dense files,
+# and workouts, details and devices follow the user's activity.
+NOT_MONITORED_STREAMS = frozenset({
+    "hrv",
+    "heart_rate/minute_endpoint",
+    "workouts",
+    "workout_detail",
+    "devices",
+})
+# A stale stream gets one automatic re-fetch; it is reported only when it is
+# still stale this long after its expected interval and an hour after the
+# re-fetch was queued.
+ALERT_GRACE = timedelta(hours=6)
+REFETCH_SETTLE = timedelta(hours=1)
+
+
+def freshness_actions(
+    streams: Iterable[dict],
+    markers: dict[str, datetime],
+    now: datetime,
+) -> list[tuple[str, str, dict[str, object]]]:
+    """Decide ``("refetch" | "alert", event_key, payload)`` for stale streams.
+
+    ``streams`` are ``/api/data-status`` stream rows; ``markers`` maps the event
+    keys already stored to when they were stored.  One staleness episode is one
+    stream at one ``last_sample_at``: new data starts a new episode.
+    """
+    now = _as_utc(now)
+    actions = []
+    for row in streams:
+        stream = str(row.get("stream") or "")
+        if (
+            not stream or stream in NOT_MONITORED_STREAMS
+            or row.get("freshness") != "stale" or not row.get("last_sample_at")
+        ):
+            continue
+        episode = f"{stream}@{row['last_sample_at']}"
+        expected = timedelta(seconds=int(row.get("expected_interval_seconds") or 86_400))
+        age = timedelta(seconds=float(row.get("age_seconds") or 0))
+        payload = {
+            "stream": stream,
+            "last_sample_at": row["last_sample_at"],
+            "expected_interval_seconds": int(expected.total_seconds()),
+            "age_seconds": round(age.total_seconds()),
+        }
+        refetch_key = f"freshness_refetch:{episode}"
+        if refetch_key not in markers:
+            actions.append(("refetch", refetch_key, payload))
+            continue
+        alert_key = f"stream_stale:{episode}"
+        if (
+            alert_key not in markers
+            and age >= expected + ALERT_GRACE
+            and now - _as_utc(markers[refetch_key]) >= REFETCH_SETTLE
+        ):
+            actions.append(("alert", alert_key, payload))
+    return actions

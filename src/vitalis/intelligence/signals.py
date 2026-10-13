@@ -524,14 +524,9 @@ def _daily_state(
     target = _day_coverage(raw, definition, raw.day, current, status)
     if value is not None and not target.complete:
         status = target.status = SignalStatus.PARTIAL
-    truncated = _metric_truncated(raw, definition.normalized_metric)
-    if truncated:
-        limitations.append("sample_query_truncated")
-        if value is not None:
-            status = target.status = SignalStatus.PARTIAL
     baseline = _baseline(raw, definition, points, supplied)
     usable_baseline = baseline if baseline and baseline.status == Availability.AVAILABLE else None
-    can_compare = value is not None and target.complete and not truncated and usable_baseline is not None
+    can_compare = value is not None and target.complete and usable_baseline is not None
     comparison = _compare(value, usable_baseline, definition, enabled=can_compare)
     if baseline is None or baseline.status != Availability.AVAILABLE:
         limitations.append("baseline_requires_14_of_28_distinct_days")
@@ -543,7 +538,7 @@ def _daily_state(
         status=status, value=value, baseline_stats=baseline,
         comparison_status=SignalStatus.AVAILABLE if can_compare else SignalStatus.INSUFFICIENT,
         window_start=start, window_end=raw.day,
-        sample_count=len(window), distinct_days=len(by_day), expected_days=expected,
+        sample_count=_sample_count(window), distinct_days=len(by_day), expected_days=expected,
         coverage_ratio=len(by_day) / expected, target_day_coverage=target,
         observed_at=latest.observed_at if latest else None,
         fetched_at=None, as_of=_as_utc(raw.as_of),
@@ -582,14 +577,7 @@ def _period_state(
         limitations.append("period_contains_missing_or_incomplete_days")
     if previous and len(complete_previous) != reference_expected:
         limitations.append("reference_contains_missing_or_incomplete_days")
-    truncated = _metric_truncated(raw, definition.normalized_metric)
-    if truncated:
-        limitations.append("sample_query_truncated")
-        if value is not None:
-            status = SignalStatus.PARTIAL
-    can_compare = (
-        len(complete) >= minimum and len(complete_previous) >= reference_minimum and not truncated
-    )
+    can_compare = len(complete) >= minimum and len(complete_previous) >= reference_minimum
     spread = _mad(previous_values)
     deviation = value - reference_value if can_compare else None
     percent = (
@@ -892,7 +880,7 @@ def _daily_values(
 ) -> list[DailySignalValue]:
     return [
         DailySignalValue(
-            day=day, value=_reduce(points, definition), sample_count=len(points),
+            day=day, value=_reduce(points, definition), sample_count=_sample_count(points),
             observed_at=_latest_observed(points), complete=_day_complete(raw, definition, day, points),
         )
         for day, points in sorted(by_day.items()) if start <= day <= end
@@ -913,9 +901,11 @@ def _day_coverage(
         status = SignalStatus.PARTIAL
         limitations.append("sample_window_incomplete" if definition.coverage_rule.sample_window else "local_day_incomplete")
     return SignalCoverage(
-        day=day, sample_count=len(points), distinct_days=int(bool(points)),
+        day=day, sample_count=_sample_count(points), distinct_days=int(bool(points)),
         coverage_ratio=float(bool(points)), status=status, complete=complete,
-        first_observed_at=min((point.observed_at for point in points), key=_observed_key) if points else None,
+        first_observed_at=min(
+            (point.first_observed_at or point.observed_at for point in points), key=_observed_key,
+        ) if points else None,
         last_observed_at=_latest_observed(points), observed_minutes=minutes,
         expected_minutes=expected_minutes,
         minute_coverage_ratio=min(minutes / expected_minutes, 1.0) if minutes is not None else None,
@@ -927,7 +917,7 @@ def _day_complete(raw: RawDailyProfile, definition: SignalDefinition, day: date,
     if not points:
         return False
     rule = definition.coverage_rule
-    if len(points) < rule.minimum_samples_per_day:
+    if _sample_count(points) < rule.minimum_samples_per_day:
         return False
     if rule.requires_closed_day and not _closed_day(raw, day):
         return False
@@ -942,19 +932,17 @@ def _closed_day(raw: RawDailyProfile, day: date) -> bool:
 
 
 def _observed_minutes(points: list[SeriesPoint]) -> int:
-    return len({
+    # A daily feature carries its own minute count; samples of the same day
+    # never coexist with a feature (detail days read samples only).
+    return sum(point.observed_minutes for point in points if point.is_daily_feature) + len({
         _as_utc(point.observed_at).replace(second=0, microsecond=0)
-        for point in points if isinstance(point.observed_at, datetime)
+        for point in points
+        if isinstance(point.observed_at, datetime) and not point.is_daily_feature
     })
 
 
-def _metric_truncated(raw: RawDailyProfile, metric: str) -> bool:
-    if raw.data_quality is None:
-        return False
-    return any(
-        flag.code == "SAMPLE_LIMIT_REACHED" and metric in flag.detail
-        for flag in raw.data_quality.flags
-    )
+def _sample_count(points: list[SeriesPoint]) -> int:
+    return sum(point.sample_count for point in points)
 
 
 def _reduce(points: list[SeriesPoint], definition: SignalDefinition) -> float | None:
@@ -962,7 +950,10 @@ def _reduce(points: list[SeriesPoint], definition: SignalDefinition) -> float | 
         return None
     if definition.coverage_rule.daily_reduction == "latest":
         latest_time = max(_observed_key(point.observed_at) for point in points)
-        latest_values = [point.value for point in points if _observed_key(point.observed_at) == latest_time]
+        latest_values = [
+            point.last_value if point.last_value is not None else point.value
+            for point in points if _observed_key(point.observed_at) == latest_time
+        ]
         return float(median(latest_values))
     return float(median(point.value for point in points))
 

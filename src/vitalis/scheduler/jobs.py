@@ -24,6 +24,8 @@ MORNING_REPORT_SYNC_DAYS = 2
 # One retry when a morning sync ends without writing anything.
 MORNING_REPORT_SYNCS_PER_DAY = 2
 MORNING_WAKE_CHECK_SECONDS = 60
+# Off-peak shadow batch: after the nightly sync, before the earliest wake window.
+SHADOW_BATCH_TIME = (3, 30)
 _ACTIVE_SYNC_STATES = {"queued", "running", "retry_wait"}
 # The 30 s heartbeat logs memory every 20 beats, about every 10 minutes.
 HEARTBEATS_PER_MEMORY_LOG = 20
@@ -364,6 +366,120 @@ def weekly_analysis_job() -> None:
 
 def monthly_analysis_job() -> None:
     _profile_push_job("monthly", sync_days=2)
+
+
+def freshness_job(now: datetime | None = None) -> int:
+    """Re-fetch a stale stream once; record a stream alert if it stays stale."""
+    from vitalis.adapters.persistence import HealthRepository, session_scope
+    from vitalis.application.data_freshness import freshness_actions
+    from vitalis.bootstrap import get_health_query
+
+    current = now or _utc_now()
+    stored = 0
+    for user_id in _get_authorized_users():
+        try:
+            status = get_health_query().data_status(user_id)
+            with session_scope() as db:
+                markers = HealthRepository(db).delivery_alert_markers(
+                    user_id, ("freshness_refetch:", "stream_stale:"),
+                )
+            for action, event_key, payload in freshness_actions(status["streams"], markers, current):
+                if action == "refetch":
+                    payload = {**payload, "attempt_id": _sync_user(user_id, days=2, label="freshness")}
+                with session_scope() as db:
+                    HealthRepository(db).create_delivery_alert(
+                        user_id, event_key=event_key, category="provider",
+                        reason="stream_refetch_queued" if action == "refetch" else "stream_stale",
+                        observed_at=current, payload=payload,
+                        status="suppressed" if action == "refetch" else "pending",
+                    )
+                stored += 1
+                log.warning(
+                    "stream freshness: action=%s stream=%s age_s=%s",
+                    action, payload["stream"], payload["age_seconds"],
+                )
+        except Exception:
+            log.exception("freshness check failed: user=%s", user_id)
+    if stored:
+        dispatcher_job()
+    return stored
+
+
+RELOGIN_LINK_MINUTES = 24 * 60
+
+
+def reauth_job(now: datetime | None = None) -> int:
+    """Renew an expired Zepp credential, or send a phone re-login link once a day."""
+    from vitalis.adapters.notifications import PushMessage, PushService
+    from vitalis.adapters.persistence import HealthRepository, session_scope
+    from vitalis.bootstrap import get_connection_service, get_zepp_login_adapter
+    from vitalis.time import local_day
+
+    current = now or _utc_now()
+    handled = 0
+    for user_id in _get_authorized_users():
+        try:
+            with session_scope() as db:
+                repo = HealthRepository(db)
+                attempts = repo.sync_attempts(user_id, source="zepp", limit=1)
+                expired = bool(attempts) and attempts[0].status == "needs_reauth"
+                token = repo.get_token(user_id, "zepp") if expired else None
+                event_key = f"credential_expired:{local_day(current, settings.timezone).isoformat()}"
+                notified = repo.delivery_alert(user_id, event_key) is not None
+            if not expired:
+                continue
+            if token is not None and token.refresh_token:
+                adapter = get_zepp_login_adapter()
+                try:
+                    attempt_id = get_connection_service().refresh_login(user_id, adapter)
+                    log.info("zepp credential renewed: user=%s attempt=%s", user_id, attempt_id)
+                    handled += 1
+                    continue
+                except Exception:
+                    log.warning("zepp credential renewal failed: user=%s", user_id)
+                finally:
+                    adapter.close()
+            if notified or not settings.public_url:
+                continue
+            pairing = get_connection_service().create_pairing(user_id, ttl_minutes=RELOGIN_LINK_MINUTES)
+            url = f"{settings.public_url}{pairing['phone_url']}"
+            PushService().push(PushMessage(
+                title="Vitalis · Zepp 需要重新登录",
+                body=(
+                    "Zepp 登录已失效，同步暂停。请在 24 小时内用手机打开下面的链接，"
+                    f"输入 Zepp 账号和密码重新连接：\n\n[重新登录 Zepp]({url})\n"
+                ),
+                user_id=user_id,
+            ))
+            with session_scope() as db:
+                HealthRepository(db).create_delivery_alert(
+                    user_id, event_key=event_key, category="provider",
+                    reason="credential_expired", observed_at=current, status="pending",
+                )
+            log.warning("zepp re-login link sent: user=%s", user_id)
+            handled += 1
+        except Exception:
+            log.exception("reauth check failed: user=%s", user_id)
+    return handled
+
+
+def shadow_batch_job(day: date | None = None) -> int:
+    """Off-peak shadow analysis for the previous local day (never rendered)."""
+    from vitalis.bootstrap import get_shadow_batch
+    from vitalis.time import local_today
+
+    target = day or local_today() - timedelta(days=1)
+    batch = get_shadow_batch()
+    done = 0
+    for user_id in _get_authorized_users():
+        try:
+            batch.run(user_id, target)
+            done += 1
+        except Exception:
+            log.exception("shadow batch failed: user=%s day=%s", user_id, target)
+        finally:
+            _release_memory()
+    return done
 
 
 def worker_heartbeat_job() -> None:
@@ -780,6 +896,24 @@ def start_scheduler() -> BackgroundScheduler:
         id="sync_dispatcher", misfire_grace_time=60,
         max_instances=1, coalesce=True,
         next_run_time=datetime.now(timezone.utc),
+    )
+    scheduler.add_job(
+        freshness_job,
+        IntervalTrigger(minutes=30, timezone=settings.timezone),
+        id="stream_freshness", misfire_grace_time=600,
+        max_instances=1, coalesce=True,
+    )
+    scheduler.add_job(
+        reauth_job,
+        IntervalTrigger(hours=1, timezone=settings.timezone),
+        id="zepp_reauth", misfire_grace_time=600,
+        max_instances=1, coalesce=True,
+    )
+    scheduler.add_job(
+        shadow_batch_job,
+        CronTrigger(hour=SHADOW_BATCH_TIME[0], minute=SHADOW_BATCH_TIME[1], timezone=settings.timezone),
+        id="shadow_batch", misfire_grace_time=3600,
+        max_instances=1, coalesce=True,
     )
     scheduler.add_job(
         worker_heartbeat_job,

@@ -175,6 +175,44 @@ class MetricSample(Base):
     sample_ordinal: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
+class DailySignalFeature(Base):
+    """One local day of one dense sample stream, written with its samples.
+
+    Daily analysis reads these rows instead of re-reading months of raw
+    samples.  ``timezone`` records the local-day convention; a reader using a
+    different zone must not reuse the row.
+    """
+
+    __tablename__ = "daily_signal_features"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "metric", "day", "timezone", "source", "source_scope",
+            "device_id", "unit", name="uq_daily_signal_feature",
+        ),
+        Index("ix_daily_signal_features_user_metric_day", "user_id", "metric", "day"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    metric: Mapped[str] = mapped_column(String(64), nullable=False)
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_scope: Mapped[str] = mapped_column(String(24), nullable=False)
+    device_id: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    unit: Mapped[str] = mapped_column(String(24), default="", nullable=False)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    rejected_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    observed_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    median: Mapped[float] = mapped_column(Float, nullable=False)
+    minimum: Mapped[float] = mapped_column(Float, nullable=False)
+    maximum: Mapped[float] = mapped_column(Float, nullable=False)
+    last_value: Mapped[float] = mapped_column(Float, nullable=False)
+    first_observed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_observed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 class DailyMetric(Base):
     """Sparse daily values such as readiness, stress, PAI and VO2 max."""
 
@@ -802,6 +840,64 @@ class AnalysisRun(Base):
     config_digest: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     input_manifest: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     input_manifest_hash: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    compute_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    peak_rss_mb: Mapped[float | None] = mapped_column(Float, nullable=True)
+    budget_exceeded: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class ShadowResult(Base):
+    """One off-peak shadow computation for a user and day; never rendered."""
+
+    __tablename__ = "shadow_results"
+    __table_args__ = (
+        UniqueConstraint("user_id", "day", "kind", name="uq_shadow_result"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class FeedbackLink(Base):
+    """One-time signed link from a pushed report to its feedback page.
+
+    Only the token digest is stored; the token itself lives in the link.
+    """
+
+    __tablename__ = "feedback_links"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    token_digest: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    target_date: Mapped[date] = mapped_column(Date, nullable=False)
+    period: Mapped[str] = mapped_column(String(16), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class ReplayApplication(Base):
+    """A replayed projection written over a user's facts, with the rows it replaced."""
+
+    __tablename__ = "replay_applications"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_user_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    replay_user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    # gzip+base64 JSON of the replaced rows; health data, never logged.
+    previous_rows: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class AnalysisSnapshot(Base):

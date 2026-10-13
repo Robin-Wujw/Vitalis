@@ -744,7 +744,31 @@ def _daily_suggestions(payload: dict[str, Any]) -> list[str]:
                 if key == "optional_session" and plan.get("session_relationship") == "ALTERNATIVE":
                     prefix = "替代选择（与主要安排二选一）"
                 output.append(f"{prefix}：{suggestion}")
-    return unique(output)[:2]
+    weekly = _weekly_load_lines(payload, morning=True)
+    return unique(output)[:2] + (["；".join(weekly[:2])] if weekly else [])
+
+
+def _weekly_load_lines(payload: dict[str, Any], *, morning: bool) -> list[str]:
+    weekly = ((payload.get("features") or {}).get("training") or {}).get("weekly_load")
+    if not isinstance(weekly, dict) or _number(weekly.get("target_load")) is None:
+        return []
+    lines = [
+        f"本周负荷目标 {number(weekly['target_load'], 0)}，已完成 {number(weekly.get('done_load'), 0)}"
+        f"（{(_number(weekly.get('progress_ratio')) or 0):.0%}），{weekly.get('status_label', '')}"
+    ]
+    remaining = _number(weekly.get("remaining_load"))
+    if morning and _number(weekly.get("today_target_load")) is not None:
+        today = f"今天的份额约 {number(weekly['today_target_load'], 0)}"
+        if _integer(weekly.get("today_minutes")) is not None:
+            today += f"（约 {weekly['today_minutes']} 分钟）"
+        lines.append(today + f"；本周还剩 {number(remaining, 0)}，计划分 {weekly.get('sessions_left')} 次完成")
+    elif not morning and remaining:
+        later_days = max(0, (_integer(weekly.get("days_left")) or 0) - 1)
+        if later_days:
+            lines.append(f"本周还剩 {number(remaining, 0)}，留给接下来的 {later_days} 天")
+    if _number(weekly.get("acute_chronic_ratio")) is not None and weekly.get("load_tier_label"):
+        lines.append(f"近 7 天对近 4 周负荷比 {weekly['acute_chronic_ratio']:.2f}（{weekly['load_tier_label']}）")
+    return lines
 
 
 def _recovery_conflict_finding(payload: dict[str, Any]) -> list[str]:
@@ -1008,6 +1032,12 @@ def daily_display_sections(payload: Any, *, facts_only: bool = False) -> list[di
         strength_card = _strength_display_section(raw)
         if strength_card:
             sections.append(strength_card)
+        weekly = _weekly_load_lines(raw, morning=False)
+        if weekly:
+            sections.append({
+                "key": "display_weekly_load", "title": "本周负荷", "facts": weekly,
+                "interpretation": [], "limitations": [], "display": True,
+            })
     return sections
 
 

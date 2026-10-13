@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html as html_mod
 from importlib import resources
+import ipaddress
 import json
 import secrets
 import zipfile
@@ -244,17 +245,28 @@ def _public_base_url(request: Request) -> str:
     return str(request.base_url).rstrip("/")
 
 
+def _private_origin(host: str | None) -> bool:
+    try:
+        address = ipaddress.ip_address(host or "")
+    except ValueError:
+        return False
+    return address.is_private and not address.is_loopback
+
+
 def _require_phone_origin(request: Request) -> None:
     """Apply the phone page's origin/referrer boundary before password input."""
     expected = _public_base_url(request).rstrip("/")
     expected_parts = urlsplit(expected)
     production = settings.env in {"prod", "production"}
+    # Plain HTTP is accepted only on a private address, i.e. inside an
+    # encrypted overlay network such as ZeroTier; anything else needs HTTPS.
+    scheme = "http" if _private_origin(expected_parts.hostname) else "https"
     if production and (
         not settings.public_url
-        or expected_parts.scheme != "https"
-        or request.headers.get("X-Forwarded-Proto", request.url.scheme).split(",", 1)[0].strip().lower() != "https"
+        or expected_parts.scheme != scheme
+        or request.headers.get("X-Forwarded-Proto", request.url.scheme).split(",", 1)[0].strip().lower() != scheme
     ):
-        raise HTTPException(status_code=503, detail="手机登录要求 HTTPS 公网地址")
+        raise HTTPException(status_code=503, detail="手机登录要求 HTTPS 或私有网络地址")
 
     origin = request.headers.get("Origin")
     if production and origin is None:

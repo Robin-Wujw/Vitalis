@@ -646,3 +646,57 @@ def test_worker_device_inventory_is_journaled_in_the_same_fenced_transaction(ses
         assert journal.stream == "devices"
         assert SourceJournalRepository(db).read_payload(journal.id, user_id="source-owner") == payload
         assert len(db.scalars(select(orm.Device)).all()) == 1
+
+
+def test_replay_diff_lists_changes_and_apply_can_be_undone(sessions, offline):
+    from vitalis.adapters import replay_apply
+    from vitalis.domain import MetricSample
+
+    with sessions() as db:
+        repo = _owner(db)
+        _append(db, _input())
+        # The facts an older parser wrote for the same response.
+        repo.save_metric_samples([MetricSample(
+            user_id="source-owner", metric="heart_rate", timestamp=START, value=70,
+            unit="bpm", source="zepp", source_scope="device", device_id="SYNTHBALANCE2",
+        )])
+        db.commit()
+    _replay(sessions)
+    with sessions() as db:
+        report = replay_apply.diff(db, "source-owner", "replay-owner", DAY, DAY, timezone_name="UTC")
+        assert report["identical"] is False
+        samples = report["tables"]["metric_samples"]
+        assert samples["changed"] or (samples["added"] and samples["removed"])
+        applied = replay_apply.apply(db, "source-owner", "replay-owner", DAY, DAY, timezone_name="UTC")
+        db.commit()
+        values = db.scalars(select(orm.MetricSample.value).where(
+            orm.MetricSample.user_id == "source-owner", orm.MetricSample.metric == "heart_rate",
+        )).all()
+        assert values == [72]
+        assert replay_apply.diff(db, "source-owner", "replay-owner", DAY, DAY, timezone_name="UTC")["identical"]
+        replay_apply.undo(db, applied["application_id"])
+        db.commit()
+        values = db.scalars(select(orm.MetricSample.value).where(
+            orm.MetricSample.user_id == "source-owner", orm.MetricSample.metric == "heart_rate",
+        )).all()
+        assert values == [70]
+        with pytest.raises(ReplayError):
+            replay_apply.undo(db, applied["application_id"])
+
+
+def test_replay_apply_refuses_an_unrelated_or_long_window(sessions, offline):
+    from vitalis.adapters import replay_apply
+
+    with sessions() as db:
+        _owner(db)
+        _owner(db, "other-source")
+        _append(db, _input())
+        db.commit()
+    _replay(sessions)
+    with sessions() as db:
+        with pytest.raises(ReplayError):
+            replay_apply.diff(db, "other-source", "replay-owner", DAY, DAY, timezone_name="UTC")
+        with pytest.raises(ReplayError):
+            replay_apply.apply(
+                db, "source-owner", "replay-owner", DAY, DAY + timedelta(days=20), timezone_name="UTC",
+            )

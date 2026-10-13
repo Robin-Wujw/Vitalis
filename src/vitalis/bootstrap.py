@@ -59,6 +59,28 @@ def get_intelligence_command(
     )
 
 
+def get_shadow_batch(
+    *, now_factory: Callable[[], datetime] | None = None,
+):
+    from vitalis.application.shadow_batch import ShadowBatch
+
+    return ShadowBatch(
+        _intelligence_uow,
+        timezone_name=settings.timezone,
+        now_factory=now_factory or (lambda: datetime.now(timezone.utc)),
+    )
+
+
+def get_feedback_link_service():
+    from vitalis.application.feedback_links import FeedbackLinkService
+
+    return FeedbackLinkService(
+        _intelligence_uow,
+        save_feedback=get_intelligence_action()._save_feedback,
+        now_factory=lambda: datetime.now(timezone.utc),
+    )
+
+
 def get_intelligence_query() -> IntelligenceQuery:
     return IntelligenceQuery(_intelligence_uow, today_factory=local_today)
 

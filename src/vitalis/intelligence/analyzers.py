@@ -1,5 +1,6 @@
 """Deterministic feature analyzers over normalized profile data."""
 
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -8,6 +9,7 @@ from statistics import median
 
 from .activity import workout_calories_kcal, workout_distance_km
 from .baseline import BaselineEngine, daily_stream_values
+from .weekly_load import weekly_load_plan
 from .contracts import (
     Availability,
     BaselineStats,
@@ -575,7 +577,20 @@ def _analyze_nocturnal_heart_rate(
     preferred_hrv_device: str | None,
 ) -> NocturnalHeartRateFeature:
     summaries: dict[date, dict[str | None, dict]] = {}
+    # Only the target night and the 28 nights before it are compared; convert
+    # each minute once instead of once per night.
+    local_points = sorted(
+        (
+            (utc_to_local(point.observed_at, raw.timezone_name), point)
+            for point in raw.heart_rate_samples
+            if isinstance(point.observed_at, datetime)
+        ),
+        key=lambda item: item[0],
+    )
+    local_times = [observed for observed, _ in local_points]
     for sleep_day, record in raw.sleep_by_day.items():
+        if not raw.day - timedelta(days=28) <= sleep_day <= raw.day:
+            continue
         window = local_sleep_window(
             sleep_day,
             record.get("bedtime"),
@@ -586,11 +601,9 @@ def _analyze_nocturnal_heart_rate(
             continue
         start, end = window
         by_device: dict[str | None, list[SeriesPoint]] = defaultdict(list)
-        for point in raw.heart_rate_samples:
-            if not isinstance(point.observed_at, datetime):
-                continue
-            if start <= utc_to_local(point.observed_at, raw.timezone_name) <= end:
-                by_device[point.device_id].append(point)
+        for index in range(bisect_left(local_times, start), bisect_right(local_times, end)):
+            point = local_points[index][1]
+            by_device[point.device_id].append(point)
         for device_id, points in by_device.items():
             summary = _night_heart_rate_summary(
                 points, start, end, raw.timezone_name
@@ -1175,6 +1188,7 @@ class TrainingAnalyzer:
             running=running,
             strength=strength,
             training_status=training_status,
+            weekly_load=weekly_load_plan(raw, raw.training_preferences),
             load_deviation=deviation,
             load_state=load_state,
             load_state_label=LOAD_LABELS[load_state.value],

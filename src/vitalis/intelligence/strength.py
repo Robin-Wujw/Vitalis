@@ -74,21 +74,30 @@ SPLIT_LABELS = {
 }
 
 
+# (aliases, movement pattern, primary muscles, secondary muscles).  Order
+# matters: specific movements precede the generic aliases they contain.
+# Secondary muscles count half in volume shares and muscle load.
 EXERCISE_KNOWLEDGE = (
-    (("benchpress", "bench_press", "卧推", "哑铃卧推", "俯卧撑", "pushup"), "horizontal_push", ("chest", "triceps", "shoulders")),
-    (("row", "划船"), "horizontal_pull", ("back", "biceps")),
-    (("pullup", "pull_up", "引体向上", "下拉", "latpulldown"), "vertical_pull", ("back", "biceps")),
-    (("overheadpress", "shoulderpress", "推举", "肩推"), "vertical_push", ("shoulders", "triceps")),
-    (("deadlift", "硬拉", "罗马尼亚硬拉", "rdl", "hipthrust", "臀推"), "hinge", ("glutes", "hamstrings", "back")),
-    (("squat", "深蹲", "腿举", "legpress"), "squat", ("quadriceps", "glutes")),
-    (("lunge", "弓步", "分腿蹲", "split squat"), "unilateral_leg", ("quadriceps", "glutes")),
-    (("plank", "平板支撑", "deadbug", "死虫", "卷腹"), "core", ("core",)),
-    (("carry", "农夫行走"), "carry", ("core", "shoulders")),
-    (("curl", "弯举"), "isolation", ("biceps",)),
-    (("tricep", "臂屈伸", "下压"), "isolation", ("triceps",)),
-    (("calf", "提踵"), "isolation", ("calves",)),
-    (("lateralraise", "侧平举"), "isolation", ("shoulders",)),
+    (("reversefly", "反向飞鸟", "facepull", "面拉"), "horizontal_pull", ("shoulders",), ("back",)),
+    (("chestfly", "夹胸", "飞鸟"), "isolation", ("chest",), ("shoulders",)),
+    (("straightarm", "直臂下拉"), "vertical_pull", ("back",), ()),
+    (("dip", "双杠臂屈伸"), "vertical_push", ("triceps",), ("chest", "shoulders")),
+    (("benchpress", "bench_press", "卧推", "哑铃卧推", "俯卧撑", "pushup"), "horizontal_push", ("chest",), ("triceps", "shoulders")),
+    (("row", "划船"), "horizontal_pull", ("back",), ("biceps",)),
+    (("pullup", "pull_up", "引体向上", "下拉", "latpulldown"), "vertical_pull", ("back",), ("biceps",)),
+    (("overheadpress", "shoulderpress", "推举", "肩推", "推肩"), "vertical_push", ("shoulders",), ("triceps",)),
+    (("kettlebellswing", "swing", "甩摆"), "hinge", ("glutes", "hamstrings"), ("back", "core")),
+    (("deadlift", "硬拉", "罗马尼亚硬拉", "rdl", "hipthrust", "臀推"), "hinge", ("glutes", "hamstrings"), ("back",)),
+    (("squat", "深蹲", "腿举", "legpress"), "squat", ("quadriceps", "glutes"), ()),
+    (("lunge", "弓步", "分腿蹲", "split squat"), "unilateral_leg", ("quadriceps", "glutes"), ()),
+    (("plank", "平板支撑", "deadbug", "死虫", "卷腹"), "core", ("core",), ()),
+    (("carry", "农夫行走"), "carry", ("core",), ("shoulders",)),
+    (("curl", "弯举"), "isolation", ("biceps",), ()),
+    (("tricep", "三头", "臂屈伸", "下压"), "isolation", ("triceps",), ()),
+    (("calf", "提踵"), "isolation", ("calves",), ()),
+    (("lateralraise", "侧平举"), "isolation", ("shoulders",), ()),
 )
+SECONDARY_MUSCLE_WEIGHT = 0.5
 
 
 @dataclass(frozen=True)
@@ -143,15 +152,30 @@ def normalize_exercise(
     )
 
 
-def classify_exercise(exercise_id: str | None, exercise_name: str | None):
+def _knowledge(exercise_id: str | None, exercise_name: str | None):
     text = "".join(
         character for character in f"{exercise_id or ''}{exercise_name or ''}".lower()
-        if character.isalnum() or "\u4e00" <= character <= "\u9fff"
+        if character.isalnum() or "一" <= character <= "鿿"
     )
-    for aliases, pattern, muscles in EXERCISE_KNOWLEDGE:
+    for aliases, pattern, primary, secondary in EXERCISE_KNOWLEDGE:
         if any(alias.replace(" ", "").replace("_", "").lower() in text for alias in aliases):
-            return pattern, muscles
-    return "unknown", ()
+            return pattern, primary, secondary
+    return "unknown", (), ()
+
+
+def classify_exercise(exercise_id: str | None, exercise_name: str | None):
+    """Movement pattern and trained muscles, primary muscles first."""
+    pattern, primary, secondary = _knowledge(exercise_id, exercise_name)
+    return pattern, primary + secondary
+
+
+def muscle_weights(exercise_id: str | None, exercise_name: str | None) -> dict[str, float]:
+    """Share of an exercise's volume per muscle: primary 1, secondary 0.5, normalized."""
+    _, primary, secondary = _knowledge(exercise_id, exercise_name)
+    raw = {muscle: 1.0 for muscle in primary}
+    raw.update({muscle: SECONDARY_MUSCLE_WEIGHT for muscle in secondary if muscle not in raw})
+    total = sum(raw.values())
+    return {muscle: value / total for muscle, value in raw.items()} if total else {}
 
 
 def reported_set_count(data: dict) -> int | None:
@@ -188,7 +212,7 @@ def _capacity_unit(value, weight_kg=None) -> str | None:
     }.get(normalized)
 
 
-def _canonical_capacity_exercise(item: dict) -> tuple[str, tuple[str, ...]] | None:
+def _canonical_capacity_exercise(item: dict) -> tuple[str, dict[str, float]] | None:
     item = _capacity_mapping(item)
     source = item.get("source")
     if source not in {"user_confirmed", "vendor_explicit"}:
@@ -203,7 +227,7 @@ def _canonical_capacity_exercise(item: dict) -> tuple[str, tuple[str, ...]] | No
     pattern, muscles = classify_exercise(exercise_id, name)
     if pattern == "unknown" or not muscles:
         return None
-    return identity.casefold(), tuple(muscles)
+    return identity.casefold(), muscle_weights(exercise_id, name)
 
 
 def _capacity_weight(item: dict) -> tuple[float, str, str] | None:
@@ -293,8 +317,8 @@ def strength_session_capacity(session: dict, history: list[dict] | None = None) 
         volume = sum(row["weight_kg"] * row["repetitions"] for row in rows)
         estimated = max(row["weight_kg"] * (1 + row["repetitions"] / 30) for row in rows)
         muscles = rows[0]["muscles"]
-        for muscle in muscles:
-            muscle_volume[muscle] += volume / len(muscles)
+        for muscle, weight in muscles.items():
+            muscle_volume[muscle] += volume * weight
         key = (exercise_id, basis)
         prior = historical_max.get(key)
         capacity.append({
@@ -375,8 +399,9 @@ def _muscle_load_status(day: date, sessions: list[StrengthSessionAnalysis]) -> l
             continue
         rows = [row for item in session.explicit_exercises for row in _capacity_rows(item.model_dump(mode="python"))]
         for row in rows:
-            share = row["weight_kg"] * row["repetitions"] / len(row["muscles"])
-            for muscle in row["muscles"]:
+            volume = row["weight_kg"] * row["repetitions"]
+            for muscle, weight in row["muscles"].items():
+                share = volume * weight
                 long[muscle] += share
                 latest[muscle] = max(latest.get(muscle, row.get("date", session.date)), session.date)
                 if session.date >= short_start:

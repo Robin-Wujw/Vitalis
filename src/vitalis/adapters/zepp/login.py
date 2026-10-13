@@ -7,11 +7,9 @@ The public ``user.zepp.com`` bundle currently performs two form POSTs:
 2. ``account.huami.com/v2/client/login`` exchanges that value for the
    ``app_token``/``login_token``/``user_id`` tuple used by the Zepp web client.
 
-This adapter deliberately does not implement a refresh call for the legacy
-``login_token``.  The official public documentation we can verify documents a
-different OAuth refresh endpoint, not this web-login token.  A saved legacy
-credential therefore has to go through the phone login page again when it
-expires.
+``refresh`` renews the ``app_token`` with the saved ``login_token`` through the
+app-token endpoint the Zepp apps use.  That endpoint is undocumented; any
+failure falls back to a new phone login, never to a guessed credential.
 """
 
 from __future__ import annotations
@@ -262,14 +260,48 @@ class ZeppLoginAdapter:
             login_token=login_token,
         )
 
-    def refresh(self, _token: AuthToken) -> ZeppLoginResult:
-        """Refuse unverified legacy-token refresh instead of fabricating one."""
-        raise ZeppLoginError(
-            "Zepp 网页登录令牌续期协议尚未验证，请重新登录",
-            kind="auth",
-            failure_code="reauth_required",
-            needs_reauth=True,
-            reset_url=OFFICIAL_RESET_URL,
+    def refresh(self, token: AuthToken) -> ZeppLoginResult:
+        """Exchange the saved ``login_token`` for a new ``app_token``.
+
+        Uses ``GET account.huami.com/v1/client/app_tokens``, the call the Zepp
+        apps make with a stored login token.  It is not in Zepp's public
+        documentation; any unexpected answer is treated as "log in again".
+        """
+        login_token = token.refresh_token
+        if not login_token or not token.source_user_id:
+            raise ZeppLoginError(
+                "没有可续期的 Zepp 登录令牌，请重新登录",
+                kind="auth", failure_code="reauth_required", needs_reauth=True,
+                reset_url=OFFICIAL_RESET_URL,
+            )
+        try:
+            response = self._client.get(
+                f"{self._account_base}/v1/client/app_tokens",
+                params={"app_name": APP_NAME, "dn": DEFAULT_DN, "login_token": login_token},
+                timeout=self._timeout,
+            )
+        except httpx.TimeoutException:
+            raise ZeppLoginError("Zepp 续期请求超时", kind="timeout", failure_code="timeout") from None
+        except httpx.HTTPError:
+            raise ZeppLoginError("无法连接 Zepp 续期服务", kind="network", failure_code="network_error") from None
+        if len(response.content) > MAX_RESPONSE_BYTES:
+            raise ZeppLoginError("Zepp 续期响应超过安全上限", kind="vendor_response", failure_code="response_too_large")
+        payload = self._json_object(response)
+        self._raise_for_response(response, payload, stage="token")
+        info = payload.get("token_info") if isinstance(payload.get("token_info"), dict) else {}
+        app_token = _text_value(info.get("app_token"), max_length=16 * 1024)
+        user_id = _text_value(info.get("user_id"), max_length=256)
+        if not app_token or (user_id and user_id != token.source_user_id):
+            raise ZeppLoginError(
+                "Zepp 续期响应无效，请重新登录",
+                kind="auth", failure_code="reauth_required", needs_reauth=True,
+                reset_url=OFFICIAL_RESET_URL,
+            )
+        return ZeppLoginResult(
+            source_user_id=token.source_user_id,
+            region_host=token.region_host or "",
+            app_token=app_token,
+            login_token=_text_value(info.get("login_token"), max_length=16 * 1024) or login_token,
         )
 
     def _registration_tokens_url(self, account: str) -> str:

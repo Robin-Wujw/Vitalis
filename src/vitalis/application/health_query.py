@@ -196,7 +196,18 @@ class HealthQuery:
             },
             "latest_attempt": latest_payload,
             "streams": streams,
+            "workout_details": self._workout_details(user_id),
         }
+
+    def _workout_details(self, user_id: str) -> dict | None:
+        reader = getattr(self._reader, "workout_detail_coverage", None)
+        if not callable(reader):
+            return None
+        coverage = dict(reader(user_id, source="zepp"))
+        for key in ("oldest_missing_started_at", "last_resource_limit_at"):
+            if isinstance(coverage.get(key), datetime):
+                coverage[key] = _iso_utc(coverage[key])
+        return coverage
 
     def metric_series(
         self,

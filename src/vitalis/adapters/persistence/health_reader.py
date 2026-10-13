@@ -247,6 +247,10 @@ class SqlHealthReader(HealthReader):
                 expires_at=token.expires_at,
             )
 
+    def workout_detail_coverage(self, user_id: str, source: str = "zepp") -> dict:
+        with self._session_factory() as db:
+            return HealthRepository(db).workout_detail_coverage(user_id, source=source)
+
     def latest_browser_link(self, user_id: str) -> HealthBrowserLinkRead | None:
         with self._session_factory() as db:
             row = HealthRepository(db).latest_browser_link(user_id)

@@ -328,3 +328,29 @@ def test_strength_comparison_blocks_changed_weight_sets_basis_unit_and_source():
     ])
     comparison = StrengthAnalyzer().analyze(raw).recent_sessions[0].comparisons[0]
     assert comparison.blocked_reason == "source_mismatch"
+
+
+def test_every_catalog_exercise_has_a_muscle_mapping():
+    import json
+    from pathlib import Path
+
+    from vitalis.intelligence.strength import classify_exercise
+
+    catalog = Path(__file__).resolve().parents[1] / "src/vitalis/adapters/zepp/data/strength_exercises.json"
+    entries = json.loads(catalog.read_text(encoding="utf-8"))["entries"]
+    # Walking between sets is a vendor lap type, not an exercise.
+    unmapped = [
+        entry["labels"]["zh-CN"] for entry in entries
+        if entry["labels"]["zh-CN"] != "组间行走"
+        and classify_exercise(entry.get("canonical_exercise_id"), entry["labels"]["zh-CN"])[0] == "unknown"
+    ]
+    assert unmapped == []
+
+
+def test_secondary_muscles_count_half_of_the_volume():
+    from vitalis.intelligence.strength import muscle_weights
+
+    weights = muscle_weights(None, "卧推")
+    assert weights == {"chest": 0.5, "triceps": 0.25, "shoulders": 0.25}
+    assert muscle_weights(None, "二头肌弯举") == {"biceps": 1.0}
+    assert muscle_weights(None, "蝴蝶机反向飞鸟") == {"shoulders": 2 / 3, "back": 1 / 3}

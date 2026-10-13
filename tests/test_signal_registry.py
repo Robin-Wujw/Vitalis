@@ -320,7 +320,7 @@ def test_profile_loader_preserves_existing_timestamped_readiness_and_charge_inpu
     queried = []
     timestamp = datetime(2026, 10, 8, 0, tzinfo=timezone.utc)
 
-    def samples(_user, metric, _start, _end, *, limit):
+    def samples(_user, metric, _start, _end):
         queried.append(metric)
         if metric in {"readiness", "hybrid_charge", "skin_temp_delta", "stress"}:
             return [SimpleNamespace(metric=metric, value=0, unit="C" if metric == "skin_temp_delta" else "score",
@@ -328,7 +328,9 @@ def test_profile_loader_preserves_existing_timestamped_readiness_and_charge_inpu
         return []
 
     raw = _raw()
-    loader = ProfileLoader(SimpleNamespace(metric_samples=samples))
+    loader = ProfileLoader(SimpleNamespace(
+        metric_sample_rows=samples, daily_features=lambda *_args, **_kwargs: [],
+    ))
     loader._add_sample_metrics(raw, DAY)
     assert {"readiness", "hybrid_charge", "skin_temp_delta", "stress"} <= set(queried)
     for metric in ("readiness", "hybrid_charge", "skin_temp_delta", "stress"):

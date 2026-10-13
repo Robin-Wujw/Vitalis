@@ -17,41 +17,70 @@ from vitalis.domain import (
 from vitalis.adapters.persistence import HealthRepository, session_scope
 
 
-def test_profile_loader_caps_high_frequency_sample_budget(monkeypatch):
-    from vitalis.intelligence import profile as profile_module
+def _hrv_samples(user_id: str, day: date, values: list[float], *, hour: int = 18):
+    start = datetime.combine(day, datetime.min.time()) + timedelta(hours=hour)
+    return [
+        MetricSample(
+            user_id=user_id, metric="hrv_rmssd", timestamp=start + timedelta(minutes=5 * index),
+            value=value, unit="ms", source="zepp", source_scope="device", device_id="DEV-1",
+        )
+        for index, value in enumerate(values)
+    ]
 
+
+def test_metric_samples_write_daily_features_in_the_same_transaction():
+    from vitalis.adapters.persistence import models as orm
+    from vitalis.time import local_timezone
+
+    user_id = "feature-writer"
+    day = date(2026, 8, 20)
+    zone = str(local_timezone())
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+        repo.save_metric_samples(_hrv_samples(user_id, day, [40, 50, 60, 0, 500], hour=2))
+        rows = repo.daily_features(user_id, "hrv_rmssd", day, day, timezone_name=zone)
+        assert [(row.sample_count, row.rejected_count, row.median, row.last_value) for row in rows] == [
+            (3, 2, 50.0, 60.0),
+        ]
+        db.rollback()
+    with session_scope() as db:
+        assert db.query(orm.DailySignalFeature).filter_by(user_id=user_id).count() == 0
+
+
+def test_profile_loader_reads_features_for_history_and_samples_for_detail_days():
+    from vitalis.time import local_timezone
+
+    user_id = "feature-reader"
     day = date(2026, 8, 28)
-    loader = ProfileLoader.__new__(ProfileLoader)
-    calls = []
+    zone = str(local_timezone())
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+        for offset in range(1, 20):
+            repo.save_metric_samples(_hrv_samples(
+                user_id, day - timedelta(days=offset), [40 + offset, 50 + offset, 60 + offset], hour=1,
+            ))
+        repo.save_metric_samples(_hrv_samples(user_id, day, [70, 72], hour=1))
+        raw = ProfileLoader(repo).load(
+            user_id, day, as_of=datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=20),
+            timezone_name=zone,
+        )
 
-    class Repository:
-        def metric_samples(self, _user_id, metric, _start, _end, *, limit):
-            calls.append((metric, limit))
-            return [SimpleNamespace(
-                metric=metric,
-                value=50,
-                unit="ms",
-                timestamp=datetime(2026, 8, 28, tzinfo=timezone.utc),
-                source="zepp",
-                source_scope="unknown",
-                device_id=None,
-            ) for _ in range(limit)]
-
-    loader.repo = Repository()
-    monkeypatch.setattr(profile_module, "MAX_SAMPLES_PER_METRIC", 2)
-    monkeypatch.setattr(profile_module, "MAX_PROFILE_SAMPLE_POINTS", 3)
-    raw = profile_module.RawDailyProfile(
-        user_id="budget-user",
-        day=day,
-        as_of=datetime(2026, 8, 28, 23, tzinfo=timezone.utc),
-        timezone_name="UTC",
+    points = raw.series["hrv_rmssd"]
+    history = [point for point in points if point.day < day - timedelta(days=1)]
+    detail = [point for point in points if point.day >= day - timedelta(days=1)]
+    assert history and all(point.is_daily_feature for point in history)
+    assert len(history) == 18 and {point.sample_count for point in history} == {3}
+    assert sorted(point.value for point in detail) == [41.0, 51.0, 61.0, 70.0, 72.0]
+    assert all(not point.is_daily_feature for point in detail)
+    baseline = next(
+        item for item in BaselineEngine().build(raw.series, day)["hrv_rmssd"] if item.window_days == 28
     )
-
-    loader._add_sample_metrics(raw, day)
-
-    assert raw.sample_budget_exhausted is True
-    assert sum(len(points) for points in raw.series.values()) == 3
-    assert calls[:2] == [("hrv_rmssd", 2), ("hrv_sdnn", 1)]
+    assert baseline.sample_count == 19 * 3 and baseline.distinct_days == 19
+    assert not any(flag.code.endswith("BUDGET_REACHED") for flag in raw.data_quality.flags)
 
 
 def test_profile_loader_reports_missing_signals_without_fabricating_facts():
@@ -112,7 +141,7 @@ def test_open_health_load_uses_only_persisted_verified_days(monkeypatch):
                 "budget_exhausted": False,
             },
         )
-        raw = ProfileLoader(repo).load(user_id, day)
+        raw = ProfileLoader(repo, shadow_inputs=True, detail_days=28).load(user_id, day)
 
     assert raw.open_health_load_queried_days == sorted(
         date.fromisoformat(value) for value in verified
@@ -141,7 +170,7 @@ def test_open_health_coverage_flag_stays_false_when_ledger_is_truncated(monkeypa
                 "budget_exhausted": False,
             },
         )
-        raw = ProfileLoader(repo).load(user_id, day)
+        raw = ProfileLoader(repo, shadow_inputs=True, detail_days=28).load(user_id, day)
 
     assert len(raw.open_health_load_queried_days) == 42
     assert raw.open_health_load_upstream_coverage_verified is False
@@ -165,7 +194,7 @@ def test_training_coverage_accepts_date_values_and_derives_prior_week_verificati
                 "budget_exhausted": False,
             },
         )
-        raw = ProfileLoader(repo).load(user_id, day)
+        raw = ProfileLoader(repo, shadow_inputs=True, detail_days=28).load(user_id, day)
 
     assert raw.training_history_coverage["prior_7d_verified"] is True
     assert raw.open_health_load_upstream_coverage_verified is True
@@ -289,7 +318,7 @@ def test_open_health_groups_pre_midnight_rmssd_into_wake_date_sleep_window():
                 (datetime(2026, 9, 1, 17, 30, tzinfo=timezone.utc), 110),
             )
         ])
-        raw = ProfileLoader(repo).load(user_id, day)
+        raw = ProfileLoader(repo, shadow_inputs=True, detail_days=28).load(user_id, day)
 
     target = next(item for item in raw.open_health_observations if item.date == day)
     assert target.rmssd_ms == 100
@@ -339,7 +368,7 @@ def test_open_health_prefers_zepp_fused_sleep_hrv_over_device_samples():
                 (datetime(2026, 9, 1, 17, 30, tzinfo=timezone.utc), 110),
             )
         ])
-        raw = ProfileLoader(repo).load(user_id, day)
+        raw = ProfileLoader(repo, shadow_inputs=True, detail_days=28).load(user_id, day)
 
     target = next(item for item in raw.open_health_observations if item.date == day)
     assert target.rmssd_ms == 65

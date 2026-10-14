@@ -191,6 +191,9 @@ def parse_workout_detail_stream(
         detail = _normalize_stream_detail(data, context)
     except WorkoutStreamLimitError as exc:
         raise WorkoutDetailLimitError(str(exc)) from exc
+    except WorkoutDetailLimitError:
+        # A size limit is a resource limit, not an unrecognized payload.
+        raise
     except (WorkoutStreamError, ValueError, TypeError, OverflowError):
         return ParseResult("unrecognized", diagnostics=("malformed_detail",))
 

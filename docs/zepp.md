@@ -48,6 +48,8 @@ Idempotency-Key: <new-or-reused-key>
 
 首次连接成功后，worker 回填 180 天历史，完成后自动排队首次分析。进度用 `GET /api/connect/zepp/progress` 读取，状态依次为 `connected` → `credential_verified` → `backfill_requested` → `backfill_progress` → `bootstrap_analysis_queued` → `first_report_ready` → `daily_cadence`，同时给出实际覆盖和暖机进度。
 
+训练明细先落盘再流式解析，单条响应最多 32 MB、展开后最多 15 万个样本（各逐秒序列合计约每秒 10 个，约 4 小时）；超过时记为 `resource_limit`，不记成无法识别。2026-10-14 以前的上限是 2 万，普通 35 分钟的跑步就会超出，因此 9/28 以来的跑步明细一直缺失，用 `vitalis sync details` 补齐。
+
 同步状态区分成功、部分覆盖、需要重新认证、失败和未知；不能把一个流失败或没有密集文件理解成全库成功。迟到数据进入后续分析修订，缺失继续保持缺失。
 
 HRV 请求使用包含首尾两天的本地日期窗口，再转换成 UTC 毫秒范围；同步 attempt 保存的时区会在 worker 恢复时继续使用，不从当前进程环境重新推断。持久同步保留原始事件和逐样本观测时间，mock/demo 路径只生成按本地日聚合的合成样本；两者都按报告时区归属 `calendar_day`。未知设备范围保持未知，不能把 mock 或厂商融合值描述成设备级观测。

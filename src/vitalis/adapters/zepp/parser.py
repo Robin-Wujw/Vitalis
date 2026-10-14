@@ -33,7 +33,10 @@ from .sport_types import resolve_cloud_sport_mode, resolve_sport_mode
 
 MAX_WORKOUT_SECONDS = 12 * 60 * 60
 MAX_WELLNESS_SAMPLES_PER_EVENT = 10_000
-MAX_WORKOUT_DETAIL_SAMPLES = 20_000
+# A run expands to roughly 10 samples per second across heart rate, speed,
+# pace, distance, altitude, power and gait; 150,000 covers about four hours
+# (2026-10-14: 20,000 rejected every ordinary 35-minute run).
+MAX_WORKOUT_DETAIL_SAMPLES = 150_000
 MAX_WORKOUT_DETAIL_LAP_ROWS = 2_000
 MAX_WORKOUT_DETAIL_PAUSE_ROWS = 10_000
 MAX_WORKOUT_DETAIL_STRENGTH_ROWS = 2_000

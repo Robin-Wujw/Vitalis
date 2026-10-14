@@ -37,8 +37,10 @@ def test_detail_parser_rejects_oversized_compressed_series_before_expansion():
         ZeppParser.parse_workout_detail({
             "data": {
                 "trackid": 1_700_000_000,
-                "time": str(MAX_WORKOUT_DETAIL_SAMPLES + 1),
-                "heart_rate": f"{MAX_WORKOUT_DETAIL_SAMPLES + 1},1",
+                "time": str(12 * 3600),
+                "heart_rate": f"{12 * 3600},1",
+                # Per-second heart rate for 12 h plus a long speed series.
+                "speed": ";".join(["1,1"] * (MAX_WORKOUT_DETAIL_SAMPLES - 12 * 3600 + 1)),
             }
         })
 
@@ -97,7 +99,10 @@ def test_oversized_detail_does_not_persist_or_mark_workout_synced():
             source_key=f"workout_detail:{workout_id}:cloud",
             start_utc=started,
             end_utc=started + timedelta(seconds=MAX_WORKOUT_DETAIL_SAMPLES + 1),
-            payload={"data": {"trackid": int(started.timestamp()), "heart_rate": "1,100"}},
+            payload={"data": {
+                "trackid": int(started.timestamp()), "heart_rate": "1,100",
+                "speed": ";".join(["1,1"] * (MAX_WORKOUT_DETAIL_SAMPLES - 12 * 3600 + 1)),
+            }},
         ))
         report = SyncManager(SimpleNamespace())._persist_record(record, repo, user)
         assert report.status == "failed"

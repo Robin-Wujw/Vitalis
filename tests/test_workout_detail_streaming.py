@@ -217,3 +217,52 @@ def test_cancellation_after_a_written_batch_rolls_back_everything():
         workout = repo.workout(user_id, workout_id)
         assert workout is not None and workout.detail_synced is False
         assert repo.workout_metric_samples(user_id, workout_id) == []
+
+
+def _run_payload(seconds: int) -> bytes:
+    """A synthetic run with every per-second series a Zepp watch uploads."""
+    series = lambda value: ";".join(f"1,{value}" for _ in range(seconds))  # noqa: E731
+    return json.dumps({"code": 1, "message": "success", "data": {
+        "trackid": int(START.timestamp()),
+        "time": ";".join("1" for _ in range(seconds)),
+        "heart_rate": ";".join(["1,140"] + ["1,0"] * (seconds - 1)),
+        "speed": series("3.1"),
+        "equivPace": series("330"),
+        "currentDistance": series("100"),
+        "time_delta_altitude": series("250"),
+        "power_meter": series("260"),
+        "gait": ";".join("1,0,95,172" for _ in range(seconds)),
+        "longitude_latitude": "1,2;" * 50,
+        "pace": "330;" * 50,
+    }}).encode()
+
+
+def test_two_hour_run_with_every_series_is_recognized_within_worker_memory():
+    payload = _run_payload(2 * 3600)
+    spool = spool_bytes(payload, max_bytes=32 * 1024 * 1024)
+    try:
+        tracemalloc.start()
+        result = parse_workout_detail(spool, ParseContext())
+        _current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        assert result.status == "recognized"
+        counts = result.detail.metric_sample_counts
+        assert counts["heart_rate"] >= 2 * 3600 and counts["cadence"] == 2 * 3600
+        assert sum(counts.values()) > 20_000
+        # Recorded peak for a 2 h run: well inside the worker's 640 MB limit.
+        assert peak < 160 * 1024 * 1024
+    finally:
+        spool.cleanup()
+
+
+def test_detail_over_the_sample_limit_is_a_resource_limit_not_unrecognized(monkeypatch):
+    from vitalis.adapters.zepp.parser import WorkoutDetailLimitError
+    from vitalis.adapters.zepp.parsers import workout_detail
+
+    monkeypatch.setattr(workout_detail, "MAX_WORKOUT_DETAIL_SAMPLES", 1_000)
+    spool = spool_bytes(_run_payload(600), max_bytes=64 * 1024 * 1024)
+    try:
+        with pytest.raises(WorkoutDetailLimitError):
+            parse_workout_detail(spool, ParseContext())
+    finally:
+        spool.cleanup()

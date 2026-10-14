@@ -7,7 +7,7 @@ import pytest
 
 from vitalis.adapters.zepp.client import MockZeppClient
 from vitalis.adapters.zepp.fetcher import FetchedRecord, RawRecord
-from vitalis.adapters.zepp.parser import WorkoutDetailLimitError
+from vitalis.adapters.zepp.parser import MAX_WORKOUT_DETAIL_SAMPLES, WorkoutDetailLimitError
 from vitalis.adapters.zepp.parsers import ParseContext, parse_workout_detail
 from vitalis.adapters.zepp.sync_manager import SyncManager
 from vitalis.domain import User
@@ -75,7 +75,8 @@ def test_unknown_nonempty_and_malformed_detail_never_appear_empty():
 
 
 def test_resource_limit_is_not_disguised_as_successful_empty_detail():
-    payload = {"data": {"trackid": TRACK_ID, "heart_rate": ";".join(["1,80"] * 20_002)}}
+    # More delimited entries than the sample limit: rejected before splitting.
+    payload = {"data": {"trackid": TRACK_ID, "heart_rate": ";".join(["1,80"] * (MAX_WORKOUT_DETAIL_SAMPLES + 2))}}
     with pytest.raises(WorkoutDetailLimitError):
         parse_workout_detail(payload, CONTEXT)
 

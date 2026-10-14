@@ -1,0 +1,12 @@
+[Unit]
+Description=Vitalis API on the private (ZeroTier) address only
+# FreeBind lets the socket start before the overlay interface has its address.
+
+[Socket]
+# Replace with the private overlay address that VITALIS_PUBLIC_URL names.
+ListenStream=10.0.0.1:80
+FreeBind=true
+NoDelay=true
+
+[Install]
+WantedBy=sockets.target

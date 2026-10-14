@@ -640,10 +640,24 @@ class ProfileLoader:
             sample_start_at = start_at
             if metric in DAILY_FEATURE_METRICS:
                 sample_start_at = detail_start_at
-                for row in self.repo.daily_features(
+                features = self.repo.daily_features(
                     raw.user_id, metric, start, detail_start - timedelta(days=1),
                     timezone_name=raw.timezone_name,
-                ):
+                )
+                covered = {
+                    (row.day, row.source, row.source_scope, row.device_id or None, row.unit)
+                    for row in features
+                }
+                # A vendor daily summary in the same stream is one value among
+                # a day's many samples; next to a single feature it would weigh
+                # as much as all of them, so the feature stands for that day.
+                if covered and metric in raw.series:
+                    raw.series[metric] = [
+                        point for point in raw.series[metric]
+                        if isinstance(point.observed_at, datetime)
+                        or (point.day, point.source, point.source_scope, point.device_id, point.unit) not in covered
+                    ]
+                for row in features:
                     raw.series.setdefault(metric, []).append(SeriesPoint(
                         metric=metric,
                         value=row.median,

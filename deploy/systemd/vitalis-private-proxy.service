@@ -1,0 +1,11 @@
+[Unit]
+Description=Forward the private Vitalis address to the loopback API
+Requires=vitalis-private-proxy.socket
+After=vitalis-private-proxy.socket vitalis-api.service
+
+[Service]
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=10min 127.0.0.1:8000
+DynamicUser=true
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict

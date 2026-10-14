@@ -70,3 +70,28 @@ def test_unknown_day_in_the_reference_leaves_no_plan():
     raw.training_history_coverage["verified_days"].remove(gap.isoformat())
     raw.training_by_day.pop(gap)
     assert weekly_load_plan(raw, PREFS) is None
+
+
+def test_most_of_the_target_early_in_the_week_is_ahead_not_on_track():
+    loads = {**_history(), MONDAY: 240.0}
+    plan = weekly_load_plan(_raw(MONDAY + timedelta(days=1), loads), PREFS)
+    assert plan.status == "AHEAD" and plan.status_label == "已超前"
+
+
+def test_strength_day_names_rested_and_recent_muscle_groups():
+    from types import SimpleNamespace
+
+    from vitalis.intelligence.decision import DecisionEngine
+
+    def status(muscle, label, days, soreness=None):
+        return SimpleNamespace(
+            muscle_group=muscle, muscle_group_label=label,
+            days_since_last_trained=days, latest_soreness=soreness,
+        )
+
+    training = SimpleNamespace(strength=SimpleNamespace(muscle_recovery=[
+        status("back", "背部", 5), status("chest", "胸部", 4), status("quadriceps", "股四头肌", 1),
+        status("shoulders", "肩部", 6, soreness=4),
+    ]))
+    lines = DecisionEngine._muscle_freshness(training)
+    assert lines == ["今天适合练：背部、胸部（已休息 3 天以上）。", "避开：股四头肌（48 小时内练过）。"]

@@ -931,6 +931,7 @@ class DecisionEngine:
                 )
         if lower_conflict:
             reasons.append("近期跑步或下肢负担较高，已降低力量训练剂量并避开下肢重点。")
+        reasons.extend(self._muscle_freshness(training))
         return PlannedSession(
             role=role,
             role_label=ROLE_LABELS[role],
@@ -963,6 +964,27 @@ class DecisionEngine:
             progression=["所有工作组达到次数上限且仍满足余力要求时，下次增加少量重量或每组 1–2 次。"],
             stop_conditions=["出现尖锐疼痛、动作失控、异常头晕或胸闷时立即停止。", "无法保持目标余力时减少重量或结束该动作。"],
         )
+
+    @staticmethod
+    def _muscle_freshness(training) -> list[str]:
+        """Which trained muscle groups are rested enough today, and which are not."""
+        recovery = training.strength.muscle_recovery if training.strength else []
+        known = [item for item in recovery if item.days_since_last_trained is not None]
+        rested = sorted(
+            (item for item in known if item.days_since_last_trained >= 3
+             and not (item.latest_soreness is not None and item.latest_soreness >= 4)),
+            key=lambda item: -item.days_since_last_trained,
+        )[:3]
+        recent = [item for item in known if item.days_since_last_trained <= 1]
+        lines = []
+        if rested:
+            lines.append(
+                "今天适合练：" + "、".join(item.muscle_group_label for item in rested)
+                + "（已休息 3 天以上）。"
+            )
+        if recent:
+            lines.append("避开：" + "、".join(item.muscle_group_label for item in recent) + "（48 小时内练过）。")
+        return lines
 
     @staticmethod
     def _strength_from_prior(prior, intensity: str):

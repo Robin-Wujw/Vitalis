@@ -18,12 +18,15 @@ from .profile import RawDailyProfile
 HEALTH_PROGRESSION = 1.05
 OVER_TARGET = 1.10
 CATCH_UP_PACE = 0.75
+# Done this far beyond the even pace (and at least half the target) is ahead.
+AHEAD_PACE = 1.5
 # A catch-up day may take at most this much more than an even share.
 CATCH_UP_CAP = 1.25
 STATUS_LABELS = {
     "WEEK_START": "本周刚开始",
     "ON_TRACK": "进度正常",
     "CATCH_UP": "需要补齐",
+    "AHEAD": "已超前",
     "OVER": "已超过目标",
 }
 TIER_LABELS = {"BUILDING": "提升", "MAINTAINING": "维持", "EXCESSIVE": "过量"}
@@ -101,6 +104,8 @@ def weekly_load_plan(
         status = "OVER"
     elif elapsed_days == 0 and done == 0:
         status = "WEEK_START"
+    elif done >= target * 0.5 and done >= target * (elapsed_days + 1) / 7 * AHEAD_PACE:
+        status = "AHEAD"
     elif done < expected * CATCH_UP_PACE:
         status = "CATCH_UP"
     else:
@@ -135,6 +140,8 @@ def weekly_load_plan(
 
     if status == "OVER":
         reason = f"本周负荷已达目标的 {done / target:.0%}，今天以恢复为主。"
+    elif status == "AHEAD":
+        reason = f"本周 {elapsed_days + 1} 天已完成目标的 {done / target:.0%}，超前于进度，剩下的份额少分配。"
     elif status == "CATCH_UP":
         reason = f"本周已完成目标的 {done / target:.0%}，落后于进度，剩余 {days_left} 天内补齐。"
     elif status == "WEEK_START":

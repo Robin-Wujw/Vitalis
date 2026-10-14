@@ -78,7 +78,7 @@ worker 的内存上限写在 `deploy/systemd/vitalis-worker.service`（`MemoryHi
 
 ## Zepp 手机登录与重新登录
 
-API 只在本机监听，手机通过 ZeroTier 私有网络访问：nginx 只在 ZeroTier 地址上监听 80 端口并转发到 `127.0.0.1:8000`，`VITALIS_PUBLIC_URL` 设为该地址。ZeroTier 端到端加密，所以这条私有链路允许 HTTP；公网地址仍必须 HTTPS。`vitalis connect zepp --user U [--minutes 60] [--push]` 生成手机登录链接（可直接经 PushPlus 发到手机），密码只经过自己的服务器一次、不保存。
+API 只在本机监听，手机通过 ZeroTier 私有网络访问：`deploy/systemd/vitalis-private-proxy.socket` 只在 ZeroTier 地址的 80 端口监听（模板里的地址换成实际 ZeroTier 地址），由 `systemd-socket-proxyd` 转发到 `127.0.0.1:8000`；`VITALIS_PUBLIC_URL` 设为 `http://<ZeroTier 地址>`。ZeroTier 端到端加密，所以这条私有链路允许 HTTP；公网地址仍必须 HTTPS。`vitalis connect zepp --user U [--minutes 60] [--push]` 生成手机登录链接（可直接经 PushPlus 发到手机），密码只经过自己的服务器一次、不保存。
 
 最近一次同步返回需要重新认证时，worker 每小时先用保存的 `login_token` 换新的 `app_token`；换不了（没有 `login_token`、接口拒绝或返回别的账号）就经 PushPlus 发一个 24 小时有效的重新登录链接，每天最多一次，并记一条 `credential_expired` 告警。
 

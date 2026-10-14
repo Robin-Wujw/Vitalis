@@ -11,14 +11,14 @@
         "media_type": "text/markdown",
         "template": "markdown",
         "renderer_version": "4.0",
-        "content_sha256": "5cb3d108da6ad8f61660fb95378a2a4f092ccbc7a4c2085aef751ba10fda8250"
+        "content_sha256": "ef3c318771329fe7644a7599be557043ccaabb3b1c5294f1f525f7a3828bfe21"
       },
       "html": {
         "title": "Vitalis 晨报 · 今天安排：正常训练",
         "media_type": "text/html",
         "template": "html",
         "renderer_version": "4.0",
-        "content_sha256": "6fdafc6009e4a2d2cebae15be6a9bbeea7fde78982a7b4153a8e1a63a24e08a3"
+        "content_sha256": "4702bcdaf9f43e05202f78317fa11ef6af1f3dbaf918d0a02e69bc909b53e300"
       }
     },
     "daily": {

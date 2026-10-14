@@ -744,8 +744,16 @@ def _daily_suggestions(payload: dict[str, Any]) -> list[str]:
                 if key == "optional_session" and plan.get("session_relationship") == "ALTERNATIVE":
                     prefix = "替代选择（与主要安排二选一）"
                 output.append(f"{prefix}：{suggestion}")
+    primary = plan.get("primary_session") or {}
+    muscles = [
+        str(reason).rstrip("。") for reason in primary.get("personalization_reasons") or []
+        if primary.get("session_type") == "STRENGTH" and str(reason).startswith(("今天适合练", "避开"))
+    ]
     weekly = _weekly_load_lines(payload, morning=True)
-    return unique(output)[:2] + (["；".join(weekly[:2])] if weekly else [])
+    return (
+        unique(output)[:2] + (["；".join(muscles)] if muscles else [])
+        + (["；".join(weekly[:2])] if weekly else [])
+    )
 
 
 def _weekly_load_lines(payload: dict[str, Any], *, morning: bool) -> list[str]:
@@ -759,8 +767,9 @@ def _weekly_load_lines(payload: dict[str, Any], *, morning: bool) -> list[str]:
     remaining = _number(weekly.get("remaining_load"))
     if morning and _number(weekly.get("today_target_load")) is not None:
         today = f"今天的份额约 {number(weekly['today_target_load'], 0)}"
-        if _integer(weekly.get("today_minutes")) is not None:
-            today += f"（约 {weekly['today_minutes']} 分钟）"
+        primary = (((payload.get("decision") or {}).get("action_plan") or {}).get("primary_session") or {})
+        if _integer(weekly.get("today_minutes")) is not None and primary.get("session_type") == "RUNNING":
+            today += f"（跑步约 {weekly['today_minutes']} 分钟）"
         lines.append(today + f"；本周还剩 {number(remaining, 0)}，计划分 {weekly.get('sessions_left')} 次完成")
     elif not morning and remaining:
         later_days = max(0, (_integer(weekly.get("days_left")) or 0) - 1)

@@ -999,7 +999,7 @@ class WeeklyLoadPlan(BaseModel):
     progress_ratio: float = Field(ge=0)
     days_left: int = Field(ge=0)
     sessions_left: int = Field(ge=0)
-    status: Literal["WEEK_START", "ON_TRACK", "CATCH_UP", "OVER"]
+    status: Literal["WEEK_START", "ON_TRACK", "CATCH_UP", "AHEAD", "OVER"]
     status_label: str
     acute_chronic_ratio: float | None = None
     load_tier: Literal["BUILDING", "MAINTAINING", "EXCESSIVE"] | None = None

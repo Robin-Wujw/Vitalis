@@ -649,3 +649,34 @@ def test_profile_loader_ignores_legacy_activity_default_zero_but_keeps_positive_
     assert "calories" not in raw.series
     assert "distance_km" not in raw.series
     assert "resting_hr" not in raw.series
+
+
+def test_feature_day_drops_the_same_stream_vendor_daily_value():
+    from vitalis.time import local_timezone
+
+    user_id = "feature-vs-daily"
+    day = date(2026, 8, 28)
+    zone = str(local_timezone())
+    history = day - timedelta(days=5)
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+        start = datetime.combine(history, datetime.min.time()) + timedelta(hours=2)
+        repo.save_metric_samples([
+            MetricSample(
+                user_id=user_id, metric="stress", timestamp=start + timedelta(minutes=index),
+                value=30.0, unit="score", source="zepp", source_scope="device", device_id="DEV-1",
+            )
+            for index in range(60)
+        ])
+        repo.save_daily_metrics([DailyMetric(
+            user_id=user_id, date=history, metric="stress", value=90.0, unit="score",
+            source="zepp", source_scope="device", device_id="DEV-1",
+        )])
+        raw = ProfileLoader(repo).load(
+            user_id, day, as_of=datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=20),
+            timezone_name=zone,
+        )
+    points = [point for point in raw.series["stress"] if point.day == history]
+    assert [(point.value, point.sample_count) for point in points] == [(30.0, 60)]

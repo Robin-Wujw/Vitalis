@@ -307,3 +307,15 @@ def test_data_status_reports_unknown_without_observations_and_actual_7d_coverage
     assert stream["expected_interval_seconds"] == 86400
     assert stream["coverage_7d"]["observed_days"] == 2
     assert stream["coverage_7d"]["coverage"] == 2 / 7
+
+
+def test_requeued_analysis_after_input_change_is_not_an_alert():
+    from datetime import date, datetime, timezone
+
+    from vitalis.application.delivery_alerts import AnalysisFailureObservation, evaluate_analysis_failure
+
+    now = datetime(2026, 10, 14, 4, tzinfo=timezone.utc)
+    changed = AnalysisFailureObservation(run_id="r1", target_date=date(2026, 10, 14), failed_at=now, error="analysis_input_changed")
+    limit = AnalysisFailureObservation(run_id="r2", target_date=date(2026, 10, 14), failed_at=now, error="analysis_attempt_limit")
+    assert evaluate_analysis_failure("u", changed, now=now) is None
+    assert evaluate_analysis_failure("u", limit, now=now).reason == "analysis_failed"

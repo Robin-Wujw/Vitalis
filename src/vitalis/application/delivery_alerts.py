@@ -189,6 +189,10 @@ def evaluate_analysis_failure(
     """Evaluate one recent failed analysis run using only a stable error category."""
     if not _is_recent(failure.failed_at, now):
         return None
+    # New input arriving mid-run requeues the job; only a run that keeps
+    # failing (``analysis_attempt_limit``) or fails outright is an incident.
+    if failure.error == "analysis_input_changed":
+        return None
     safe_error = failure.error if failure.error in {
         "analysis_failed", "analysis_input_changed", "analysis_attempt_limit",
     } else None

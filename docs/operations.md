@@ -41,7 +41,7 @@ worker 每 30 分钟检查一次数据流新鲜度：周期性的流（睡眠、
 
 ## 投递目标与告警
 
-目标是晨报在窗口结束后 30 分钟内（默认 11:30）、晚报在 22:30 前被 PushPlus 受理（业务 `code=200`）。告警检查不在 worker 里：`vitalis-alerts.timer` 每 10 分钟启动一次 `vitalis alerts check`，独立进程，worker 冻住时照样运行。到目标仍未受理、PushPlus 明确拒绝、24 小时内分析失败，或 worker 心跳超过 30 分钟未更新时各记一次事件，同一事件不重复。没有投递意图的漏发在 `GET /api/deliveries` 里显示为 `status=missed` 的记录，`failure_code` 为 `worker_not_running`、`snapshot_unavailable` 或 `delivery_not_created`。
+目标是晨报在窗口结束后 30 分钟内（默认 11:30）、晚报在 22:30 前被 PushPlus 受理（业务 `code=200`）。告警检查不在 worker 里：`vitalis-alerts.timer` 每 10 分钟启动一次 `vitalis alerts check`，独立进程，worker 冻住时照样运行。到目标仍未受理、PushPlus 明确拒绝、24 小时内分析失败（计算中途有新数据、任务自动重排的不算），或 worker 心跳超过 30 分钟未更新时各记一次事件，同一事件不重复。没有投递意图的漏发在 `GET /api/deliveries` 里显示为 `status=missed` 的记录，`failure_code` 为 `worker_not_running`、`snapshot_unavailable` 或 `delivery_not_created`。
 
 数据流停更（`stream_stale`）和 Zepp 凭据失效（`credential_expired`）也写进同一张告警表。第二告警通道（邮件或 Hermes）用户决定暂不接入（2026-10-13，2026-10-14 再次确认）：事件只写入当前数据库，用 `GET /api/delivery-alerts` 查看，`external_channel` 为 `unconfigured`；`journalctl -u vitalis-alerts` 里每个新事件一行，只含原因类别和日期。
 

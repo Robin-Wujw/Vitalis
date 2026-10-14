@@ -24,6 +24,5 @@
 | P0 | [不用插件，在手机上连接 Zepp](zepp-phone-login.md) | 用户用真实账号在手机上登录 |
 | P1 | [准备度评分接入晨报](readiness-score.md) | 用户确认影子对比 |
 | P1 | [身体信号预警接入晨报](illness-warning.md) | 用户确认误报统计 |
-| P1 | [训练明细拿全](workout-detail-streaming.md) | — |
 | P2 | [漏发告警的第二通道](delivery-alerts.md) | 用户选定通道 |
 | P2 | [一键反馈的真实验收](feedback-tags.md) | 用户提交一次反馈 |

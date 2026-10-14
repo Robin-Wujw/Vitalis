@@ -111,3 +111,14 @@ def test_shadow_report_needs_user_review_for_false_positives():
     report = shadow_report("body_signal", rows)
     assert report["evaluated_days"] == 1 and report["warning_rate"] == 1.0
     assert "用户确认" in report["note"]
+
+
+def test_skin_temperature_delta_is_judged_by_z_not_by_percent():
+    from vitalis.intelligence.shadow import body_signal_inputs
+
+    temps = _steady(0.02, wobble=0.05)
+    temps.update({0: 0.6, 1: 0.6})
+    inputs = body_signal_inputs(_raw(skin_temp_delta=_series("skin_temp_delta", "C", temps)))
+    item = inputs["skin_temperature_delta"]
+    assert item["status"] == "AVAILABLE" and item["direction"] == "above"
+    assert item["percent"] is None and item["robust_z"] > 1.5

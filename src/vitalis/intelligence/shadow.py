@@ -239,7 +239,11 @@ def body_signal_inputs(raw: RawDailyProfile) -> dict[str, dict]:
         )
         deviations = [BaselineEngine.deviation(daily[night], baseline) for night in nights]
         directions = {item.direction for item in deviations}
-        percents = [item.percent for item in deviations if item.percent is not None]
+        # A temperature delta is already a difference around zero; a percentage
+        # of it is meaningless, so it qualifies by robust z only.
+        percents = [] if metric in _SIGNED_METRICS else [
+            item.percent for item in deviations if item.percent is not None
+        ]
         zs = [item.robust_z for item in deviations if item.robust_z is not None]
         output[name] = {
             "status": "AVAILABLE",

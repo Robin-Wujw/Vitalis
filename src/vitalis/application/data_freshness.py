@@ -25,7 +25,12 @@ EXPECTED_INTERVAL_SECONDS: dict[str, int] = {
     "workout_detail": 24 * 60 * 60,
     "heart_rate/dense_file": 24 * 60 * 60,
     "heart_rate/dense_archive": 24 * 60 * 60,
-    "daily_summary": 24 * 60 * 60,
+    # Daily values are stamped at local midnight of their day and arrive the
+    # next morning, so a healthy stream is up to two days old.
+    "daily_summary": 48 * 60 * 60,
+    "wellness/pai": 48 * 60 * 60,
+    "wellness/respiratory_rate": 48 * 60 * 60,
+    "wellness/spo2_odi": 48 * 60 * 60,
     "devices": 7 * 24 * 60 * 60,
     "wellness": 24 * 60 * 60,
 }
@@ -114,7 +119,8 @@ def stream_freshness(
     }
 
 
-# Streams that are event-driven rather than periodic, so silence is normal:
+# Streams that are event-driven rather than periodic, so silence is normal
+# (``/api/data-status`` still reports their age):
 # Zepp's ``hrv`` endpoint carries manual spot measurements (SDNN) only, the
 # minute heart-rate endpoint is empty for watches that upload dense files,
 # and workouts, details and devices follow the user's activity.
@@ -124,6 +130,10 @@ NOT_MONITORED_STREAMS = frozenset({
     "workouts",
     "workout_detail",
     "devices",
+    # Vendor estimates that change only occasionally.
+    "wellness/lactate_threshold",
+    "daily_summary/vo2_max",
+    "daily_summary/sport_load",
 })
 # A stale stream gets one automatic re-fetch; it is reported only when it is
 # still stale this long after its expected interval and an hour after the

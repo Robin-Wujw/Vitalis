@@ -70,3 +70,12 @@ def test_freshness_job_refetches_once_and_stores_one_alert(monkeypatch):
             for row in db.scalars(select(DeliveryAlertEvent).where(DeliveryAlertEvent.user_id == user_id))
         }
     assert events == {"stream_refetch_queued": "suppressed", "stream_stale": "pending"}
+
+
+def test_midnight_stamped_daily_values_get_two_days_and_estimates_are_not_monitored():
+    from vitalis.application.data_freshness import expected_interval_seconds
+
+    assert expected_interval_seconds("wellness/pai") == 48 * 3600
+    assert expected_interval_seconds("wellness/hrv_rmssd") == 24 * 3600
+    rows = [_row("wellness/lactate_threshold", age_hours=200), _row("daily_summary/vo2_max", age_hours=200)]
+    assert freshness_actions(rows, {}, NOW) == []

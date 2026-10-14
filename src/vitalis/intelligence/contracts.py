@@ -636,6 +636,10 @@ class RecoveryFeatures(BaseModel):
     vendor_charge: float | None = None
     vendor_readiness_components: dict[str, float] = Field(default_factory=dict)
     vendor_charge_components: dict[str, float] = Field(default_factory=dict)
+    readiness_score: int | None = Field(default=None, ge=0, le=100)
+    readiness_factors: list[str] = Field(default_factory=list)
+    readiness_hrv_state: str | None = None
+    readiness_missing_components: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     limitation_labels: list[str] = Field(default_factory=list)
 

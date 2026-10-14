@@ -1,8 +1,12 @@
-"""Shadow-only daily computations that run in the off-peak batch.
+"""Daily readiness score and body-signal warning.
 
-Nothing here reaches a report.  The batch stores each result so a later
-comparison can decide, with the user, whether it replaces current logic.
-Each function documents its promotion condition.
+Both ran as shadow modules until the user reviewed 60 days of replayed
+results (2026-10-14) and confirmed them for the morning report.  The score
+and its factors are shown in the key records; the recovery state the plan
+follows stays with the signal vote until the score bands are calibrated to
+the user's own range (on fixed 34/67 bands nearly every day is "normal",
+including days the user confirmed as poor).  A warning lowers the day's
+intensity.  The off-peak batch still records both for tracking.
 """
 
 from __future__ import annotations
@@ -18,8 +22,11 @@ from .events import detect_body_signal_warning
 from .open_health.readiness import compute_composite_readiness
 from .profile import RawDailyProfile, SeriesPoint
 
-READINESS_VERSION = "readiness-shadow-1"
-BODY_SIGNAL_VERSION = "body-signal-shadow-1"
+READINESS_VERSION = "readiness-1"
+BODY_SIGNAL_VERSION = "body-signal-1"
+# Score bands for the morning label (0-100, 50 is the personal norm).
+GOOD_FROM = 67
+SUPPRESSED_BELOW = 34
 # Robust SD multiplier for the 60-day HRV normal range (smallest worthwhile
 # change convention: half a standard deviation either side).
 HRV_RANGE_SD = 0.5
@@ -165,13 +172,8 @@ def _load_component(raw: RawDailyProfile) -> dict:
     return {"score": _clamp(85 - 150 * max(0.0, ratio - 1.0)), "acwr": round(ratio, 2), "sentence": sentence}
 
 
-def readiness_shadow(raw: RawDailyProfile) -> dict:
-    """0–100 readiness from HRV status, sleep, resting HR and recent load.
-
-    Promotion: two weeks of shadow results compared with the vote-based
-    recovery state and the vendor readiness, shown to and confirmed by the
-    user, before it replaces the morning training basis.
-    """
+def readiness_score(raw: RawDailyProfile) -> dict:
+    """0–100 readiness from HRV status, sleep, resting HR and recent load."""
     components = {
         "hrv": _hrv_component(raw),
         "sleep": _sleep_component(raw),
@@ -257,17 +259,16 @@ def body_signal_inputs(raw: RawDailyProfile) -> dict[str, dict]:
     return output
 
 
-def body_signal_shadow(raw: RawDailyProfile) -> dict:
+def body_signal_warning(raw: RawDailyProfile) -> dict:
     """Warn when two or more body signals leave their personal range together.
 
-    Promotion: the shadow false-positive count over the observation period,
-    shown to and confirmed by the user, before the warning enters the morning
-    report.  It never names a disease.
+    It never names a disease; the morning report only lowers the intensity.
     """
     inputs = body_signal_inputs(raw)
     event = detect_body_signal_warning(raw.user_id, raw.day, inputs)
     return {
         "version": BODY_SIGNAL_VERSION,
+        "event": event,
         "warning": event is not None,
         "evidence": [item.model_dump(mode="json") for item in event.evidence] if event else [],
         "inputs": inputs,
@@ -281,3 +282,21 @@ def latest_value(points: list[SeriesPoint], day: date) -> float | None:
         return None
     latest = max(same_day, key=lambda point: str(point.observed_at))
     return latest.last_value if latest.last_value is not None else latest.value
+
+
+def readiness_band(score: int | None) -> str | None:
+    if score is None:
+        return None
+    return "GOOD" if score >= GOOD_FROM else "SUPPRESSED" if score < SUPPRESSED_BELOW else "NORMAL"
+
+
+def apply_readiness(recovery, readiness: dict):
+    """Attach the readiness score and factors; the recovery state is unchanged."""
+    return recovery.model_copy(update={
+        "readiness_score": readiness.get("score"),
+        "readiness_factors": list(readiness.get("factors") or []),
+        "readiness_hrv_state": readiness.get("hrv_state"),
+        "readiness_missing_components": list(
+            ((readiness.get("insight") or {}).get("payload") or {}).get("missing_components") or []
+        ),
+    })

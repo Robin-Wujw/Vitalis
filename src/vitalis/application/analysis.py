@@ -49,6 +49,7 @@ from vitalis.intelligence.morning_briefing import MorningBriefingEngine
 from vitalis.intelligence.personal import PersonalModelEngine
 from vitalis.intelligence.facts import facts_for_day
 from vitalis.intelligence.profile import RawDailyProfile
+from vitalis.intelligence.readiness import apply_readiness, body_signal_warning, readiness_score
 from vitalis.intelligence.training_response import TrainingResponseEngine
 from vitalis.intelligence.weekly import WeeklyProfileEngine
 from vitalis.intelligence.report_periods import resolve_month_period, resolve_week_period
@@ -347,6 +348,8 @@ def build_daily_profile(
     overnight_vitals = OvernightVitalsAnalyzer().analyze(raw, baselines, sleep)
     training = TrainingAnalyzer().analyze(raw, baselines)
     recovery = RecoveryAnalyzer().analyze(raw, sleep, sleep_state, hrv, training)
+    recovery = apply_readiness(recovery, readiness_score(raw))
+    body_warning = body_signal_warning(raw)["event"]
     recommendation_id = _stable_id("recommendation", analysis_run_id)
     decision = DecisionEngine().decide(
         recommendation_id,
@@ -358,11 +361,14 @@ def build_daily_profile(
         training,
         raw.training_preferences,
         timezone_name=raw.timezone_name,
+        body_warning=body_warning is not None,
     )
     from vitalis.intelligence.trend import TrendEngine
 
     trends = TrendEngine().calculate(raw)
     events = HealthEventEngine().detect(raw, baselines, trends, hrv, recovery, training)
+    if body_warning is not None:
+        events.append(body_warning)
     return DailyProfile(
         analysis_run_id=analysis_run_id,
         user_id=raw.user_id,

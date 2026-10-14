@@ -19,10 +19,10 @@ from vitalis.intelligence.contracts import OpenHealthBundle
 from vitalis.intelligence.open_health import OpenHealthEngine
 from vitalis.intelligence.profile import ProfileLoader, RawDailyProfile
 from vitalis.intelligence.response_model import evaluate, rows_from_series
-from vitalis.intelligence.shadow import (
-    body_signal_shadow,
+from vitalis.intelligence.readiness import (
+    body_signal_warning,
     latest_value,
-    readiness_shadow,
+    readiness_score,
 )
 
 log = logging.getLogger("vitalis.shadow")
@@ -112,14 +112,15 @@ class ShadowBatch:
             bundle = None
         if bundle is not None:
             results["open_health"] = (OPEN_HEALTH_VERSION, bundle.model_dump(mode="json"))
-        readiness = readiness_shadow(raw)
+        readiness = readiness_score(raw)
         readiness["comparison"] = {
             "vote_state": recovery.get("state"),
             "vendor_readiness": latest_value(raw.series.get("readiness", []), day),
             "vendor_charge": latest_value(raw.series.get("hybrid_charge", []), day),
         }
         results["readiness"] = (readiness["version"], readiness)
-        body = body_signal_shadow(raw)
+        body = body_signal_warning(raw)
+        body.pop("event", None)
         results["body_signal"] = (body["version"], body)
         results["response_model"] = (RESPONSE_MODEL_VERSION, self._response_model(raw, feedback))
         results["tracking"] = (TRACKING_VERSION, tracking_metrics(

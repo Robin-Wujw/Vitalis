@@ -65,6 +65,7 @@ class DecisionEngine:
         preferences: TrainingPreferences,
         *,
         timezone_name: str | None = None,
+        body_warning: bool = False,
     ) -> TrainingDecision:
         limitations = list(dict.fromkeys(
             hrv.limitations + recovery.limitations + training.limitations
@@ -285,7 +286,9 @@ class DecisionEngine:
             )
 
         conflicts = self._conflicts(day, training)
-        action, action_drivers = self._training_action(sleep_state, hrv, recovery, training)
+        action, action_drivers = self._lower_for_body_warning(
+            *self._training_action(sleep_state, hrv, recovery, training), body_warning,
+        )
         intensity = {
             DecisionAction.TRAIN_HARD: "high",
             DecisionAction.TRAIN_NORMAL: "moderate",
@@ -494,6 +497,13 @@ class DecisionEngine:
         if preferences.pain_or_injury_status == "UNKNOWN":
             return "UNKNOWN", "伤病与疼痛状态未确认"
         return "CLEAR", "未记录疼痛或伤病限制"
+
+    @staticmethod
+    def _lower_for_body_warning(action, drivers, body_warning: bool):
+        """Several body signals left their personal range together: go light."""
+        if body_warning and action in {DecisionAction.TRAIN_HARD, DecisionAction.TRAIN_NORMAL}:
+            return DecisionAction.TRAIN_LIGHT, list(drivers) + ["BODY_SIGNAL_WARNING"]
+        return action, drivers
 
     @staticmethod
     def _training_action(

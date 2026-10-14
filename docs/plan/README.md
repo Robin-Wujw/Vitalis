@@ -22,7 +22,6 @@
 | --- | --- | --- |
 | P0 | [晨报醒来窗口的一周验收](wake-triggered-morning.md) | 运行满一周（2026-10-20） |
 | P0 | [不用插件，在电脑网页上连接 Zepp](zepp-web-login.md) | 回填完成；稳定两周后删插件（2026-10-28） |
-| P1 | [准备度评分接入晨报](readiness-score.md) | 用户确认影子对比 |
-| P1 | [身体信号预警接入晨报](illness-warning.md) | 用户确认误报统计 |
+| P1 | [准备度分数段按个人分布校准](readiness-bands.md) | 用户确认新分数段的逐日对比 |
 | P2 | [漏发告警的第二通道](delivery-alerts.md) | 用户选定通道 |
 | P2 | [一键反馈的真实验收](feedback-tags.md) | 用户提交一次反馈 |

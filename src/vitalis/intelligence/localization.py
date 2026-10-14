@@ -62,6 +62,7 @@ LOAD_LABELS = {
 }
 
 DRIVER_LABELS = {
+    "BODY_SIGNAL_WARNING": "多个身体信号同时偏离个人范围，今天降低强度",
     "HRV_ABOVE_BASELINE": "HRV 高于个人基线",
     "HRV_BELOW_BASELINE": "HRV 低于个人基线",
     "RHR_BELOW_BASELINE": "静息心率低于个人基线",

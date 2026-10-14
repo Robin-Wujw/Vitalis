@@ -10,6 +10,7 @@ from datetime import date, datetime
 from typing import Any
 
 from .period_activity import comparison_gate
+from .readiness import readiness_band
 from .report_formatting import (
     energy_label,
     metric_label,
@@ -264,6 +265,15 @@ def _daily_metrics(payload: dict[str, Any], *, morning: bool) -> list[dict[str, 
     ))
 
     if morning:
+        recovery = features.get("recovery") or {}
+        score = _integer(recovery.get("readiness_score"))
+        if score is not None:
+            band = {"GOOD": "较好", "SUPPRESSED": "偏低"}.get(readiness_band(score), "一般")
+            factors = [str(item) for item in recovery.get("readiness_factors") or [] if item][:3]
+            output.insert(0, _metric(
+                "readiness", "准备度", score, "score", digits=0,
+                detail="；".join([f"{band}（50 是你的平常水平）"] + factors),
+            ))
         rhr = _number(hrv.get("rhr_bpm"))
         if rhr is not None:
             output.append(_metric(
@@ -282,7 +292,7 @@ def _daily_metrics(payload: dict[str, Any], *, morning: bool) -> list[dict[str, 
             oxygen = vitals.get("oxygen") or {}
             if oxygen.get("status") == "AVAILABLE" and _number(oxygen.get("median_percent")) is not None:
                 output.append(_metric("oxygen", "夜间血氧中位数", oxygen["median_percent"], "%", digits=0))
-        return output[:3]
+        return output[:4]
 
     steps = activity.get("steps") if isinstance(activity, dict) else None
     steps_value = _number(steps.get("value")) if isinstance(steps, dict) else None

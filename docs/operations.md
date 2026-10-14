@@ -74,7 +74,7 @@ worker 的内存上限写在 `deploy/systemd/vitalis-worker.service`（`MemoryHi
 
 日常分析读入库时写好的日级特征（`daily_signal_features`）：HRV、血氧、压力和 Charge 这类密集样本流，只有目标日和前一天读原始样本，更早的日子每个流每天一行（合格值的中位数、最新值、样本数、覆盖分钟数），不再截断样本。特征和样本在同一个事务里写入；首次部署或时区变化后用 `vitalis db rebuild-features` 从已存样本重算（约 1 年数据 2 分钟）。每次分析在 `analysis_runs` 记录耗时 `compute_seconds` 和进程峰值内存 `peak_rss_mb`；耗时超过 30 秒或分析新增的峰值内存（峰值减开始时常驻）超过 150 MB 时，`budget_exceeded` 写明超出项，worker 日志记一行警告。生产库副本上单次分析约 7–8 秒、含解释器的进程峰值约 140–150 MB（旧路径约 26 秒、320 MB）。
 
-影子模块不在日常路径计算，也不进报告：worker 每天 03:30 跑离峰批处理，算前一天的开放健康洞察（EWMA 准备度、TRIMP 负荷、多变量异常）、0–100 准备度、身体信号预警、个人反应模型和四项系统质量指标，各存一行 `shadow_results`。`vitalis shadow run --day D --days N` 补算或在历史上回放策略改动，`vitalis shadow report readiness|body_signal --user U --days 14` 输出对比（准备度对计票结论的一致率、对厂商 Readiness 的秩相关；预警日列表需要用户确认才能算误报率）。
+影子模块不在日常路径计算，也不进报告：worker 每天 03:30 跑离峰批处理，算前一天的开放健康洞察（EWMA 准备度、TRIMP 负荷、多变量异常）、个人反应模型和四项系统质量指标，并记录当天的 0–100 准备度和身体信号预警（这两项已进入日常分析和晨报，批处理只留跟踪记录），各存一行 `shadow_results`。`vitalis shadow run --day D --days N` 补算或在历史上回放策略改动，`vitalis shadow report readiness|body_signal --user U --days 14` 输出对比（准备度对计票结论的一致率、对厂商 Readiness 的秩相关；预警日列表需要用户确认才能算误报率）。
 
 ## Zepp 网页登录与重新登录
 

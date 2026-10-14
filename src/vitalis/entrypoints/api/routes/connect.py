@@ -42,8 +42,8 @@ def _login_adapter():
         adapter.close()
 
 
-class PhoneLoginRequest(BaseModel):
-    """Password input accepted once by the mobile pairing page."""
+class PasswordLoginRequest(BaseModel):
+    """Password input accepted once by the login page."""
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
@@ -56,10 +56,20 @@ def _connection_status(error: ConnectionOperationError) -> int:
     return error.http_status
 
 
+# Stable login classifications the login page may show; never vendor text.
+LOGIN_FAILURE_CODES = frozenset({
+    "captcha_required", "invalid_credentials", "invalid_password", "invalid_account",
+    "invalid_country_code", "rate_limited", "network_error", "timeout",
+})
+
+
 def connection_http_error(error: ConnectionOperationError) -> HTTPException:
+    headers = {"Retry-After": str(error.retry_after)} if error.retry_after else {}
+    failure = getattr(error, "failure_code", None)
+    if failure in LOGIN_FAILURE_CODES:
+        headers["X-Login-Failure"] = failure
     return HTTPException(
-        status_code=error.http_status, detail="连接操作失败",
-        headers={"Retry-After": str(error.retry_after)} if error.retry_after else None,
+        status_code=error.http_status, detail="连接操作失败", headers=headers or None,
     )
 
 
@@ -253,8 +263,8 @@ def _private_origin(host: str | None) -> bool:
     return address.is_private and not address.is_loopback
 
 
-def _require_phone_origin(request: Request) -> None:
-    """Apply the phone page's origin/referrer boundary before password input."""
+def _require_login_origin(request: Request) -> None:
+    """Apply the login page's origin/referrer boundary before password input."""
     expected = _public_base_url(request).rstrip("/")
     expected_parts = urlsplit(expected)
     production = settings.env in {"prod", "production"}
@@ -266,22 +276,22 @@ def _require_phone_origin(request: Request) -> None:
         or expected_parts.scheme != scheme
         or request.headers.get("X-Forwarded-Proto", request.url.scheme).split(",", 1)[0].strip().lower() != scheme
     ):
-        raise HTTPException(status_code=503, detail="手机登录要求 HTTPS 或私有网络地址")
+        raise HTTPException(status_code=503, detail="登录页要求 HTTPS 或私有网络地址")
 
     origin = request.headers.get("Origin")
     if production and origin is None:
-        raise HTTPException(status_code=403, detail="手机登录需要同源请求")
+        raise HTTPException(status_code=403, detail="登录需要同源请求")
     if origin is not None and origin.rstrip("/") != expected:
-        raise HTTPException(status_code=403, detail="不允许此手机登录来源")
+        raise HTTPException(status_code=403, detail="不允许此登录来源")
     referrer = request.headers.get("Referer")
     if referrer:
         parts = urlsplit(referrer)
         ref_origin = f"{parts.scheme}://{parts.netloc}".rstrip("/")
         if ref_origin != expected:
-            raise HTTPException(status_code=403, detail="手机登录来源页面无效")
+            raise HTTPException(status_code=403, detail="登录来源页面无效")
 
 
-def _phone_response_headers(nonce: str | None = None) -> dict[str, str]:
+def _login_response_headers(nonce: str | None = None) -> dict[str, str]:
     script_policy = f"'nonce-{nonce}'" if nonce else "'none'"
     style_policy = f"'nonce-{nonce}'" if nonce else "'none'"
     return {
@@ -298,11 +308,10 @@ def _phone_response_headers(nonce: str | None = None) -> dict[str, str]:
     }
 
 
-def _phone_pairing_html(code: str, expires_at: str, *, nonce: str) -> str:
-    """Self-contained local phone form; it has no third-party assets/scripts."""
+def _login_page_html(code: str, expires_at: str, *, nonce: str) -> str:
+    """Self-contained Zepp login page; no third-party assets or scripts."""
     code_json = json.dumps(code, ensure_ascii=True)
-    code_esc = html_mod.escape(code, quote=True)
-    expiry_esc = html_mod.escape(expires_at, quote=True)
+    expiry_json = json.dumps(expires_at, ensure_ascii=True)
     reset_url = "https://user.zepp.com/universalLogin/index.html#/forget"
     reset_esc = html_mod.escape(reset_url, quote=True)
     return f"""<!doctype html>
@@ -313,91 +322,174 @@ def _phone_pairing_html(code: str, expires_at: str, *, nonce: str) -> str:
 <meta name="referrer" content="no-referrer"/>
 <title>Vitalis · 连接 Zepp</title>
 <style nonce="{nonce}">
-:root {{ color-scheme: light; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }}
+:root {{ color-scheme: light; --ink: #16231d; --muted: #5d6e65; --line: #d7e2db; --brand: #136b54;
+  --brand-dark: #0d3d31; --soft: #eef5f1; --warn: #8a5a12; --bad: #a33a2b;
+  font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }}
 * {{ box-sizing: border-box; }}
-body {{ margin: 0; min-height: 100vh; background: #f4f7f5; color: #15221c; }}
-main {{ width: min(460px, calc(100% - 32px)); margin: 0 auto; padding: 34px 0 48px; }}
-header {{ border-bottom: 1px solid #d6e1da; padding: 6px 0 22px; }}
-.brand {{ color: #16745b; font-size: 13px; font-weight: 750; letter-spacing: .08em; }}
-h1 {{ font-size: 25px; line-height: 1.25; margin: 10px 0 8px; }}
-.lead {{ color: #5c6d64; font-size: 14px; line-height: 1.6; margin: 0; }}
-section {{ padding: 24px 0 0; }}
+body {{ margin: 0; min-height: 100vh; background: #f3f6f4; color: var(--ink); display: flex; align-items: center; justify-content: center; padding: 32px 16px; }}
+.shell {{ width: min(980px, 100%); display: grid; grid-template-columns: 1fr 1.05fr; background: #fff;
+  border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: 0 18px 50px rgba(15,46,36,.08); }}
+.shell > section {{ min-width: 0; }}
+.intro {{ background: var(--brand-dark); color: #e8f2ed; padding: 44px 40px; display: flex; flex-direction: column; gap: 28px; }}
+.brand {{ font-size: 13px; font-weight: 750; letter-spacing: .14em; color: #9fd3bd; }}
+.intro h1 {{ margin: 0; font-size: 30px; line-height: 1.25; color: #fff; }}
+.intro p {{ margin: 12px 0 0; color: #c3d8ce; line-height: 1.7; font-size: 15px; }}
+.trust {{ list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }}
+.trust li {{ display: grid; grid-template-columns: 22px 1fr; gap: 10px; font-size: 14px; line-height: 1.55; color: #d6e6de; }}
+.trust svg {{ margin-top: 2px; }}
+.steps {{ list-style: none; margin: auto 0 0; padding: 0; display: grid; gap: 12px; }}
+.steps li {{ display: grid; grid-template-columns: 26px 1fr; gap: 10px; align-items: center; font-size: 14px; color: #a9c4b8; }}
+.dot {{ width: 26px; height: 26px; border-radius: 50%; border: 2px solid #4c7a68; display: grid; place-items: center; font-size: 12px; font-weight: 700; }}
+.steps li.active {{ color: #fff; }} .steps li.active .dot {{ border-color: #9fd3bd; color: #9fd3bd; }}
+.steps li.done {{ color: #d6e6de; }} .steps li.done .dot {{ background: #9fd3bd; border-color: #9fd3bd; color: var(--brand-dark); }}
+.panel {{ padding: 44px 44px 36px; display: flex; flex-direction: column; }}
+.panel h2 {{ margin: 0 0 6px; font-size: 22px; }}
+.sub {{ margin: 0 0 22px; color: var(--muted); font-size: 14px; line-height: 1.6; }}
 label {{ display: block; font-size: 14px; font-weight: 650; margin: 16px 0 7px; }}
-input {{ width: 100%; min-height: 46px; border: 1px solid #bdcec3; border-radius: 6px; background: #fff; color: #15221c; font: inherit; padding: 10px 12px; }}
-input:focus {{ outline: 3px solid #b9dfcf; border-color: #16745b; }}
-button {{ width: 100%; min-height: 46px; border: 0; border-radius: 6px; margin-top: 22px; background: #16745b; color: white; font: inherit; font-weight: 700; cursor: pointer; }}
-button:disabled {{ cursor: wait; opacity: .65; }}
-.status {{ min-height: 24px; margin-top: 16px; color: #6a4a13; font-size: 14px; line-height: 1.5; }}
-.status.ok {{ color: #16745b; }}
-.meta {{ color: #718178; font-size: 12px; line-height: 1.6; margin-top: 16px; }}
-a {{ color: #12634e; }}
+.field {{ position: relative; }}
+input, select {{ width: 100%; min-height: 46px; border: 1px solid #bfcfc5; border-radius: 8px; background: #fff; color: var(--ink);
+  font: inherit; padding: 10px 12px; }}
+input:focus, select:focus {{ outline: 3px solid #bfe2d3; border-color: var(--brand); }}
+.toggle {{ position: absolute; right: 8px; top: 8px; min-height: 30px; padding: 0 10px; border: 0; border-radius: 6px;
+  background: var(--soft); color: var(--brand); font: inherit; font-size: 13px; cursor: pointer; }}
+button.primary {{ width: 100%; min-height: 48px; border: 0; border-radius: 8px; margin-top: 24px; background: var(--brand); color: #fff;
+  font: inherit; font-size: 16px; font-weight: 700; cursor: pointer; }}
+button.primary:hover {{ background: #0f5c48; }}
+button.primary:disabled {{ cursor: wait; opacity: .6; }}
+.status {{ margin-top: 18px; padding: 12px 14px; border-radius: 8px; background: var(--soft); font-size: 14px; line-height: 1.6; min-height: 46px; }}
+.status.warn {{ background: #fbf3e4; color: var(--warn); }} .status.bad {{ background: #fbeceb; color: var(--bad); }}
+.status.ok {{ background: #e3f3ec; color: var(--brand); }}
+.meta {{ margin-top: auto; padding-top: 22px; color: #7b8a82; font-size: 12.5px; line-height: 1.7; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }}
+a {{ color: var(--brand); }}
+@media (max-width: 760px) {{ body {{ padding: 0; align-items: stretch; }} .shell {{ grid-template-columns: 1fr; border-radius: 0; border: 0; }} .intro, .panel {{ padding: 30px 24px; }} .steps {{ margin-top: 0; }} }}
 </style>
 </head>
 <body>
-<main>
-<header><div class="brand">VITALIS</div><h1>连接 Zepp 健康数据</h1>
-<p class="lead">密码只在本次请求中经过 Vitalis 服务端处理，不会保存、记录或返回。登录协议由 Zepp 官方网页公开脚本定义。</p></header>
-<section>
+<main class="shell">
+<section class="intro">
+<div class="brand">VITALIS</div>
+<div><h1>连接你的 Zepp 账号</h1>
+<p>连接后 Vitalis 每天从 Zepp 云端读取睡眠、心率、HRV 和训练记录，用来生成晨报和晚报。</p></div>
+<ul class="trust">
+<li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9fd3bd" stroke-width="2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+<span>密码只用来向 Zepp 官方登录一次，不保存、不写日志、不返回；保存的是加密的登录令牌。</span></li>
+<li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9fd3bd" stroke-width="2"><path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6z"/></svg>
+<span>本页只在你的 ZeroTier 私有网络里打开，传输由 ZeroTier 端到端加密。</span></li>
+<li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9fd3bd" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+<span>只读取健康数据，不会改动你在 Zepp 里的任何设置。</span></li>
+</ul>
+<ol class="steps" id="steps">
+<li class="active"><span class="dot">1</span><span>登录 Zepp</span></li>
+<li><span class="dot">2</span><span>加密保存登录令牌</span></li>
+<li><span class="dot">3</span><span>回填近 180 天数据</span></li>
+<li><span class="dot">4</span><span>之后每天自动同步</span></li>
+</ol>
+</section>
+<section class="panel">
+<h2>Zepp 账号登录</h2>
+<p class="sub">用你在 Zepp App 里的手机号（或邮箱）和密码。</p>
 <form id="login-form" autocomplete="on">
-<label for="account">Zepp 手机号或邮箱</label>
-<input id="account" name="username" autocomplete="username" maxlength="320" required />
-<label for="password">Zepp 密码</label>
-<input id="password" name="password" type="password" autocomplete="current-password" maxlength="256" required />
-<label for="country">国家/地区代码</label>
-<input id="country" name="country_code" value="CN" maxlength="24" pattern="[A-Za-z]{{2}}(-[A-Za-z0-9_-]{{1,16}})?" required />
-<button id="submit" type="submit">安全登录并连接</button>
-<div id="status" class="status" role="status" aria-live="polite">一次性配对码 {code_esc} · {expiry_esc} 前有效</div>
+<label for="account">手机号或邮箱</label>
+<input id="account" name="username" autocomplete="username" maxlength="320" placeholder="例如 13800000000" required/>
+<label for="password">密码</label>
+<div class="field"><input id="password" name="password" type="password" autocomplete="current-password" maxlength="256" required/>
+<button type="button" class="toggle" id="toggle">显示</button></div>
+<label for="country">账号注册地区</label>
+<select id="country" name="country_code">
+<option value="CN" selected>中国大陆</option><option value="HK">中国香港</option><option value="TW">中国台湾</option>
+<option value="US">美国</option><option value="GB">英国</option><option value="DE">德国</option><option value="JP">日本</option>
+</select>
+<button class="primary" id="submit" type="submit">登录并连接</button>
 </form>
-<p class="meta">没有密码或遇到图形验证？请在 <a href="{reset_esc}" rel="noopener noreferrer">Zepp 官方忘记密码页面</a> 完成重置后返回本页。</p>
+<div id="status" class="status" role="status" aria-live="polite">填写后点“登录并连接”。</div>
+<div class="meta"><span>没有密码或忘了？到 <a href="{reset_esc}" target="_blank" rel="noopener noreferrer">Zepp 官方页面</a> 用手机验证码设置密码，再回来登录。</span>
+<span id="expiry"></span></div>
 </section>
 </main>
 <script nonce="{nonce}">
 (() => {{
   const code = {code_json};
+  const expiresAt = new Date({expiry_json});
   const form = document.getElementById("login-form");
   const password = document.getElementById("password");
   const button = document.getElementById("submit");
   const status = document.getElementById("status");
+  const expiry = document.getElementById("expiry");
   const loginPath = "/api/connect/zepp/pair/" + encodeURIComponent(code) + "/login";
   const statusPath = "/api/connect/zepp/pair/" + encodeURIComponent(code);
-  const setStatus = (text, ok = false) => {{ status.textContent = text; status.className = ok ? "status ok" : "status"; }};
+  const show = (text, kind = "") => {{ status.textContent = text; status.className = "status " + kind; }};
+  const step = (index) => {{
+    document.querySelectorAll("#steps li").forEach((item, i) => {{
+      item.className = i < index ? "done" : i === index ? "active" : "";
+    }});
+  }};
+  document.getElementById("toggle").addEventListener("click", (event) => {{
+    const hidden = password.type === "password";
+    password.type = hidden ? "text" : "password";
+    event.target.textContent = hidden ? "隐藏" : "显示";
+  }});
+  let finished = false;
+  const tick = () => {{
+    const left = Math.round((expiresAt - new Date()) / 60000);
+    if (finished || isNaN(left)) {{ expiry.textContent = ""; return; }}
+    expiry.textContent = left > 0 ? "本页 " + left + " 分钟内有效" : "本页已过期，请重新生成链接";
+    if (left <= 0) button.disabled = true;
+  }};
+  tick(); window.setInterval(tick, 30000);
   async function poll() {{
     try {{
       const response = await fetch(statusPath, {{ cache: "no-store", headers: {{ "Accept": "application/json" }} }});
-      const data = await response.json();
-      if (data.status === "connected") {{ setStatus("已连接，云端同步已启动。", true); return; }}
-      if (data.status === "expired") {{ setStatus("配对码已过期，请重新生成连接页面。"); return; }}
+      if (response.ok) {{
+        const data = await response.json();
+        const attempt = data.attempt_status;
+        if (data.status === "connected") {{
+          if (attempt === "succeeded" || attempt === "partial") {{
+            step(4); show("全部完成：历史数据已回填，之后每天自动同步，晨报和晚报照常推送。可以关闭本页。", "ok"); return;
+          }}
+          if (attempt === "failed" || attempt === "needs_reauth" || attempt === "cancelled") {{
+            show("已连接，但首次回填没有完成；worker 会按计划重试，不需要重新登录。", "warn"); return;
+          }}
+          step(2); show("已连接，正在回填近 180 天数据，通常几分钟到几十分钟；可以关闭本页，回填会继续。", "ok");
+        }}
+        if (data.status === "expired") {{ show("本页已过期；登录已完成的话，回填仍在后台继续。", "warn"); return; }}
+      }}
     }} catch (_) {{}}
-    window.setTimeout(poll, 2500);
+    window.setTimeout(poll, 5000);
   }}
   form.addEventListener("submit", async (event) => {{
     event.preventDefault();
     button.disabled = true;
-    setStatus("正在通过官方登录协议验证…");
+    show("正在向 Zepp 官方登录…");
+    let response;
     try {{
-      const response = await fetch(loginPath, {{
-        method: "POST",
-        cache: "no-store",
+      response = await fetch(loginPath, {{
+        method: "POST", cache: "no-store",
         headers: {{ "Content-Type": "application/json", "Accept": "application/json" }},
         body: JSON.stringify({{
-          account: document.getElementById("account").value,
+          account: document.getElementById("account").value.trim(),
           password: password.value,
           country_code: document.getElementById("country").value
         }})
       }});
-      password.value = "";
-      if (response.ok) {{
-        setStatus("登录成功，云端同步已启动。", true);
-        window.setTimeout(poll, 800);
-      }} else if (response.status === 429) {{
-        setStatus("尝试次数过多，请稍后重试。 ");
-      }} else {{
-        setStatus("登录未完成，请使用官方页面重置密码后重试。");
-      }}
     }} catch (_) {{
-      password.value = "";
-      setStatus("网络暂时不可用，请稍后重试。");
-    }} finally {{ button.disabled = false; }}
+      password.value = ""; button.disabled = false;
+      show("连不上 Vitalis 服务，确认电脑已连上 ZeroTier 后重试。", "bad"); return;
+    }}
+    password.value = "";
+    if (response.ok) {{
+      finished = true; tick(); form.querySelectorAll("input,select,button").forEach((item) => item.disabled = true);
+      step(1); show("登录成功，令牌已加密保存。", "ok"); window.setTimeout(poll, 1000); return;
+    }}
+    const failure = response.headers.get("X-Login-Failure") || "";
+    button.disabled = false;
+    if (response.status === 429 || failure === "rate_limited") show("尝试次数过多，请过几分钟再试。", "warn");
+    else if (failure === "captcha_required") show("Zepp 要求图形验证，网页登录过不去。请先在 Zepp 官方页面用手机验证码重设密码，再回来登录。", "warn");
+    else if (response.status === 409) show("这个 Zepp 账号已连接到另一个 Vitalis 用户。", "bad");
+    else if (response.status === 404 || response.status === 410) show("本页已过期或已经用过，请重新生成链接。", "warn");
+    else if (failure === "invalid_country_code") show("注册地区不对，换一个地区再试。", "bad");
+    else if (response.status === 401 || response.status === 403 || failure.startsWith("invalid_")) show("账号或密码不对，或者注册地区选错了。", "bad");
+    else if (response.status >= 502) show("Zepp 登录服务暂时连不上，请稍后重试。", "warn");
+    else show("登录没有完成，请稍后重试。", "bad");
   }});
 }})();
 </script>
@@ -405,20 +497,20 @@ a {{ color: #12634e; }}
 </html>"""
 
 
-@router.get("/zepp/phone", response_class=HTMLResponse, summary="手机 Zepp 登录页")
-def zepp_phone_page(
+@router.get("/zepp/login", response_class=HTMLResponse, summary="Zepp 账号密码登录页")
+def zepp_login_page(
     request: Request,
     code: str = Query(..., min_length=1, max_length=128),
 ) -> Response:
-    _require_phone_origin(request)
+    _require_login_origin(request)
     try:
         status = get_connection_service().pairing_status(code)
     except ConnectionOperationError as exc:
         raise HTTPException(status_code=exc.http_status, detail="配对会话不存在或已过期") from exc
     nonce = secrets.token_urlsafe(18)
     return HTMLResponse(
-        _phone_pairing_html(code, iso_utc(status.expires_at) or "", nonce=nonce),
-        headers=_phone_response_headers(nonce),
+        _login_page_html(code, iso_utc(status.expires_at) or "", nonce=nonce),
+        headers=_login_response_headers(nonce),
     )
 
 

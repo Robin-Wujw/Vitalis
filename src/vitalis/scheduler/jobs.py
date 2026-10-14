@@ -442,7 +442,7 @@ def reauth_job(now: datetime | None = None) -> int:
             if notified or not settings.public_url:
                 continue
             pairing = get_connection_service().create_pairing(user_id, ttl_minutes=RELOGIN_LINK_MINUTES)
-            url = f"{settings.public_url}{pairing['phone_url']}"
+            url = f"{settings.public_url}{pairing['login_url']}"
             PushService().push(PushMessage(
                 title="Vitalis · Zepp 需要重新登录",
                 body=(

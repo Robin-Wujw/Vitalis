@@ -340,7 +340,7 @@ class ConnectionService:
             "progress_url": "/api/connect/zepp/progress",
             "scan_url": f"/api/connect/zepp/scan?code={pairing_id}",
             "submit_path": f"/api/connect/zepp/pair/{pairing_id}/credentials",
-            "phone_url": f"/api/connect/zepp/phone?code={pairing_id}",
+            "login_url": f"/api/connect/zepp/login?code={pairing_id}",
             "login_path": f"/api/connect/zepp/pair/{pairing_id}/login",
         }
 

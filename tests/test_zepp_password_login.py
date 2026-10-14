@@ -1,4 +1,4 @@
-"""Synthetic tests for Zepp phone/email login and one-time handoff."""
+"""Synthetic tests for Zepp phone/email password login and one-time handoff."""
 
 from __future__ import annotations
 
@@ -153,13 +153,13 @@ def test_oversized_upstream_response_is_rejected_before_json_parsing():
     assert caught.value.failure_code == "response_too_large"
 
 
-def test_phone_page_has_no_external_scripts_and_no_password_echo(client):
+def test_login_page_has_no_external_scripts_and_no_password_echo(client):
     user_id = "phone-page-synthetic"
     created = client.post("/api/connect/zepp/pair", headers={"X-User-Id": user_id})
     assert created.status_code == 200
     code = created.json()["pairing_code"]
 
-    response = client.get(f"/api/connect/zepp/phone?code={code}")
+    response = client.get(f"/api/connect/zepp/login?code={code}")
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store, max-age=0"
     assert response.headers["referrer-policy"] == "no-referrer"
@@ -170,7 +170,7 @@ def test_phone_page_has_no_external_scripts_and_no_password_echo(client):
     assert "script-src 'nonce-" in response.headers["content-security-policy"]
 
 
-def test_phone_login_success_uses_pairing_claim_and_never_persists_password(
+def test_password_login_success_uses_pairing_claim_and_never_persists_password(
     client, monkeypatch
 ):
     user_id = "phone-login-success-synthetic"
@@ -218,7 +218,7 @@ def test_phone_login_success_uses_pairing_claim_and_never_persists_password(
         assert PASSWORD not in json.dumps(row.message)
 
 
-def test_phone_login_validation_does_not_echo_password(client):
+def test_password_login_validation_does_not_echo_password(client):
     user_id = "phone-login-validation-synthetic"
     created = client.post("/api/connect/zepp/pair", headers={"X-User-Id": user_id})
     code = created.json()["pairing_code"]
@@ -306,7 +306,7 @@ def test_expired_credential_without_renewal_sends_one_relogin_link_per_day(monke
     class Service:
         def create_pairing(self, user, ttl_minutes):
             assert ttl_minutes == 24 * 60
-            return {"phone_url": "/api/connect/zepp/phone?code=synthetic"}
+            return {"login_url": "/api/connect/zepp/login?code=synthetic"}
 
     monkeypatch.setattr("vitalis.adapters.persistence.HealthRepository", Repo)
     monkeypatch.setattr(jobs, "_get_authorized_users", lambda: {user_id})
@@ -316,4 +316,33 @@ def test_expired_credential_without_renewal_sends_one_relogin_link_per_day(monke
     now = datetime(2026, 10, 14, 2, tzinfo=timezone.utc)
     assert jobs.reauth_job(now) == 1
     assert jobs.reauth_job(now + timedelta(hours=1)) == 0
-    assert len(sent) == 1 and "http://10.217.48.211/api/connect/zepp/phone?code=synthetic" in sent[0].body
+    assert len(sent) == 1 and "http://10.217.48.211/api/connect/zepp/login?code=synthetic" in sent[0].body
+
+
+def test_wrong_password_reports_a_safe_failure_code_and_the_page_can_retry(client):
+    user_id = "login-wrong-password-synthetic"
+    created = client.post("/api/connect/zepp/pair", headers={"X-User-Id": user_id})
+    code = created.json()["pairing_code"]
+
+    class WrongPassword:
+        def login(self, account, password, *, country_code):
+            raise ZeppLoginError("密码不正确", kind="auth", failure_code="invalid_password")
+
+        def close(self):
+            return None
+
+    from vitalis.entrypoints.api.app import app
+
+    app.dependency_overrides[connect._login_adapter] = lambda: WrongPassword()
+    try:
+        response = client.post(
+            f"/api/connect/zepp/pair/{code}/login",
+            json={"account": ACCOUNT, "password": PASSWORD, "country_code": "CN"},
+        )
+    finally:
+        app.dependency_overrides.pop(connect._login_adapter, None)
+    assert response.status_code == 401
+    assert response.headers["x-login-failure"] == "invalid_password"
+    assert PASSWORD not in response.text
+    page = client.get(f"/api/connect/zepp/login?code={code}")
+    assert page.status_code == 200 and "登录并连接" in page.text

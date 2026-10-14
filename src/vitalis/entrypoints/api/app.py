@@ -65,13 +65,16 @@ def create_app() -> FastAPI:
             response = error_response(500, request_id)
         else:
             if is_api and response.status_code >= 400:
-                retry_after = response.headers.get("Retry-After")
+                # Only fixed, non-secret headers survive the public error body.
+                kept = {
+                    name: response.headers[name]
+                    for name in ("Retry-After", "X-Login-Failure") if name in response.headers
+                }
                 response = error_response(
                     response.status_code, request_id,
                     www_authenticate=response.headers.get("WWW-Authenticate") == "Bearer",
                 )
-                if retry_after is not None:
-                    response.headers["Retry-After"] = retry_after
+                response.headers.update(kept)
         response.headers["X-Request-ID"] = request_id
         return response
 

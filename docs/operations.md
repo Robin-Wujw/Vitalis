@@ -29,7 +29,7 @@
 | `PUSHPLUS_ACCESS_KEY` | 空 | 可选的 PushPlus 状态查询凭据；不参与发送，缺失时保留 `accepted`。 |
 | `PUSHPLUS_QUERY_MAX_ATTEMPTS` | `3` | 状态查询最多轮询次数；不会重发原消息。 |
 | `PUSHPLUS_QUERY_INTERVAL_SECONDS` | `60` | 状态查询间隔秒数；只影响状态查询。 |
-| `VITALIS_PUBLIC_URL` | 空 | 手机能访问的 API 地址（无路径）。设了才生成手机登录链接和报告里的反馈链接；生产要求 HTTPS，或私有网络地址（如 ZeroTier 的 `http://10.x.x.x`）。 |
+| `VITALIS_PUBLIC_URL` | 空 | 浏览器能访问的 API 地址（无路径）。设了才生成 Zepp 登录链接和报告里的反馈链接；生产要求 HTTPS，或私有网络地址（如 ZeroTier 的 `http://10.x.x.x`）。 |
 
 晨报跟着醒来时间走，晚报是 `21:30` 的定时任务；配置和时区不要在其它文档复制成另一套默认值。worker 每分钟检查一次晨报窗口：窗口内至多每隔 `MORNING_WAKE_POLL_INTERVAL_SECONDS` 只拉一次当天的睡眠（每天至多 `MORNING_WAKE_MAX_PROBES` 次）；库里一出现可信的昨夜主睡眠，就排一次完整的晨报同步，同步结束后分析并投递。可信指有醒来时间、睡眠至少 3 小时、醒来不早于窗口开始前 3 小时：手机夜里同步时 Zepp 会留下以上传时刻为“醒来”的半截睡眠（2026-10-11 02:00 的记录一直保留到 09:57 醒来后才更新），不能据此发晨报。到窗口结束仍没有可信睡眠，也排这次同步并按兜底规则发送；晨报同步失败或取消且没写入任何记录时再试一次。worker 重启后按已保存的探测和同步记录续跑，晨报不需要补建。
 
@@ -76,9 +76,9 @@ worker 的内存上限写在 `deploy/systemd/vitalis-worker.service`（`MemoryHi
 
 影子模块不在日常路径计算，也不进报告：worker 每天 03:30 跑离峰批处理，算前一天的开放健康洞察（EWMA 准备度、TRIMP 负荷、多变量异常）、0–100 准备度、身体信号预警、个人反应模型和四项系统质量指标，各存一行 `shadow_results`。`vitalis shadow run --day D --days N` 补算或在历史上回放策略改动，`vitalis shadow report readiness|body_signal --user U --days 14` 输出对比（准备度对计票结论的一致率、对厂商 Readiness 的秩相关；预警日列表需要用户确认才能算误报率）。
 
-## Zepp 手机登录与重新登录
+## Zepp 网页登录与重新登录
 
-API 只在本机监听，手机通过 ZeroTier 私有网络访问：`deploy/systemd/vitalis-private-proxy.socket` 只在 ZeroTier 地址的 80 端口监听（模板里的地址换成实际 ZeroTier 地址），由 `systemd-socket-proxyd` 转发到 `127.0.0.1:8000`；`VITALIS_PUBLIC_URL` 设为 `http://<ZeroTier 地址>`。ZeroTier 端到端加密，所以这条私有链路允许 HTTP；公网地址仍必须 HTTPS。`vitalis connect zepp --user U [--minutes 60] [--push]` 生成手机登录链接（可直接经 PushPlus 发到手机），密码只经过自己的服务器一次、不保存。
+API 只在本机监听，电脑和手机通过 ZeroTier 私有网络访问：`deploy/systemd/vitalis-private-proxy.socket` 只在 ZeroTier 地址的 80 端口监听（模板里的地址换成实际 ZeroTier 地址），由 `systemd-socket-proxyd` 转发到 `127.0.0.1:8000`；`VITALIS_PUBLIC_URL` 设为 `http://<ZeroTier 地址>`。ZeroTier 端到端加密，所以这条私有链路允许 HTTP；公网地址仍必须 HTTPS。`vitalis connect zepp --user U [--minutes 60] [--push]` 生成登录链接（在连着 ZeroTier 的电脑上打开；`--push` 另经 PushPlus 发一份），密码只经过自己的服务器一次、不保存。
 
 最近一次同步返回需要重新认证时，worker 每小时先用保存的 `login_token` 换新的 `app_token`；换不了（没有 `login_token`、接口拒绝或返回别的账号）就经 PushPlus 发一个 24 小时有效的重新登录链接，每天最多一次，并记一条 `credential_expired` 告警。
 

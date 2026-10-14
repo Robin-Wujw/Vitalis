@@ -638,7 +638,7 @@ def _connect_link(args) -> dict:
     if not settings.public_url:
         raise ValueError("VITALIS_PUBLIC_URL is not configured; the phone cannot reach the login page")
     pairing = get_connection_service().create_pairing(args.user, ttl_minutes=args.minutes)
-    url = f"{settings.public_url}{pairing['phone_url']}"
+    url = f"{settings.public_url}{pairing['login_url']}"
     if args.push:
         from vitalis.adapters.notifications import PushMessage, PushService
 
@@ -647,7 +647,7 @@ def _connect_link(args) -> dict:
             body=f"用手机打开下面的链接，输入 Zepp 账号和密码完成连接：\n\n[连接 Zepp]({url})\n",
             user_id=args.user,
         ))
-    return {"phone_url": url, "expires_at": pairing["expires_at"], "pushed": bool(args.push)}
+    return {"login_url": url, "expires_at": pairing["expires_at"], "pushed": bool(args.push)}
 
 
 def _sync_details(args) -> dict:

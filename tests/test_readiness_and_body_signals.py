@@ -124,15 +124,21 @@ def test_skin_temperature_delta_is_judged_by_z_not_by_percent():
     assert item["percent"] is None and item["robust_z"] > 1.5
 
 
-def test_readiness_is_attached_without_changing_the_vote():
+def test_readiness_band_sets_the_recovery_state_and_keeps_the_vote():
     from vitalis.intelligence.contracts import Availability, RecoveryFeatures, RecoveryState
     from vitalis.intelligence.readiness import apply_readiness, readiness_band
 
     vote = RecoveryFeatures(status=Availability.AVAILABLE, state=RecoveryState.SUPPRESSED)
-    scored = apply_readiness(vote, {"score": 72, "factors": ["静息心率低于你平时"], "hrv_state": "normal"})
-    assert scored.state == RecoveryState.SUPPRESSED
-    assert scored.readiness_score == 72 and scored.readiness_factors == ["静息心率低于你平时"]
-    assert apply_readiness(vote, {"score": None}).readiness_score is None
+    normal = apply_readiness(vote, {"score": 70, "factors": ["静息心率接近你平时"]})
+    assert normal.state == RecoveryState.NORMAL and normal.vote_state == RecoveryState.SUPPRESSED
+    assert normal.readiness_score == 70 and normal.readiness_factors == ["静息心率接近你平时"]
+    assert apply_readiness(vote.model_copy(update={"state": RecoveryState.NORMAL}), {"score": 54}).state == RecoveryState.SUPPRESSED
+    assert apply_readiness(vote, {"score": 88}).state == RecoveryState.GOOD
+    unknown = apply_readiness(vote, {"score": None})
+    assert unknown.state == RecoveryState.SUPPRESSED and unknown.readiness_score is None
+    insufficient = RecoveryFeatures(status=Availability.INSUFFICIENT_DATA, state=RecoveryState.INSUFFICIENT_DATA)
+    scored = apply_readiness(insufficient, {"score": 66})
+    assert scored.state == RecoveryState.NORMAL and scored.status == Availability.AVAILABLE
     assert [readiness_band(v) for v in (None, 59, 60, 84, 85)] == [None, "SUPPRESSED", "NORMAL", "NORMAL", "GOOD"]
 
 

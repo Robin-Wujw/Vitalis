@@ -646,6 +646,7 @@ class RecoveryFeatures(BaseModel):
     readiness_factors: list[str] = Field(default_factory=list)
     readiness_hrv_state: str | None = None
     readiness_missing_components: list[str] = Field(default_factory=list)
+    vote_state: RecoveryState | None = None
     limitations: list[str] = Field(default_factory=list)
     limitation_labels: list[str] = Field(default_factory=list)
 

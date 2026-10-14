@@ -2,9 +2,10 @@
 
 Both ran as shadow modules until the user reviewed 60 days of replayed
 results (2026-10-14) and confirmed them for the morning report.  The score
-and its factors are shown in the key records; the recovery state the plan
-follows stays with the signal vote until the score bands are calibrated and
-confirmed.  A warning lowers the day's intensity.  The off-peak batch still
+and its factors lead the key records, and its band sets the recovery state
+the training plan follows (the user asked for this on 2026-10-14 after
+seeing v2 on real mornings); the signal vote is kept for comparison.  A
+warning lowers the day's intensity.  The off-peak batch still
 records both for tracking.
 
 Components score 50 at the user's own norm.  The displayed score reads like
@@ -392,12 +393,26 @@ def readiness_label(score: int | None) -> str | None:
 
 
 def apply_readiness(recovery, readiness: dict):
-    """Attach the readiness score and factors; the recovery state is unchanged."""
-    return recovery.model_copy(update={
-        "readiness_score": readiness.get("score"),
+    """Let the displayed score's band set the recovery state the plan follows.
+
+    The signal vote stays in ``vote_state`` for comparison; without a score
+    the vote still decides.
+    """
+    from .contracts import RecoveryState
+    from .localization import RECOVERY_LABELS
+
+    score = readiness.get("score")
+    update = {
+        "readiness_score": score,
         "readiness_factors": list(readiness.get("factors") or []),
         "readiness_hrv_state": readiness.get("hrv_state"),
         "readiness_missing_components": list(
             ((readiness.get("insight") or {}).get("payload") or {}).get("missing_components") or []
         ),
-    })
+        "vote_state": recovery.state,
+    }
+    band = readiness_band(score)
+    if band is not None:
+        state = RecoveryState(band)
+        update.update(state=state, state_label=RECOVERY_LABELS[state.value], status=Availability.AVAILABLE)
+    return recovery.model_copy(update=update)

@@ -36,7 +36,10 @@ DEFAULT_DN = (
     "account.huami.com,api-user.huami.com,auth.huami.com,"
     "api-mifit.huami.com,api-open.huami.com"
 )
-OFFICIAL_RESET_URL = "https://user.zepp.com/universalLogin/index.html#/forget"
+# Zepp's open platform routes to the official login for the account's
+# region (with its "forgot password"); user.zepp.com does not open from
+# every network (2026-10-14).
+OFFICIAL_RESET_URL = "https://console.zepp.com/"
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+$")
 _COUNTRY_RE = re.compile(r"^[A-Za-z]{2}(?:-[A-Za-z0-9_-]{1,16})?$")
 _REGION_RE = re.compile(r"^api-mifit[^.]*\.(?:zepp\.com|huami\.com)$", re.IGNORECASE)

@@ -28,6 +28,9 @@ from vitalis.application.ports import CredentialProvider
 from vitalis.entrypoints.api.deps import require_scope, require_user_id
 
 router = APIRouter(prefix="/connect", tags=["connect"])
+# Zepp's open platform routes to the official login for the account's region,
+# where "forgot password" sets a password with an SMS code.
+ZEPP_ACCOUNT_URL = "https://console.zepp.com/"
 
 
 def _connector() -> CredentialProvider:
@@ -319,7 +322,7 @@ def _login_page_html(code: str, expires_at: str, *, nonce: str) -> str:
     """Self-contained Zepp login page; no third-party assets or scripts."""
     code_json = json.dumps(code, ensure_ascii=True)
     expiry_json = json.dumps(expires_at, ensure_ascii=True)
-    reset_url = "https://user.zepp.com/universalLogin/index.html#/forget"
+    reset_url = ZEPP_ACCOUNT_URL
     reset_esc = html_mod.escape(reset_url, quote=True)
     return f"""<!doctype html>
 <html lang="zh-CN">
@@ -409,7 +412,7 @@ a {{ color: var(--brand); }}
 <button class="primary" id="submit" type="submit">登录并连接</button>
 </form>
 <div id="status" class="status" role="status" aria-live="polite">填写后点“登录并连接”。</div>
-<div class="meta"><span>没有密码或忘了？到 <a href="{reset_esc}" target="_blank" rel="noopener noreferrer">Zepp 官方页面</a> 用手机验证码设置密码，再回来登录。</span>
+<div class="meta"><span>没有密码或忘了？打开 <a href="{reset_esc}" target="_blank" rel="noopener noreferrer">Zepp 官方开放平台</a>，点登录后选“忘记密码”，用手机验证码设置密码，再回来登录。</span>
 <span id="expiry"></span></div>
 </section>
 </main>
@@ -490,7 +493,7 @@ a {{ color: var(--brand); }}
     const failure = response.headers.get("X-Login-Failure") || "";
     button.disabled = false;
     if (response.status === 429 || failure === "rate_limited") show("尝试次数过多，请过几分钟再试。", "warn");
-    else if (failure === "captcha_required") show("Zepp 要求图形验证，网页登录过不去。请先在 Zepp 官方页面用手机验证码重设密码，再回来登录。", "warn");
+    else if (failure === "captcha_required") show("Zepp 要求图形验证，网页登录过不去。请先在 Zepp 官方开放平台（console.zepp.com）的登录页用“忘记密码”重设，再回来登录。", "warn");
     else if (response.status === 409) show("这个 Zepp 账号已连接到另一个 Vitalis 用户。", "bad");
     else if (response.status === 404 || response.status === 410) show("本页已过期或已经用过，请重新生成链接。", "warn");
     else if (failure === "invalid_country_code") show("注册地区不对，换一个地区再试。", "bad");

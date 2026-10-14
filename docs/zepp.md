@@ -27,7 +27,7 @@ Mock 生成同构的睡眠、活动、训练和来源元信息，可离线执行
 
 ### 网页登录
 
-不用插件、在电脑浏览器里用 Zepp 手机号（或邮箱）和密码连接：`vitalis connect zepp --user <用户>` 生成配对会话的 `login_url`（`/api/connect/zepp/login?code=…`，默认 60 分钟有效），在连着 ZeroTier 的电脑上打开即可；`--push` 另经 PushPlus 发一份。页面左侧说明数据去向和进度（登录 → 加密保存令牌 → 回填 180 天 → 每天同步），右侧是登录表单；密码错误、地区不对、要图形验证、尝试过多等情况各有一句提示（API 只经 `X-Login-Failure` 头给出固定分类码，不转发 Zepp 原文）。Zepp 官方网页的手机验证码只用于注册和重置密码，不能直接登录（2026-10-14 核对其当前脚本）；没有密码时页面引导到官方重置页。“密码只经过自己的 Vitalis 服务器一次、不保存”的方案已于 2026-10-13 经用户确认；生产 API 只在本机监听，经 ZeroTier 私有网络访问（2026-10-14 用户决定），入口配置见[运维](operations.md)；真实账号走通前保留浏览器插件，见[改动计划](plan/zepp-web-login.md)。
+不用插件、在电脑浏览器里用 Zepp 手机号（或邮箱）和密码连接：`vitalis connect zepp --user <用户>` 生成配对会话的 `login_url`（`/api/connect/zepp/login?code=…`，默认 60 分钟有效），在连着 ZeroTier 的电脑上打开即可；`--push` 另经 PushPlus 发一份。页面左侧说明数据去向和进度（登录 → 加密保存令牌 → 回填 180 天 → 每天同步），右侧是登录表单；密码错误、地区不对、要图形验证、尝试过多等情况各有一句提示（API 只经 `X-Login-Failure` 头给出固定分类码，不转发 Zepp 原文）。Zepp 官方网页的手机验证码只用于注册和重置密码，不能直接登录（2026-10-14 核对其当前脚本）；没有密码时页面引导到 Zepp 官方开放平台 `console.zepp.com`，它按账号地区转到官方登录页，在那里用“忘记密码”和手机验证码设置密码（`user.zepp.com` 不是在所有网络都能打开）。“密码只经过自己的 Vitalis 服务器一次、不保存”的方案已于 2026-10-13 经用户确认；生产 API 只在本机监听，经 ZeroTier 私有网络访问（2026-10-14 用户决定），入口配置见[运维](operations.md)；真实账号走通前保留浏览器插件，见[改动计划](plan/zepp-web-login.md)。
 
 登录页按 Zepp `user.zepp.com/universalLogin` 当前生产 JavaScript 使用的两步表单流程：先向 `api-user.huami.com/registrations/{account}/tokens` 换取 `access`，再向 `account.huami.com/v2/client/login` 换取 `app_token`、`login_token` 和 `user_id`。成功必须同时满足第二步 `result=ok` 和三项令牌字段存在；任何未知响应都不会被当作成功。这个 legacy 网页协议不是 Zepp 官方 OAuth API，实际部署仍需目标环境单独验收。
 

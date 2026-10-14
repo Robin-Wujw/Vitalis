@@ -70,6 +70,9 @@ from vitalis.time import local_day, local_day_utc_bounds, local_timezone
 from . import models as orm
 
 
+# Days before today that new synced data still re-analyzes.
+ANALYSIS_REFRESH_DAYS = 7
+
 class SourceIdentityConflict(ValueError):
     """A vendor identity is already owned by another local user."""
 
@@ -212,12 +215,19 @@ class HealthRepository:
             orm.AnalysisRun.user_id == user_id,
             orm.AnalysisRun.target_date.between(min(dates), max(dates) + timedelta(days=179)),
         )).scalars())
-        candidates.add(local_day(datetime.now(timezone.utc)))
+        today = local_day(datetime.now(timezone.utc))
+        candidates.add(today)
         direct_targets = set() if event_type == "training_coverage" else dates
-        return targets | direct_targets | {
+        selected = targets | direct_targets | {
             target for target in candidates
             if any(day <= target <= day + timedelta(days=179) for day in dates)
         }
+        if event_type == "source_sync":
+            # Synced history only refreshes days whose reports can still be
+            # read or delivered; a 180-day backfill would otherwise rerun
+            # every past analysis once per chunk.
+            selected = {target for target in selected if target >= today - timedelta(days=ANALYSIS_REFRESH_DAYS)}
+        return selected
 
     def enqueue_analysis_job(
         self, user_id: str, target_date: date, *, event_type: str, source: str,

@@ -14,6 +14,14 @@ from vitalis.application.intelligence_service import IntelligenceCommand
 from vitalis.bootstrap import get_intelligence_action, get_intelligence_command, get_intelligence_query
 
 
+@pytest.fixture(autouse=True)
+def _refresh_every_synced_day(monkeypatch):
+    """These scenarios use fixed past dates; the refresh window is tested separately."""
+    from vitalis.adapters.persistence import repositories
+
+    monkeypatch.setattr(repositories, "ANALYSIS_REFRESH_DAYS", 100_000)
+
+
 TARGET = date(2026, 8, 28)
 
 

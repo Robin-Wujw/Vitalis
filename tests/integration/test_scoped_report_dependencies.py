@@ -2,10 +2,20 @@
 
 from datetime import date, timedelta
 
+import pytest
+
 import vitalis.adapters.persistence.repositories as persistence_repositories
 from vitalis.adapters.persistence import HealthRepository, session_scope
 from vitalis.bootstrap import get_intelligence_command, get_intelligence_query
 from vitalis.domain import NormalizedDaily, SleepRecord
+
+
+@pytest.fixture(autouse=True)
+def _refresh_every_synced_day(monkeypatch):
+    """These scenarios use fixed past dates; the refresh window is tested separately."""
+    from vitalis.adapters.persistence import repositories
+
+    monkeypatch.setattr(repositories, "ANALYSIS_REFRESH_DAYS", 100_000)
 
 
 DAY = date(2026, 8, 28)
@@ -106,3 +116,36 @@ def test_config_change_is_stale_without_job_and_keeps_payload_run_consistent(mon
         assert report.report_context["report_state"]["stale_since"] is None
         assert state["facts"] == getattr(saved, profile_type).model_dump(mode="json")["facts"]
         assert report.model_dump(mode="json")["facts"] == state["facts"]
+
+
+
+def test_synced_history_only_reanalyzes_recent_days(tmp_path, monkeypatch):
+    from datetime import date, timedelta
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from vitalis.adapters.persistence import HealthRepository, repositories
+    from vitalis.adapters.persistence.database import init_db
+    from vitalis.adapters.persistence.models import AnalysisRun, User
+
+    monkeypatch.setattr(repositories, "ANALYSIS_REFRESH_DAYS", 7)
+    today = date(2026, 10, 14)
+    monkeypatch.setattr(repositories, "local_day", lambda _now=None: today)
+    engine = create_engine(f"sqlite:///{(tmp_path / 'window.db').as_posix()}")
+    init_db(engine)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    with factory.begin() as db:
+        db.add(User(id="owner"))
+    with factory.begin() as db:
+        repo = HealthRepository(db)
+        old = today - timedelta(days=60)
+        targets = repo._analysis_targets(
+            "owner", {old}, {old}, "source_sync",
+        )
+        assert targets == {today}
+        recent = today - timedelta(days=3)
+        assert repo._analysis_targets("owner", {recent}, {recent}, "source_sync") == {recent, today}
+        # A user's own action on an old day still analyzes that day.
+        assert old in repo._analysis_targets("owner", {old}, {old}, "feedback")
+    engine.dispose()

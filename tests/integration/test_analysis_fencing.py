@@ -22,6 +22,14 @@ from vitalis.intelligence.contracts import ConfidenceBand, EventSeverity, Health
 from vitalis.intelligence.morning_briefing import MorningBriefingEngine
 
 
+@pytest.fixture(autouse=True)
+def _refresh_every_synced_day(monkeypatch):
+    """These scenarios use fixed past dates; the refresh window is tested separately."""
+    from vitalis.adapters.persistence import repositories
+
+    monkeypatch.setattr(repositories, "ANALYSIS_REFRESH_DAYS", 100_000)
+
+
 DAY = date(2026, 8, 29)
 
 

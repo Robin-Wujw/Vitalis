@@ -346,3 +346,28 @@ def test_wrong_password_reports_a_safe_failure_code_and_the_page_can_retry(clien
     assert PASSWORD not in response.text
     page = client.get(f"/api/connect/zepp/login?code={code}")
     assert page.status_code == 200 and "登录并连接" in page.text
+
+
+def test_production_page_opens_from_a_link_but_login_needs_its_own_origin(monkeypatch):
+    from fastapi import HTTPException
+    from starlette.requests import Request
+
+    from vitalis.config import settings
+
+    monkeypatch.setattr(settings, "env", "production")
+    monkeypatch.setattr(settings, "public_url", "http://10.217.48.211")
+
+    def request(**headers):
+        return Request({
+            "type": "http", "method": "GET", "scheme": "http", "path": "/",
+            "server": ("10.217.48.211", 80),
+            "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
+        })
+
+    # Opening the link: no Origin, a foreign Referer from the app it came from.
+    connect._require_login_origin(request(Referer="https://www.pushplus.plus/"), submission=False)
+    connect._require_login_origin(request(Origin="http://10.217.48.211"))
+    for headers in ({}, {"Origin": "http://evil.example"}):
+        with pytest.raises(HTTPException) as refused:
+            connect._require_login_origin(request(**headers))
+        assert refused.value.status_code == 403

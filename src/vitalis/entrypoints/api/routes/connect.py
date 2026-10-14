@@ -263,8 +263,13 @@ def _private_origin(host: str | None) -> bool:
     return address.is_private and not address.is_loopback
 
 
-def _require_login_origin(request: Request) -> None:
-    """Apply the login page's origin/referrer boundary before password input."""
+def _require_login_origin(request: Request, *, submission: bool = True) -> None:
+    """Apply the login page's transport and origin boundary.
+
+    Opening the page is a top-level navigation (often from a link in another
+    app), which carries no Origin and may carry a foreign Referer; only the
+    password submission must come from the page itself.
+    """
     expected = _public_base_url(request).rstrip("/")
     expected_parts = urlsplit(expected)
     production = settings.env in {"prod", "production"}
@@ -277,6 +282,8 @@ def _require_login_origin(request: Request) -> None:
         or request.headers.get("X-Forwarded-Proto", request.url.scheme).split(",", 1)[0].strip().lower() != scheme
     ):
         raise HTTPException(status_code=503, detail="登录页要求 HTTPS 或私有网络地址")
+    if not submission:
+        return
 
     origin = request.headers.get("Origin")
     if production and origin is None:
@@ -502,7 +509,7 @@ def zepp_login_page(
     request: Request,
     code: str = Query(..., min_length=1, max_length=128),
 ) -> Response:
-    _require_login_origin(request)
+    _require_login_origin(request, submission=False)
     try:
         status = get_connection_service().pairing_status(code)
     except ConnectionOperationError as exc:

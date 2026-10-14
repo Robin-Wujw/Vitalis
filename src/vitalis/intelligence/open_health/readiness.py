@@ -186,7 +186,7 @@ def compute_composite_readiness(
     raw data or invents a missing component. Weights are renormalized across
     present components and the output remains shadow-only until promotion review.
     """
-    base_weights = {"hrv": 0.35, "sleep": 0.25, "rhr": 0.20, "load": 0.20}
+    base_weights = {"hrv": 0.30, "sleep": 0.20, "rhr": 0.15, "charge": 0.20, "load": 0.15}
     present: dict[str, float] = {}
     for name, value in component_scores.items():
         if name not in base_weights or value is None:

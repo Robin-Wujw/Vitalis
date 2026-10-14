@@ -22,6 +22,7 @@ from vitalis.intelligence.response_model import evaluate, rows_from_series
 from vitalis.intelligence.readiness import (
     body_signal_warning,
     latest_value,
+    readiness_band,
     readiness_score,
 )
 
@@ -182,9 +183,7 @@ def _verified_days(raw: RawDailyProfile) -> set[date]:
 
 
 def _band(score: float | None) -> str | None:
-    if score is None:
-        return None
-    return "GOOD" if score >= 67 else "NORMAL" if score >= 34 else "SUPPRESSED"
+    return readiness_band(score)
 
 
 def _rank(values: list[float]) -> list[float]:

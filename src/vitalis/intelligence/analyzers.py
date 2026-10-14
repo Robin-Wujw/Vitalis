@@ -40,6 +40,7 @@ from .profile import (
     device_label,
     device_measurement_site,
 )
+from .readiness import wake_charge_summary
 from .running import RunningAnalyzer
 from .strength import StrengthAnalyzer, reported_set_count
 from vitalis.time import local_sleep_window, utc_to_local
@@ -1384,7 +1385,7 @@ class RecoveryAnalyzer:
             )
             if (value := _current_median(raw.series.get(metric, []), raw.day)) is not None
         }
-        wake_charge = _wake_charge(raw)
+        wake_charge = wake_charge_summary(raw)
         charge_components = {
             label: value
             for metric, label in (
@@ -1445,42 +1446,6 @@ def _baseline_for(
         and item.device_id == device_id
     ]
     return candidates[0] if candidates else None
-
-
-WAKE_CHARGE_DAYS = 60
-WAKE_CHARGE_MIN_DAYS = 14
-
-
-def _wake_charge(raw: RawDailyProfile) -> dict[str, float | None]:
-    """Zepp Hybrid Charge on waking and the user's usual range.
-
-    Charge refills during sleep and drains through the day, so a local day's
-    maximum is the value on waking (equal on 348 of 377 real days, within 2
-    on 368).  Daily features carry that maximum; detail days use samples.
-    """
-    by_day: dict[date, float] = {}
-    for point in raw.series.get("hybrid_charge", []):
-        # A vendor daily summary is not a reading on waking.
-        if not point.is_daily_feature and not isinstance(point.observed_at, datetime):
-            continue
-        value = point.maximum if point.maximum is not None else point.value
-        if value is not None and value > by_day.get(point.day, float("-inf")):
-            by_day[point.day] = float(value)
-    history = sorted(
-        value for day, value in by_day.items()
-        if raw.day - timedelta(days=WAKE_CHARGE_DAYS) <= day < raw.day
-    )
-    output: dict[str, float | None] = {
-        "wake_charge": by_day.get(raw.day),
-        "wake_charge_reference": None, "wake_charge_low": None, "wake_charge_high": None,
-    }
-    if len(history) >= WAKE_CHARGE_MIN_DAYS:
-        pick = lambda q: history[int(q * (len(history) - 1))]
-        output.update(
-            wake_charge_reference=round(float(median(history)), 1),
-            wake_charge_low=pick(0.2), wake_charge_high=pick(0.8),
-        )
-    return output
 
 
 def _current_median(points: list[SeriesPoint], day: date) -> float | None:

@@ -133,7 +133,15 @@ def test_readiness_is_attached_without_changing_the_vote():
     assert scored.state == RecoveryState.SUPPRESSED
     assert scored.readiness_score == 72 and scored.readiness_factors == ["静息心率低于你平时"]
     assert apply_readiness(vote, {"score": None}).readiness_score is None
-    assert [readiness_band(v) for v in (None, 33, 34, 66, 67)] == [None, "SUPPRESSED", "NORMAL", "NORMAL", "GOOD"]
+    assert [readiness_band(v) for v in (None, 59, 60, 84, 85)] == [None, "SUPPRESSED", "NORMAL", "NORMAL", "GOOD"]
+
+
+def test_displayed_readiness_reads_like_a_grade():
+    from vitalis.intelligence.readiness import display_score, readiness_label
+
+    # The personal norm (composite 50) shows as 70; order is preserved.
+    assert [display_score(v) for v in (None, 20, 50, 56, 81, 100)] == [None, 43, 70, 75, 98, 100]
+    assert [readiness_label(v) for v in (59, 60, 74, 75, 84, 85)] == ["偏低", "正常", "正常", "还行", "还行", "较好"]
 
 
 def test_body_warning_lowers_hard_or_normal_days_only():
@@ -151,19 +159,19 @@ def test_morning_key_records_lead_with_readiness():
     from vitalis.intelligence.report_presentation import _daily_metrics
 
     payload = {"date": "2026-10-14", "features": {
-        "recovery": {"readiness_score": 49, "readiness_factors": ["HRV 7 天均值在你 60 天的常态范围内", "静息心率接近你平时"]},
+        "recovery": {"readiness_score": 70, "readiness_factors": ["HRV 7 天均值在你 60 天的常态范围内", "静息心率接近你平时"]},
         "sleep": {"duration_minutes": 440},
         "hrv": {"rhr_bpm": 50},
     }}
     metrics = _daily_metrics(payload, morning=True)
-    assert metrics[0]["key"] == "readiness" and metrics[0]["value"] == 49
-    assert metrics[0]["detail"].startswith("一般") and "静息心率接近你平时" in metrics[0]["detail"]
+    assert metrics[0]["key"] == "readiness" and metrics[0]["value"] == 70
+    assert metrics[0]["detail"].startswith("正常（70 是你的平常水平，60 及格）") and "静息心率接近你平时" in metrics[0]["detail"]
 
 
 def test_wake_charge_is_the_days_maximum_against_the_last_60_days():
     from datetime import datetime, timezone
 
-    from vitalis.intelligence.analyzers import _wake_charge
+    from vitalis.intelligence.readiness import wake_charge_summary
     from vitalis.intelligence.profile import RawDailyProfile, SeriesPoint
 
     day = date(2026, 10, 14)
@@ -183,12 +191,12 @@ def test_wake_charge_is_the_days_maximum_against_the_last_60_days():
         SeriesPoint(metric="hybrid_charge", value=74.0, unit="score", day=day, observed_at=day,
                     source="zepp", source_scope="user_fused")
     ]
-    charge = _wake_charge(RawDailyProfile(user_id="u", day=day, series={"hybrid_charge": points}))
+    charge = wake_charge_summary(RawDailyProfile(user_id="u", day=day, series={"hybrid_charge": points}))
     assert charge["wake_charge"] == 67.0
     assert charge["wake_charge_reference"] == 77.5
     assert charge["wake_charge_low"] == 73.0 and charge["wake_charge_high"] == 83.0
 
-    few = _wake_charge(RawDailyProfile(user_id="u", day=day, series={"hybrid_charge": points[-4:]}))
+    few = wake_charge_summary(RawDailyProfile(user_id="u", day=day, series={"hybrid_charge": points[-4:]}))
     assert few["wake_charge"] == 67.0 and few["wake_charge_reference"] is None
 
 

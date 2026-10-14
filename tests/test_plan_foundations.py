@@ -54,7 +54,7 @@ def test_composite_weight_redistribution_keeps_missing_components_explicit():
     assert output.shadow_only is True
     assert output.payload.composite_score == 69
     assert sum(output.payload.applied_weights.values()) == pytest.approx(1)
-    assert output.payload.missing_components == ["hrv", "load"]
+    assert output.payload.missing_components == ["charge", "hrv", "load"]
 
 
 def test_composite_single_hrv_deviation_does_not_promote_warning():

@@ -10,7 +10,7 @@ from datetime import date, datetime
 from typing import Any
 
 from .period_activity import comparison_gate
-from .readiness import readiness_band
+from .readiness import DISPLAY_NORM, readiness_label
 from .report_formatting import (
     energy_label,
     metric_label,
@@ -282,11 +282,11 @@ def _daily_metrics(payload: dict[str, Any], *, morning: bool) -> list[dict[str, 
         score = _integer(recovery.get("readiness_score"))
         charge = _wake_charge_text(recovery)
         if score is not None:
-            band = {"GOOD": "较好", "SUPPRESSED": "偏低"}.get(readiness_band(score), "一般")
+            band = readiness_label(score)
             factors = [str(item) for item in recovery.get("readiness_factors") or [] if item][:3]
             output.insert(0, _metric(
                 "readiness", "准备度", score, "score", digits=0,
-                detail="；".join([f"{band}（50 是你的平常水平）"] + factors + ([charge] if charge else [])),
+                detail="；".join([f"{band}（{DISPLAY_NORM} 是你的平常水平，60 及格）"] + factors + ([charge] if charge else [])),
             ))
         elif charge:
             output.insert(0, _metric(

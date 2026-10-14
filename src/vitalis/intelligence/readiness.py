@@ -3,16 +3,20 @@
 Both ran as shadow modules until the user reviewed 60 days of replayed
 results (2026-10-14) and confirmed them for the morning report.  The score
 and its factors are shown in the key records; the recovery state the plan
-follows stays with the signal vote until the score bands are calibrated to
-the user's own range (on fixed 34/67 bands nearly every day is "normal",
-including days the user confirmed as poor).  A warning lowers the day's
-intensity.  The off-peak batch still records both for tracking.
+follows stays with the signal vote until the score bands are calibrated and
+confirmed.  A warning lowers the day's intensity.  The off-peak batch still
+records both for tracking.
+
+Components score 50 at the user's own norm.  The displayed score reads like
+a grade, as the user asked (2026-10-14): the personal norm is 70, 60 is a
+pass, 75 "fair" and 85 "good"; the transform is linear, so it keeps the
+order of days.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from math import log
 from statistics import fmean, median
 
@@ -22,11 +26,14 @@ from .events import detect_body_signal_warning
 from .open_health.readiness import compute_composite_readiness
 from .profile import RawDailyProfile, SeriesPoint
 
-READINESS_VERSION = "readiness-1"
+READINESS_VERSION = "readiness-2"
 BODY_SIGNAL_VERSION = "body-signal-1"
-# Score bands for the morning label (0-100, 50 is the personal norm).
-GOOD_FROM = 67
-SUPPRESSED_BELOW = 34
+# Displayed score: 70 + 0.9 x (composite - 50), so the personal norm is 70.
+DISPLAY_NORM = 70
+DISPLAY_SCALE = 0.9
+PASS_FROM = 60
+FAIR_FROM = 75
+GOOD_FROM = 85
 # Robust SD multiplier for the 60-day HRV normal range (smallest worthwhile
 # change convention: half a standard deviation either side).
 HRV_RANGE_SD = 0.5
@@ -65,6 +72,50 @@ def _clamp(value: float) -> float:
     return round(min(100.0, max(0.0, value)), 1)
 
 
+WAKE_CHARGE_DAYS = 60
+WAKE_CHARGE_MIN_DAYS = 14
+
+
+def wake_charge_daily(raw: RawDailyProfile) -> dict[date, float]:
+    """Zepp Hybrid Charge on waking and the user's usual range.
+
+    Charge refills during sleep and drains through the day, so a local day's
+    maximum is the value on waking (equal on 348 of 377 real days, within 2
+    on 368).  Daily features carry that maximum; detail days use samples.
+    """
+    by_day: dict[date, float] = {}
+    for point in raw.series.get("hybrid_charge", []):
+        # A vendor daily summary is not a reading on waking.
+        if not point.is_daily_feature and not isinstance(point.observed_at, datetime):
+            continue
+        value = point.maximum if point.maximum is not None else point.value
+        if value is not None and value > by_day.get(point.day, float("-inf")):
+            by_day[point.day] = float(value)
+    return by_day
+
+
+def wake_charge_summary(raw: RawDailyProfile) -> dict[str, float | None]:
+    """The day's wake-up Charge with the median and 20th/80th percentile of
+    the previous 60 days (none with fewer than 14 days)."""
+    by_day = wake_charge_daily(raw)
+    history = sorted(
+        value for day, value in by_day.items()
+        if raw.day - timedelta(days=WAKE_CHARGE_DAYS) <= day < raw.day
+    )
+    output: dict[str, float | None] = {
+        "wake_charge": by_day.get(raw.day),
+        "wake_charge_reference": None, "wake_charge_low": None, "wake_charge_high": None,
+    }
+    if len(history) >= WAKE_CHARGE_MIN_DAYS:
+        pick = lambda q: history[int(q * (len(history) - 1))]
+        output.update(
+            wake_charge_reference=round(float(median(history)), 1),
+            wake_charge_low=pick(0.2), wake_charge_high=pick(0.8),
+        )
+    return output
+
+
+
 def _hrv_component(raw: RawDailyProfile) -> dict:
     day = raw.day
     metric, daily = _canonical_daily(
@@ -91,16 +142,25 @@ def _hrv_component(raw: RawDailyProfile) -> dict:
         if value is None or low <= value <= high:
             break
         streak += 1
-    z = (current - center) / spread
-    sentence = (
-        "HRV 7 天均值高于你 60 天的常态范围" if current > high
-        else "HRV 7 天均值低于你 60 天的常态范围" if current < low
-        else "HRV 7 天均值在你 60 天的常态范围内"
-    )
+    z_week = (current - center) / spread
+    # The 7-day mean alone trails a recovery by about a week; last night's
+    # value carries half the weight when it exists.
+    z_night = (ln_daily[day] - center) / spread if day in ln_daily else None
+    z = z_week if z_night is None else (z_week + z_night) / 2
+    if z_night is not None and z_night >= 0.75:
+        sentence = "昨晚 HRV 高于你平时"
+    elif z_night is not None and z_night <= -0.75:
+        sentence = "昨晚 HRV 低于你平时"
+    else:
+        sentence = (
+            "HRV 7 天均值高于你 60 天的常态范围" if current > high
+            else "HRV 7 天均值低于你 60 天的常态范围" if current < low
+            else "HRV 7 天均值在你 60 天的常态范围内"
+        )
     return {
         "metric": metric, "score": _clamp(50 + 20 * z), "value": round(current, 4),
         "range": (round(low, 4), round(high, 4)), "streak": streak, "z": round(z, 2),
-        "sentence": sentence,
+        "z_night": round(z_night, 2) if z_night is not None else None, "sentence": sentence,
     }
 
 
@@ -115,9 +175,10 @@ def _sleep_component(raw: RawDailyProfile) -> dict:
         return {"score": None}
     need, spread = stats
     z = (duration[day] - need) / spread if spread else 0.0
-    debt_hours = sum(
-        max(0.0, need - duration[item]) for item in duration if day - timedelta(days=6) <= item <= day
-    ) / 60
+    # Net 7-day debt: a long night pays back a short one.
+    debt_hours = max(0.0, sum(
+        need - duration[item] for item in duration if day - timedelta(days=6) <= item <= day
+    )) / 60
     _, bedtimes = _canonical_daily(raw, ("sleep_bedtime_offset_minutes",), day - timedelta(days=6), day)
     bedtime_values = list(bedtimes.values())
     bedtime_spread = (
@@ -169,7 +230,25 @@ def _load_component(raw: RawDailyProfile) -> dict:
         else "近 7 天负荷低于近 4 周平均" if ratio < 0.8
         else "近 7 天负荷与近 4 周平均相当"
     )
-    return {"score": _clamp(85 - 150 * max(0.0, ratio - 1.0)), "acwr": round(ratio, 2), "sentence": sentence}
+    # 50 is the personal norm: an ordinary ratio is neutral, a fast rise
+    # lowers readiness and a lighter week adds a little.
+    score = 50 - 100 * (ratio - 1.3) if ratio > 1.3 else 55 if ratio < 0.8 else 50
+    return {"score": _clamp(score), "acwr": round(ratio, 2), "sentence": sentence}
+
+
+def _charge_component(raw: RawDailyProfile) -> dict:
+    by_day = wake_charge_daily(raw)
+    history = [value for day, value in by_day.items()
+               if raw.day - timedelta(days=WAKE_CHARGE_DAYS) <= day < raw.day]
+    stats = _robust(history) if len(history) >= WAKE_CHARGE_MIN_DAYS else None
+    if raw.day not in by_day or stats is None or stats[1] == 0:
+        return {"score": None}
+    z = (by_day[raw.day] - stats[0]) / stats[1]
+    sentence = (
+        "晨起 Charge 低于你平时" if z <= -0.75 else "晨起 Charge 高于你平时" if z >= 0.75
+        else "晨起 Charge 接近你平时"
+    )
+    return {"score": _clamp(50 + 15 * z), "z": round(z, 2), "value": by_day[raw.day], "sentence": sentence}
 
 
 def readiness_score(raw: RawDailyProfile) -> dict:
@@ -179,6 +258,7 @@ def readiness_score(raw: RawDailyProfile) -> dict:
         "sleep": _sleep_component(raw),
         "rhr": _rhr_component(raw),
         "load": _load_component(raw),
+        "charge": _charge_component(raw),
     }
     hrv = components["hrv"]
     insight = compute_composite_readiness(
@@ -189,15 +269,20 @@ def readiness_score(raw: RawDailyProfile) -> dict:
         hrv_out_of_range_streak=hrv.get("streak", 0),
         profile_revision_used=raw.user_profile.revision,
     )
-    present = {name: item for name, item in components.items() if item.get("score") is not None}
+    present = {
+        name: item for name, item in components.items()
+        if item.get("score") is not None and name != "charge"
+    }
     factors = [
         item["sentence"]
         for _, item in sorted(present.items(), key=lambda pair: abs(pair[1]["score"] - 50), reverse=True)[:3]
     ]
+    composite = insight.payload.composite_score
     return {
         "version": READINESS_VERSION,
         "insight": insight.model_dump(mode="json"),
-        "score": insight.payload.composite_score,
+        "composite": composite,
+        "score": display_score(composite),
         "hrv_state": insight.payload.state,
         "factors": factors,
         "components": components,
@@ -284,10 +369,26 @@ def latest_value(points: list[SeriesPoint], day: date) -> float | None:
     return latest.last_value if latest.last_value is not None else latest.value
 
 
+def display_score(composite: float | None) -> int | None:
+    if composite is None:
+        return None
+    return round(min(100.0, max(0.0, DISPLAY_NORM + DISPLAY_SCALE * (composite - 50))))
+
+
 def readiness_band(score: int | None) -> str | None:
+    """Recovery band of a displayed score."""
     if score is None:
         return None
-    return "GOOD" if score >= GOOD_FROM else "SUPPRESSED" if score < SUPPRESSED_BELOW else "NORMAL"
+    return "GOOD" if score >= GOOD_FROM else "SUPPRESSED" if score < PASS_FROM else "NORMAL"
+
+
+def readiness_label(score: int | None) -> str | None:
+    if score is None:
+        return None
+    return (
+        "较好" if score >= GOOD_FROM else "还行" if score >= FAIR_FROM
+        else "正常" if score >= PASS_FROM else "偏低"
+    )
 
 
 def apply_readiness(recovery, readiness: dict):

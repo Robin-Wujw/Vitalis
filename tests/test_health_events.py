@@ -209,3 +209,68 @@ def test_load_spike_text_uses_the_four_week_context_and_never_a_runaway_percenta
     assert _load_spike_summary(_load_trend(40), training(4.0, "near")) == (
         "近 7 天训练负荷比之前 7 天多 40%，但和前 3 周的周平均相比差不多，属于回到平时的训练量。"
     )
+
+
+def test_historical_events_read_one_bounded_snapshot(tmp_path):
+    from datetime import datetime
+
+    from sqlalchemy import create_engine, event as sa_event
+    from sqlalchemy.orm import sessionmaker
+
+    from vitalis.adapters.persistence import HealthRepository
+    from vitalis.adapters.persistence.database import init_db
+    from vitalis.adapters.persistence.models import AnalysisRun, AnalysisSnapshot, User
+    from vitalis.intelligence.contracts import (
+        ConfidenceBand, EventLifecycle, EventSeverity, HealthEvent,
+    )
+
+    engine = create_engine(f"sqlite:///{(tmp_path / 'events.db').as_posix()}")
+    init_db(engine)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    day = date(2026, 9, 1)
+
+    def event(index, lifecycle):
+        return HealthEvent(
+            id=f"event-{index}", type="SLEEP_DEFICIT", type_label="持续睡眠不足",
+            severity=EventSeverity.MODERATE, severity_label="中等",
+            metric="sleep_duration", metric_label="睡眠时长",
+            start_date=day, end_date=day + timedelta(days=5), duration_days=6,
+            confidence=ConfidenceBand.HIGH, confidence_label="较高",
+            summary="睡眠时长连续偏低。", lifecycle=lifecycle,
+        )
+
+    with factory.begin() as db:
+        db.add(User(id="owner"))
+        for offset in range(4):
+            run_id = f"run-{offset}"
+            db.add(AnalysisRun(
+                id=run_id, user_id="owner", target_date=day - timedelta(days=offset),
+                status="SUCCEEDED", started_at=datetime(2026, 9, 2),
+                completed_at=datetime(2026, 9, 2), intelligence_version="v",
+                decision_policy_version="v", evidence_version="v",
+            ))
+            db.add(AnalysisSnapshot(
+                id=f"snap-{offset}", analysis_run_id=run_id, user_id="owner",
+                profile_type="daily", period_start=day - timedelta(days=offset),
+                period_end=day - timedelta(days=offset), schema_version="1",
+                intelligence_version="v", decision_policy_version="v", evidence_version="v",
+                payload={"events": [
+                    event(i, EventLifecycle.PERSISTING).model_dump(mode="json") for i in range(3)
+                ] if offset == 0 else []},
+            ))
+        repo = HealthRepository(db)
+        for i in range(3):
+            # Current state is resolved later; the historical snapshot still shows it active.
+            repo.save_health_event("owner", event(i, EventLifecycle.RESOLVED).model_copy(
+                update={"last_evaluated_date": day + timedelta(days=5)},
+            ))
+
+    statements = []
+    sa_event.listen(engine, "before_cursor_execute",
+                    lambda *args: statements.append(args[2]) if "analysis_snapshots" in args[2] else None)
+    with factory() as db:
+        events = HealthRepository(db).health_events_as_of("owner", day)
+    assert sorted(item.id for item in events) == ["event-0", "event-1", "event-2"]
+    assert all(item.lifecycle is EventLifecycle.PERSISTING for item in events)
+    assert len(statements) == 1 and "LIMIT" in statements[0]
+    engine.dispose()

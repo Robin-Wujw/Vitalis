@@ -4044,6 +4044,7 @@ class HealthRepository:
             orm.HealthEventRecord.user_id == user_id,
         )).scalars().all()
         output: list[HealthEvent] = []
+        historical_events: dict[str, dict] | None = None
         for row in events:
             event = _event_from_row(row)
             evaluated = event.last_evaluated_date or event.end_date
@@ -4051,28 +4052,33 @@ class HealthRepository:
                 if event.lifecycle is not EventLifecycle.RESOLVED:
                     output.append(event)
                 continue
-            snapshot = self.db.execute(
-                select(orm.AnalysisSnapshot)
-                .join(orm.AnalysisRun, orm.AnalysisSnapshot.analysis_run_id == orm.AnalysisRun.id)
-                .where(
-                    orm.AnalysisSnapshot.user_id == user_id,
-                    orm.AnalysisRun.user_id == user_id,
-                    orm.AnalysisSnapshot.profile_type == "daily",
-                    orm.AnalysisRun.target_date <= as_of,
-                    orm.AnalysisRun.status == "SUCCEEDED",
-                ).order_by(
-                    orm.AnalysisRun.target_date.desc(),
-                    orm.AnalysisRun.completed_at.desc(),
-                    orm.AnalysisRun.id.desc(),
-                )
-            ).scalars().first()
-            if snapshot is not None:
-                for payload in snapshot.payload.get("events", []):
-                    if payload.get("id") == event.id:
-                        historical = HealthEvent.model_validate(payload)
-                        if historical.lifecycle is not EventLifecycle.RESOLVED:
-                            output.append(historical)
-                        break
+            if historical_events is None:
+                # One snapshot serves every later-evaluated event; LIMIT keeps
+                # the ORM from decoding every older daily payload.
+                snapshot = self.db.execute(
+                    select(orm.AnalysisSnapshot)
+                    .join(orm.AnalysisRun, orm.AnalysisSnapshot.analysis_run_id == orm.AnalysisRun.id)
+                    .where(
+                        orm.AnalysisSnapshot.user_id == user_id,
+                        orm.AnalysisRun.user_id == user_id,
+                        orm.AnalysisSnapshot.profile_type == "daily",
+                        orm.AnalysisRun.target_date <= as_of,
+                        orm.AnalysisRun.status == "SUCCEEDED",
+                    ).order_by(
+                        orm.AnalysisRun.target_date.desc(),
+                        orm.AnalysisRun.completed_at.desc(),
+                        orm.AnalysisRun.id.desc(),
+                    ).limit(1)
+                ).scalars().first()
+                historical_events = {
+                    str(payload.get("id")): payload
+                    for payload in (snapshot.payload.get("events", []) if snapshot is not None else [])
+                }
+            payload = historical_events.get(event.id)
+            if payload is not None:
+                historical = HealthEvent.model_validate(payload)
+                if historical.lifecycle is not EventLifecycle.RESOLVED:
+                    output.append(historical)
         return output
 
     def save_health_event(self, user_id: str, event: HealthEvent) -> HealthEvent:
@@ -4418,7 +4424,7 @@ class HealthRepository:
             orm.ShadowResult.user_id == user_id,
             orm.ShadowResult.kind == kind,
             orm.ShadowResult.day <= on_or_before,
-        ).order_by(orm.ShadowResult.day.desc())).scalars().first()
+        ).order_by(orm.ShadowResult.day.desc()).limit(1)).scalars().first()
 
     def latest_analysis_snapshot(
         self,
@@ -4434,7 +4440,7 @@ class HealthRepository:
                 orm.AnalysisRun.completed_at.desc().nulls_last(),
                 orm.AnalysisRun.id.desc(),
                 orm.AnalysisSnapshot.id.desc(),
-            )
+            ).limit(1)
         ).scalars().first()
 
     def latest_good_analysis_snapshot(
@@ -4452,7 +4458,7 @@ class HealthRepository:
                 orm.AnalysisRun.completed_at.desc().nulls_last(),
                 orm.AnalysisRun.id.desc(),
                 orm.AnalysisSnapshot.id.desc(),
-            )
+            ).limit(1)
         ).scalars().first()
 
     def latest_good_analysis_snapshot_for_target(
@@ -4471,7 +4477,7 @@ class HealthRepository:
                 orm.AnalysisRun.completed_at.desc().nulls_last(),
                 orm.AnalysisRun.id.desc(),
                 orm.AnalysisSnapshot.id.desc(),
-            )
+            ).limit(1)
         ).scalars().first()
 
     def analysis_snapshot_for_run(
@@ -4482,7 +4488,7 @@ class HealthRepository:
                 *self._current_snapshot_conditions(user_id, profile_type),
                 orm.AnalysisSnapshot.period_end == period_end,
                 orm.AnalysisSnapshot.analysis_run_id == run_id,
-            ).order_by(orm.AnalysisSnapshot.id.desc())
+            ).order_by(orm.AnalysisSnapshot.id.desc()).limit(1)
         ).scalars().first()
 
     def latest_analysis_snapshot_for_target(
@@ -4502,7 +4508,7 @@ class HealthRepository:
                 orm.AnalysisRun.completed_at.desc().nulls_last(),
                 orm.AnalysisRun.id.desc(),
                 orm.AnalysisSnapshot.id.desc(),
-            )
+            ).limit(1)
         ).scalars().first()
 
     def latest_analysis_snapshot_on_or_before(
@@ -4520,7 +4526,7 @@ class HealthRepository:
                 orm.AnalysisRun.completed_at.desc().nulls_last(),
                 orm.AnalysisRun.id.desc(),
                 orm.AnalysisSnapshot.id.desc(),
-            )
+            ).limit(1)
         ).scalars().first()
 
     def analysis_snapshot_for_run_on_or_before(
@@ -4536,7 +4542,7 @@ class HealthRepository:
                 *self._current_snapshot_conditions(user_id, profile_type),
                 orm.AnalysisSnapshot.period_end <= period_end,
                 orm.AnalysisSnapshot.analysis_run_id == run_id,
-            ).order_by(orm.AnalysisSnapshot.period_end.desc(), orm.AnalysisSnapshot.id.desc())
+            ).order_by(orm.AnalysisSnapshot.period_end.desc(), orm.AnalysisSnapshot.id.desc()).limit(1)
         ).scalars().first()
 
     def save_recommendation(

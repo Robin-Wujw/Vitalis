@@ -158,3 +158,49 @@ def test_morning_key_records_lead_with_readiness():
     metrics = _daily_metrics(payload, morning=True)
     assert metrics[0]["key"] == "readiness" and metrics[0]["value"] == 49
     assert metrics[0]["detail"].startswith("一般") and "静息心率接近你平时" in metrics[0]["detail"]
+
+
+def test_wake_charge_is_the_days_maximum_against_the_last_60_days():
+    from datetime import datetime, timezone
+
+    from vitalis.intelligence.analyzers import _wake_charge
+    from vitalis.intelligence.profile import RawDailyProfile, SeriesPoint
+
+    day = date(2026, 10, 14)
+    points = [
+        # History arrives as daily features carrying their maximum.
+        SeriesPoint(metric="hybrid_charge", value=60.0, unit="score", day=day - timedelta(days=offset),
+                    observed_at=datetime(2026, 9, 1, tzinfo=timezone.utc), source="zepp", source_scope="user_fused",
+                    sample_count=900, observed_minutes=900, maximum=float(70 + offset % 20))
+        for offset in range(1, 31)
+    ] + [
+        # The target day is minute samples: charge peaks on waking, then drains.
+        SeriesPoint(metric="hybrid_charge", value=value, unit="score", day=day,
+                    observed_at=datetime(2026, 10, 14, hour, tzinfo=timezone.utc), source="zepp", source_scope="user_fused")
+        for hour, value in ((0, 58.0), (1, 67.0), (3, 61.0))
+    ] + [
+        # Zepp's own daily summary for the target day is not a wake reading.
+        SeriesPoint(metric="hybrid_charge", value=74.0, unit="score", day=day, observed_at=day,
+                    source="zepp", source_scope="user_fused")
+    ]
+    charge = _wake_charge(RawDailyProfile(user_id="u", day=day, series={"hybrid_charge": points}))
+    assert charge["wake_charge"] == 67.0
+    assert charge["wake_charge_reference"] == 77.5
+    assert charge["wake_charge_low"] == 73.0 and charge["wake_charge_high"] == 83.0
+
+    few = _wake_charge(RawDailyProfile(user_id="u", day=day, series={"hybrid_charge": points[-4:]}))
+    assert few["wake_charge"] == 67.0 and few["wake_charge_reference"] is None
+
+
+def test_morning_readiness_card_names_the_wake_charge():
+    from vitalis.intelligence.report_presentation import _daily_metrics
+
+    recovery = {"readiness_score": 40, "readiness_factors": ["静息心率高于你平时"],
+                "wake_charge": 67.0, "wake_charge_reference": 81.5, "wake_charge_low": 72.0, "wake_charge_high": 86.0}
+    metrics = _daily_metrics({"date": "2026-10-01", "features": {"recovery": recovery}}, morning=True)
+    assert metrics[0]["key"] == "readiness"
+    assert metrics[0]["detail"].endswith("晨起 Charge 67（你平时 82，偏低）")
+    only_charge = {key: value for key, value in recovery.items() if not key.startswith("readiness")}
+    metrics = _daily_metrics({"date": "2026-10-01", "features": {"recovery": only_charge}}, morning=True)
+    assert metrics[0]["key"] == "wake_charge" and metrics[0]["value"] == 67
+    assert metrics[0]["detail"] == "你平时 82，偏低"

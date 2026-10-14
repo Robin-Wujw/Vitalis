@@ -636,6 +636,12 @@ class RecoveryFeatures(BaseModel):
     vendor_charge: float | None = None
     vendor_readiness_components: dict[str, float] = Field(default_factory=dict)
     vendor_charge_components: dict[str, float] = Field(default_factory=dict)
+    # Zepp Hybrid Charge on waking (the day's maximum) and the user's range
+    # over the previous 60 days: median, 20th and 80th percentile.
+    wake_charge: float | None = None
+    wake_charge_reference: float | None = None
+    wake_charge_low: float | None = None
+    wake_charge_high: float | None = None
     readiness_score: int | None = Field(default=None, ge=0, le=100)
     readiness_factors: list[str] = Field(default_factory=list)
     readiness_hrv_state: str | None = None

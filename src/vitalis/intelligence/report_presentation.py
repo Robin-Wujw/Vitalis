@@ -239,6 +239,19 @@ def _metric_deviation(metric: Any) -> dict[str, Any] | None:
     return deviation if isinstance(deviation, dict) else None
 
 
+def _wake_charge_text(recovery: dict[str, Any]) -> str | None:
+    """Zepp Hybrid Charge on waking against the user's own 60-day range."""
+    value = _number(recovery.get("wake_charge"))
+    if value is None:
+        return None
+    reference = _number(recovery.get("wake_charge_reference"))
+    low, high = _number(recovery.get("wake_charge_low")), _number(recovery.get("wake_charge_high"))
+    if reference is None or low is None or high is None:
+        return f"晨起 Charge {value:.0f}"
+    state = "偏低" if value < low else "偏高" if value > high else "正常"
+    return f"晨起 Charge {value:.0f}（你平时 {reference:.0f}，{state}）"
+
+
 def _daily_metrics(payload: dict[str, Any], *, morning: bool) -> list[dict[str, Any]]:
     features = payload.get("features") or {}
     sleep = features.get("sleep") or {}
@@ -267,12 +280,18 @@ def _daily_metrics(payload: dict[str, Any], *, morning: bool) -> list[dict[str, 
     if morning:
         recovery = features.get("recovery") or {}
         score = _integer(recovery.get("readiness_score"))
+        charge = _wake_charge_text(recovery)
         if score is not None:
             band = {"GOOD": "较好", "SUPPRESSED": "偏低"}.get(readiness_band(score), "一般")
             factors = [str(item) for item in recovery.get("readiness_factors") or [] if item][:3]
             output.insert(0, _metric(
                 "readiness", "准备度", score, "score", digits=0,
-                detail="；".join([f"{band}（50 是你的平常水平）"] + factors),
+                detail="；".join([f"{band}（50 是你的平常水平）"] + factors + ([charge] if charge else [])),
+            ))
+        elif charge:
+            output.insert(0, _metric(
+                "wake_charge", "晨起 Charge", recovery.get("wake_charge"), "score", digits=0,
+                detail=charge.split("（", 1)[1].rstrip("）") if "（" in charge else None,
             ))
         rhr = _number(hrv.get("rhr_bpm"))
         if rhr is not None:

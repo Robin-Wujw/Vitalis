@@ -88,6 +88,7 @@ class SeriesPoint:
     observed_minutes: int | None = None
     last_value: float | None = None
     first_observed_at: datetime | None = None
+    maximum: float | None = None
 
     @property
     def is_daily_feature(self) -> bool:
@@ -672,6 +673,7 @@ class ProfileLoader:
                         observed_minutes=row.observed_minutes,
                         last_value=row.last_value,
                         first_observed_at=row.first_observed_at,
+                        maximum=row.maximum,
                     ))
             if end_at < sample_start_at:
                 continue

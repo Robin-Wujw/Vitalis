@@ -11,7 +11,9 @@ from vitalis.adapters.zepp import catalog
 from vitalis.adapters.zepp.catalog import LAP_62_NAMESPACE, resolve_exercise
 from vitalis.adapters.zepp.fetcher import FetchedRecord, RawRecord
 from vitalis.adapters.zepp.parser import ZEPP_STRENGTH_LAP_LABELS, ZeppParser
+from vitalis.adapters.zepp.parsers.workout_detail import ParseContext, parse_workout_detail
 from vitalis.adapters.zepp.sync_manager import SyncManager
+from vitalis.adapters.zepp.workout_streaming import spool_bytes
 from vitalis.domain import User, Workout, WorkoutDetail, WORKOUT_DETAIL_SCHEMA_VERSION
 from vitalis.adapters.persistence import HealthRepository, session_scope
 
@@ -73,6 +75,25 @@ def test_strength_lap_maps_only_verified_display_codes(code):
     assert observed.source == "lap_62"
     assert "exercise_name_reference_mapping" in observed.limitations
     assert "exercise_name_unverified" not in observed.limitations
+
+
+def test_streamed_strength_laps_retain_verified_names_and_unknowns():
+    rows = [lap_row(code=code) for code in OBSERVED_CODES]
+    rows += ["bad,row", "", lap_row(code=999999), lap_row(code="")]
+    payload = {"data": {"trackid": int(START.timestamp()), "lap": ";".join(rows)}}
+    expected = parse_workout_detail(payload, ParseContext(training_family="strength"))
+    spool = spool_bytes(json.dumps(payload).encode(), max_bytes=32 * 1024 * 1024)
+    try:
+        actual = parse_workout_detail(spool, ParseContext(training_family="strength"))
+        assert actual.status == expected.status == "recognized"
+        assert actual.detail.strength_sets == expected.detail.strength_sets
+        assert [item.exercise_name for item in actual.detail.strength_sets[:len(OBSERVED_CODES)]] == [
+            resolve_exercise(LAP_62_NAMESPACE, code).label_zh for code in OBSERVED_CODES
+        ]
+        assert all(item.weight_unit is None for item in actual.detail.strength_sets)
+        assert all(item.exercise_name is None for item in actual.detail.strength_sets[-2:])
+    finally:
+        spool.cleanup()
 
 
 def test_user_confirmed_september_23_session_maps_four_ordered_blocks():
@@ -207,7 +228,8 @@ def test_explicit_strength_set_units_remain_distinct():
     assert [item.weight_unit for item in detail.strength_sets] == ["kg", "lb", None]
 
 
-def test_detail_refresh_reparses_old_observation_with_verified_name():
+@pytest.mark.parametrize("streamed", [False, True])
+def test_detail_refresh_reparses_old_observation_with_verified_name(streamed):
     user = User(id="lap-refresh-verified-name")
     workout_id = str(int(START.timestamp()))
     with session_scope() as db:
@@ -224,12 +246,19 @@ def test_detail_refresh_reparses_old_observation_with_verified_name():
                 "vendor_exercise_code": 1770, "exercise_name": None,
             }],
         }, fetched_at=START)
+        payload = {"data": {"trackid": int(START.timestamp()), "lap": lap_row(code="1770")}}
+        if streamed:
+            payload = spool_bytes(json.dumps(payload).encode(), max_bytes=32 * 1024 * 1024)
         record = FetchedRecord(raw=RawRecord(
             stream="workout_detail", source_key=f"workout_detail:{workout_id}:cloud",
             start_utc=START, end_utc=START + timedelta(minutes=30),
-            payload={"data": {"trackid": int(START.timestamp()), "lap": lap_row(code="1770")}},
+            payload=payload,
         ))
-        assert SyncManager(SimpleNamespace())._write_stream(record, repo, user) == 1
+        try:
+            assert SyncManager(SimpleNamespace())._write_stream(record, repo, user) == 1
+        finally:
+            if streamed:
+                payload.cleanup()
     with session_scope() as db:
         saved = HealthRepository(db).workout(user.id, workout_id)
         assert saved is not None

@@ -7,6 +7,7 @@ TrainingRecord / Workout。此处是「厂商格式隔离」的关键边界 —�
 
 from base64 import b64decode
 from binascii import Error as BinasciiError
+from collections.abc import Iterable
 from datetime import date, datetime, time, timedelta, timezone
 import hashlib
 import json
@@ -767,8 +768,13 @@ class ZeppParser:
         """Read observed fields of the supported strength-only 62-column layout."""
         if not isinstance(encoded, str):
             return []
+        return ZeppParser._strength_lap_rows(encoded.split(";"))
+
+    @staticmethod
+    def _strength_lap_rows(rows: Iterable[str]) -> list[StrengthSetObservation]:
+        """Normalize both buffered and streamed laps through the same catalog."""
         output = []
-        for order, row in enumerate(encoded.split(";"), start=1):
+        for order, row in enumerate(rows, start=1):
             fields = row.split(",")
             if len(fields) != 62:
                 continue

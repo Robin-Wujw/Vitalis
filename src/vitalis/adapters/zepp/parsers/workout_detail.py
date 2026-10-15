@@ -10,7 +10,6 @@ import json
 from typing import Iterator, Literal
 
 from vitalis.domain import (
-    StrengthSetObservation,
     WorkoutDetail,
     WorkoutLap,
     WorkoutMetricSample,
@@ -276,7 +275,6 @@ def _normalize_stream_detail(data: dict[str, object], context: ParseContext) -> 
         raise WorkoutDetailLimitError("运动明细样本超过安全上限")
     samples = ZeppParser._deduplicate_workout_samples(samples)
 
-    strength_sets: list[StrengthSetObservation] = []
     encoded_sets = data.get("strengthSets")
     if isinstance(encoded_sets, DelimitedText):
         try:
@@ -285,7 +283,7 @@ def _normalize_stream_detail(data: dict[str, object], context: ParseContext) -> 
             encoded_sets = []
     strength_sets = ZeppParser._strength_sets(encoded_sets)
     if not strength_sets and context.training_family == "strength":
-        strength_sets = _stream_strength_lap_sets(data.get("lap"))
+        strength_sets = ZeppParser._strength_lap_rows(_stream_parts(data.get("lap")))
     counts: dict[str, int] = {}
     for sample in samples:
         counts[sample.metric] = counts.get(sample.metric, 0) + 1
@@ -445,23 +443,4 @@ def _stream_pauses(encoded):
             continue
         if started is not None and duration >= 0:
             output.append(WorkoutPause(started_at=ZeppParser._utc(started), duration_seconds=duration))
-    return output
-
-
-def _stream_strength_lap_sets(encoded):
-    output = []
-    for order, row in enumerate(_stream_parts(encoded), start=1):
-        fields = row.split(",")
-        if len(fields) != 62:
-            continue
-        repetitions = ZeppParser._strength_number({"value": fields[22]}, ("value",), 1, 1000, integer=True)
-        weight = ZeppParser._strength_number({"value": fields[21]}, ("value",), 0, 2000)
-        code = ZeppParser._strength_number({"value": fields[28]}, ("value",), 1, 2**31 - 1, integer=True)
-        if repetitions is None and weight is None and code is None:
-            continue
-        output.append(StrengthSetObservation(
-            source="lap_62", order=order, vendor_exercise_code=code,
-            repetitions=repetitions, weight_value=weight,
-            limitations=["exercise_name_unverified", "weight_unit_unverified" if weight is not None else "weight_unavailable"],
-        ))
     return output

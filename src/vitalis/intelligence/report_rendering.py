@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from html.parser import HTMLParser
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from .public_reports import PublicReportView, report_presentation, to_public_report_view
 from .report_formatting import minutes_text, number, payload_of, timestamp_text
@@ -377,17 +378,24 @@ def provider_text_length(text: str) -> int:
 
 
 _MARKDOWN_ESCAPE = re.compile(r"\\([`*_{}\[\]#|!])")
+_MARKDOWN_LINK = re.compile(r"\[([^\[\]\\`*_<>]+)\]\((https?://[^\s()<>]+)\)")
 
 
 def markdown_html_length(content: str) -> int:
     """Length of the HTML a provider stores after converting this renderer's Markdown.
 
-    Every block is one heading, bold paragraph, or plain paragraph, so the
-    conversion adds a fixed tag per block and resolves Markdown escapes.
+    Report blocks are headings or bold/plain paragraphs. The delivery adapter
+    may append one standalone link with a plain label and an HTTP(S) URL.
     """
     total = 0
     for block in content.strip().split("\n\n"):
         line, tags = block.strip(), len("<p></p>")
+        link = _MARKDOWN_LINK.fullmatch(line)
+        if link is not None:
+            label = html.escape(html.unescape(link[1]), quote=False)
+            destination = html.escape(html.unescape(link[2]), quote=True)
+            total += provider_text_length(f'<a href="{destination}">{label}</a>') + tags + 1
+            continue
         for prefix in ("### ", "## ", "# "):
             if line.startswith(prefix):
                 line, tags = line[len(prefix):], len("<h2></h2>")
@@ -695,10 +703,26 @@ class _HTMLContract(HTMLParser):
         self.tags: list[str] = []
 
     def handle_starttag(self, tag, attrs):
-        if tag not in {"div", "p", "h1", "h2", "h3", "strong", "span", "br", "wbr", "ul", "li", "blockquote"}:
+        if tag not in {"div", "p", "h1", "h2", "h3", "strong", "span", "br", "wbr", "ul", "li", "blockquote", "a"}:
             raise ValueError("HTML report contains an unsupported element")
-        if any(name not in {"style", "lang"} for name, _ in attrs):
+        allowed_attrs = {"style", "lang", "href"} if tag == "a" else {"style", "lang"}
+        if any(name not in allowed_attrs for name, _ in attrs):
             raise ValueError("HTML report contains an unsupported attribute")
+        if tag == "a":
+            hrefs = [value for name, value in attrs if name == "href"]
+            if len(hrefs) != 1 or not hrefs[0] or re.search(r"[\x00-\x20\x7f]", hrefs[0]):
+                raise ValueError("HTML report contains an unsafe link")
+            try:
+                url = urlsplit(hrefs[0])
+                valid = (
+                    url.scheme in {"http", "https"} and bool(url.hostname)
+                    and url.username is None and url.password is None
+                )
+                url.port
+            except ValueError as exc:
+                raise ValueError("HTML report contains an unsafe link") from exc
+            if not valid:
+                raise ValueError("HTML report contains an unsafe link")
         for name, value in attrs:
             if name == "style" and value and re.search(r"url\s*\(|expression\s*\(|@import", value, re.IGNORECASE):
                 raise ValueError("HTML report contains an unsafe style")

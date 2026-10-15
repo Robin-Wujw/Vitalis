@@ -201,6 +201,45 @@ def test_morning_test_delivery_returns_accepted_without_filesystem_state(monkeyp
     assert not list(tmp_path.glob("*.sent"))
 
 
+@pytest.mark.parametrize("period, hour", [("morning", 9), ("evening", 21)])
+def test_scheduled_delivery_issues_feedback_link_and_sends_the_final_body(monkeypatch, period, hour):
+    from hashlib import sha256
+    import re
+
+    from vitalis.adapters.notifications import PushService
+    from vitalis.adapters.persistence import HealthRepository, session_scope
+    from vitalis.bootstrap import get_feedback_link_service
+    from tests.test_push_service import _accepting_pushplus_client
+
+    requests = []
+    user_id = f"synthetic-scheduled-feedback-{period}"
+    with session_scope() as db:
+        HealthRepository(db).upsert_user(user_id)
+    monkeypatch.setattr(daily_push.settings, "public_url", "https://example.invalid")
+    monkeypatch.setattr(daily_push, "PushService", PushService)
+    monkeypatch.setattr(httpx, "Client", _accepting_pushplus_client(requests))
+    profile = _daily()
+    profile["user_id"] = user_id
+
+    result = daily_push.deliver_daily_report(
+        user_id, "synthetic-token", profile, period=period,
+        target_date=date(2026, 8, 29), scheduled_delivery=True,
+        send_attempt_id="synthetic-scheduled-send",
+        as_of=datetime(2026, 8, 29, hour, 45, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "accepted"
+    assert result["_pushplus_result"]["provider_id"] == "synthetic-short-code"
+    assert result["_pushplus_result"]["send_attempt_id"] == "synthetic-scheduled-send"
+    assert len(requests) == 1
+    content = requests[0][1]["json"]["content"]
+    feedback = re.search(r'href="https://example.invalid/api/feedback/([^"/]+)"', content)
+    assert feedback is not None
+    link = get_feedback_link_service().view(feedback.group(1))
+    assert link.period == period and link.target_date == date(2026, 8, 29)
+    assert result["_render"]["content_sha256"] == sha256(content.encode("utf-8")).hexdigest()
+
+
 def test_manual_test_push_isolated_from_scheduled_intent(monkeypatch, workflow, tmp_path):
     sent = _capture_push(monkeypatch)
 

@@ -160,6 +160,28 @@ def test_transport_contract_rejects_invalid_content(content, template):
         validate_report_content(content, template)
 
 
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_html_contract_accepts_feedback_links(scheme):
+    validate_report_content(
+        f'<p><a href="{scheme}://example.invalid/api/feedback/synthetic?source=report&amp;day=synthetic">反馈</a></p>',
+        "html",
+    )
+
+
+@pytest.mark.parametrize("content", [
+    '<a href="javascript:alert(1)">反馈</a>',
+    '<a href="java&#x09;script:alert(1)">反馈</a>',
+    '<a href="data:text/html,synthetic">反馈</a>',
+    '<a href="//example.invalid/api/feedback/synthetic">反馈</a>',
+    '<a href="https://example.invalid" onclick="evil()">反馈</a>',
+    '<a href="https://example.invalid" href="javascript:evil()">反馈</a>',
+    '<p href="https://example.invalid">反馈</p>',
+])
+def test_html_contract_rejects_unsafe_feedback_links(content):
+    with pytest.raises(ValueError):
+        validate_report_content(content, "html")
+
+
 def test_long_ascii_action_keeps_its_text_and_wraps_without_css():
     name = "UnrecognizedStrengthAction" * 12
     briefing = _briefing()
@@ -368,6 +390,16 @@ def test_markdown_html_length_matches_the_converted_markdown():
     for content in (render_report(_briefing()).content, render_report(large_briefing(40)).content):
         # The estimate counts a newline after every block, including the last one.
         assert markdown_html_length(content) - provider_text_length(markdown(content)) in (0, 1)
+
+
+@pytest.mark.parametrize("url", [
+    "https://example.invalid/api/feedback/synthetic",
+    "http://example.invalid/api/feedback/synthetic?source=report&day=synthetic",
+])
+def test_markdown_html_length_counts_standalone_feedback_links(url):
+    content = render_report(_briefing()).content + f"\n\n[记录今天的感觉（可选）]({url})\n"
+
+    assert markdown_html_length(content) - provider_text_length(markdown(content)) in (0, 1)
 
 
 @pytest.mark.parametrize(("target", "measure"), _BUDGET_MEASURES)

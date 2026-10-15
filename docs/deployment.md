@@ -59,6 +59,14 @@ UV_PROJECT_ENVIRONMENT=/opt/vitalis/venvs/<candidate_sha> uv sync --python <pyth
 
 在服务器隔离配置中运行受影响目标测试、生成报告检查、候选 schema 检查和合成 API/worker smoke。本地 `tools/check.py all --ci` 已包含 wheel/sdist 打包验收；资源受限的运行服务器不重复全量 CI 或打包。若需要独立构建检查，先用受支持 Python 的 `ensurepip` 补齐构建工具，并在锁定开发环境验证。测试使用合成数据、空外部凭据和空 PushPlus 配置，临时数据库按服务器资源选择磁盘目录。服务器目标测试或运行验收失败先查明并修复，不合并失败候选。
 
+涉及通知、反馈入口或公开地址配置时，候选验收必须覆盖实际启用的路径：用合成报告和假 HTTP transport 走 `PushService`，分别验证晨报/晚报、HTML/Markdown、有/无反馈链接、最终正文摘要和含链接的运输预算，再模拟业务 `code=200` 与有效流水号。`render_report` 单独成功、`test_delivery` 不带反馈链接，或 API `/ready` 成功，都不能替代这项发送前验收。可运行：
+
+```bash
+UV_PROJECT_ENVIRONMENT=<candidate-venv> uv run --locked --extra dev python -m pytest tests/test_push_service.py tests/test_daily_push.py tests/test_feedback_links.py tests/integration/test_notification_outbox.py -q
+```
+
+测试进程使用隔离配置，不载入生产凭据或生产数据库；生产开关的组合以显式合成参数重现。
+
 ## 3. 停止服务；破坏性迁移才备份
 
 候选验证完成后保存当前 unit/drop-in、release 路径和环境配置的私密回滚副本。确认所有 Vitalis 服务的实际状态，然后停止 API 和 worker，等待进程退出：
@@ -131,6 +139,7 @@ sudo systemctl start vitalis-alerts.service && systemctl show vitalis-alerts.ser
 - 隔离合成库能生成 morning/daily/evening/weekly/monthly，并通过 API 读取；
 - `/api/data-status` 合同正常，能展示同步与覆盖状态；
 - 测试没有向真实 PushPlus 发送通知；
+- 配置了反馈入口时，完整推送链路的合成受理和最终正文摘要检查通过；实际投递按日期、类型和供应商状态单独记录，未到发送窗口的记为待验证，不能由心跳或合成受理推断真实送达；
 - 从日志中仅提取非敏感错误类别和数量，日志不输出凭据、个人信息或健康原文。
 
 保存验收退出码和结果后才进入合并步骤。

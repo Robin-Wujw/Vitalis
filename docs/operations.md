@@ -45,7 +45,27 @@ worker 每 30 分钟检查一次数据流新鲜度：周期性的流（睡眠、
 
 数据流停更（`stream_stale`）和 Zepp 凭据失效（`credential_expired`）也写进同一张告警表。第二告警通道（邮件或 Hermes）用户决定暂不接入（2026-10-13，2026-10-14 再次确认）：事件只写入当前数据库，用 `GET /api/delivery-alerts` 查看，`external_channel` 为 `unconfigured`；`journalctl -u vitalis-alerts` 里每个新事件一行，只含原因类别和日期。
 
-漏发按这个顺序查：`GET /api/delivery-alerts` 的原因 → `GET /api/deliveries` 当天记录的 `status` 和 `failure_code` → `systemctl status vitalis-worker` 与 `vitalis doctor` 的心跳 → `journalctl -u vitalis-worker --since 07:25` 里的晨报探测、同步结束（睡眠分片状态）、分析和投递日志 → `GET /api/data-status` 的数据新鲜度。
+漏发按下面的 SOP 排查；发布和版本切换仍由[发布 SOP](deployment.md)负责。
+
+### 日报、晨报和晚报缺失排查 SOP
+
+1. **固定日期、类型和截止时刻**：用部署的 `VITALIS_TIMEZONE` 确定目标本地日，再判断是否到了该期发送时间。日报是可回看的分析快照，自动推送的是晨报和晚报；分别检查 `GET /api/reports/daily/state?day=YYYY-MM-DD`、`GET /api/deliveries` 和 `GET /api/delivery-alerts`，不要把尚未到点的晚报判为漏发。
+2. **核对实际版本**：记录本地候选或 `origin/main` SHA、服务器仓库 SHA、发布验收记录，以及 API、worker、alerts 的 `ExecStart`、`WorkingDirectory`、`EnvironmentFiles`。对 API 和 worker 的实际进程读取允许公开的 `PYTHONPATH`，在各自服务环境下导入 `vitalis` 确认源码路径；核对 release 的源码与锁文件摘要。配置只记录时区、数据库后端和 PushPlus、反馈入口是否已配置，不打印完整环境、令牌或投递目标。
+3. **沿链路定位**：先看告警原因、投递状态和 `failure_code`，再查 `doctor` 的心跳、目标日同步 attempt/chunk、分析任务和快照状态，最后看对应时段 worker 日志和 `GET /api/data-status`。心跳正常和 `/ready` 成功不能证明报告已生成或渠道已受理；数据库内部时间按 UTC 读取后转换到部署时区。
+
+| 证据 | 判断与处理 |
+| --- | --- |
+| 同步未成功、需要认证或无当天事实 | 按来源状态修复认证或同步；保留缺失资格，等待 worker 按投递期限协调。 |
+| 同步完成，分析失败、长时间运行或没有日报快照 | 查分析任务、租约、失败类别和内存；修复后按影响日期排分析，不清库、不清空整个队列。 |
+| 日报快照存在，投递 `failed/render_failed` | 优先用合成数据走完整 `PushService` 渲染及发送前校验；同时覆盖生产启用的反馈链接和 HTML/Markdown，不能只验证 `render_report` 或不带链接的测试补发。确认最终正文摘要与运输预算包含链接。 |
+| `accepted`，有供应商流水号 | PushPlus 已受理；继续查供应商最终状态。未配置查询凭据时只能确认受理，不能声称送达。 |
+| `uncertain` 或响应丢失 | 保留原意图并在供应商侧核对，不重置次数、不新建意图盲重发。 |
+| 无投递意图、`missed` 或 `deferred` | 按 `worker_not_running`、`snapshot_unavailable`、`delivery_not_created` 或延期原因查调度及资格；核对该期同步是否已存在。 |
+
+4. **恢复与验收**：修复在 feature branch 先复现失败，再按发布 SOP 验证候选和切换所有服务。没有 schema 差异时保留现库。已过投递期限的历史记录和失败证据保留，历史日报仍可回看；历史补发需要明确的目标日期和授权，不能把旧训练建议当成今天的安排。仍在期限内的意图只通过现有协调规则恢复，不直接修改状态伪装成功。
+5. **留存结果**：私密发布验收记录保存目标日期/类型、失败类别、最终 SHA、命令退出码、合成渠道验收和实际投递状态。下一个定时窗口核对是否受理；尚未发生的投递写为待验证。第二告警通道未配置时明确记录该限制，沿用现有用户选择。
+
+2026-10-15 排查实例：10 月 14 日晚报和 15 日晨报的同步、分析与日报快照均成功，投递各三次 `render_failed`，没有供应商流水号；配置反馈入口后追加的 HTML 链接未通过标签校验，且最终正文摘要仍为追加前的值。服务器仓库、源码、三个服务和发布记录的 SHA 一致。此类故障应修复发送前完整链路，重启或重复同步不能解决。
 
 ## 初始化与进程
 

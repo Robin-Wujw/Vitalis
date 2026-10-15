@@ -271,12 +271,14 @@ class PushService:
             ),
             measure=measure,
         )
+        body = str(getattr(rendered, "content", "")) + link
         metadata = _render_metadata(rendered)
+        metadata["content_sha256"] = hashlib.sha256(body.encode("utf-8")).hexdigest()
         payload = _payload_for_extras(briefing)
         payload.update(metadata)
         message = PushMessage(
             title=str(getattr(rendered, "title", "Vitalis 报告")),
-            body=str(getattr(rendered, "content", "")) + link,
+            body=body,
             user_id=user_id,
             template=str(getattr(rendered, "template", self.template)),
             extras={**payload, **metadata, **({"send_attempt_id": self.send_attempt_id} if self.send_attempt_id else {})},

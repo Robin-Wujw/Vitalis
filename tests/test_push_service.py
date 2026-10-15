@@ -1,4 +1,5 @@
 from copy import deepcopy
+from hashlib import sha256
 from html.parser import HTMLParser
 import logging
 
@@ -898,3 +899,52 @@ def test_pushplus_sends_the_html_page_by_default(monkeypatch):
     sent = requests[0][1]["json"]
     assert sent["template"] == "html"
     assert sent["content"].startswith("<div") and "关键记录" in sent["content"]
+
+
+@pytest.mark.parametrize("template", ["html", "markdown"])
+@pytest.mark.parametrize("period", ["morning", "evening"])
+@pytest.mark.parametrize("with_feedback", [False, True])
+def test_feedback_link_is_sent_with_final_body_digest(monkeypatch, template, period, with_feedback):
+    requests = []
+    messages = []
+    monkeypatch.setattr("vitalis.adapters.notifications.httpx.Client", _accepting_pushplus_client(requests))
+    feedback_url = "https://example.invalid/api/feedback/synthetic-token?source=report&day=synthetic"
+    service = PushService(
+        pushplus_token="synthetic-token", template=template,
+        feedback_url=feedback_url if with_feedback else None, send_attempt_id="synthetic-send-attempt",
+    )
+    service.add_handler(messages.append)
+
+    result = service.push_daily_profile("synthetic-user", _daily_payload(), period=period)
+
+    assert len(requests) == len(messages) == 1
+    sent = requests[0][1]["json"]
+    assert requests[0][0] == PUSHPLUS_URL
+    assert sent["template"] == template
+    assert ("记录今天的感觉（可选）" in sent["content"]) is with_feedback
+    if with_feedback:
+        assert (feedback_url if template == "markdown" else feedback_url.replace("&", "&amp;")) in sent["content"]
+    digest = sha256(sent["content"].encode("utf-8")).hexdigest()
+    assert result["_render"]["content_sha256"] == messages[0].extras["content_sha256"] == digest
+    assert result["_render"]["template"] == template
+    assert result["_pushplus_result"]["status"] == "accepted"
+    assert result["_pushplus_result"]["provider_id"] == "synthetic-short-code"
+    assert result["_pushplus_result"]["send_attempt_id"] == "synthetic-send-attempt"
+
+
+@pytest.mark.parametrize("template", ["html", "markdown"])
+def test_feedback_link_stays_within_the_pushplus_budget(monkeypatch, template):
+    requests = []
+    monkeypatch.setattr("vitalis.adapters.notifications.httpx.Client", _accepting_pushplus_client(requests))
+    service = PushService(
+        pushplus_token="synthetic-token", template=template,
+        feedback_url="https://example.invalid/api/feedback/" + "s" * 1000,
+    )
+
+    result = service.push_morning_briefing("synthetic-user", large_briefing())
+
+    assert result["_pushplus_result"]["status"] == "accepted"
+    content = requests[0][1]["json"]["content"]
+    assert "记录今天的感觉（可选）" in content
+    converted = markdown.markdown(content) if template == "markdown" else content
+    assert provider_text_length(converted) <= PUSHPLUS_CONTENT_BUDGET

@@ -20,6 +20,10 @@
 
 本条目记录来源，并不声称 Vitalis 与 ZeppBridge 或 Zepp Health 存在从属、获得其背书或在功能上等同。
 
+## Zepp 厂商目录
+
+`src/vitalis/adapters/zepp/data/` 的规范化映射来自用户提供的 Zepp 10.8.7-play APK 三份运动目录及官方 `/sport/config/muscle` 中文动作目录。只保留互操作所需的编号、名称、交叉关系和来源摘要；不分发 APK、图片、反编译实现或个人响应。208 个运动模式与 1,133 个动作名称的来源、占位排除及更新方法见 [Zepp](docs/zepp.md)。这些厂商标签不表示用户确认或 Vitalis 对训练动作的处方资格。
+
 ## OpenStrap analytics
 
 Open Health Insights shadow 算法的部分内容移植或改编自 OpenStrap analytics。

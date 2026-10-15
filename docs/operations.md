@@ -152,6 +152,22 @@ PushPlus 的 HTTP 200 只表示请求完成；只有业务 `code=200` 且有有�
 
 ## 常见故障
 
+### Zepp 名称或运动大类缺失
+
+1. 先核对运行服务的 SHA、实际加载路径和目录版本；查看标准化记录的 `vendor_type_id`、`vendor_type_namespace`，力量逐组记录还要看 `source=lap_62`、`vendor_exercise_code`。不要把设备 ID 当云端类型，或仅在本地补表。
+2. 按[Zepp 目录](zepp.md)核对 APK 三份运动资源和官方动作目录的全量覆盖、唯一性及摘要。未知代码保持未知，禁止根据训练习惯补名称。
+3. 在已完成候选验收的服务环境下预览，默认只读、无网络、无通知：
+
+   ```bash
+   python -m vitalis.zepp_mapping_refresh --user U
+   python -m vitalis.zepp_mapping_refresh --user U --apply
+   ```
+
+   以上 `python` 必须是当前 release 的锁定虚拟环境，并加载服务配置。先审查 dry-run 的更改数量、受影响 `activity_day`、未解析命名空间及目录外代码数量。apply 是离线维护操作：暂停 API、worker、定时器及所有其他数据库写入者，用已加载服务配置的 release 环境执行，提交后恢复全部服务并检查心跳，防止同步写入与历史更正互相覆盖。无 schema 变化时保留现库，不因显示名刷新创建数据库备份。旧的直接 SQL 力量刷新入口已经移除。
+4. 刷新通过仓储写入，只改厂商参考映射字段，保留原始数值、单位、获取时间、逐秒样本、source coverage 和用户确认。旧记录缺少命名空间时，只接受已有识别来源或同用户加密 journal 中匹配的 `sport_history` 原始类型及入口；没有证据或证据冲突时跳过并计数。不会由 `vendor_source` 猜测命名空间。
+5. apply 在同一事务内递增输入 revision、追加输入事件并创建 `catalog_refresh` 任务，影响范围含更正日及依赖它的已有分析日，不受普通同步近 7 天刷新上限约束。由 worker 完成重算；历史 last-good 快照保持可回看，不原地覆写。重复 dry-run 应没有可更新记录。
+6. 验收自由训练云端 16、力量训练大类、完整目录的普通/流式解析、保存后的逐组名称、分析快照和 API 报告；再次核对服务 SHA、`/live`、`/ready`、doctor 和心跳。报告显示名更新本身不触发真实 PushPlus；补发需要用户已授权的明确投递动作。发布步骤统一按[发布 SOP](deployment.md)。
+
 | 现象 | 处理 |
 | --- | --- |
 | `/ready` 503 | 对照 `DATABASE_URL` 检查 schema；用新库 `db init`，不要自动迁移未知旧库。 |

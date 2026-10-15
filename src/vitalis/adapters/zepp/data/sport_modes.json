@@ -1,0 +1,4574 @@
+{
+  "catalog_revision": "zepp-apk-10.8.7-play-sports-v1",
+  "provenance": {
+    "app_version": "10.8.7-play",
+    "artifact_digest": "322c37d71a525db026975a60af7852c063218804a5b3258e91299499122acbcf",
+    "resources": {
+      "assets/config_sport_type_group.json": "384d76beccea63c0df015e457cd5eba44e5da7f114453d9dec232ad5de6c7183",
+      "assets/device_sport_categories.json": "627d6983f8626e24c1d61781285539e518f055e8bca02300f979e01352f19906",
+      "assets/sport_categories.json": "1c75286ae95e031876addeda4681a214f5ba84068bc8f9c8d327b7649c7af35d"
+    }
+  },
+  "source_entry_counts": {
+    "assets/config_sport_type_group.json": 189,
+    "assets/device_sport_categories.json": 208,
+    "assets/sport_categories.json": 209
+  },
+  "entries": [
+    {
+      "device_code": 1,
+      "cloud_code": 1,
+      "labels": {
+        "zh-CN": "户外跑",
+        "en": "Outdoor running"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Outdoor running",
+      "resource_key": 1,
+      "asset_category": "Run",
+      "support_gps": true,
+      "canonical_code": "outdoor_running",
+      "display_label_zh": "户外跑",
+      "category": "running",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 2,
+      "cloud_code": 8,
+      "labels": {
+        "zh-CN": "跑步机（原室内跑）",
+        "en": "Treadmill"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Treadmill",
+      "resource_key": 8,
+      "asset_category": "Run",
+      "support_gps": false,
+      "canonical_code": "treadmill",
+      "display_label_zh": "跑步机",
+      "category": "running",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 3,
+      "cloud_code": 6,
+      "labels": {
+        "zh-CN": "健走",
+        "en": "Walking"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Walking",
+      "resource_key": 6,
+      "asset_category": "Walk",
+      "support_gps": true,
+      "canonical_code": "walking",
+      "display_label_zh": "健走",
+      "category": "walking",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 4,
+      "cloud_code": 9,
+      "labels": {
+        "zh-CN": "户外骑行",
+        "en": "Outdoor Cycling"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Outdoor Cycling",
+      "resource_key": 9,
+      "asset_category": "Cycling",
+      "support_gps": true,
+      "canonical_code": "outdoor_cycling",
+      "display_label_zh": "户外骑行",
+      "category": "cycling",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 5,
+      "cloud_code": 16,
+      "labels": {
+        "zh-CN": "自由训练",
+        "en": "Free training"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 16,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "free_training",
+      "display_label_zh": "自由训练",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 6,
+      "cloud_code": 14,
+      "labels": {
+        "zh-CN": "泳池游泳",
+        "en": "Swimming Pool"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Pool Swimming",
+      "resource_key": 14,
+      "asset_category": "Swimming",
+      "support_gps": false,
+      "canonical_code": "pool_swimming",
+      "display_label_zh": "泳池游泳",
+      "category": "swimming",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 7,
+      "cloud_code": 15,
+      "labels": {
+        "zh-CN": "公开水域游泳",
+        "en": "Open Water Swimming"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Open Water Swimming",
+      "resource_key": 15,
+      "asset_category": "Swimming",
+      "support_gps": true,
+      "canonical_code": "open_water_swimming",
+      "display_label_zh": "公开水域游泳",
+      "category": "swimming",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 8,
+      "cloud_code": 10,
+      "labels": {
+        "zh-CN": "室内骑行",
+        "en": "Indoor Ride"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Indoor Cycling",
+      "resource_key": 10,
+      "asset_category": "Cycling",
+      "support_gps": false,
+      "canonical_code": "indoor_cycling",
+      "display_label_zh": "室内骑行",
+      "category": "cycling",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 9,
+      "cloud_code": 12,
+      "labels": {
+        "zh-CN": "椭圆机",
+        "en": "Elliptical machine"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 12,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "elliptical",
+      "display_label_zh": "椭圆机",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 10,
+      "cloud_code": 13,
+      "labels": {
+        "zh-CN": "登山",
+        "en": "Mountaineering"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Mountaineering",
+      "resource_key": 13,
+      "asset_category": "OutdoorSports",
+      "support_gps": true,
+      "canonical_code": "climbing",
+      "display_label_zh": "攀登",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 11,
+      "cloud_code": 7,
+      "labels": {
+        "zh-CN": "越野跑",
+        "en": "Trail Running"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Trail Running",
+      "resource_key": 7,
+      "asset_category": "Run",
+      "support_gps": true,
+      "canonical_code": "trail_running",
+      "display_label_zh": "越野跑",
+      "category": "running",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 12,
+      "cloud_code": 11,
+      "labels": {
+        "zh-CN": "滑雪",
+        "en": "ski"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Skiing",
+      "resource_key": 105,
+      "asset_category": "WinterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_12",
+      "display_label_zh": "滑雪",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 15,
+      "cloud_code": 22,
+      "labels": {
+        "zh-CN": "户外徒步",
+        "en": "Outdoor hiking"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Mountaineering",
+      "resource_key": 22,
+      "asset_category": "OutdoorSports",
+      "support_gps": true,
+      "canonical_code": "hiking",
+      "display_label_zh": "徒步",
+      "category": "walking",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 17,
+      "cloud_code": 17,
+      "labels": {
+        "zh-CN": "网球",
+        "en": "Tennis"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Tennis",
+      "resource_key": 17,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "tennis",
+      "display_label_zh": "网球",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 18,
+      "cloud_code": 18,
+      "labels": {
+        "zh-CN": "足球",
+        "en": "Soccer"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Soccer",
+      "resource_key": 18,
+      "asset_category": "BallGame",
+      "support_gps": true,
+      "canonical_code": "soccer_legacy",
+      "display_label_zh": "足球",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 19,
+      "cloud_code": 2001,
+      "labels": {
+        "zh-CN": "铁人三项",
+        "en": "Triathlon"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Triathlon",
+      "resource_key": -1,
+      "asset_category": "Others",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_19",
+      "display_label_zh": "铁人三项",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 20,
+      "cloud_code": 2002,
+      "labels": {
+        "zh-CN": "复合运动",
+        "en": "multisport"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "multisport",
+      "resource_key": -1,
+      "asset_category": "Others",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_20",
+      "display_label_zh": "复合运动",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 21,
+      "cloud_code": 21,
+      "labels": {
+        "zh-CN": "跳绳",
+        "en": "Skipping rope"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Rope Skipping",
+      "resource_key": 21,
+      "asset_category": "Others",
+      "support_gps": false,
+      "canonical_code": "jump_rope",
+      "display_label_zh": "跳绳",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 23,
+      "cloud_code": 23,
+      "labels": {
+        "zh-CN": "划船机",
+        "en": "Rowing machine"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Rowing machine",
+      "resource_key": 23,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "rowing",
+      "display_label_zh": "划船机",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 24,
+      "cloud_code": 24,
+      "labels": {
+        "zh-CN": "室内健身",
+        "en": "Indoor Fitness"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Indoor Fitness",
+      "resource_key": 24,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "indoor_fitness",
+      "display_label_zh": "室内健身",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 40,
+      "cloud_code": 40,
+      "labels": {
+        "zh-CN": "室内步行",
+        "en": "Indoor walking"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Indoor walking",
+      "resource_key": 40,
+      "asset_category": "Walk",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_40",
+      "display_label_zh": "室内步行",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 41,
+      "cloud_code": 41,
+      "labels": {
+        "zh-CN": "冰壶",
+        "en": "Curling"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 41,
+      "asset_category": "WinterSports",
+      "support_gps": false,
+      "canonical_code": "curling",
+      "display_label_zh": "冰壶",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 42,
+      "cloud_code": 42,
+      "labels": {
+        "zh-CN": "单板滑雪",
+        "en": "Snowboarding single"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Skiing",
+      "resource_key": 42,
+      "asset_category": "WinterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_42",
+      "display_label_zh": "单板滑雪",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 43,
+      "cloud_code": 43,
+      "labels": {
+        "zh-CN": "高山滑雪",
+        "en": "Alpine skiing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Skiing",
+      "resource_key": 43,
+      "asset_category": "WinterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_43",
+      "display_label_zh": "高山滑雪",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 44,
+      "cloud_code": 44,
+      "labels": {
+        "zh-CN": "户外滑冰",
+        "en": "Outdoor Skating"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Cross-country skiing",
+      "resource_key": 44,
+      "asset_category": "WinterSports",
+      "support_gps": true,
+      "canonical_code": "ice_skating",
+      "display_label_zh": "滑冰",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 45,
+      "cloud_code": 45,
+      "labels": {
+        "zh-CN": "室内滑冰",
+        "en": "Indoor Skating"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 45,
+      "asset_category": "WinterSports",
+      "support_gps": false,
+      "canonical_code": "indoor_ice_skating",
+      "display_label_zh": "室内滑冰",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 46,
+      "cloud_code": 46,
+      "labels": {
+        "zh-CN": "越野滑雪",
+        "en": "Cross-country skiing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Cross-country skiing",
+      "resource_key": 46,
+      "asset_category": "WinterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_46",
+      "display_label_zh": "越野滑雪",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 47,
+      "cloud_code": 47,
+      "labels": {
+        "zh-CN": "山地骑行",
+        "en": "Mountain biking"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Outdoor Cycling",
+      "resource_key": 47,
+      "asset_category": "Cycling",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_47",
+      "display_label_zh": "山地骑行",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 48,
+      "cloud_code": 48,
+      "labels": {
+        "zh-CN": "小轮车",
+        "en": "BMX"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Outdoor Cycling",
+      "resource_key": 48,
+      "asset_category": "Cycling",
+      "support_gps": true,
+      "canonical_code": "bmx",
+      "display_label_zh": "小轮车",
+      "category": "cycling",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 49,
+      "cloud_code": 49,
+      "labels": {
+        "zh-CN": "高强度间歇训练",
+        "en": "High-intensity interval training"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 49,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "hiit",
+      "display_label_zh": "高强度间歇训练",
+      "category": "hiit",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 50,
+      "cloud_code": 50,
+      "labels": {
+        "zh-CN": "核心训练",
+        "en": "Core training"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Indoor Fitness",
+      "resource_key": 50,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "core_training",
+      "display_label_zh": "核心训练",
+      "category": "strength",
+      "training_family": "strength",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 51,
+      "cloud_code": 51,
+      "labels": {
+        "zh-CN": "混合有氧",
+        "en": "Mixed aerobic"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 51,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "aerobic_combo",
+      "display_label_zh": "有氧组合",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 52,
+      "cloud_code": 52,
+      "labels": {
+        "zh-CN": "力量训练",
+        "en": "Strength training"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Strength training",
+      "resource_key": 52,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "strength_training",
+      "display_label_zh": "力量训练",
+      "category": "strength",
+      "training_family": "strength",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 53,
+      "cloud_code": 53,
+      "labels": {
+        "zh-CN": "拉伸",
+        "en": "Stretch"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 53,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "stretching",
+      "display_label_zh": "拉伸",
+      "category": "other",
+      "training_family": "mobility",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 54,
+      "cloud_code": 54,
+      "labels": {
+        "zh-CN": "爬楼机",
+        "en": "Climbing machine"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 54,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "stair_climber",
+      "display_label_zh": "爬楼机",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 55,
+      "cloud_code": 55,
+      "labels": {
+        "zh-CN": "柔韧训练",
+        "en": "Flexibility training"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 55,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "flexibility",
+      "display_label_zh": "柔韧性训练",
+      "category": "other",
+      "training_family": "mobility",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 57,
+      "cloud_code": 57,
+      "labels": {
+        "zh-CN": "踏步训练",
+        "en": "Step training"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 57,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "stepper",
+      "display_label_zh": "踏步机",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 58,
+      "cloud_code": 58,
+      "labels": {
+        "zh-CN": "踏步机",
+        "en": "Stepper machine"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 58,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_58",
+      "display_label_zh": "踏步机",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 59,
+      "cloud_code": 59,
+      "labels": {
+        "zh-CN": "体操",
+        "en": "Gymnastics"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 59,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "gymnastics",
+      "display_label_zh": "体操",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 60,
+      "cloud_code": 60,
+      "labels": {
+        "zh-CN": "瑜伽",
+        "en": "Yoga"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 60,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "yoga",
+      "display_label_zh": "瑜伽",
+      "category": "yoga",
+      "training_family": "mobility",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 61,
+      "cloud_code": 61,
+      "labels": {
+        "zh-CN": "普拉提",
+        "en": "Pilates"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 61,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "pilates",
+      "display_label_zh": "普拉提",
+      "category": "yoga",
+      "training_family": "mobility",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 62,
+      "cloud_code": 62,
+      "labels": {
+        "zh-CN": "冲浪",
+        "en": "Surfing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 1",
+      "resource_key": 62,
+      "asset_category": "WaterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_62",
+      "display_label_zh": "冲浪",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 63,
+      "cloud_code": 63,
+      "labels": {
+        "zh-CN": "打猎",
+        "en": "Hunting"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Cross-country skiing",
+      "resource_key": 63,
+      "asset_category": "OutdoorSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_63",
+      "display_label_zh": "打猎",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 64,
+      "cloud_code": 64,
+      "labels": {
+        "zh-CN": "钓鱼",
+        "en": "Fishing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 64,
+      "asset_category": "OutdoorSports",
+      "support_gps": false,
+      "canonical_code": "fishing",
+      "display_label_zh": "钓鱼",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 65,
+      "cloud_code": 65,
+      "labels": {
+        "zh-CN": "帆船运动",
+        "en": "Sailing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 1",
+      "resource_key": 65,
+      "asset_category": "WaterSports",
+      "support_gps": true,
+      "canonical_code": "sailing",
+      "display_label_zh": "帆船",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 66,
+      "cloud_code": 66,
+      "labels": {
+        "zh-CN": "户外划船",
+        "en": "Outdoor rowing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Outdoor rowing",
+      "resource_key": 66,
+      "asset_category": "WaterSports",
+      "support_gps": true,
+      "canonical_code": "water_rowing",
+      "display_label_zh": "水上划船",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 67,
+      "cloud_code": 67,
+      "labels": {
+        "zh-CN": "滑板",
+        "en": "Skateboard"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Cross-country skiing",
+      "resource_key": 67,
+      "asset_category": "OutdoorSports",
+      "support_gps": true,
+      "canonical_code": "skateboarding",
+      "display_label_zh": "滑板",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 68,
+      "cloud_code": 68,
+      "labels": {
+        "zh-CN": "桨板冲浪",
+        "en": "Paddle board surfing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 1",
+      "resource_key": 68,
+      "asset_category": "WaterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_68",
+      "display_label_zh": "桨板冲浪",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 69,
+      "cloud_code": 69,
+      "labels": {
+        "zh-CN": "轮滑",
+        "en": "Roller skating"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 1",
+      "resource_key": 69,
+      "asset_category": "OutdoorSports",
+      "support_gps": true,
+      "canonical_code": "roller_skating",
+      "display_label_zh": "轮滑",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 70,
+      "cloud_code": 70,
+      "labels": {
+        "zh-CN": "攀岩",
+        "en": "Rock climbing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 70,
+      "asset_category": "OutdoorSports",
+      "support_gps": false,
+      "canonical_code": "rock_climbing",
+      "display_label_zh": "攀岩",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 71,
+      "cloud_code": 71,
+      "labels": {
+        "zh-CN": "芭蕾舞",
+        "en": "Ballet"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 71,
+      "asset_category": "Dance",
+      "support_gps": false,
+      "canonical_code": "ballet",
+      "display_label_zh": "芭蕾",
+      "category": "other",
+      "training_family": "mobility",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 72,
+      "cloud_code": 72,
+      "labels": {
+        "zh-CN": "肚皮舞",
+        "en": "Belly dance"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 72,
+      "asset_category": "Dance",
+      "support_gps": false,
+      "canonical_code": "belly_dance",
+      "display_label_zh": "肚皮舞",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 73,
+      "cloud_code": 73,
+      "labels": {
+        "zh-CN": "广场舞",
+        "en": "Square dance"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 73,
+      "asset_category": "Dance",
+      "support_gps": false,
+      "canonical_code": "square_dance",
+      "display_label_zh": "广场舞",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 74,
+      "cloud_code": 74,
+      "labels": {
+        "zh-CN": "街舞",
+        "en": "breaking"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 74,
+      "asset_category": "Dance",
+      "support_gps": false,
+      "canonical_code": "street_dance",
+      "display_label_zh": "街舞",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 75,
+      "cloud_code": 75,
+      "labels": {
+        "zh-CN": "交际舞",
+        "en": "Ballroom dance"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 75,
+      "asset_category": "Dance",
+      "support_gps": false,
+      "canonical_code": "ballroom_dance",
+      "display_label_zh": "交谊舞",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 76,
+      "cloud_code": 76,
+      "labels": {
+        "zh-CN": "舞蹈",
+        "en": "Dance"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 76,
+      "asset_category": "Dance",
+      "support_gps": false,
+      "canonical_code": "dance",
+      "display_label_zh": "舞蹈",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 77,
+      "cloud_code": 77,
+      "labels": {
+        "zh-CN": "尊巴",
+        "en": "Zumba"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 77,
+      "asset_category": "Dance",
+      "support_gps": false,
+      "canonical_code": "zumba",
+      "display_label_zh": "尊巴",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 78,
+      "cloud_code": 78,
+      "labels": {
+        "zh-CN": "板球",
+        "en": "Cricket"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 78,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "cricket",
+      "display_label_zh": "板球",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 79,
+      "cloud_code": 79,
+      "labels": {
+        "zh-CN": "棒球",
+        "en": "Baseball"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 79,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "baseball",
+      "display_label_zh": "棒球",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 80,
+      "cloud_code": 80,
+      "labels": {
+        "zh-CN": "保龄球",
+        "en": "Bowling"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 80,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "bowling",
+      "display_label_zh": "保龄球",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 81,
+      "cloud_code": 81,
+      "labels": {
+        "zh-CN": "壁球",
+        "en": "Squash"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 81,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "squash",
+      "display_label_zh": "壁球",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 82,
+      "cloud_code": 82,
+      "labels": {
+        "zh-CN": "橄榄球",
+        "en": "rugby"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Soccer",
+      "resource_key": 82,
+      "asset_category": "BallGame",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_82",
+      "display_label_zh": "橄榄球",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 83,
+      "cloud_code": 83,
+      "labels": {
+        "zh-CN": "高尔夫",
+        "en": "Golf"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "golf",
+      "resource_key": 83,
+      "asset_category": "BallGame",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_83",
+      "display_label_zh": "高尔夫",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 84,
+      "cloud_code": 84,
+      "labels": {
+        "zh-CN": "高尔夫挥杆",
+        "en": "Golf swing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "golf swing",
+      "resource_key": 84,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_84",
+      "display_label_zh": "高尔夫挥杆",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 85,
+      "cloud_code": 85,
+      "labels": {
+        "zh-CN": "篮球",
+        "en": "Basketball"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 85,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "basketball",
+      "display_label_zh": "篮球",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 86,
+      "cloud_code": 86,
+      "labels": {
+        "zh-CN": "垒球",
+        "en": "Softball"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 86,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "softball",
+      "display_label_zh": "垒球",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 87,
+      "cloud_code": 87,
+      "labels": {
+        "zh-CN": "门球",
+        "en": "Gateball"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 87,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "gateball",
+      "display_label_zh": "门球",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 88,
+      "cloud_code": 88,
+      "labels": {
+        "zh-CN": "排球",
+        "en": "Volleyball"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 88,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "volleyball",
+      "display_label_zh": "排球",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 89,
+      "cloud_code": 89,
+      "labels": {
+        "zh-CN": "乒乓球",
+        "en": "Table tennis"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 89,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "table_tennis",
+      "display_label_zh": "乒乓球",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 90,
+      "cloud_code": 90,
+      "labels": {
+        "zh-CN": "曲棍球",
+        "en": "Hockey"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Soccer",
+      "resource_key": 90,
+      "asset_category": "BallGame",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_90",
+      "display_label_zh": "曲棍球",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 91,
+      "cloud_code": 91,
+      "labels": {
+        "zh-CN": "手球",
+        "en": "Handball"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 91,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "handball",
+      "display_label_zh": "手球",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 92,
+      "cloud_code": 92,
+      "labels": {
+        "zh-CN": "羽毛球",
+        "en": "Badminton"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 92,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "badminton",
+      "display_label_zh": "羽毛球",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 93,
+      "cloud_code": 93,
+      "labels": {
+        "zh-CN": "射箭",
+        "en": "Archery"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 93,
+      "asset_category": "Others",
+      "support_gps": false,
+      "canonical_code": "archery",
+      "display_label_zh": "射箭",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 94,
+      "cloud_code": 94,
+      "labels": {
+        "zh-CN": "马术运动",
+        "en": "Equestrian sports"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 1",
+      "resource_key": 94,
+      "asset_category": "Others",
+      "support_gps": true,
+      "canonical_code": "equestrian",
+      "display_label_zh": "马术",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 95,
+      "cloud_code": 95,
+      "labels": {
+        "zh-CN": "剑术",
+        "en": "Swordsmanship"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 95,
+      "asset_category": "CombatSports",
+      "support_gps": false,
+      "canonical_code": "kendo",
+      "display_label_zh": "剑道",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 96,
+      "cloud_code": 96,
+      "labels": {
+        "zh-CN": "空手道",
+        "en": "Karate"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 96,
+      "asset_category": "CombatSports",
+      "support_gps": false,
+      "canonical_code": "karate",
+      "display_label_zh": "空手道",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 97,
+      "cloud_code": 97,
+      "labels": {
+        "zh-CN": "拳击",
+        "en": "Boxing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 97,
+      "asset_category": "CombatSports",
+      "support_gps": false,
+      "canonical_code": "boxing",
+      "display_label_zh": "拳击",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 98,
+      "cloud_code": 98,
+      "labels": {
+        "zh-CN": "柔道",
+        "en": "Judo"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 98,
+      "asset_category": "CombatSports",
+      "support_gps": false,
+      "canonical_code": "judo",
+      "display_label_zh": "柔道",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 99,
+      "cloud_code": 99,
+      "labels": {
+        "zh-CN": "摔跤",
+        "en": "Wrestling"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 99,
+      "asset_category": "CombatSports",
+      "support_gps": false,
+      "canonical_code": "wrestling",
+      "display_label_zh": "摔跤",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 100,
+      "cloud_code": 100,
+      "labels": {
+        "zh-CN": "太极",
+        "en": "Tai Chi"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 100,
+      "asset_category": "CombatSports",
+      "support_gps": false,
+      "canonical_code": "tai_chi",
+      "display_label_zh": "太极",
+      "category": "other",
+      "training_family": "mobility",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 101,
+      "cloud_code": 101,
+      "labels": {
+        "zh-CN": "泰拳",
+        "en": "Muay Thai"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 101,
+      "asset_category": "CombatSports",
+      "support_gps": false,
+      "canonical_code": "muay_thai",
+      "display_label_zh": "泰拳",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 102,
+      "cloud_code": 102,
+      "labels": {
+        "zh-CN": "跆拳道",
+        "en": "Taekwondo"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 102,
+      "asset_category": "CombatSports",
+      "support_gps": false,
+      "canonical_code": "taekwondo",
+      "display_label_zh": "跆拳道",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 103,
+      "cloud_code": 103,
+      "labels": {
+        "zh-CN": "武术",
+        "en": "Martial arts"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 103,
+      "asset_category": "CombatSports",
+      "support_gps": false,
+      "canonical_code": "martial_arts",
+      "display_label_zh": "武术",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 104,
+      "cloud_code": 104,
+      "labels": {
+        "zh-CN": "自由搏击",
+        "en": "Kickboxing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 104,
+      "asset_category": "CombatSports",
+      "support_gps": false,
+      "canonical_code": "kickboxing",
+      "display_label_zh": "自由搏击",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 105,
+      "cloud_code": 105,
+      "labels": {
+        "zh-CN": "双板滑雪",
+        "en": "Snowboarding double"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Skiing",
+      "resource_key": 105,
+      "asset_category": "WinterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_105",
+      "display_label_zh": "双板滑雪",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 106,
+      "cloud_code": 106,
+      "labels": {
+        "zh-CN": "风筝冲浪",
+        "en": "Kite surfing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 1",
+      "resource_key": 106,
+      "asset_category": "WaterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_106",
+      "display_label_zh": "风筝冲浪",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 108,
+      "cloud_code": 108,
+      "labels": {
+        "zh-CN": "爬楼",
+        "en": "Climb the stairs"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Stair climbing",
+      "resource_key": 108,
+      "asset_category": "Others",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_108",
+      "display_label_zh": "爬楼",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 109,
+      "cloud_code": 109,
+      "labels": {
+        "zh-CN": "健身操",
+        "en": "Aerobics"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 109,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "aerobics",
+      "display_label_zh": "健美操",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 110,
+      "cloud_code": 110,
+      "labels": {
+        "zh-CN": "定向越野",
+        "en": "Directional cross-country"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Trail Running",
+      "resource_key": 110,
+      "asset_category": "Run",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_110",
+      "display_label_zh": "定向越野",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 111,
+      "cloud_code": 111,
+      "labels": {
+        "zh-CN": "团体操",
+        "en": "Group gymnastics"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 111,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "mass_gymnastics",
+      "display_label_zh": "团体操",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 112,
+      "cloud_code": 112,
+      "labels": {
+        "zh-CN": "拉丁舞",
+        "en": "Latin dance"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 112,
+      "asset_category": "Dance",
+      "support_gps": false,
+      "canonical_code": "latin_dance",
+      "display_label_zh": "拉丁舞",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 113,
+      "cloud_code": 113,
+      "labels": {
+        "zh-CN": "爵士舞",
+        "en": "Jazz dance"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 113,
+      "asset_category": "Dance",
+      "support_gps": false,
+      "canonical_code": "jazz_dance",
+      "display_label_zh": "爵士舞",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 114,
+      "cloud_code": 114,
+      "labels": {
+        "zh-CN": "搏击操",
+        "en": "Fighting exercise"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 114,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "cardio_combat",
+      "display_label_zh": "有氧搏击",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 115,
+      "cloud_code": 115,
+      "labels": {
+        "zh-CN": "呼啦圈",
+        "en": "Hula hoop"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 115,
+      "asset_category": "LeisureSports",
+      "support_gps": false,
+      "canonical_code": "hula_hoop",
+      "display_label_zh": "呼啦圈",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 116,
+      "cloud_code": 116,
+      "labels": {
+        "zh-CN": "飞盘",
+        "en": "Frisbee"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 116,
+      "asset_category": "LeisureSports",
+      "support_gps": false,
+      "canonical_code": "frisbee",
+      "display_label_zh": "飞盘",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 117,
+      "cloud_code": 117,
+      "labels": {
+        "zh-CN": "飞镖",
+        "en": "Darts"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 117,
+      "asset_category": "LeisureSports",
+      "support_gps": false,
+      "canonical_code": "darts",
+      "display_label_zh": "飞镖",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 118,
+      "cloud_code": 118,
+      "labels": {
+        "zh-CN": "放风筝",
+        "en": "Flying a kite"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 118,
+      "asset_category": "LeisureSports",
+      "support_gps": false,
+      "canonical_code": "kite_flying",
+      "display_label_zh": "放风筝",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 119,
+      "cloud_code": 119,
+      "labels": {
+        "zh-CN": "拔河",
+        "en": "Tug of war"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 119,
+      "asset_category": "LeisureSports",
+      "support_gps": false,
+      "canonical_code": "tug_of_war",
+      "display_label_zh": "拔河",
+      "category": "other",
+      "training_family": "strength",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 120,
+      "cloud_code": 120,
+      "labels": {
+        "zh-CN": "踢毽子",
+        "en": "Kicking shuttlecock"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 120,
+      "asset_category": "LeisureSports",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_120",
+      "display_label_zh": "踢毽子",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 121,
+      "cloud_code": 121,
+      "labels": {
+        "zh-CN": "沙滩足球",
+        "en": "Beach Soccer"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Soccer",
+      "resource_key": 121,
+      "asset_category": "BallGame",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_121",
+      "display_label_zh": "沙滩足球",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 122,
+      "cloud_code": 122,
+      "labels": {
+        "zh-CN": "沙滩排球",
+        "en": "Beach Volleyball"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 122,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "beach_volleyball",
+      "display_label_zh": "沙滩排球",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 123,
+      "cloud_code": 123,
+      "labels": {
+        "zh-CN": "漂流",
+        "en": "Drifting"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 1",
+      "resource_key": 123,
+      "asset_category": "WaterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_123",
+      "display_label_zh": "漂流",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 124,
+      "cloud_code": 124,
+      "labels": {
+        "zh-CN": "摩托艇",
+        "en": "Motorboat"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 1",
+      "resource_key": 124,
+      "asset_category": "WaterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_124",
+      "display_label_zh": "摩托艇",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 125,
+      "cloud_code": 125,
+      "labels": {
+        "zh-CN": "雪车",
+        "en": "Snowmobiles"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Cross-country skiing",
+      "resource_key": 125,
+      "asset_category": "WinterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_125",
+      "display_label_zh": "雪车",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 126,
+      "cloud_code": 126,
+      "labels": {
+        "zh-CN": "雪橇",
+        "en": "Sleigh"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Cross-country skiing",
+      "resource_key": 126,
+      "asset_category": "WinterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_126",
+      "display_label_zh": "雪橇",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 127,
+      "cloud_code": 127,
+      "labels": {
+        "zh-CN": "定向滑雪",
+        "en": "Orienteering"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Cross-country skiing",
+      "resource_key": 127,
+      "asset_category": "WinterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_127",
+      "display_label_zh": "定向滑雪",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 128,
+      "cloud_code": 128,
+      "labels": {
+        "zh-CN": "冬季两项",
+        "en": "Biathlon"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Cross-country skiing",
+      "resource_key": 128,
+      "asset_category": "WinterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_128",
+      "display_label_zh": "冬季两项",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 129,
+      "cloud_code": 129,
+      "labels": {
+        "zh-CN": "跑酷",
+        "en": "Parkour"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 129,
+      "asset_category": "OutdoorSports",
+      "support_gps": false,
+      "canonical_code": "parkour",
+      "display_label_zh": "跑酷",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 130,
+      "cloud_code": 130,
+      "labels": {
+        "zh-CN": "交叉训练",
+        "en": "Cross-training"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 130,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "cross_training",
+      "display_label_zh": "交叉训练",
+      "category": "strength",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 131,
+      "cloud_code": 131,
+      "labels": {
+        "zh-CN": "竞走",
+        "en": "Race walking"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Outdoor running",
+      "resource_key": 131,
+      "asset_category": "Walk",
+      "support_gps": true,
+      "canonical_code": "race_walking",
+      "display_label_zh": "竞走",
+      "category": "walking",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 132,
+      "cloud_code": 132,
+      "labels": {
+        "zh-CN": "驾车",
+        "en": "Driving"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "driving",
+      "resource_key": 132,
+      "asset_category": "Others",
+      "support_gps": true,
+      "canonical_code": "driving",
+      "display_label_zh": "驾驶",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 133,
+      "cloud_code": 133,
+      "labels": {
+        "zh-CN": "滑翔伞",
+        "en": "parasailing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "parasailing",
+      "resource_key": 133,
+      "asset_category": "ExtremeSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_133",
+      "display_label_zh": "滑翔伞",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 134,
+      "cloud_code": 134,
+      "labels": {
+        "en": "One-minute Sit-ups"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": -1,
+      "sport_group": "Strength training",
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_134",
+      "display_label_zh": "One-minute Sit-ups",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 135,
+      "cloud_code": 135,
+      "labels": {
+        "en": "One-minute Skipping rope"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": -1,
+      "sport_group": "Rope Skipping",
+      "asset_category": "Others",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_135",
+      "display_label_zh": "One-minute Skipping rope",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 136,
+      "cloud_code": 136,
+      "labels": {
+        "zh-CN": "雪地摩托",
+        "en": "Snowmobile"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "driving",
+      "resource_key": 136,
+      "asset_category": "WinterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_136",
+      "display_label_zh": "雪地摩托",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 137,
+      "cloud_code": 137,
+      "labels": {
+        "zh-CN": "越野摩托",
+        "en": "Off-road motorcycle"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "driving",
+      "resource_key": 137,
+      "asset_category": "OutdoorSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_137",
+      "display_label_zh": "越野摩托",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 138,
+      "cloud_code": 138,
+      "labels": {
+        "zh-CN": "龙舟",
+        "en": "Dragon boat"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 1",
+      "resource_key": 138,
+      "asset_category": "WaterSports",
+      "support_gps": true,
+      "canonical_code": "dragon_boat",
+      "display_label_zh": "龙舟",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 139,
+      "cloud_code": 139,
+      "labels": {
+        "zh-CN": "滑水",
+        "en": "Water skiing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 1",
+      "resource_key": 139,
+      "asset_category": "WaterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_139",
+      "display_label_zh": "滑水",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 140,
+      "cloud_code": 140,
+      "labels": {
+        "zh-CN": "皮划艇",
+        "en": "Kayak"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 1",
+      "resource_key": 140,
+      "asset_category": "WaterSports",
+      "support_gps": true,
+      "canonical_code": "kayaking",
+      "display_label_zh": "皮划艇",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 141,
+      "cloud_code": 141,
+      "labels": {
+        "zh-CN": "赛艇",
+        "en": "Rowing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 1",
+      "resource_key": 141,
+      "asset_category": "WaterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_141",
+      "display_label_zh": "赛艇",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 142,
+      "cloud_code": 142,
+      "labels": {
+        "zh-CN": "马球",
+        "en": "Polo"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 1",
+      "resource_key": 142,
+      "asset_category": "BallGame",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_142",
+      "display_label_zh": "马球",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 143,
+      "cloud_code": 143,
+      "labels": {
+        "zh-CN": "动感单车",
+        "en": "Spinning bike"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 143,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "spinning",
+      "display_label_zh": "动感单车",
+      "category": "cycling",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 144,
+      "cloud_code": 144,
+      "labels": {
+        "zh-CN": "漫步机",
+        "en": "Walking machine"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 144,
+      "asset_category": "LeisureSports",
+      "support_gps": false,
+      "canonical_code": "air_walker",
+      "display_label_zh": "漫步机",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 145,
+      "cloud_code": 145,
+      "labels": {
+        "zh-CN": "墙球",
+        "en": "wall ball"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 145,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "wall_ball",
+      "display_label_zh": "墙球",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 146,
+      "cloud_code": 146,
+      "labels": {
+        "zh-CN": "民族舞",
+        "en": "Folk dance"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 146,
+      "asset_category": "Dance",
+      "support_gps": false,
+      "canonical_code": "folk_dance",
+      "display_label_zh": "民族舞",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 147,
+      "cloud_code": 147,
+      "labels": {
+        "zh-CN": "柔术",
+        "en": "Jujitsu"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 147,
+      "asset_category": "CombatSports",
+      "support_gps": false,
+      "canonical_code": "jujitsu",
+      "display_label_zh": "柔术",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 148,
+      "cloud_code": 148,
+      "labels": {
+        "zh-CN": "击剑",
+        "en": "Fencing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 148,
+      "asset_category": "CombatSports",
+      "support_gps": false,
+      "canonical_code": "fencing",
+      "display_label_zh": "击剑",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 149,
+      "cloud_code": 149,
+      "labels": {
+        "zh-CN": "单杠",
+        "en": "Horizontal bar"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 149,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "horizontal_bar",
+      "display_label_zh": "单杠",
+      "category": "strength",
+      "training_family": "strength",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 150,
+      "cloud_code": 150,
+      "labels": {
+        "zh-CN": "双杠",
+        "en": "Parallel bars"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 150,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "parallel_bars",
+      "display_label_zh": "双杠",
+      "category": "strength",
+      "training_family": "strength",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 151,
+      "cloud_code": 151,
+      "labels": {
+        "zh-CN": "台球",
+        "en": "Billiards"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 151,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "billiards",
+      "display_label_zh": "台球",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 152,
+      "cloud_code": 152,
+      "labels": {
+        "zh-CN": "藤球",
+        "en": "Fujiki"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 152,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "sepak_takraw",
+      "display_label_zh": "藤球",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 153,
+      "cloud_code": 153,
+      "labels": {
+        "zh-CN": "躲避球",
+        "en": "Dodge ball"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 153,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "dodgeball",
+      "display_label_zh": "躲避球",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 154,
+      "cloud_code": 154,
+      "labels": {
+        "zh-CN": "水球",
+        "en": "Water polo"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 154,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "water_polo",
+      "display_label_zh": "水球",
+      "category": "swimming",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 155,
+      "cloud_code": 155,
+      "labels": {
+        "zh-CN": "蹼泳",
+        "en": "Fin swimming"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 155,
+      "asset_category": "Swimming",
+      "support_gps": false,
+      "canonical_code": "finswimming",
+      "display_label_zh": "蹼泳",
+      "category": "swimming",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 156,
+      "cloud_code": 156,
+      "labels": {
+        "zh-CN": "花样游泳",
+        "en": "Synchronized swimming"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 156,
+      "asset_category": "Swimming",
+      "support_gps": false,
+      "canonical_code": "artistic_swimming",
+      "display_label_zh": "花样游泳",
+      "category": "swimming",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 157,
+      "cloud_code": 157,
+      "labels": {
+        "zh-CN": "浮潜",
+        "en": "Snorkeling"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 157,
+      "asset_category": "WaterSports",
+      "support_gps": false,
+      "canonical_code": "snorkeling",
+      "display_label_zh": "浮潜",
+      "category": "swimming",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 158,
+      "cloud_code": 158,
+      "labels": {
+        "zh-CN": "冰球",
+        "en": "Ice hockey"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 158,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "ice_hockey",
+      "display_label_zh": "冰球",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 159,
+      "cloud_code": 159,
+      "labels": {
+        "zh-CN": "秋千",
+        "en": "Swing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 159,
+      "asset_category": "LeisureSports",
+      "support_gps": false,
+      "canonical_code": "swing",
+      "display_label_zh": "秋千",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 160,
+      "cloud_code": 160,
+      "labels": {
+        "zh-CN": "沙狐球",
+        "en": "Shuffleboard"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 160,
+      "asset_category": "LeisureSports",
+      "support_gps": false,
+      "canonical_code": "shuffleboard",
+      "display_label_zh": "沙狐球",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 161,
+      "cloud_code": 161,
+      "labels": {
+        "zh-CN": "桌上足球",
+        "en": "Table football"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 161,
+      "asset_category": "LeisureSports",
+      "support_gps": false,
+      "canonical_code": "table_football",
+      "display_label_zh": "桌上足球",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 162,
+      "cloud_code": 162,
+      "labels": {
+        "zh-CN": "毽球",
+        "en": "Shuttlecock"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 162,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "shuttlecock",
+      "display_label_zh": "踢毽子",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 163,
+      "cloud_code": 163,
+      "labels": {
+        "zh-CN": "体感游戏",
+        "en": "Somatosensory game"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 163,
+      "asset_category": "LeisureSports",
+      "support_gps": false,
+      "canonical_code": "somatosensory_game",
+      "display_label_zh": "体感游戏",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 164,
+      "cloud_code": 164,
+      "labels": {
+        "zh-CN": "室内足球",
+        "en": "Indoor football"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 164,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "futsal",
+      "display_label_zh": "室内足球",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 165,
+      "cloud_code": 165,
+      "labels": {
+        "zh-CN": "嘻哈舞",
+        "en": "Hip-hop"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 165,
+      "asset_category": "Dance",
+      "support_gps": false,
+      "canonical_code": "hip_hop",
+      "display_label_zh": "嘻哈舞",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 166,
+      "cloud_code": 166,
+      "labels": {
+        "zh-CN": "钢管舞",
+        "en": "Pole dancing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 166,
+      "asset_category": "Dance",
+      "support_gps": false,
+      "canonical_code": "pole_dance",
+      "display_label_zh": "钢管舞",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 167,
+      "cloud_code": 167,
+      "labels": {
+        "zh-CN": "战绳",
+        "en": "Battle rope"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 167,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "battle_rope",
+      "display_label_zh": "战绳",
+      "category": "strength",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 168,
+      "cloud_code": 168,
+      "labels": {
+        "zh-CN": "霹雳舞",
+        "en": "Break dancing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 168,
+      "asset_category": "Dance",
+      "support_gps": false,
+      "canonical_code": "breaking",
+      "display_label_zh": "霹雳舞",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 169,
+      "cloud_code": 169,
+      "labels": {
+        "zh-CN": "沙包球",
+        "en": "Sandbag ball"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 169,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "hacky_sack",
+      "display_label_zh": "沙包球",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 170,
+      "cloud_code": 170,
+      "labels": {
+        "zh-CN": "地掷球",
+        "en": "Ground throw"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 170,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "bocce",
+      "display_label_zh": "地掷球",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 171,
+      "cloud_code": 171,
+      "labels": {
+        "zh-CN": "回力球",
+        "en": "Jai Li Ball"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 171,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "jai_alai",
+      "display_label_zh": "回力球",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 172,
+      "cloud_code": 172,
+      "labels": {
+        "zh-CN": "室内冲浪",
+        "en": "Indoor surfing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 172,
+      "asset_category": "WaterSports",
+      "support_gps": false,
+      "canonical_code": "flowriding",
+      "display_label_zh": "模拟冲浪",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 173,
+      "cloud_code": 173,
+      "labels": {
+        "zh-CN": "国际象棋",
+        "en": "Chess"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 3",
+      "resource_key": 173,
+      "asset_category": "ChessCardSports",
+      "support_gps": false,
+      "canonical_code": "chess",
+      "display_label_zh": "国际象棋",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 174,
+      "cloud_code": 174,
+      "labels": {
+        "zh-CN": "国际跳棋",
+        "en": "Checkers"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 3",
+      "resource_key": 174,
+      "asset_category": "ChessCardSports",
+      "support_gps": false,
+      "canonical_code": "checkers",
+      "display_label_zh": "国际跳棋",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 175,
+      "cloud_code": 175,
+      "labels": {
+        "zh-CN": "围棋",
+        "en": "Go"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 3",
+      "resource_key": 175,
+      "asset_category": "ChessCardSports",
+      "support_gps": false,
+      "canonical_code": "weiqi",
+      "display_label_zh": "围棋",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 176,
+      "cloud_code": 176,
+      "labels": {
+        "zh-CN": "桥牌",
+        "en": "Bridge"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 3",
+      "resource_key": 176,
+      "asset_category": "ChessCardSports",
+      "support_gps": false,
+      "canonical_code": "bridge",
+      "display_label_zh": "桥牌",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 177,
+      "cloud_code": 177,
+      "labels": {
+        "zh-CN": "桌游",
+        "en": "Board games"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 3",
+      "resource_key": 177,
+      "asset_category": "ChessCardSports",
+      "support_gps": false,
+      "canonical_code": "board_game",
+      "display_label_zh": "桌游",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 178,
+      "cloud_code": 178,
+      "labels": {
+        "zh-CN": "雪鞋健行",
+        "en": "Snowshoe hiking"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Cross-country skiing",
+      "resource_key": 178,
+      "asset_category": "WinterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_178",
+      "display_label_zh": "雪鞋健行",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 179,
+      "cloud_code": 179,
+      "labels": {
+        "zh-CN": "射击",
+        "en": "Shoot"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 4",
+      "resource_key": -1,
+      "asset_category": "LeisureSports",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_179",
+      "display_label_zh": "射击",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 180,
+      "cloud_code": 180,
+      "labels": {
+        "zh-CN": "跳伞",
+        "en": "Skydiving"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Skydiving",
+      "resource_key": 180,
+      "asset_category": "ExtremeSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_180",
+      "display_label_zh": "跳伞",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 181,
+      "cloud_code": 181,
+      "labels": {
+        "zh-CN": "速降",
+        "en": "Downhill"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 5",
+      "resource_key": -1,
+      "asset_category": "ExtremeSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_181",
+      "display_label_zh": "速降",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 182,
+      "cloud_code": 182,
+      "labels": {
+        "zh-CN": "蹦极",
+        "en": "Bungee jumping"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 6",
+      "resource_key": -1,
+      "asset_category": "ExtremeSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_182",
+      "display_label_zh": "蹦极",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 183,
+      "cloud_code": 183,
+      "labels": {
+        "zh-CN": "蹦床",
+        "en": "Trampoline"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 6",
+      "resource_key": -1,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_183",
+      "display_label_zh": "蹦床",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 184,
+      "cloud_code": 184,
+      "labels": {
+        "zh-CN": "抱石",
+        "en": "Bouldering"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Bouldering",
+      "resource_key": 184,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_184",
+      "display_label_zh": "抱石",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 185,
+      "cloud_code": 185,
+      "labels": {
+        "zh-CN": "现代舞",
+        "en": "Modern dance"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 185,
+      "asset_category": "Dance",
+      "support_gps": false,
+      "canonical_code": "modern_dance",
+      "display_label_zh": "现代舞",
+      "category": "other",
+      "training_family": "aerobic",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 186,
+      "cloud_code": 186,
+      "labels": {
+        "zh-CN": "迪斯科",
+        "en": "Disco"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 186,
+      "asset_category": "Dance",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_186",
+      "display_label_zh": "迪斯科",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 187,
+      "cloud_code": 187,
+      "labels": {
+        "zh-CN": "踢踏舞",
+        "en": "Tap dance"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 187,
+      "asset_category": "Dance",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_187",
+      "display_label_zh": "踢踏舞",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 188,
+      "cloud_code": 188,
+      "labels": {
+        "zh-CN": "地板球",
+        "en": "Floorball"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 188,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_188",
+      "display_label_zh": "地板球",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 189,
+      "cloud_code": 189,
+      "labels": {
+        "zh-CN": "电子竞技",
+        "en": "E-sports"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 3",
+      "resource_key": 189,
+      "asset_category": "LeisureSports",
+      "support_gps": false,
+      "canonical_code": "esports",
+      "display_label_zh": "电子竞技",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 190,
+      "cloud_code": 190,
+      "labels": {
+        "zh-CN": "沙滩车",
+        "en": "ATV"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "driving",
+      "resource_key": 190,
+      "asset_category": "OutdoorSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_190",
+      "display_label_zh": "沙滩车",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 191,
+      "cloud_code": 191,
+      "labels": {
+        "zh-CN": "足球",
+        "en": "Soccer1"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 18,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "soccer",
+      "display_label_zh": "足球",
+      "category": "other",
+      "training_family": "mixed",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 192,
+      "cloud_code": 192,
+      "labels": {
+        "zh-CN": "操场跑步",
+        "en": "Running track"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Running track",
+      "resource_key": 192,
+      "asset_category": "Run",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_192",
+      "display_label_zh": "操场跑步",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 193,
+      "cloud_code": 193,
+      "labels": {
+        "zh-CN": "钓鱼（钓鱼数量）",
+        "en": "Fishing2"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Fishing",
+      "resource_key": 64,
+      "asset_category": "OutdoorSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_193",
+      "display_label_zh": "钓鱼（钓鱼数量）",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 194,
+      "cloud_code": 194,
+      "labels": {
+        "zh-CN": "室内攀岩",
+        "en": "Indoor climbing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Indoor climbing",
+      "resource_key": 194,
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_194",
+      "display_label_zh": "室内攀岩",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 195,
+      "cloud_code": 195,
+      "labels": {
+        "zh-CN": "登山滑雪",
+        "en": "Ski mountaineering"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Ski mountaineering",
+      "resource_key": 195,
+      "asset_category": "WinterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_195",
+      "display_label_zh": "登山滑雪",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 196,
+      "cloud_code": 196,
+      "labels": {
+        "zh-CN": "户外自由潜水",
+        "en": "Outdoor free diving"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Outdoor free diving",
+      "resource_key": 196,
+      "asset_category": "DivingSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_196",
+      "display_label_zh": "户外自由潜水",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 197,
+      "cloud_code": 197,
+      "labels": {
+        "zh-CN": "室内自由潜水",
+        "en": "Indoor free diving"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Indoor free diving",
+      "resource_key": 197,
+      "asset_category": "DivingSports",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_197",
+      "display_label_zh": "室内自由潜水",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 198,
+      "cloud_code": 198,
+      "labels": {
+        "zh-CN": "渔猎",
+        "en": "Spearfishing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Spearfishing",
+      "resource_key": 198,
+      "asset_category": "DivingSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_198",
+      "display_label_zh": "渔猎",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 199,
+      "cloud_code": 199,
+      "labels": {
+        "zh-CN": "网球(无挥拍)",
+        "en": "Tennis1"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 17,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_199",
+      "display_label_zh": "网球(无挥拍)",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 200,
+      "cloud_code": 200,
+      "labels": {
+        "zh-CN": "尾波冲浪",
+        "en": "Tailwave surfing"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 1",
+      "resource_key": 200,
+      "asset_category": "WaterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_200",
+      "display_label_zh": "尾波冲浪",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 201,
+      "cloud_code": 201,
+      "labels": {
+        "zh-CN": "冲浪（识别趟数）",
+        "en": "Surfing1"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Surfing",
+      "resource_key": 62,
+      "asset_category": "WaterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_201",
+      "display_label_zh": "冲浪（识别趟数）",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 202,
+      "cloud_code": 202,
+      "labels": {
+        "zh-CN": "风筝冲浪（识别滑翔）",
+        "en": "Kite surfing1"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Kitesurfing",
+      "resource_key": 106,
+      "asset_category": "WaterSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_202",
+      "display_label_zh": "风筝冲浪（识别滑翔）",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 203,
+      "cloud_code": 203,
+      "labels": {
+        "zh-CN": "超级马拉松",
+        "en": "Super marathon"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Super marathon",
+      "resource_key": 203,
+      "asset_category": "Run",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_203",
+      "display_label_zh": "超级马拉松",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 204,
+      "cloud_code": 204,
+      "labels": {
+        "zh-CN": "匹克球",
+        "en": "Pickle ball"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 204,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_204",
+      "display_label_zh": "匹克球",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 205,
+      "cloud_code": 205,
+      "labels": {
+        "zh-CN": "笼式网球",
+        "en": "Padel"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Class 2",
+      "resource_key": 216,
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_205",
+      "display_label_zh": "笼式网球",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 206,
+      "cloud_code": 206,
+      "labels": {
+        "zh-CN": "电动自行车",
+        "en": "eBike"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Outdoor Cycling",
+      "resource_key": 206,
+      "asset_category": "Cycling",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_206",
+      "display_label_zh": "电动自行车",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 207,
+      "cloud_code": 207,
+      "labels": {
+        "zh-CN": "电动山地车",
+        "en": "eMTB"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Outdoor Cycling",
+      "resource_key": 207,
+      "asset_category": "Cycling",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_207",
+      "display_label_zh": "电动山地车",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 208,
+      "cloud_code": 208,
+      "labels": {
+        "zh-CN": "碎石路骑行",
+        "en": "Gravel Bike"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Outdoor Cycling",
+      "resource_key": 208,
+      "asset_category": "Cycling",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_208",
+      "display_label_zh": "碎石路骑行",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 209,
+      "cloud_code": 209,
+      "labels": {
+        "zh-CN": "骑车通勤",
+        "en": "Bike Commute"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Outdoor Cycling",
+      "resource_key": 209,
+      "asset_category": "Cycling",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_209",
+      "display_label_zh": "骑车通勤",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 210,
+      "cloud_code": 210,
+      "labels": {
+        "zh-CN": "骑车旅行",
+        "en": "Bike Tour"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Outdoor Cycling",
+      "resource_key": 210,
+      "asset_category": "Cycling",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_210",
+      "display_label_zh": "骑车旅行",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 211,
+      "cloud_code": 211,
+      "labels": {
+        "zh-CN": "公路骑行",
+        "en": "Road Bike"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Outdoor Cycling",
+      "resource_key": 211,
+      "asset_category": "Cycling",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_211",
+      "display_label_zh": "公路骑行",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 212,
+      "cloud_code": 212,
+      "labels": {
+        "zh-CN": "越野骑行",
+        "en": "Cyclecross"
+      },
+      "sources": [
+        "assets/config_sport_type_group.json",
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "sport_group": "Outdoor Cycling",
+      "resource_key": 212,
+      "asset_category": "Cycling",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_212",
+      "display_label_zh": "越野骑行",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 213,
+      "cloud_code": 213,
+      "labels": {
+        "en": "Wingsuit Flying"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": 213,
+      "sport_group": "parasailing",
+      "asset_category": "ExtremeSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_213",
+      "display_label_zh": "Wingsuit Flying",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 214,
+      "cloud_code": 214,
+      "labels": {
+        "en": "Hyrox Race"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": 214,
+      "sport_group": "Hyrox Race",
+      "asset_category": "HYROX",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_214",
+      "display_label_zh": "Hyrox Race",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 215,
+      "cloud_code": 215,
+      "labels": {
+        "en": "Dog Walking"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": 215,
+      "sport_group": "Walking",
+      "asset_category": "Walk",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_215",
+      "display_label_zh": "Dog Walking",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 216,
+      "cloud_code": 216,
+      "labels": {
+        "en": "Padel Pro"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": 216,
+      "sport_group": "Padel",
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_216",
+      "display_label_zh": "Padel Pro",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 217,
+      "cloud_code": 217,
+      "labels": {
+        "en": "Snow Shoveling"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": 217,
+      "sport_group": "Class 2",
+      "asset_category": "Others",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_217",
+      "display_label_zh": "Snow Shoveling",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 218,
+      "cloud_code": 218,
+      "labels": {
+        "en": "Hyrox Pft"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": 218,
+      "sport_group": "Hyrox Race",
+      "asset_category": "HYROX",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_218",
+      "display_label_zh": "Hyrox Pft",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 219,
+      "cloud_code": 219,
+      "labels": {
+        "en": "Skierg"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": 219,
+      "sport_group": "SkiErg",
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_219",
+      "display_label_zh": "Skierg",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 220,
+      "cloud_code": 220,
+      "labels": {
+        "en": "Lawn mowing"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": -1,
+      "sport_group": "Class 2",
+      "asset_category": "Others",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_220",
+      "display_label_zh": "Lawn mowing",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 221,
+      "cloud_code": 221,
+      "labels": {
+        "en": "Scuba Diving"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": 221,
+      "sport_group": "Rec Diving",
+      "asset_category": "DivingSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_221",
+      "display_label_zh": "Scuba Diving",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 222,
+      "cloud_code": 222,
+      "labels": {
+        "en": "HYROX Training"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": 222,
+      "sport_group": "Class 2",
+      "asset_category": "HYROX",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_222",
+      "display_label_zh": "HYROX Training",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 223,
+      "cloud_code": 223,
+      "labels": {
+        "en": "Activity"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": 223,
+      "sport_group": "Class 2",
+      "asset_category": "Others",
+      "support_gps": false,
+      "canonical_code": "activity",
+      "display_label_zh": "AI 识别活动",
+      "category": "other",
+      "training_family": "skill",
+      "classification_source": "reviewed_vitalis_mapping"
+    },
+    {
+      "device_code": 224,
+      "cloud_code": 224,
+      "labels": {
+        "en": "Mountain hiking"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": 224,
+      "sport_group": "Mountaineering",
+      "asset_category": "OutdoorSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_224",
+      "display_label_zh": "Mountain hiking",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 225,
+      "cloud_code": 225,
+      "labels": {
+        "en": "Rucking"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": 225,
+      "sport_group": "Rucking",
+      "asset_category": "OutdoorSports",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_225",
+      "display_label_zh": "Rucking",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 226,
+      "cloud_code": 226,
+      "labels": {
+        "en": "Hybrid training"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": 226,
+      "sport_group": "Hybrid Training",
+      "asset_category": "IndoorSports",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_226",
+      "display_label_zh": "Hybrid training",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 227,
+      "cloud_code": 227,
+      "labels": {
+        "en": "Pickleball pro"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": 204,
+      "sport_group": "Padel",
+      "asset_category": "BallGame",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_227",
+      "display_label_zh": "Pickleball pro",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 228,
+      "cloud_code": 228,
+      "labels": {
+        "en": "Hyrox Simulation"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": 228,
+      "sport_group": "Hyrox Race",
+      "asset_category": "HYROX",
+      "support_gps": false,
+      "canonical_code": "zepp_sport_228",
+      "display_label_zh": "Hyrox Simulation",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    },
+    {
+      "device_code": 229,
+      "cloud_code": 229,
+      "labels": {
+        "en": "Expedition"
+      },
+      "sources": [
+        "assets/device_sport_categories.json",
+        "assets/sport_categories.json"
+      ],
+      "resource_key": 229,
+      "sport_group": "Expedition",
+      "asset_category": "Expedition",
+      "support_gps": true,
+      "canonical_code": "zepp_sport_229",
+      "display_label_zh": "Expedition",
+      "category": "other",
+      "training_family": "unknown",
+      "classification_source": "unclassified"
+    }
+  ],
+  "placeholders": [
+    {
+      "device_code": -1,
+      "cloud_code": -1,
+      "labels": {
+        "en": "Training"
+      },
+      "sources": [
+        "assets/sport_categories.json"
+      ],
+      "resource_key": -1,
+      "sport_group": "Training",
+      "asset_category": "Training",
+      "support_gps": false,
+      "status": "placeholder"
+    }
+  ]
+}

@@ -154,6 +154,7 @@ def package_sources() -> set[str]:
         for path in package_dir.rglob("*.py") if path.is_file()
     }
     sources.add("vitalis/adapters/zepp/data/strength_exercises.json")
+    sources.add("vitalis/adapters/zepp/data/sport_modes.json")
     extension = ROOT / "clients" / "browser_extension"
     for name in (
         "README.md", "README.en.md", "background.js", "manifest.json",
@@ -198,6 +199,7 @@ def sdist_sources() -> set[str]:
         "skills/vitalis/scripts/vitalis_api.py",
         "tools/check.py", "tools/check_docs.py", "tools/generate_api_reference.py",
         "tools/generate_report_examples.py",
+        "tools/extract_zepp_strength_catalog.py", "tools/extract_zepp_sport_catalog.py",
         "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.en.md",
     }
     for kind in ("morning", "daily", "evening", "weekly", "monthly", "insufficient-data"):
@@ -211,6 +213,7 @@ def sdist_sources() -> set[str]:
         for path in package_dir.rglob("*.py") if path.is_file()
     )
     sources.add("src/vitalis/adapters/zepp/data/strength_exercises.json")
+    sources.add("src/vitalis/adapters/zepp/data/sport_modes.json")
     extension = ROOT / "clients" / "browser_extension"
     for name in (
         "README.md", "README.en.md", "background.js", "manifest.json",

@@ -116,6 +116,10 @@ class Workout(BaseModel):
         default=None,
         description="Original numeric vendor workout type retained for mapping audits",
     )
+    vendor_type_namespace: str | None = Field(
+        default=None,
+        description="Original sport-code namespace, retained even for unknown vendor types",
+    )
     heart_rate_zone_setting_type: int | None = Field(
         default=None,
         description="Vendor heart-rate-zone model identifier from the workout summary",

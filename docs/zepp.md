@@ -50,7 +50,24 @@ Idempotency-Key: <new-or-reused-key>
 
 训练明细先落盘再流式解析，单条响应最多 32 MB、展开后最多 25 万个样本（各逐秒序列合计约每秒 10 个，约 6.5 小时）；超过时记为 `resource_limit`，不记成无法识别。实测最大的真实明细是 4 小时 39 分的马拉松：响应 1.6 MB、16.7 万个样本，服务器上解析 4.1 秒、进程峰值 309 MB，在 worker 的 500 MB 软上限内。2026-10-14 以前的上限是 2 万，普通 35 分钟的跑步就会超出，9/28 以来缺失的 71 条明细已用 `vitalis sync details` 补齐。
 
-力量 `lap_62` 的普通解析和流式解析共用同一行解析器及已核验动作表（`adapters/zepp/data/strength_exercises.json`）。APK、目录响应和观测证据核验过的代码可显示动作名称，并保留 `exercise_name_reference_mapping`；该表只覆盖已核验条目，不代表厂商全部枚举。没有代码、未知代码或暂定条目仍保留未知；名称映射不会补出重量单位、负重口径或处方资格。回归测试同时覆盖流式落库和普通解析，避免新增传输路径绕过映射。
+力量 `lap_62` 的普通解析和流式解析共用同一行解析器及完整已核验动作表（`adapters/zepp/data/strength_exercises.json`）。Zepp 10.8.7-play APK 证明 `lap_62[28] → strengthTrainType → actionType`，官方 `/sport/config/muscle` 中文目录共 1,134 项，其中代码 0 是“选择一项训练”界面占位，其余 **1,133 个唯一动作代码全部映射**；原来只收录实际观测的 26 项不再作为覆盖上限。目录响应 SHA-256 为 `7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb`，资源保留 APK 摘要、版本、字段关系和逐项目录定位，不伪造个人观测证据。
+
+动作名称只提供厂商参考显示名，并保留 `exercise_name_reference_mapping`；没有代码、目录外代码或暂定条目仍保留未知，不补重量单位、负重口径、用户确认或处方资格。回归测试让完整目录同时经过普通和流式解析，再验证落库路径。
+
+运动大类使用 `adapters/zepp/data/sport_modes.json`：对齐 APK 的 `config_sport_type_group.json`、`device_sport_categories.json` 和 `sport_categories.json`，覆盖 **208 个真实项目**，`-1/Training` 占位独立保存但不解析为运动。189 项有 APK 中文，19 项仅有 APK 英文时保留原名称；原有已核验展示名和分类继续使用，84 个新增且没有分类证据的项目归入 `other`、训练家族 `unknown`，不从名称推断健康事实。
+
+设备 ID 与云端类型是两个命名空间：例如“自由训练”设备 ID **5** 对应云端 **16**，公开水域游泳设备 7 对应云端 15，户外徒步设备 15 对应云端 22。`/run` 历史入口按云端目录解析，旧分运动入口按设备目录解析，禁止跨目录回退。标准化记录保留 `vendor_type_id` 和 `vendor_type_namespace`，即使代码未知也保存来源命名空间。
+
+### 更新目录
+
+APK、原始响应和个人健康数据不进入仓库；只提交最小规范化映射及来源摘要。用仓库外的原始证据运行生成器：
+
+```bash
+uv run --locked --extra dev python tools/extract_zepp_sport_catalog.py --assets /secure/zepp/assets --apk /secure/zepp/base.apk --app-version 10.8.7-play --output src/vitalis/adapters/zepp/data/sport_modes.json --check
+uv run --locked --extra dev python tools/extract_zepp_strength_catalog.py --catalog /secure/zepp/muscle-zh_CN.json --apkm /secure/zepp/app.apkm --output src/vitalis/adapters/zepp/data/strength_exercises.json --check
+```
+
+首次生成时去掉 `--check`；运动生成器会逐字节验证解包资源与传入 APK 的 ZIP 成员一致。新 APK 或官方响应摘要变化时，先复核字段关系、重复编号、占位、语言及全量覆盖，再更新力量生成器允许的已审查摘要。目录、解析代码均计入分析规则摘要；更新不会原地改写旧分析快照。已存记录的安全刷新和报告重算见[运维](operations.md)。
 
 同步状态区分成功、部分覆盖、需要重新认证、失败和未知；不能把一个流失败或没有密集文件理解成全库成功。迟到数据进入后续分析修订，缺失继续保持缺失。
 

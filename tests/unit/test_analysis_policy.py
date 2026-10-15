@@ -40,6 +40,8 @@ def test_presentation_revision_does_not_invalidate_analysis_facts(tmp_path, monk
     catalog = roots["vitalis.adapters.zepp"] / "data"
     catalog.mkdir()
     (catalog / "strength_exercises.json").write_text("{}", encoding="utf-8")
+    (catalog / "sport_modes.json").write_text("{}", encoding="utf-8")
+    (roots["vitalis.adapters.zepp"] / "sport_types.py").write_text("catalog = 1\n", encoding="utf-8")
     monkeypatch.setattr(analysis_policy.resources, "files", lambda package: roots[package])
 
     def fingerprint():
@@ -50,6 +52,8 @@ def test_presentation_revision_does_not_invalidate_analysis_facts(tmp_path, monk
         original = fingerprint()
         renderer.write_text("font_size = 28\n", encoding="utf-8")
         assert fingerprint() == original
+        (catalog / "sport_modes.json").write_text('{"revision":2}', encoding="utf-8")
+        assert fingerprint() != original
         semantic.write_text("rules = 2\n", encoding="utf-8")
         assert fingerprint() != original
     finally:

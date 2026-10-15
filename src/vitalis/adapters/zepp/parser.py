@@ -322,6 +322,7 @@ class ZeppParser:
                 vendor_reported_sets=reported_sets,
                 vendor_source=str(it.get("source")) if it.get("source") else None,
                 vendor_type_id=numeric_type,
+                vendor_type_namespace=mode.namespace,
                 heart_rate_zone_setting_type=self._bounded_int(
                     it, ("heartrate_setting_type", "heartRateSettingType"), 0, 20
                 ),

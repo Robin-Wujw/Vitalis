@@ -209,6 +209,7 @@ class HealthRepository:
         if event_type not in {
             "source_sync", "feedback", "strength_confirmation",
             "recommendation_completion", "event_acknowledgement", "training_coverage",
+            "catalog_refresh",
         }:
             return targets
         candidates = set(self.db.execute(select(orm.AnalysisRun.target_date).where(
@@ -1681,6 +1682,34 @@ class HealthRepository:
                 )
         return affected
 
+    def save_workout_classification(
+        self, user_id: str, workout_id: str, classification: dict, *, source: str = "zepp",
+    ) -> bool:
+        """Correct only catalog fields, preserving every stored observation."""
+        allowed = {
+            "type", "sport_mode", "sport_mode_label", "training_family",
+            "recognition_confidence", "recognition_confidence_label",
+            "recognition_source", "recognition_source_label", "vendor_type_namespace",
+        }
+        if not classification or classification.keys() - allowed:
+            raise ValueError("unsupported workout classification fields")
+        row = self.workout(user_id, workout_id, source)
+        if row is None or all((row.data or {}).get(key) == value for key, value in classification.items()):
+            return False
+        payload = dict(row.data or {}) | classification
+        Workout.model_validate(payload)
+        row.data = payload
+        self.db.flush()
+        self._bump_existing_input_revisions({user_id})
+        if row.started_at is not None:
+            day = local_day(row.started_at)
+            self.enqueue_analysis_job(
+                user_id, day, event_type="catalog_refresh", source=source,
+                affected_dates={day}, affected_streams={"workouts"},
+                reason="verified sport catalog classification changed",
+            )
+        return True
+
     def rebuild_training_days(self, user_id: str, days: set[date]) -> int:
         """Rebuild derived training rows from canonical workouts."""
         written = 0
@@ -1919,6 +1948,7 @@ class HealthRepository:
         *,
         source: str = "zepp",
         fetched_at: datetime | None = None,
+        event_type: str = "source_sync",
     ) -> bool:
         row = self.db.execute(
             select(orm.Workout).where(
@@ -2071,7 +2101,7 @@ class HealthRepository:
                 self.enqueue_analysis_job(
                     user_id,
                     affected_day,
-                    event_type="source_sync",
+                    event_type=event_type,
                     source=source,
                     affected_dates={affected_day},
                     affected_streams={"workout_detail"},

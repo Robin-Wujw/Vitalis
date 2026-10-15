@@ -330,21 +330,21 @@ def test_strength_comparison_blocks_changed_weight_sets_basis_unit_and_source():
     assert comparison.blocked_reason == "source_mismatch"
 
 
-def test_every_catalog_exercise_has_a_muscle_mapping():
-    import json
-    from pathlib import Path
-
+def test_vendor_display_catalog_does_not_assert_complete_muscle_knowledge():
+    from vitalis.adapters.zepp.catalog import LAP_62_NAMESPACE, load_catalog
     from vitalis.intelligence.strength import classify_exercise
 
-    catalog = Path(__file__).resolve().parents[1] / "src/vitalis/adapters/zepp/data/strength_exercises.json"
-    entries = json.loads(catalog.read_text(encoding="utf-8"))["entries"]
-    # Walking between sets is a vendor lap type, not an exercise.
-    unmapped = [
-        entry["labels"]["zh-CN"] for entry in entries
-        if entry["labels"]["zh-CN"] != "组间行走"
-        and classify_exercise(entry.get("canonical_exercise_id"), entry["labels"]["zh-CN"])[0] == "unknown"
-    ]
-    assert unmapped == []
+    catalog = load_catalog()
+    # A verified vendor label supplies neither a canonical exercise nor a
+    # supported muscle model. Existing explicit knowledge remains independent.
+    jumping_jack = catalog.resolve(LAP_62_NAMESPACE, 15)
+    assert jumping_jack.status == "verified"
+    assert jumping_jack.label_zh == "开合跳"
+    assert jumping_jack.canonical_exercise_id is None
+    assert classify_exercise(None, jumping_jack.label_zh) == ("unknown", ())
+    for code in (3, 14, 64, 114):
+        exercise = catalog.resolve(LAP_62_NAMESPACE, code)
+        assert classify_exercise(None, exercise.label_zh)[0] != "unknown"
 
 
 def test_secondary_muscles_count_half_of_the_volume():

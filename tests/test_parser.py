@@ -50,8 +50,8 @@ TRAINING_RAW = {
 }
 
 
-def test_public_workout_catalog_has_all_current_zepp_and_legacy_cloud_ids():
-    assert len(ZEPP_SPORT_MODES) == 122
+def test_apk_workout_catalog_covers_every_actual_device_mode():
+    assert len(ZEPP_SPORT_MODES) == 208
     assert ZEPP_SPORT_MODES[0xBF].label_zh == "足球"
 
 
@@ -216,6 +216,8 @@ def test_verified_zepp_strength_type_is_preserved_and_normalized():
         (9, WorkoutType.CYCLING, "outdoor_cycling", "户外骑行"),
         (10, WorkoutType.CYCLING, "indoor_cycling", "室内骑行"),
         (14, WorkoutType.SWIMMING, "pool_swimming", "泳池游泳"),
+        (15, WorkoutType.SWIMMING, "open_water_swimming", "公开水域游泳"),
+        (16, WorkoutType.OTHER, "free_training", "自由训练"),
         (18, WorkoutType.OTHER, "soccer_legacy", "足球"),
         (52, WorkoutType.STRENGTH, "strength_training", "力量训练"),
         (92, WorkoutType.OTHER, "badminton", "羽毛球"),
@@ -238,6 +240,7 @@ def test_cloud_history_decodes_record_type_in_its_own_namespace(
     assert rows[0].sport_mode == expected_mode
     assert rows[0].sport_mode_label == expected_label
     assert rows[0].recognition_source != "public_zepp_enum"
+    assert rows[0].vendor_type_namespace == "zepp.sport.cloud_history"
 
 
 @pytest.mark.parametrize("code, label", [
@@ -247,13 +250,26 @@ def test_device_mode_catalog_is_separate_from_cloud_history(code, label):
     assert resolve_sport_mode(code).label_zh == label
 
 
-def test_unverified_device_only_code_is_unknown_in_cloud_history():
+def test_device_only_alias_is_unknown_in_cloud_history():
     workout, = ZeppParser().parse_sport_history({
-        "data": {"summary": [{"trackid": 1_777_334_400, "type": 149}]}
+        "data": {"summary": [{"trackid": 1_777_334_400, "type": 5}]}
     })
-    assert resolve_sport_mode(149).label_zh == "单杠"
-    assert workout.sport_mode_label == "未知运动（编号 149）"
+    assert resolve_sport_mode(5).label_zh == "自由训练"
+    assert workout.sport_mode_label == "未知运动（编号 5）"
     assert workout.training_family == "skill"
+
+
+@pytest.mark.parametrize("sport_hint,namespace", [
+    ("", "zepp.sport.cloud_history"), ("run", "zepp.sport.cloud_history"),
+    ("ride", "zepp.sport.device"),
+])
+def test_unknown_sport_still_preserves_its_original_type_namespace(sport_hint, namespace):
+    workout, = ZeppParser().parse_sport_history({
+        "data": {"summary": [{"trackid": 1_777_334_400, "type": 999999}]}
+    }, sport_hint=sport_hint)
+    assert workout.vendor_type_namespace == namespace
+    assert workout.vendor_type_id == 999999
+    assert workout.recognition_confidence == "NONE"
 
 
 def test_unknown_numeric_sport_type_does_not_inherit_run_endpoint():

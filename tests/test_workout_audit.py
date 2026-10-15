@@ -68,13 +68,13 @@ def test_workout_audit_is_user_scoped_read_only_and_does_not_claim_coverage(tmp_
     assert result["totals"]["unsynced_strength_details"] == 1
     assert result["totals"]["outdated_strength_details"] == 1
     assert result["totals"]["misclassified_strength_details"] == 1
-    assert result["totals"]["stale_mapped_lap_sets"] == 1
+    assert result["totals"]["stale_mapped_lap_sets"] == 2
     assert result["totals"]["observed_lap_sets"] == 4
     assert result["strength_codes"] == [
         {"code": 64, "sets": 1, "named_sets": 1, "mapping_known": True,
          "stale_mapped_sets": 0, "stored_name_status": "CONSISTENT"},
-        {"code": 1111, "sets": 1, "named_sets": 0, "mapping_known": False,
-         "stale_mapped_sets": 0, "stored_name_status": "MISSING"},
+        {"code": 1111, "sets": 1, "named_sets": 0, "mapping_known": True,
+         "stale_mapped_sets": 1, "stored_name_status": "MISSING"},
         {"code": 1770, "sets": 1, "named_sets": 0, "mapping_known": True,
          "stale_mapped_sets": 1, "stored_name_status": "MISSING"},
         {"code": 999999, "sets": 1, "named_sets": 0, "mapping_known": False,

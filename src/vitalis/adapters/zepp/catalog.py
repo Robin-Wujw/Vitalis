@@ -13,7 +13,7 @@ LAP_62_NAMESPACE = "zepp.strength.lap_62"
 _VERIFICATION = {"verified", "provisional"}
 _EVIDENCE_FIELDS = (
     "app_version", "artifact_digest", "catalog_response_digest",
-    "extraction_reference", "observation_reference",
+    "extraction_reference", "catalog_reference",
 )
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _NAMESPACE = re.compile(r"zepp(?:\.[a-z][a-z0-9_]*){2,}\Z")
@@ -79,6 +79,15 @@ def parse_catalog(text: str) -> StrengthCatalog:
     records = payload.get("entries")
     if not isinstance(records, list):
         raise ValueError("entries must be a list")
+    shared = payload.get("provenance", {})
+    if not isinstance(shared, dict):
+        raise ValueError("invalid shared provenance")
+    if "source_entry_count" in payload:
+        placeholders = payload.get("placeholders")
+        if (type(payload["source_entry_count"]) is not int
+            or placeholders != [{"vendor_code": 0, "label": "选择一项训练"}]
+            or payload["source_entry_count"] != len(records) + len(placeholders)):
+            raise ValueError("incomplete source catalog coverage")
 
     entries: dict[tuple[str, int], CatalogEntry] = {}
     for index, record in enumerate(records):
@@ -107,7 +116,12 @@ def parse_catalog(text: str) -> StrengthCatalog:
             for locale, label in labels.items()
         ):
             raise ValueError(f"entry {index} needs nonempty supported labels")
-        provenance = record.get("provenance")
+        local_provenance = record.get("provenance")
+        if not isinstance(local_provenance, dict):
+            raise ValueError(f"entry {index} has invalid provenance")
+        if shared.keys() & local_provenance.keys():
+            raise ValueError(f"entry {index} overrides shared provenance")
+        provenance = shared | local_provenance
         if not isinstance(provenance, dict) or any(
             field not in _EVIDENCE_FIELDS or not _nonempty_text(value)
             for field, value in provenance.items()
@@ -119,7 +133,7 @@ def parse_catalog(text: str) -> StrengthCatalog:
         if verification == "verified" and any(
             field not in provenance for field in _EVIDENCE_FIELDS
         ):
-            raise ValueError(f"entry {index} needs app, catalog and observation evidence")
+            raise ValueError(f"entry {index} needs app and catalog evidence")
         entries[key] = CatalogEntry(
             namespace, code, canonical_id,
             MappingProxyType(dict(labels)), verification,

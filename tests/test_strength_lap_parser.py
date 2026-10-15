@@ -63,7 +63,8 @@ def test_strength_lap_keeps_order_codes_and_unconfirmed_weight_units():
 
 
 def test_observed_strength_codes_match_catalog_scope():
-    assert set(ZEPP_STRENGTH_LAP_LABELS) == set(OBSERVED_CODES)
+    assert set(OBSERVED_CODES) < set(ZEPP_STRENGTH_LAP_LABELS)
+    assert len(ZEPP_STRENGTH_LAP_LABELS) == 1133
 
 
 @pytest.mark.parametrize("code", OBSERVED_CODES)
@@ -78,7 +79,8 @@ def test_strength_lap_maps_only_verified_display_codes(code):
 
 
 def test_streamed_strength_laps_retain_verified_names_and_unknowns():
-    rows = [lap_row(code=code) for code in OBSERVED_CODES]
+    codes = sorted(ZEPP_STRENGTH_LAP_LABELS)
+    rows = [lap_row(code=code) for code in codes]
     rows += ["bad,row", "", lap_row(code=999999), lap_row(code="")]
     payload = {"data": {"trackid": int(START.timestamp()), "lap": ";".join(rows)}}
     expected = parse_workout_detail(payload, ParseContext(training_family="strength"))
@@ -87,8 +89,8 @@ def test_streamed_strength_laps_retain_verified_names_and_unknowns():
         actual = parse_workout_detail(spool, ParseContext(training_family="strength"))
         assert actual.status == expected.status == "recognized"
         assert actual.detail.strength_sets == expected.detail.strength_sets
-        assert [item.exercise_name for item in actual.detail.strength_sets[:len(OBSERVED_CODES)]] == [
-            resolve_exercise(LAP_62_NAMESPACE, code).label_zh for code in OBSERVED_CODES
+        assert [item.exercise_name for item in actual.detail.strength_sets[:len(codes)]] == [
+            resolve_exercise(LAP_62_NAMESPACE, code).label_zh for code in codes
         ]
         assert all(item.weight_unit is None for item in actual.detail.strength_sets)
         assert all(item.exercise_name is None for item in actual.detail.strength_sets[-2:])

@@ -1,10 +1,24 @@
-"""Verified Zepp OS workout modes and Chinese presentation labels.
+"""APK-backed Zepp sport catalog with separate device and cloud namespaces."""
 
-Codes follow the public Zepp OS activity enum used by Gadgetbridge. Unknown future
-codes remain explicit instead of being guessed into a known activity.
-"""
+from collections import Counter
+from dataclasses import dataclass
+from functools import lru_cache
+from importlib import resources
+import json
+import re
+from types import MappingProxyType
+from typing import Mapping
 
-from dataclasses import dataclass, replace
+
+DEVICE_SPORT_NAMESPACE = "zepp.sport.device"
+CLOUD_SPORT_NAMESPACE = "zepp.sport.cloud_history"
+_ASSETS = frozenset({
+    "assets/config_sport_type_group.json",
+    "assets/device_sport_categories.json",
+    "assets/sport_categories.json",
+})
+_DIGEST = re.compile(r"[0-9a-f]{64}\Z")
+_CODE = re.compile(r"[a-z][a-z0-9_]*\Z")
 
 
 @dataclass(frozen=True)
@@ -15,248 +29,163 @@ class SportMode:
     family: str
     recognition_confidence: str = "HIGH"
     recognition_confidence_label: str = "较高"
-    recognition_source: str = "public_zepp_enum"
-    recognition_source_label: str = "公开 Zepp/Huami 运动枚举"
+    recognition_source: str = "zepp_apk_device_catalog"
+    recognition_source_label: str = "Zepp APK 设备运动目录"
+    namespace: str = DEVICE_SPORT_NAMESPACE
+    vendor_code: int | None = None
+    catalog_revision: str | None = None
 
 
-def _mode(
-    code: str,
-    label: str,
-    category: str = "other",
-    family: str = "skill",
-    **recognition: str,
-) -> SportMode:
-    return SportMode(
-        code=code,
-        label_zh=label,
-        category=category,
-        family=family,
-        **recognition,
-    )
-
-
-ZEPP_SPORT_MODES: dict[int, SportMode] = {
-    0x01: _mode("outdoor_running", "户外跑", "running", "aerobic"),
-    0x02: _mode("treadmill", "跑步机", "running", "aerobic"),
-    0x03: _mode("walking", "健走", "walking", "aerobic"),
-    0x04: _mode("outdoor_cycling", "户外骑行", "cycling", "aerobic"),
-    0x05: _mode("free_training", "自由训练", "other", "mixed"),
-    0x06: _mode("pool_swimming", "泳池游泳", "swimming", "aerobic"),
-    0x07: _mode("open_water_swimming", "公开水域游泳", "swimming", "aerobic"),
-    0x08: _mode("indoor_cycling", "室内骑行", "cycling", "aerobic"),
-    0x09: _mode("elliptical", "椭圆机", "other", "aerobic"),
-    0x0A: _mode("climbing", "攀登", "other", "mixed"),
-    0x0F: _mode("hiking", "徒步", "walking", "aerobic"),
-    0x11: _mode("tennis", "网球"),
-    0x12: _mode("soccer_legacy", "足球", "other", "mixed"),
-    0x15: _mode("jump_rope", "跳绳", "other", "aerobic"),
-    0x17: _mode("rowing", "划船机", "other", "aerobic"),
-    0x18: _mode("indoor_fitness", "室内健身", "other", "mixed"),
-    0x29: _mode("curling", "冰壶"),
-    0x2C: _mode("ice_skating", "滑冰", "other", "aerobic"),
-    0x2D: _mode("indoor_ice_skating", "室内滑冰", "other", "aerobic"),
-    0x30: _mode("bmx", "小轮车", "cycling", "mixed"),
-    0x31: _mode("hiit", "高强度间歇训练", "hiit", "mixed"),
-    0x32: _mode("core_training", "核心训练", "strength", "strength"),
-    0x33: _mode("aerobic_combo", "有氧组合", "other", "aerobic"),
-    0x34: _mode("strength_training", "力量训练", "strength", "strength"),
-    0x35: _mode("stretching", "拉伸", "other", "mobility"),
-    0x36: _mode("stair_climber", "爬楼机", "other", "aerobic"),
-    0x37: _mode("flexibility", "柔韧性训练", "other", "mobility"),
-    0x39: _mode("stepper", "踏步机", "other", "aerobic"),
-    0x3B: _mode("gymnastics", "体操", "other", "mixed"),
-    0x3C: _mode("yoga", "瑜伽", "yoga", "mobility"),
-    0x3D: _mode("pilates", "普拉提", "yoga", "mobility"),
-    0x40: _mode("fishing", "钓鱼"),
-    0x41: _mode("sailing", "帆船"),
-    0x42: _mode("water_rowing", "水上划船", "other", "aerobic"),
-    0x43: _mode("skateboarding", "滑板", "other", "mixed"),
-    0x45: _mode("roller_skating", "轮滑", "other", "aerobic"),
-    0x46: _mode("rock_climbing", "攀岩", "other", "mixed"),
-    0x47: _mode("ballet", "芭蕾", "other", "mobility"),
-    0x48: _mode("belly_dance", "肚皮舞", "other", "aerobic"),
-    0x49: _mode("square_dance", "广场舞", "other", "aerobic"),
-    0x4A: _mode("street_dance", "街舞", "other", "aerobic"),
-    0x4B: _mode("ballroom_dance", "交谊舞", "other", "aerobic"),
-    0x4C: _mode("dance", "舞蹈", "other", "aerobic"),
-    0x4D: _mode("zumba", "尊巴", "other", "aerobic"),
-    0x4E: _mode("cricket", "板球"),
-    0x4F: _mode("baseball", "棒球"),
-    0x50: _mode("bowling", "保龄球"),
-    0x51: _mode("squash", "壁球", "other", "mixed"),
-    0x55: _mode("basketball", "篮球", "other", "mixed"),
-    0x56: _mode("softball", "垒球"),
-    0x57: _mode("gateball", "门球"),
-    0x58: _mode("volleyball", "排球", "other", "mixed"),
-    0x59: _mode("table_tennis", "乒乓球"),
-    0x5B: _mode("handball", "手球", "other", "mixed"),
-    0x5C: _mode("badminton", "羽毛球", "other", "mixed"),
-    0x5D: _mode("archery", "射箭"),
-    0x5E: _mode("equestrian", "马术"),
-    0x5F: _mode("kendo", "剑道", "other", "mixed"),
-    0x60: _mode("karate", "空手道", "other", "mixed"),
-    0x61: _mode("boxing", "拳击", "other", "mixed"),
-    0x62: _mode("judo", "柔道", "other", "mixed"),
-    0x63: _mode("wrestling", "摔跤", "other", "mixed"),
-    0x64: _mode("tai_chi", "太极", "other", "mobility"),
-    0x65: _mode("muay_thai", "泰拳", "other", "mixed"),
-    0x66: _mode("taekwondo", "跆拳道", "other", "mixed"),
-    0x67: _mode("martial_arts", "武术", "other", "mixed"),
-    0x68: _mode("kickboxing", "自由搏击", "other", "mixed"),
-    0x6D: _mode("aerobics", "健美操", "other", "aerobic"),
-    0x6F: _mode("mass_gymnastics", "团体操", "other", "aerobic"),
-    0x70: _mode("latin_dance", "拉丁舞", "other", "aerobic"),
-    0x71: _mode("jazz_dance", "爵士舞", "other", "aerobic"),
-    0x72: _mode("cardio_combat", "有氧搏击", "other", "mixed"),
-    0x73: _mode("hula_hoop", "呼啦圈", "other", "aerobic"),
-    0x74: _mode("frisbee", "飞盘", "other", "mixed"),
-    0x75: _mode("darts", "飞镖"),
-    0x76: _mode("kite_flying", "放风筝"),
-    0x77: _mode("tug_of_war", "拔河", "other", "strength"),
-    0x7A: _mode("beach_volleyball", "沙滩排球", "other", "mixed"),
-    0x81: _mode("parkour", "跑酷", "other", "mixed"),
-    0x82: _mode("cross_training", "交叉训练", "strength", "mixed"),
-    0x83: _mode("race_walking", "竞走", "walking", "aerobic"),
-    0x84: _mode("driving", "驾驶"),
-    0x8A: _mode("dragon_boat", "龙舟", "other", "mixed"),
-    0x8C: _mode("kayaking", "皮划艇", "other", "aerobic"),
-    0x8F: _mode("spinning", "动感单车", "cycling", "aerobic"),
-    0x90: _mode("air_walker", "漫步机", "other", "aerobic"),
-    0x91: _mode("wall_ball", "墙球", "other", "mixed"),
-    0x92: _mode("folk_dance", "民族舞", "other", "aerobic"),
-    0x93: _mode("jujitsu", "柔术", "other", "mixed"),
-    0x94: _mode("fencing", "击剑", "other", "mixed"),
-    0x95: _mode("horizontal_bar", "单杠", "strength", "strength"),
-    0x96: _mode("parallel_bars", "双杠", "strength", "strength"),
-    0x97: _mode("billiards", "台球"),
-    0x98: _mode("sepak_takraw", "藤球", "other", "mixed"),
-    0x99: _mode("dodgeball", "躲避球", "other", "mixed"),
-    0x9A: _mode("water_polo", "水球", "swimming", "mixed"),
-    0x9B: _mode("finswimming", "蹼泳", "swimming", "aerobic"),
-    0x9C: _mode("artistic_swimming", "花样游泳", "swimming", "mixed"),
-    0x9D: _mode("snorkeling", "浮潜", "swimming", "aerobic"),
-    0x9E: _mode("ice_hockey", "冰球", "other", "mixed"),
-    0x9F: _mode("swing", "秋千"),
-    0xA0: _mode("shuffleboard", "沙狐球"),
-    0xA1: _mode("table_football", "桌上足球"),
-    0xA2: _mode("shuttlecock", "踢毽子", "other", "aerobic"),
-    0xA3: _mode("somatosensory_game", "体感游戏", "other", "mixed"),
-    0xA4: _mode("futsal", "室内足球", "other", "mixed"),
-    0xA5: _mode("hip_hop", "嘻哈舞", "other", "aerobic"),
-    0xA6: _mode("pole_dance", "钢管舞", "other", "mixed"),
-    0xA7: _mode("battle_rope", "战绳", "strength", "mixed"),
-    0xA8: _mode("breaking", "霹雳舞", "other", "mixed"),
-    0xA9: _mode("hacky_sack", "沙包球", "other", "mixed"),
-    0xAA: _mode("bocce", "地掷球"),
-    0xAB: _mode("jai_alai", "回力球", "other", "mixed"),
-    0xAC: _mode("flowriding", "模拟冲浪", "other", "mixed"),
-    0xAD: _mode("chess", "国际象棋"),
-    0xAE: _mode("checkers", "国际跳棋"),
-    0xAF: _mode("weiqi", "围棋"),
-    0xB0: _mode("bridge", "桥牌"),
-    0xB1: _mode("board_game", "桌游"),
-    0xB9: _mode("modern_dance", "现代舞", "other", "aerobic"),
-    0xBD: _mode("esports", "电子竞技"),
-    0xBF: _mode("soccer", "足球", "other", "mixed"),
-}
+@dataclass(frozen=True)
+class SportCatalog:
+    catalog_revision: str
+    app_version: str
+    artifact_digest: str
+    resource_digests: Mapping[str, str]
+    device_modes: Mapping[int, SportMode]
+    cloud_modes: Mapping[int, SportMode]
 
 
 CATEGORY_LABELS = {
-    "strength": "力量训练",
-    "running": "跑步",
-    "cycling": "骑行",
-    "swimming": "游泳",
-    "walking": "步行与徒步",
-    "hiit": "高强度间歇训练",
-    "yoga": "瑜伽与灵活性训练",
-    "other": "其他运动",
+    "strength": "力量训练", "running": "跑步", "cycling": "骑行",
+    "swimming": "游泳", "walking": "步行与徒步", "hiit": "高强度间歇训练",
+    "yoga": "瑜伽与灵活性训练", "other": "其他运动",
 }
-
 FAMILY_LABELS = {
-    "aerobic": "有氧",
-    "strength": "力量",
-    "mobility": "灵活性与恢复",
-    "mixed": "混合体能",
-    "skill": "技巧与休闲",
+    "aerobic": "有氧", "strength": "力量", "mobility": "灵活性与恢复",
+    "mixed": "混合体能", "skill": "技巧与休闲", "unknown": "未知",
 }
 
 
-def _unknown_sport_mode(vendor_type_id: int | None) -> SportMode:
-    if vendor_type_id is not None:
-        return _mode(
-            f"unknown_{vendor_type_id}",
-            f"未知运动（编号 {vendor_type_id}）",
-            "other",
-            "skill",
-            recognition_confidence="NONE",
-            recognition_confidence_label="无法识别",
-            recognition_source="unknown_vendor_code",
-            recognition_source_label="厂商编号未公开",
-        )
+def _text(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _unique_members(pairs: list[tuple[str, object]]) -> dict:
+    output = {}
+    for key, value in pairs:
+        if key in output:
+            raise ValueError(f"duplicate JSON member: {key}")
+        output[key] = value
+    return output
+
+
+def parse_sport_catalog(text: str) -> SportCatalog:
+    """Reject incomplete extraction, ambiguous codes, or unsupported evidence."""
+    payload = json.loads(text, object_pairs_hook=_unique_members)
+    if not isinstance(payload, dict) or not _text(payload.get("catalog_revision")):
+        raise ValueError("sport catalog revision is required")
+    provenance = payload.get("provenance")
+    if not isinstance(provenance, dict) or not _text(provenance.get("app_version")):
+        raise ValueError("sport catalog app_version is required")
+    artifact = provenance.get("artifact_digest")
+    digests = provenance.get("resources")
+    if not isinstance(artifact, str) or not _DIGEST.fullmatch(artifact):
+        raise ValueError("sport catalog artifact digest is invalid")
+    if not isinstance(digests, dict) or set(digests) != _ASSETS or any(
+        not isinstance(value, str) or not _DIGEST.fullmatch(value)
+        for value in digests.values()
+    ):
+        raise ValueError("sport catalog resource digest is invalid")
+    counts = payload.get("source_entry_counts")
+    if not isinstance(counts, dict) or set(counts) != _ASSETS or any(
+        type(value) is not int or value < 1 for value in counts.values()
+    ):
+        raise ValueError("sport catalog source coverage is invalid")
+    entries, placeholders = payload.get("entries"), payload.get("placeholders")
+    if not isinstance(entries, list) or not entries or not isinstance(placeholders, list):
+        raise ValueError("sport catalog entries and placeholders are required")
+    coverage = Counter()
+    device_modes, cloud_modes = {}, {}
+    revision, version = payload["catalog_revision"], provenance["app_version"]
+    for entry in entries + placeholders:
+        if not isinstance(entry, dict):
+            raise ValueError("sport catalog entry must be an object")
+        sources = entry.get("sources")
+        if (not isinstance(sources, list) or not sources
+            or any(not isinstance(source, str) or source not in _ASSETS for source in sources)
+            or len(sources) != len(set(sources))):
+            raise ValueError("sport catalog entry source coverage is invalid")
+        coverage.update(sources)
+        device, cloud = entry.get("device_code"), entry.get("cloud_code")
+        if any(type(value) is not int for value in (device, cloud)):
+            raise ValueError("sport codes must be integers")
+        if entry.get("status") == "placeholder":
+            if device >= 0 or cloud >= 0 or entry not in placeholders:
+                raise ValueError("sport placeholder must have negative codes")
+            continue
+        if entry in placeholders or any(not 0 < value < 2**31 for value in (device, cloud)):
+            raise ValueError("sport codes must be positive; placeholders stay separate")
+        if device in device_modes or cloud in cloud_modes:
+            raise ValueError("duplicate namespaced sport code")
+        labels = entry.get("labels")
+        if not isinstance(labels, dict) or not labels or any(
+            locale not in {"en", "zh-CN"} or not _text(label)
+            for locale, label in labels.items()
+        ):
+            raise ValueError("sport catalog labels are invalid")
+        canonical, display = entry.get("canonical_code"), entry.get("display_label_zh")
+        if not isinstance(canonical, str) or not _CODE.fullmatch(canonical) or not _text(display):
+            raise ValueError("sport canonical code and display label are required")
+        category, family = entry.get("category"), entry.get("training_family")
+        if category not in CATEGORY_LABELS or family not in FAMILY_LABELS:
+            raise ValueError("sport category or training family is invalid")
+        classification = entry.get("classification_source")
+        if classification == "unclassified":
+            if category != "other" or family != "unknown":
+                raise ValueError("unclassified sport must not infer training facts")
+        elif classification != "reviewed_vitalis_mapping":
+            raise ValueError("sport classification evidence is required")
+        for namespace, vendor, modes, source, source_label in (
+            (DEVICE_SPORT_NAMESPACE, device, device_modes, "zepp_apk_device_catalog", "设备编号"),
+            (CLOUD_SPORT_NAMESPACE, cloud, cloud_modes, "zepp_apk_cloud_catalog", "云端类型"),
+        ):
+            modes[vendor] = SportMode(
+                code=canonical, label_zh=display, category=category, family=family,
+                recognition_source=source,
+                recognition_source_label=f"Zepp APK {version} 运动目录（{source_label}）",
+                namespace=namespace, vendor_code=vendor, catalog_revision=revision,
+            )
+    if dict(coverage) != counts:
+        raise ValueError("sport catalog source coverage is incomplete")
+    return SportCatalog(
+        revision, version, artifact, MappingProxyType(dict(digests)),
+        MappingProxyType(device_modes), MappingProxyType(cloud_modes),
+    )
+
+
+@lru_cache(maxsize=1)
+def load_sport_catalog() -> SportCatalog:
+    text = resources.files("vitalis.adapters.zepp").joinpath(
+        "data", "sport_modes.json",
+    ).read_text(encoding="utf-8")
+    return parse_sport_catalog(text)
+
+
+ZEPP_SPORT_MODES = load_sport_catalog().device_modes
+CLOUD_SPORT_MODES = load_sport_catalog().cloud_modes
+
+
+def _unknown_sport_mode(vendor_type_id: object, namespace: str) -> SportMode:
+    code = vendor_type_id if type(vendor_type_id) is int else None
     return SportMode(
-        code="unknown",
-        label_zh="未知运动",
-        category="other",
-        family="skill",
-        recognition_confidence="NONE",
+        code=f"unknown_{code}" if code is not None else "unknown",
+        label_zh=f"未知运动（编号 {code}）" if code is not None else "未知运动",
+        category="other", family="skill", recognition_confidence="NONE",
         recognition_confidence_label="无法识别",
-        recognition_source="missing_vendor_type",
-        recognition_source_label="缺少厂商运动类型",
+        recognition_source="unknown_vendor_code" if code is not None else "missing_vendor_type",
+        recognition_source_label="厂商编号未核验" if code is not None else "缺少厂商运动类型",
+        namespace=namespace, vendor_code=code,
     )
 
 
 def resolve_sport_mode(vendor_type_id: int | None) -> SportMode:
-    if vendor_type_id is not None and vendor_type_id in ZEPP_SPORT_MODES:
+    if type(vendor_type_id) is int and vendor_type_id in ZEPP_SPORT_MODES:
         return ZEPP_SPORT_MODES[vendor_type_id]
-    return _unknown_sport_mode(vendor_type_id)
-
-
-def _cloud_mode(
-    code: str, label: str, category: str = "other", family: str = "skill",
-    *, verified: bool = True,
-) -> SportMode:
-    return _mode(
-        code, label, category, family,
-        recognition_confidence="HIGH" if verified else "MEDIUM",
-        recognition_confidence_label="较高" if verified else "参考",
-        recognition_source="zepp_cloud_observed" if verified else "zepp_cloud_reference",
-        recognition_source_label="Zepp 云端历史核验" if verified else "Zepp 云端历史参考",
-    )
-
-
-# The account-wide /run/history feed uses a cloud namespace, not the public
-# Zepp OS enum. Include only independently observed or referenced cloud modes.
-CLOUD_SPORT_MODES = {
-    1: _cloud_mode("outdoor_running", "户外跑", "running", "aerobic"),
-    6: _cloud_mode("walking", "健走", "walking", "aerobic"),
-    7: _cloud_mode("trail_running", "越野跑", "running", "aerobic"),
-    8: _cloud_mode("treadmill", "跑步机", "running", "aerobic", verified=False),
-    9: _cloud_mode("outdoor_cycling", "户外骑行", "cycling", "aerobic"),
-    10: _cloud_mode("indoor_cycling", "室内骑行", "cycling", "aerobic", verified=False),
-    12: _cloud_mode("elliptical", "椭圆机", "other", "aerobic", verified=False),
-    14: _cloud_mode("pool_swimming", "泳池游泳", "swimming", "aerobic", verified=False),
-    18: _cloud_mode("soccer_legacy", "足球", "other", "mixed"),
-    23: _cloud_mode("rowing", "划船机", "other", "aerobic", verified=False),
-    52: _cloud_mode("strength_training", "力量训练", "strength", "strength"),
-    92: _cloud_mode("badminton", "羽毛球"),
-    223: _cloud_mode("activity", "AI 识别活动"),
-}
-
-# These modes match the cloud reference catalog and the public device enum;
-# keep their cloud confidence below independently observed modes.
-_CLOUD_OS_COMPATIBLE_CODES = frozenset({2, 3, 4, 5, 15, 17, 21, 24, 146})
+    return _unknown_sport_mode(vendor_type_id, DEVICE_SPORT_NAMESPACE)
 
 
 def resolve_cloud_sport_mode(vendor_type_id: int | None) -> SportMode:
-    if vendor_type_id in CLOUD_SPORT_MODES:
+    if type(vendor_type_id) is int and vendor_type_id in CLOUD_SPORT_MODES:
         return CLOUD_SPORT_MODES[vendor_type_id]
-    if vendor_type_id in _CLOUD_OS_COMPATIBLE_CODES:
-        mode = ZEPP_SPORT_MODES[vendor_type_id]
-        return replace(
-            mode,
-            recognition_confidence="MEDIUM",
-            recognition_confidence_label="参考",
-            recognition_source="zepp_os_cloud_compatible",
-            recognition_source_label="Zepp OS 与云端对照",
-        )
-    return _unknown_sport_mode(vendor_type_id)
+    return _unknown_sport_mode(vendor_type_id, CLOUD_SPORT_NAMESPACE)

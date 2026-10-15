@@ -50,6 +50,8 @@ def installed_analysis_rules_digest() -> str:
         ("vitalis", "time.py"),
         ("vitalis.adapters.zepp", "catalog.py"),
         ("vitalis.adapters.zepp", "data/strength_exercises.json"),
+        ("vitalis.adapters.zepp", "sport_types.py"),
+        ("vitalis.adapters.zepp", "data/sport_modes.json"),
     ):
         digest.update(f"{package}/{name}\0".encode())
         digest.update(resources.files(package).joinpath(name).read_bytes())

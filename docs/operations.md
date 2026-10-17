@@ -31,9 +31,9 @@
 | `PUSHPLUS_QUERY_INTERVAL_SECONDS` | `60` | 状态查询间隔秒数；只影响状态查询。 |
 | `VITALIS_PUBLIC_URL` | 空 | 浏览器能访问的 API 地址（无路径）。设了才生成 Zepp 登录链接和报告里的反馈链接；生产要求 HTTPS，或私有网络地址（如 ZeroTier 的 `http://10.x.x.x`）。 |
 
-晨报跟着醒来时间走，晚报是 `21:30` 的定时任务；配置和时区不要在其它文档复制成另一套默认值。worker 每分钟检查一次晨报窗口：窗口内至多每隔 `MORNING_WAKE_POLL_INTERVAL_SECONDS` 只拉一次当天的睡眠（每天至多 `MORNING_WAKE_MAX_PROBES` 次）；库里一出现已结束的昨夜主睡眠，就排一次完整的晨报同步，同步结束后分析并投递。已结束指有醒来时间、睡眠至少 3 小时、醒来不早于窗口开始前 3 小时，并且满足其一：睡眠时长达到前 14 晚中位数的 75%（少于 5 晚记录时不用这条），或手表数据已上传到醒来后至少 30 分钟而睡眠没有被延长。Zepp 把手机上传时刻之前的最后一分钟睡眠当作“醒来”，夜里或短暂醒来时的上传会留下半截睡眠：2026-10-11 02:00 的记录一直保留到 09:57 醒来后才更新；2026-10-17 07:09 的上传留下 02:26–07:04、275 分钟的记录，人却睡到 9 点以后，晨报据此在 07:36 发出（之后改成上面的规则）。到窗口结束仍没有已结束的睡眠，也排这次同步并按兜底规则发送；晨报同步失败或取消且没写入任何记录时再试一次。worker 重启后按已保存的探测和同步记录续跑，晨报不需要补建。
+晨报跟着醒来时间走，晚报是 `23:00` 的定时任务，先同步当天数据，再分析并投递；配置和时区不要在其它文档复制成另一套默认值。worker 每分钟检查一次晨报窗口：窗口内至多每隔 `MORNING_WAKE_POLL_INTERVAL_SECONDS` 只拉一次当天的睡眠（每天至多 `MORNING_WAKE_MAX_PROBES` 次）；库里一出现已结束的昨夜主睡眠，就排一次完整的晨报同步，同步结束后分析并投递。已结束指有醒来时间、睡眠至少 3 小时、醒来不早于窗口开始前 3 小时，并且满足其一：睡眠时长达到前 14 晚中位数的 75%（少于 5 晚记录时不用这条），或手表数据已上传到醒来后至少 30 分钟而睡眠没有被延长。Zepp 把手机上传时刻之前的最后一分钟睡眠当作“醒来”，夜里或短暂醒来时的上传会留下半截睡眠：2026-10-11 02:00 的记录一直保留到 09:57 醒来后才更新；2026-10-17 07:09 的上传留下 02:26–07:04、275 分钟的记录，人却睡到 9 点以后，晨报据此在 07:36 发出（之后改成上面的规则）。到窗口结束仍没有已结束的睡眠，也排这次同步并按兜底规则发送；晨报同步失败或取消且没写入任何记录时再试一次。worker 重启后按已保存的探测和同步记录续跑，晨报不需要补建。
 
-晨报需要已结束的睡眠和已核实的前 7 天训练记录，窗口结束前睡眠没到齐就继续等；晚报需要当天事实和训练记录。窗口结束后睡眠仍缺或仍未结束、必需数据缺失、同步降级，或发送比计划晚 30 分钟以上（晨报以窗口结束、晚报以 21:30 计）时，只发仅事实版本（不带训练安排、建议和变化），开头一句话说明原因，例如“昨夜睡眠还没同步”“昨夜睡眠可能还没同步完整”；没有当天事实时不发并保留延期记录，`/api/deliveries` 的 `failure_code` 给出原因。晨报在窗口结束后 90 分钟（默认 14:30）、晚报在 21:30 后 6 小时仍未发出的，本次投递作废（`delivery_deadline_expired`）。这些规则在 `src/vitalis/application/delivery_policy.py`、worker 的晨报窗口任务和延期投递协调中执行。真实模式还需要有效的 `VITALIS_TOKEN_ENCRYPTION_KEY`，并将其与数据库分开保存。
+晨报需要已结束的睡眠和已核实的前 7 天训练记录，窗口结束前睡眠没到齐就继续等；晚报需要当天事实和训练记录。窗口结束后睡眠仍缺或仍未结束、必需数据缺失、同步降级，或发送比计划晚 30 分钟以上（晨报以窗口结束、晚报以 23:00 计）时，只发仅事实版本（不带训练安排、建议和变化），开头一句话说明原因，例如“昨夜睡眠还没同步”“昨夜睡眠可能还没同步完整”；没有当天事实时不发并保留延期记录，`/api/deliveries` 的 `failure_code` 给出原因。晨报在窗口结束后 90 分钟（默认 14:30）、晚报在 23:00 后 6 小时（次日 05:00，夏令时切换日按实际经过时长）仍未发出的，本次投递作废（`delivery_deadline_expired`）。这些规则在 `src/vitalis/application/delivery_policy.py`、worker 的晨报窗口任务和延期投递协调中执行。真实模式还需要有效的 `VITALIS_TOKEN_ENCRYPTION_KEY`，并将其与数据库分开保存。
 
 `GET /api/data-status` 的每个流还会返回预期间隔、实际观测年龄、`freshness` 和基于真实存储观测的近 7 天覆盖；没有观测时显示未知，不补零。`workout_details` 给出训练总数、已有明细数、缺明细数、最早缺明细的训练时间和最近一次因体积超限跳过的时间。
 
@@ -41,7 +41,7 @@ worker 每 30 分钟检查一次数据流新鲜度：周期性的流（睡眠、
 
 ## 投递目标与告警
 
-目标是晨报在窗口结束后 30 分钟内（默认 13:30）、晚报在 22:30 前被 PushPlus 受理（业务 `code=200`）。告警检查不在 worker 里：`vitalis-alerts.timer` 每 10 分钟启动一次 `vitalis alerts check`，独立进程，worker 冻住时照样运行。到目标仍未受理、PushPlus 明确拒绝、24 小时内分析失败（计算中途有新数据、任务自动重排的不算），或 worker 心跳超过 30 分钟未更新时各记一次事件，同一事件不重复。没有投递意图的漏发在 `GET /api/deliveries` 里显示为 `status=missed` 的记录，`failure_code` 为 `worker_not_running`、`snapshot_unavailable` 或 `delivery_not_created`。
+目标是晨报在窗口结束后 30 分钟内（默认 13:30）、晚报在次日 00:00 前被 PushPlus 受理（业务 `code=200`）。告警检查不在 worker 里：`vitalis-alerts.timer` 每 10 分钟启动一次 `vitalis alerts check`，独立进程，worker 冻住时照样运行。午夜后的整天检查前一天的晚报，保留原报告日期；告警进程在投递截止后才恢复，也会补记漏发。到目标仍未受理、PushPlus 明确拒绝、24 小时内分析失败（计算中途有新数据、任务自动重排的不算），或 worker 心跳超过 30 分钟未更新时各记一次事件，同一事件不重复。没有投递意图的漏发在 `GET /api/deliveries` 里显示为 `status=missed` 的记录，`failure_code` 为 `worker_not_running`、`snapshot_unavailable` 或 `delivery_not_created`。
 
 数据流停更（`stream_stale`）和 Zepp 凭据失效（`credential_expired`）也写进同一张告警表。第二告警通道（邮件或 Hermes）用户决定暂不接入（2026-10-13，2026-10-14 再次确认）：事件只写入当前数据库，用 `GET /api/delivery-alerts` 查看，`external_channel` 为 `unconfigured`；`journalctl -u vitalis-alerts` 里每个新事件一行，只含原因类别和日期。
 
@@ -113,7 +113,7 @@ API 只在本机监听，电脑和手机通过 ZeroTier 私有网络访问：`de
 
 解析器修正后：`vitalis replay source-journal --source-user U --target-user R --start A --end B --as-of T --allow-production` 用新解析器把加密原始响应回放进独立用户 R；`vitalis replay diff --source-user U --replay-user R --start A --end B` 逐表列出新增、删除和变化的事实；确认后 `vitalis replay apply … --confirm` 用回放结果替换 U 在该窗口（最多 14 天）的事实，被替换的行压缩保存在 `replay_applications`，`vitalis replay undo --application ID --confirm` 恢复。apply 和 undo 都会重算日级特征并排对应日期的重新分析。原始响应随数据库保存、不另设期限；回放用户和 `replay_applications` 在确认无误后按[部署](deployment.md)清理旧数据的方式删除，不长期保留。
 
-每次写入心跳都会喂 systemd 看门狗（unit 设 `WatchdogSec=600`）：进程 10 分钟没有心跳（例如超过 `MemoryHigh` 后被内核节流到停住）会被中止并按 `Restart=on-failure` 重启，中止时 faulthandler 把所有线程的 Python 调用栈打进 journal；未完成的分析在租约过期后重跑。worker 漏掉 21:30 晚报定时任务时（冻结或在调度时刻之后才启动），启动时和之后每 5 分钟检查一次：配置了 PushPlus 投递且当天还没有晚报定时同步或投递记录时，为投递对象补建一次同步，补跑在投递期限和当天午夜之前停止。
+每次写入心跳都会喂 systemd 看门狗（unit 设 `WatchdogSec=600`）：进程 10 分钟没有心跳（例如超过 `MemoryHigh` 后被内核节流到停住）会被中止并按 `Restart=on-failure` 重启，中止时 faulthandler 把所有线程的 Python 调用栈打进 journal；未完成的分析在租约过期后重跑。worker 漏掉 23:00 晚报定时任务时（冻结或在调度时刻之后才启动），启动时和之后每 5 分钟检查一次：配置了 PushPlus 投递且目标日期还没有晚报定时同步或投递记录时，为投递对象补建一次同步。跨午夜后仍按前一天的日期同步、分析和投递，在次日 05:00 的投递截止时刻停止；已延期的晚报也按同一窗口恢复。
 
 ## 发布入口
 

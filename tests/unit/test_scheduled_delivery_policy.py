@@ -49,7 +49,10 @@ def test_scheduled_evening_survives_midnight_as_visible_facts_only():
     assert metadata["partial"] is True
     assert metadata["as_of"] == "2026-10-09T21:45:00Z"
     assert metadata["delivered_as_of"] == "2026-10-10T00:30:00Z"
-    assert metadata["deadline_at"] == "2026-10-10T03:30:00Z"
+    assert metadata["scheduled_for"] == "2026-10-09T23:00:00Z"
+    assert metadata["late_after"] == "2026-10-09T23:30:00Z"
+    assert metadata["delivery_target_at"] == "2026-10-10T00:00:00Z"
+    assert metadata["deadline_at"] == "2026-10-10T05:00:00Z"
     assert metadata["allowed_delay_seconds"] == 21600
     assert "decision" not in outcome["payload"]
     assert outcome["payload"]["report_context"]["delivery_metadata"] == metadata
@@ -57,7 +60,7 @@ def test_scheduled_evening_survives_midnight_as_visible_facts_only():
 
 
 @pytest.mark.parametrize("now", [
-    datetime(2026, 10, 10, 3, 30, tzinfo=UTC),
+    datetime(2026, 10, 10, 5, 0, tzinfo=UTC),
     datetime(2026, 10, 11, 0, 0, tzinfo=UTC),
 ])
 def test_scheduled_reports_stop_at_finite_deadline(now):
@@ -65,7 +68,7 @@ def test_scheduled_reports_stop_at_finite_deadline(now):
     assert result["status"] == "deferred"
     assert result["reason"] == "stale_plan_expired"
     assert result["delivery_metadata"]["failure_code"] == "delivery_deadline_expired"
-    assert result["delivery_metadata"]["deadline_at"] == "2026-10-10T03:30:00Z"
+    assert result["delivery_metadata"]["deadline_at"] == "2026-10-10T05:00:00Z"
 
 
 def test_scheduled_evening_cannot_send_without_any_observed_facts():
@@ -183,8 +186,8 @@ def test_the_morning_starts_only_after_the_main_sleep_has_ended(wake, minutes, u
 
 
 @pytest.mark.parametrize(("target", "deadline"), [
-    (date(2026, 3, 7), "2026-03-08T08:30:00Z"),
-    (date(2026, 10, 31), "2026-11-01T07:30:00Z"),
+    (date(2026, 3, 7), "2026-03-08T10:00:00Z"),
+    (date(2026, 10, 31), "2026-11-01T09:00:00Z"),
 ])
 def test_evening_delay_uses_six_real_hours_across_dst(target, deadline):
     window = delivery_policy.scheduled_report_window(target, "evening", "America/New_York")

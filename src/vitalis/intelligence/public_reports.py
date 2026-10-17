@@ -864,8 +864,10 @@ def to_public_report_view(value: Any, kind: PublicKind | None = None) -> PublicR
     versions.update(context.get("analysis_versions") or {})
     audit = {key: deepcopy(item) for key, item in (raw.get("metadata") or {}).items() if key in {"profile_revision_used", "input_revision_used", "correction_chain", "supersedes"}}
     summary = []
+    if inferred == "evening":
+        summary.append("晚报仅汇总截至所示时间已同步的训练和活动；未同步或之后的训练尚未计入。")
     if facts_only:
-        summary = [facts_only_notice(metadata, morning=inferred == "morning")]
+        summary.insert(0, facts_only_notice(metadata, morning=inferred == "morning"))
     notice = version_notice(state.get("state"), as_of, context.get("timezone"))
     if notice:
         summary.append(notice)

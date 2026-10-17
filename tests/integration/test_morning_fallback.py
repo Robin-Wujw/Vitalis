@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine
@@ -116,6 +116,24 @@ def _seed(factory, payload: dict, error: str) -> None:
 def _delivery(factory) -> NotificationDelivery:
     with factory() as db:
         return db.query(NotificationDelivery).one()
+
+
+@pytest.mark.parametrize("hour,expected", [(0, 1), (4, 1), (5, 0)])
+def test_previous_evening_rearms_only_before_its_deadline(isolated_database, monkeypatch, hour, expected):
+    from zoneinfo import ZoneInfo
+
+    _seed(isolated_database, _payload(sleep_complete=True, same_day_facts=True), "stored_data_incomplete")
+    with isolated_database.begin() as db:
+        db.query(NotificationDelivery).one().period = "evening"
+    next_day = DAY + timedelta(days=1)
+    now = datetime.combine(next_day, datetime.min.time(), ZoneInfo("Asia/Shanghai")) + timedelta(hours=hour)
+    monkeypatch.setattr("vitalis.time.local_today", lambda: next_day)
+    monkeypatch.setattr(jobs, "_utc_now", lambda: now.astimezone(UTC))
+
+    assert jobs.reconcile_deferred_daily_reports() == expected
+    row = _delivery(isolated_database)
+    assert row.target_date == DAY
+    assert row.status == ("pending" if expected else "deferred")
 
 
 def test_waiting_inside_the_wake_window_queues_no_extra_sync(isolated_database, monkeypatch):

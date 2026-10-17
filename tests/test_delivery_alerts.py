@@ -26,7 +26,7 @@ def test_targets_follow_the_morning_window_and_the_evening_schedule(monkeypatch)
     monkeypatch.setattr(settings, "timezone", "Asia/Shanghai")
     targets = delivery_targets(date(2026, 10, 13))
     assert targets["morning"].astimezone(SHANGHAI).strftime("%H:%M") == "13:30"
-    assert targets["evening"].astimezone(SHANGHAI).strftime("%H:%M") == "22:30"
+    assert targets["evening"].astimezone(SHANGHAI) == datetime(2026, 10, 14, 0, 0, tzinfo=SHANGHAI)
 
 
 def test_target_miss_is_one_event_and_a_rejection_is_reported_once():
@@ -120,18 +120,50 @@ def _alerts(user_id: str) -> list[DeliveryAlertEvent]:
         return HealthRepository(db).delivery_alerts(user_id)
 
 
-def test_stopped_worker_leaves_one_missed_record_and_one_alert_each(alert_owner, client):
+@pytest.mark.parametrize("hour", [0, 6])
+def test_evening_alert_checks_previous_report_day_even_after_deadline(alert_owner, hour):
+    day = date(2026, 10, 23)
+    user_id = f"alert-evening-midnight-{hour}"
+    next_day = day + timedelta(days=1)
+    alert_owner(user_id, day, heartbeat=_local(next_day, hour, 0))
+
+    assert check_delivery_health(now=_local(next_day, hour, 0))["new_alerts"] == 1
+    assert check_delivery_health(now=_local(next_day, hour, 5))["new_alerts"] == 0
+    row, = _alerts(user_id)
+    assert (row.reason, row.period, row.target_date) == ("delivery_target_missed", "evening", day)
+    assert row.payload["cause"] == "snapshot_unavailable"
+
+
+def test_previous_evening_accepted_does_not_raise_midnight_alert(alert_owner):
+    day = date(2026, 10, 24)
+    next_day = day + timedelta(days=1)
+    user_id = "alert-evening-accepted-midnight"
+    alert_owner(user_id, day, heartbeat=_local(next_day, 0, 0))
+    with session_scope() as db:
+        _run(db, user_id + "-run", user_id, day, "SUCCEEDED", at=_local(day, 23, 5))
+        db.flush()
+        db.add(NotificationDelivery(
+            id=user_id + "-delivery", user_id=user_id, analysis_run_id=user_id + "-run",
+            period="evening", target_date=day, status="accepted",
+        ))
+
+    assert check_delivery_health(now=_local(next_day, 0, 5))["new_alerts"] == 0
+    assert _alerts(user_id) == []
+
+
+def test_stopped_worker_records_due_reports_and_alerts_once(alert_owner, client):
     user_id, day = "alert-worker-stopped", date(2026, 10, 20)
     alert_owner(user_id, day, heartbeat=_local(day, 2, 10))
 
     first = check_delivery_health(now=_local(day, 13, 35))
     again = check_delivery_health(now=_local(day, 13, 45))
-    assert first["new_alerts"] == 2 and again["new_alerts"] == 0
+    assert first["new_alerts"] == 3 and again["new_alerts"] == 0
     assert {row.reason for row in _alerts(user_id)} == {"delivery_target_missed", "worker_heartbeat_stale"}
 
     deliveries = client.get("/api/deliveries", headers={"X-User-Id": user_id}).json()
     assert [(item["period"], item["status"], item["failure_code"]) for item in deliveries] == [
         ("morning", "missed", "worker_not_running"),
+        ("evening", "missed", "worker_not_running"),
     ]
 
     # Recovery: the heartbeat moves and the evening report is accepted on time.
@@ -157,14 +189,15 @@ def test_failed_analysis_leaves_one_missed_record_and_alerts_once(alert_owner, c
             at=_local(day - timedelta(days=3), 9, 5),
         )
 
-    assert check_delivery_health(now=_local(day, 13, 35))["new_alerts"] == 2
+    assert check_delivery_health(now=_local(day, 13, 35))["new_alerts"] == 3
     with session_scope() as db:
         db.get(WorkerHeartbeat, "primary").last_seen_at = _local(day, 13, 49).replace(tzinfo=None)
     assert check_delivery_health(now=_local(day, 13, 50))["new_alerts"] == 0
     reasons = sorted(row.reason for row in _alerts(user_id))
-    assert reasons == ["analysis_failed", "delivery_target_missed"]
+    assert reasons == ["analysis_failed", "delivery_target_missed", "delivery_target_missed"]
     deliveries = client.get("/api/deliveries", headers={"X-User-Id": user_id}).json()
     assert [(item["status"], item["failure_code"]) for item in deliveries] == [
+        ("missed", "snapshot_unavailable"),
         ("missed", "snapshot_unavailable"),
     ]
 
@@ -187,14 +220,14 @@ def test_provider_rejection_alerts_once_and_keeps_its_own_delivery_record(alert_
             period="morning", target_date=day, status="accepted",
         ))
 
-    assert check_delivery_health(now=_local(day, 22, 40))["new_alerts"] == 1
+    assert check_delivery_health(now=_local(day, 22, 40))["new_alerts"] == 2
     with session_scope() as db:
         db.get(WorkerHeartbeat, "primary").last_seen_at = _local(day, 22, 59).replace(tzinfo=None)
     assert check_delivery_health(now=_local(day, 23, 0))["new_alerts"] == 0
-    assert [row.reason for row in _alerts(user_id)] == ["provider_rejected"]
+    assert {row.reason for row in _alerts(user_id)} == {"provider_rejected", "delivery_target_missed"}
     deliveries = client.get("/api/deliveries", headers={"X-User-Id": user_id}).json()
     assert {(item["period"], item["status"]) for item in deliveries} == {
-        ("evening", "failed"), ("morning", "accepted"),
+        ("evening", "failed"), ("morning", "accepted"), ("evening", "missed"),
     }
 
 

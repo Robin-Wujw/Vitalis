@@ -308,6 +308,17 @@ class MorningBriefingEngine:
                 if detail:
                     workouts.append(f"逐组观测动作：{detail}。")
         if workouts:
+            updates = context.get("late_training_updates") or {}
+            if updates.get("date") == yesterday.isoformat():
+                notices = []
+                for update in updates.get("items") or []:
+                    workout = update.get("workout") or {}
+                    label = workout.get("sport_mode_label") or workout.get("type_label") or "训练"
+                    duration = workout.get("duration_minutes")
+                    dose = f" {number(duration, 0)} 分钟" if isinstance(duration, (int, float)) and duration > 0 else ""
+                    verb = "补入" if update.get("change") == "added" else "更新"
+                    notices.append(f"较昨晚晚报{verb}{label}{dose}，已纳入本次分析。")
+                workouts = notices + workouts
             sections.append({"key": "observed_training", "title": "昨天已记录的训练", "facts": workouts,
                              "interpretation": [], "limitations": []})
         today_activity = features.get("activity") or {}

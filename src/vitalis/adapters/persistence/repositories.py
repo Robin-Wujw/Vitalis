@@ -5891,6 +5891,41 @@ class HealthRepository:
             orm.NotificationDelivery.period == period,
         )).scalar_one_or_none()
 
+    def sent_evening_training(self, user_id: str, day: date, *, as_of: datetime) -> dict | None:
+        """Read the immutable input actually accepted by the channel, even if stale.
+
+        This is a comparison reference, not a current report query. Reanalysis
+        or a new rules digest must not replace the report the user received.
+        """
+        snapshot = self.db.execute(
+            select(orm.AnalysisSnapshot).join(
+                orm.NotificationDelivery,
+                orm.NotificationDelivery.analysis_run_id == orm.AnalysisSnapshot.analysis_run_id,
+            ).where(
+                orm.NotificationDelivery.user_id == user_id,
+                orm.NotificationDelivery.target_date == day,
+                orm.NotificationDelivery.period == "evening",
+                orm.NotificationDelivery.status.in_(("accepted", "delivered")),
+                orm.NotificationDelivery.provider_id.is_not(None),
+                orm.AnalysisSnapshot.user_id == user_id,
+                orm.AnalysisSnapshot.profile_type == "daily",
+                orm.AnalysisSnapshot.period_end == day,
+                orm.AnalysisSnapshot.generated_at <= _naive_utc(as_of),
+            ).order_by(orm.AnalysisSnapshot.generated_at.desc()).limit(1)
+        ).scalar_one_or_none()
+        if snapshot is None:
+            return None
+        payload = snapshot.payload
+        workouts = ((payload.get("features") or {}).get("training") or {}).get("recent_workouts")
+        if not isinstance(workouts, list):
+            return None
+        return {
+            "user_id": user_id, "date": day.isoformat(),
+            "analysis_run_id": snapshot.analysis_run_id,
+            "as_of": (payload.get("report_context") or {}).get("as_of"),
+            "workouts": workouts,
+        }
+
     def notification_deliveries(
         self, user_id: str, *, limit: int = 100
     ) -> list[orm.NotificationDelivery]:

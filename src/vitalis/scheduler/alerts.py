@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from vitalis.config import settings
@@ -21,7 +21,7 @@ EXTERNAL_CHANNEL = "unconfigured"
 
 
 def delivery_targets(day: date) -> dict[str, datetime]:
-    """Alert instants for today's morning and evening reports."""
+    """Alert instants for a report day, including its evening's next-day target."""
     from vitalis.application.delivery_policy import scheduled_report_window
 
     targets = {}
@@ -49,7 +49,6 @@ def check_delivery_health(*, now: datetime | None = None) -> dict:
         evaluate_alert_candidates,
         heartbeat_is_stale,
     )
-
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     today = current.astimezone(ZoneInfo(settings.timezone)).date()
     owner = settings.push_user if settings.push_user and settings.pushplus_token else None
@@ -68,6 +67,14 @@ def check_delivery_health(*, now: datetime | None = None) -> dict:
             if not repository.user_exists(user_id):
                 continue
             deliveries = repository.notification_deliveries(user_id, limit=100)
+            observations = [
+                DeliveryObservation(
+                    period=row.period, target_date=row.target_date,
+                    status=row.status, last_error=row.last_error,
+                    provider_status=row.provider_status, delivery_id=row.id,
+                )
+                for row in deliveries
+            ]
             is_owner = user_id == owner
             missing_cause = (
                 "worker_not_running" if heartbeat_is_stale(heartbeat_at, current)
@@ -80,14 +87,7 @@ def check_delivery_health(*, now: datetime | None = None) -> dict:
                 now=current,
                 local_day=today,
                 targets=delivery_targets(today) if is_owner else None,
-                deliveries=[
-                    DeliveryObservation(
-                        period=row.period, target_date=row.target_date,
-                        status=row.status, last_error=row.last_error,
-                        provider_status=row.provider_status, delivery_id=row.id,
-                    )
-                    for row in deliveries
-                ],
+                deliveries=observations,
                 missing_causes={"morning": missing_cause, "evening": missing_cause},
                 heartbeat_at=heartbeat_at if is_owner else None,
                 analysis_failures=[
@@ -105,6 +105,19 @@ def check_delivery_health(*, now: datetime | None = None) -> dict:
                     for row in repository.provider_rejected_deliveries(user_id, limit=100)
                 ],
             )
+            if is_owner:
+                previous_day = today - timedelta(days=1)
+                previous_cause = (
+                    "worker_not_running" if heartbeat_is_stale(heartbeat_at, current)
+                    else "snapshot_unavailable"
+                    if repository.latest_analysis_snapshot(user_id, "daily", previous_day) is None
+                    else "delivery_not_created"
+                )
+                candidates += evaluate_alert_candidates(
+                    user_id, now=current, local_day=previous_day,
+                    targets={"evening": delivery_targets(previous_day)["evening"]},
+                    deliveries=observations, missing_causes={"evening": previous_cause},
+                )
             for candidate in candidates:
                 if repository.delivery_alert(user_id, candidate.event_key) is not None:
                     continue

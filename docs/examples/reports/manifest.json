@@ -43,14 +43,14 @@
         "media_type": "text/markdown",
         "template": "markdown",
         "renderer_version": "4.0",
-        "content_sha256": "ac7ca537a3984d5c0a1ac8f855432f18ec9892fb921bc57fc5e1b420b18cd5a1"
+        "content_sha256": "c235b00af4d68009f6db83f2e935a3d09603fdbd40939b0f459c5eb6223453d0"
       },
       "html": {
         "title": "Vitalis 晚报 · 二头肌弯举总次数增加",
         "media_type": "text/html",
         "template": "html",
         "renderer_version": "4.0",
-        "content_sha256": "62763d050f1454ea7487728b263aa52d72b2b76bf7783abb9794bf953ce5ea5d"
+        "content_sha256": "aeb769f3bf707bfb1769a016634d5b8af274ff31d95504460bac6ff7979ef1a2"
       }
     },
     "weekly": {

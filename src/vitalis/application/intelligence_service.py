@@ -220,6 +220,9 @@ class IntelligenceCommand:
                     timezone_name=self._timezone,
                 )
                 identity = repo.identity_context(user_id)
+                previous_evening_training = repo.sent_evening_training(
+                    user_id, target - timedelta(days=1), as_of=run.started_at,
+                )
                 response_feedback = repo.subjective_feedback(
                     user_id, target - timedelta(days=179), target
                 )
@@ -264,6 +267,7 @@ class IntelligenceCommand:
                 AnalysisDataset(
                     raw=raw,
                     identity=identity,
+                    previous_evening_training=previous_evening_training,
                     response_feedback=tuple(response_feedback),
                     weekly_feedback=tuple(weekly_feedback),
                     monthly_feedback=tuple(monthly_feedback),

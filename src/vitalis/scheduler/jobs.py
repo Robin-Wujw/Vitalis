@@ -12,12 +12,13 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from vitalis.config import settings
+from vitalis.application.delivery_policy import EVENING_SCHEDULE
 
 log = logging.getLogger("vitalis.scheduler")
 
 MORNING_FALLBACK_NO_FACTS_REASON = "morning_fallback_no_facts"
 # The evening report is a cron job; the morning follows the wake window below.
-SCHEDULED_REPORT_SYNCS = {"evening": (21, 30, 1)}
+EVENING_REPORT_SYNC_DAYS = 1
 CATCH_UP_GRACE = timedelta(minutes=2)
 MORNING_PROBE_TRIGGER = "morning_probe"
 MORNING_REPORT_SYNC_DAYS = 2
@@ -136,6 +137,7 @@ def _create_attempt(
     trigger_ref: str | None = None,
     repository=None,
     sleep_only: bool = False,
+    target_date: date | None = None,
 ):
     from vitalis.bootstrap import get_connector
     connector = get_connector("zepp")
@@ -151,6 +153,12 @@ def _create_attempt(
         kwargs["repository"] = repository
     if sleep_only:
         kwargs["sleep_only"] = True
+    if target_date is not None:
+        from vitalis.adapters.zepp.fetcher import FetchWindow
+
+        kwargs["window"] = FetchWindow.local_dates(
+            target_date - timedelta(days=days - 1), target_date, settings.timezone,
+        )
     return create(user_id, **kwargs)
 
 
@@ -162,9 +170,10 @@ def _sync_user(
     trigger_ref: str | None = None,
     repository=None,
     sleep_only: bool = False,
+    target_date: date | None = None,
 ) -> str | None:
     """Create a ledger entry only; the dispatcher owns network execution."""
-    if trigger_ref is None and repository is None and not sleep_only:
+    if trigger_ref is None and repository is None and not sleep_only and target_date is None:
         attempt = _create_attempt(user_id, days, trigger=label)
     else:
         attempt = _create_attempt(
@@ -174,6 +183,7 @@ def _sync_user(
             trigger_ref=trigger_ref,
             repository=repository,
             sleep_only=sleep_only,
+            target_date=target_date,
         )
     attempt_id = attempt.id if attempt is not None else None
     log.info("%s queued: user=%s attempt=%s", label, user_id, attempt_id)
@@ -311,17 +321,17 @@ def _morning_wake_step(
 
 
 def evening_analysis_job() -> None:
-    _profile_push_job("evening", sync_days=SCHEDULED_REPORT_SYNCS["evening"][2])
+    _profile_push_job("evening", sync_days=EVENING_REPORT_SYNC_DAYS)
 
 
 def catch_up_scheduled_reports() -> int:
-    """Queue today's evening sync when the worker missed its cron run.
+    """Queue a missed evening sync while its report is still deliverable.
 
     The scheduler keeps cron state in memory, so a worker that was frozen or
-    restarted across 21:30 would otherwise skip that report entirely. Only the
+    restarted across the scheduled time would otherwise skip that report. Only the
     PushPlus delivery owner is caught up, since the missed report is what
     matters. A run counts once its scheduled sync or delivery intent exists;
-    catch-up stops at the report deadline and never crosses midnight. The
+    catch-up keeps the original report date across midnight until its deadline. The
     morning needs no catch-up: its wake window job resumes from stored state.
     """
     from zoneinfo import ZoneInfo
@@ -331,39 +341,42 @@ def catch_up_scheduled_reports() -> int:
     from vitalis.adapters.persistence import session_scope
     from vitalis.adapters.persistence.models import NotificationDelivery, SyncAttempt
     from vitalis.application.delivery_policy import scheduled_report_window
+    from vitalis.time import local_day_utc_bounds
 
     if not settings.push_user or not settings.pushplus_token:
         return 0
     now = _utc_now()
     zone = ZoneInfo(settings.timezone)
     today = now.astimezone(zone).date()
-    midnight = datetime.combine(today + timedelta(days=1), datetime.min.time(), zone)
     queued = 0
-    for period, (_hour, _minute, sync_days) in SCHEDULED_REPORT_SYNCS.items():
-        window = scheduled_report_window(today, period, settings.timezone)
+    period = "evening"
+    for target in (today - timedelta(days=1), today):
+        window = scheduled_report_window(target, period, settings.timezone)
         scheduled = datetime.fromisoformat(window["scheduled_for"].replace("Z", "+00:00"))
         deadline = datetime.fromisoformat(window["deadline_at"].replace("Z", "+00:00"))
-        if not scheduled + CATCH_UP_GRACE <= now < min(deadline, midnight):
+        if not scheduled + CATCH_UP_GRACE <= now < deadline:
             continue
         user_id = settings.push_user
         if user_id not in _get_authorized_users():
             return queued
+        _, sync_end = local_day_utc_bounds(target, settings.timezone)
         with session_scope() as db:
             ran = db.execute(select(SyncAttempt.id).where(
                 SyncAttempt.user_id == user_id,
                 SyncAttempt.trigger == period,
                 SyncAttempt.trigger_ref == user_id,
                 SyncAttempt.created_at >= scheduled.replace(tzinfo=None),
+                SyncAttempt.window_end == sync_end.replace(tzinfo=None),
             ).limit(1)).first() or db.execute(select(NotificationDelivery.id).where(
                 NotificationDelivery.user_id == user_id,
-                NotificationDelivery.target_date == today,
+                NotificationDelivery.target_date == target,
                 NotificationDelivery.period == period,
             ).limit(1)).first()
         if ran:
             continue
         log.warning("%s report run was missed; catching up: user=%s", period, user_id)
         try:
-            _sync_user(user_id, days=sync_days, label=period)
+            _sync_user(user_id, days=EVENING_REPORT_SYNC_DAYS, label=period, target_date=target)
             queued += 1
         except Exception:
             log.exception("%s catch-up enqueue failed: user=%s", period, user_id)
@@ -687,6 +700,20 @@ def drain_notification_polls(*, max_polls: int = 1) -> int:
 
 def reconcile_deferred_daily_reports() -> int:
     """Rearm deferred daily intents once usable facts or the wait end arrive."""
+    from vitalis.time import local_today
+
+    if not settings.push_user or not settings.pushplus_token:
+        return 0
+    today = local_today()
+    now = _utc_now()
+    return sum(
+        _reconcile_deferred_reports_for_day(target, today=today, now=now)
+        for target in (today - timedelta(days=1), today)
+    )
+
+
+def _reconcile_deferred_reports_for_day(target: date, *, today: date, now: datetime) -> int:
+    """Include yesterday's evening intent until its finite delivery deadline."""
     import hashlib
 
     from sqlalchemy import select
@@ -700,22 +727,22 @@ def reconcile_deferred_daily_reports() -> int:
         stored_profile_is_usable,
     )
     from vitalis.application.jobs import create_analysis_job
-    from vitalis.time import local_today
 
-    if not settings.push_user or not settings.pushplus_token:
-        return 0
-    today = local_today()
-    now = _utc_now()
-    window = _morning_window(today)
+    window = _morning_window(target)
     fallback = window["partial_fallback_after"]
     deadline = window["deadline_at"]
-    evening_window = scheduled_report_window(today, "evening", settings.timezone)
+    evening_window = scheduled_report_window(target, "evening", settings.timezone)
     evening_scheduled = datetime.fromisoformat(
         evening_window["scheduled_for"].replace("Z", "+00:00")
     )
     evening_deadline = datetime.fromisoformat(
         evening_window["deadline_at"].replace("Z", "+00:00")
     )
+    periods = ["morning"] if target == today else []
+    if evening_scheduled <= now < evening_deadline:
+        periods.append("evening")
+    if not periods:
+        return 0
     changed = 0
     with session_scope() as db:
         repo = HealthRepository(db)
@@ -724,8 +751,8 @@ def reconcile_deferred_daily_reports() -> int:
             return 0
         rows = db.execute(select(NotificationDelivery).where(
             NotificationDelivery.user_id == owner.id,
-            NotificationDelivery.target_date == today,
-            NotificationDelivery.period.in_(("morning", "evening")),
+            NotificationDelivery.target_date == target,
+            NotificationDelivery.period.in_(periods),
             NotificationDelivery.status == "deferred",
             NotificationDelivery.last_error.in_((
                 "snapshot_unavailable",
@@ -737,16 +764,16 @@ def reconcile_deferred_daily_reports() -> int:
         if not rows:
             return 0
         pending = ", ".join(f"{row.period}:{row.last_error}" for row in rows)
-        if now >= deadline:
+        if "morning" in periods and now >= deadline:
             changed += repo.expire_morning_deferred_notification_delivery(
-                owner.id, today, now=now
+                owner.id, target, now=now
             )
             if changed:
                 log.info("deferred reports [%s]: morning expired at deadline", pending)
             rows = [row for row in rows if row.period != "morning"]
             if not rows:
                 return changed
-        snapshot = repo.latest_analysis_snapshot(owner.id, "daily", today)
+        snapshot = repo.latest_analysis_snapshot(owner.id, "daily", target)
         if snapshot is None:
             recoverable = [
                 row for row in rows
@@ -755,7 +782,7 @@ def reconcile_deferred_daily_reports() -> int:
             if not recoverable:
                 return changed
             material = (
-                f"{owner.id}:{today}:{owner.analysis_input_revision}:"
+                f"{owner.id}:{target}:{owner.analysis_input_revision}:"
                 f"{_current_analysis_config_digest()}"
             )
             key = "daily-recovery:" + hashlib.sha256(material.encode()).hexdigest()
@@ -768,35 +795,35 @@ def reconcile_deferred_daily_reports() -> int:
         else:
             for row in rows:
                 usable = (
-                    stored_profile_is_usable(snapshot.payload, today, row.period)
+                    stored_profile_is_usable(snapshot.payload, target, row.period)
                     and has_same_day_facts(snapshot.payload)
                 )
                 if row.period == "morning":
                     if usable and row.last_error == "sleep_incomplete":
                         changed += repo.rearm_morning_deferred_notification_delivery(
-                            owner.id, snapshot.analysis_run_id, today
+                            owner.id, snapshot.analysis_run_id, target
                         )
                     elif usable and row.last_error != MORNING_FALLBACK_NO_FACTS_REASON:
                         changed += repo.rearm_unavailable_notification_deliveries(
-                            owner.id, snapshot.analysis_run_id, today, period="morning",
+                            owner.id, snapshot.analysis_run_id, target, period="morning",
                         )
                     elif row.last_error == "sleep_incomplete" and fallback <= now < deadline:
                         # The wake window is over: send what was observed, or
                         # keep the missed record when there is nothing to show.
                         if has_same_day_facts(snapshot.payload):
                             changed += repo.rearm_morning_deferred_notification_delivery(
-                                owner.id, snapshot.analysis_run_id, today
+                                owner.id, snapshot.analysis_run_id, target
                             )
                         else:
-                            changed += int(repo.mark_morning_fallback_no_facts(owner.id, today))
+                            changed += int(repo.mark_morning_fallback_no_facts(owner.id, target))
                 elif usable and evening_scheduled <= now < evening_deadline:
                     changed += repo.rearm_unavailable_notification_deliveries(
-                        owner.id, snapshot.analysis_run_id, today, period=row.period,
+                        owner.id, snapshot.analysis_run_id, target, period=row.period,
                     )
             if changed:
                 log.info("deferred reports [%s]: %s intents updated", pending, changed)
             return changed
-    create_analysis_job(user_id, today, key)
+    create_analysis_job(user_id, target, key)
     log.info("deferred reports [%s]: recovery analysis queued", pending)
     return 1
 
@@ -852,10 +879,9 @@ def start_scheduler() -> BackgroundScheduler:
         id="nightly_sync", misfire_grace_time=3600,
         max_instances=1, coalesce=True,
     )
-    hour, minute, _days = SCHEDULED_REPORT_SYNCS["evening"]
     scheduler.add_job(
         evening_analysis_job,
-        CronTrigger(hour=hour, minute=minute, timezone=settings.timezone),
+        CronTrigger(hour=EVENING_SCHEDULE.hour, minute=EVENING_SCHEDULE.minute, timezone=settings.timezone),
         id="evening_analysis", misfire_grace_time=1800,
         max_instances=1, coalesce=True,
     )

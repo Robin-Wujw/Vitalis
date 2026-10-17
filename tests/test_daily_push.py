@@ -201,7 +201,7 @@ def test_morning_test_delivery_returns_accepted_without_filesystem_state(monkeyp
     assert not list(tmp_path.glob("*.sent"))
 
 
-@pytest.mark.parametrize("period, hour", [("morning", 9), ("evening", 21)])
+@pytest.mark.parametrize("period, hour", [("morning", 9), ("evening", 23)])
 def test_scheduled_delivery_issues_feedback_link_and_sends_the_final_body(monkeypatch, period, hour):
     from hashlib import sha256
     import re

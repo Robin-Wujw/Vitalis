@@ -92,6 +92,7 @@ class AnalysisDataset:
 
     raw: RawDailyProfile
     identity: Mapping[str, object] = field(default_factory=dict)
+    previous_evening_training: dict | None = None
     response_feedback: tuple[SubjectiveFeedback, ...] = ()
     weekly_feedback: tuple[dict, ...] | None = None
     monthly_feedback: tuple[dict, ...] | None = None
@@ -144,6 +145,17 @@ def analyze_with_trace(
     build_daily = daily_builder or build_daily_profile
 
     daily = build_daily(request.analysis_run_id, raw, identity)
+    from vitalis.intelligence.training_updates import compare_evening_training
+
+    training = daily.model_dump(mode="json")["features"].get("training") or {}
+    updates = compare_evening_training(
+        user_id=request.user_id, day=request.target_date, as_of=request.as_of,
+        workouts=training.get("recent_workouts") or [], previous=dataset.previous_evening_training,
+    )
+    if updates:
+        daily = daily.model_copy(update={
+            "report_context": {**daily.report_context, "late_training_updates": updates},
+        })
     daily = daily.model_copy(update={"evidence_refs": list(policy.evidence_refs)})
     detected_events = tuple(daily.events)
     daily = daily.model_copy(update={

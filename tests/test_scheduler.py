@@ -61,8 +61,8 @@ def test_scheduler_uses_configured_timezone_cron_and_single_dispatcher(monkeypat
     assert abs((datetime.now(timezone.utc) - morning[2]["next_run_time"]).total_seconds()) < 5
     evening = next(item for item in captured if item[2]["id"] == "evening_analysis")
     assert evening[0] is jobs.evening_analysis_job
-    assert "hour='21'" in str(evening[1])
-    assert "minute='30'" in str(evening[1])
+    assert "hour='23'" in str(evening[1])
+    assert "minute='0'" in str(evening[1])
     dispatcher = next(item for item in captured if item[2]["id"] == "sync_dispatcher")
     assert dispatcher[0] is jobs.dispatcher_job
     assert all(item[2]["max_instances"] == 1 and item[2]["coalesce"] for item in captured)
@@ -418,9 +418,9 @@ def catch_up_database(monkeypatch):
 
     queued = []
 
-    def sync_user(user_id, days, label):
+    def sync_user(user_id, days, label, *, target_date=None):
         queued.append((user_id, days, label))
-        _add_attempt(factory, f"queued-{len(queued)}", label, jobs._utc_now())
+        _add_attempt(factory, f"queued-{len(queued)}", label, jobs._utc_now(), target_date=target_date)
         return f"queued-{len(queued)}"
 
     monkeypatch.setattr("vitalis.adapters.persistence.session_scope", isolated_session_scope)
@@ -433,12 +433,16 @@ def catch_up_database(monkeypatch):
     engine.dispose()
 
 
-def _add_attempt(factory, attempt_id, trigger, created_at, trigger_ref="owner"):
+def _add_attempt(factory, attempt_id, trigger, created_at, trigger_ref="owner", target_date=None):
+    from vitalis.time import local_day_utc_bounds
+
+    target_date = target_date or created_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
+    start, end = local_day_utc_bounds(target_date, "Asia/Shanghai")
     with factory.begin() as db:
         db.add(SyncAttempt(
             id=attempt_id, user_id="owner", trigger=trigger, trigger_ref=trigger_ref,
-            request_key=attempt_id, window_start=datetime(2026, 10, 11, 16),
-            window_end=datetime(2026, 10, 12, 16), status="succeeded",
+            request_key=attempt_id, window_start=start.replace(tzinfo=None),
+            window_end=end.replace(tzinfo=None), status="succeeded",
             created_at=created_at.replace(tzinfo=None),
         ))
 
@@ -447,8 +451,12 @@ def _add_attempt(factory, attempt_id, trigger, created_at, trigger_ref="owner"):
     ((2026, 10, 12, 9, 31), []),
     ((2026, 10, 12, 10, 5), []),
     ((2026, 10, 12, 21, 31), []),
-    ((2026, 10, 12, 21, 45), [("owner", 1, "evening")]),
-    ((2026, 10, 13, 0, 10), []),
+    ((2026, 10, 12, 21, 45), []),
+    ((2026, 10, 12, 23, 1), []),
+    ((2026, 10, 12, 23, 2), [("owner", 1, "evening")]),
+    ((2026, 10, 13, 0, 10), [("owner", 1, "evening")]),
+    ((2026, 10, 13, 4, 59), [("owner", 1, "evening")]),
+    ((2026, 10, 13, 5, 0), []),
 ])
 def test_missed_report_sync_is_caught_up_once_inside_its_window(
     catch_up_database, monkeypatch, local_now, expected,
@@ -463,12 +471,12 @@ def test_missed_report_sync_is_caught_up_once_inside_its_window(
 
 def test_catch_up_counts_only_todays_scheduled_sync(catch_up_database, monkeypatch):
     factory, queued = catch_up_database
-    _add_attempt(factory, "yesterday", "evening", _shanghai(2026, 10, 11, 21, 30))
+    _add_attempt(factory, "yesterday", "evening", _shanghai(2026, 10, 11, 23, 0))
     _add_attempt(
-        factory, "other-ref", "evening", _shanghai(2026, 10, 12, 21, 35),
+        factory, "other-ref", "evening", _shanghai(2026, 10, 12, 23, 5),
         trigger_ref="manual:2026-10-12",
     )
-    monkeypatch.setattr(jobs, "_utc_now", lambda: _shanghai(2026, 10, 12, 21, 45))
+    monkeypatch.setattr(jobs, "_utc_now", lambda: _shanghai(2026, 10, 12, 23, 15))
     assert jobs.catch_up_scheduled_reports() == 1
     assert jobs.catch_up_scheduled_reports() == 0
     assert queued == [("owner", 1, "evening")]
@@ -481,6 +489,29 @@ def test_catch_up_needs_a_configured_delivery_owner(catch_up_database, monkeypat
 
     assert jobs.catch_up_scheduled_reports() == 0
     assert queued == []
+
+
+def test_cross_midnight_catch_up_sync_keeps_the_previous_report_day(monkeypatch):
+    from vitalis.adapters.zepp.sync_coordinator import ZeppSyncCoordinator
+
+    queued = []
+    coordinator = ZeppSyncCoordinator()
+
+    def create_attempt(user_id, *, days, trigger, trigger_ref, window):
+        queued.append(coordinator._window(window, days))
+        return SimpleNamespace(id="evening-catch-up")
+
+    monkeypatch.setattr(settings, "timezone", "Asia/Shanghai")
+    monkeypatch.setattr("vitalis.time.local_today", lambda: date(2026, 10, 13))
+    monkeypatch.setattr(
+        "vitalis.bootstrap.get_connector",
+        lambda _source: SimpleNamespace(create_attempt=create_attempt),
+    )
+    jobs._sync_user("owner", 1, "evening", target_date=date(2026, 10, 12))
+
+    window, = queued
+    assert window.start_day("Asia/Shanghai") == "2026-10-12"
+    assert window.end_day("Asia/Shanghai") == "2026-10-12"
 
 
 def test_heartbeat_feeds_the_systemd_watchdog(monkeypatch):

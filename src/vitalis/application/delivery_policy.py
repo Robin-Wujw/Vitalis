@@ -27,7 +27,7 @@ _UNUSABLE_SYNC_STATES = {"needs_reauth", "token_required", "failed", "cancelled"
 # stops waiting for a finished sleep at the window end (13:00, user decision
 # 2026-10-17), and only then turns late.
 DEFAULT_MORNING_WINDOW = (time(7, 30), time(13, 0))
-EVENING_SCHEDULE = time(21, 30)
+EVENING_SCHEDULE = time(23, 0)
 LATE_AFTER_SECONDS = 30 * 60
 MORNING_DEADLINE_AFTER_WINDOW_SECONDS = 90 * 60
 EVENING_DEADLINE_SECONDS = 6 * 3600

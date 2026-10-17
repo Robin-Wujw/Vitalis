@@ -25,7 +25,7 @@ SHANGHAI = ZoneInfo("Asia/Shanghai")
 def test_targets_follow_the_morning_window_and_the_evening_schedule(monkeypatch):
     monkeypatch.setattr(settings, "timezone", "Asia/Shanghai")
     targets = delivery_targets(date(2026, 10, 13))
-    assert targets["morning"].astimezone(SHANGHAI).strftime("%H:%M") == "11:30"
+    assert targets["morning"].astimezone(SHANGHAI).strftime("%H:%M") == "13:30"
     assert targets["evening"].astimezone(SHANGHAI).strftime("%H:%M") == "22:30"
 
 
@@ -124,8 +124,8 @@ def test_stopped_worker_leaves_one_missed_record_and_one_alert_each(alert_owner,
     user_id, day = "alert-worker-stopped", date(2026, 10, 20)
     alert_owner(user_id, day, heartbeat=_local(day, 2, 10))
 
-    first = check_delivery_health(now=_local(day, 11, 35))
-    again = check_delivery_health(now=_local(day, 11, 45))
+    first = check_delivery_health(now=_local(day, 13, 35))
+    again = check_delivery_health(now=_local(day, 13, 45))
     assert first["new_alerts"] == 2 and again["new_alerts"] == 0
     assert {row.reason for row in _alerts(user_id)} == {"delivery_target_missed", "worker_heartbeat_stale"}
 
@@ -149,7 +149,7 @@ def test_stopped_worker_leaves_one_missed_record_and_one_alert_each(alert_owner,
 
 def test_failed_analysis_leaves_one_missed_record_and_alerts_once(alert_owner, client):
     user_id, day = "alert-analysis-failed", date(2026, 10, 21)
-    alert_owner(user_id, day, heartbeat=_local(day, 11, 34))
+    alert_owner(user_id, day, heartbeat=_local(day, 13, 34))
     with session_scope() as db:
         _run(db, "alert-failed-run", user_id, day, "FAILED", at=_local(day, 9, 5))
         _run(
@@ -157,10 +157,10 @@ def test_failed_analysis_leaves_one_missed_record_and_alerts_once(alert_owner, c
             at=_local(day - timedelta(days=3), 9, 5),
         )
 
-    assert check_delivery_health(now=_local(day, 11, 35))["new_alerts"] == 2
+    assert check_delivery_health(now=_local(day, 13, 35))["new_alerts"] == 2
     with session_scope() as db:
-        db.get(WorkerHeartbeat, "primary").last_seen_at = _local(day, 11, 49).replace(tzinfo=None)
-    assert check_delivery_health(now=_local(day, 11, 50))["new_alerts"] == 0
+        db.get(WorkerHeartbeat, "primary").last_seen_at = _local(day, 13, 49).replace(tzinfo=None)
+    assert check_delivery_health(now=_local(day, 13, 50))["new_alerts"] == 0
     reasons = sorted(row.reason for row in _alerts(user_id))
     assert reasons == ["analysis_failed", "delivery_target_missed"]
     deliveries = client.get("/api/deliveries", headers={"X-User-Id": user_id}).json()

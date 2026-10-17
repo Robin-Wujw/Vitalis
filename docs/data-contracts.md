@@ -25,6 +25,8 @@
 
 时间戳通常以 UTC 保存，报告按配置时区（默认 `Asia/Shanghai`）解释本地日。日内区间使用明确截止时刻；跨日睡眠按解析后的本地报告日期归属。`period_start`/`period_end` 是包含端点的本地日期范围，`generated_at` 是生成时刻，`as_of` 表示数据看到的时刻。
 
+昨夜主睡眠是否已结束记在 `features.sleep.finished`。Zepp 把手机上传时刻之前的最后一分钟睡眠当作醒来，上传发生在仍在睡或短暂醒来时，记录就是半截的。睡眠时长达到前 14 晚中位数（`usual_duration_minutes`，少于 5 晚为未知）的 75%，或醒来后已上传至少 30 分钟手表数据（`recorded_after_wake_minutes`，按截至 `as_of` 最新的心率分钟计，没有数据时为未知）而睡眠没有被延长，才算结束；晨报只用已结束的睡眠出完整版，时间和兜底见[运维](operations.md)。
+
 ## 信号与基线
 
 信号注册表 `src/vitalis/intelligence/signals.py` 为每个规范指标登记源字段、单位、日期语义（`sleep_day`、`activity_day`、`calendar_day`）、资格、覆盖规则、可见渠道（晨报、晚报、Hermes、API）、是否进入决策（`yes`、`no`、`shadow`）以及缺失或迟到时的处理；新信号先登记再进入分析。逐信号状态为 `AVAILABLE`、`PARTIAL`、`STALE`、`UNKNOWN`、`INSUFFICIENT`，整份报告的 `data_quality` 不能代替逐信号状态。个人基线取窗口内每日值的中位数和 MAD，窗口长度随比较记录在 `baseline_window_days`。

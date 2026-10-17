@@ -879,6 +879,29 @@ class HealthRepository:
             float(minutes) if isinstance(minutes, (int, float)) and not isinstance(minutes, bool) else None,
         )
 
+    def sleep_minutes_by_night(self, user_id: str, start: date, end: date) -> dict[date, object]:
+        """Stored asleep minutes per wake date in ``[start, end]``."""
+        rows = self.db.execute(
+            select(orm.SleepRecord.date, orm.SleepRecord.data).where(
+                orm.SleepRecord.user_id == user_id,
+                orm.SleepRecord.date.between(start, end),
+            )
+        ).all()
+        return {night: (data or {}).get("sleep_duration") for night, data in rows}
+
+    def latest_heart_rate_at(self, user_id: str, start: datetime, end: datetime) -> datetime | None:
+        """UTC time of the newest stored heart-rate sample in ``[start, end]``.
+
+        The watch uploads minute heart rate together with the sleep summary, so
+        this is how far the uploaded data reaches.
+        """
+        value = self.db.execute(select(func.max(orm.MetricSample.timestamp)).where(
+            orm.MetricSample.user_id == user_id,
+            orm.MetricSample.metric == "heart_rate",
+            orm.MetricSample.timestamp.between(_naive_utc(start), _naive_utc(end)),
+        )).scalar_one_or_none()
+        return value.replace(tzinfo=timezone.utc) if value is not None else None
+
     def sleep_range(self, user_id: str, start: date, end: date) -> list[dict]:
         rows = self.db.execute(
             select(orm.SleepRecord).where(

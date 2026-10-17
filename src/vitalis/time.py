@@ -39,6 +39,17 @@ def local_day_utc_bounds(
     return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
+def local_clock_at(
+    day: date, clock: time | str | None, timezone_name: str | None = None,
+) -> datetime | None:
+    """The aware instant of a stored local clock time on ``day``; None if unreadable."""
+    parsed = _clock_time(clock)
+    if parsed is None:
+        return None
+    zone = ZoneInfo(timezone_name) if timezone_name else local_timezone()
+    return datetime.combine(day, parsed, tzinfo=zone)
+
+
 def local_sleep_window(
     sleep_day: date, bedtime: time | str | None, wake_time: time | str | None,
     timezone_name: str | None = None,

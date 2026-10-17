@@ -41,11 +41,13 @@ def isolated_database(tmp_path, monkeypatch):
     engine.dispose()
 
 
-def _payload(*, sleep_complete: bool, same_day_facts: bool) -> dict:
+def _payload(*, sleep_complete: bool, same_day_facts: bool, finished: bool | None = None) -> dict:
+    stored = sleep_complete or finished is False
     sleep = {
-        "status": "AVAILABLE" if sleep_complete else "PARTIAL",
+        "status": "AVAILABLE" if stored else "PARTIAL",
         "duration_minutes": 420 if same_day_facts else None,
-        "wake_time": "08:00:00" if sleep_complete else None,
+        "wake_time": "08:00:00" if stored else None,
+        "finished": sleep_complete if finished is None else finished,
     }
     features = {"sleep": sleep}
     if same_day_facts:
@@ -186,7 +188,7 @@ def test_fallback_after_the_wake_window_sends_facts_only(
     monkeypatch.setattr(
         jobs,
         "_utc_now",
-        lambda: datetime(2026, 8, 29, 3, 5, tzinfo=UTC),
+        lambda: datetime(2026, 8, 29, 5, 5, tzinfo=UTC),
     )
     sent = []
 
@@ -202,7 +204,7 @@ def test_fallback_after_the_wake_window_sends_facts_only(
     monkeypatch.setattr(
         daily_push,
         "_delivery_now",
-        lambda: datetime(2026, 8, 29, 3, 5, tzinfo=UTC),
+        lambda: datetime(2026, 8, 29, 5, 5, tzinfo=UTC),
     )
     monkeypatch.setattr(daily_push, "local_today", lambda: DAY)
 
@@ -211,6 +213,43 @@ def test_fallback_after_the_wake_window_sends_facts_only(
     assert jobs.drain_notification_deliveries() == 1
     assert sent[0]["delivery_metadata"]["facts_only"] is True
     assert sent[0]["delivery_metadata"]["coverage_reason"] == "sleep_incomplete"
+    assert _delivery(isolated_database).status == "accepted"
+
+
+def test_a_sleep_still_unfinished_at_one_pm_goes_out_as_facts_only(
+    isolated_database, monkeypatch,
+):
+    _seed(
+        isolated_database,
+        _payload(sleep_complete=False, same_day_facts=True, finished=False),
+        "sleep_incomplete",
+    )
+    sent = []
+
+    class OfflinePush:
+        def __init__(self, pushplus_token, **kwargs):
+            pass
+
+        def push_daily_profile(self, user_id, profile, period):
+            sent.append(profile)
+            return {"_pushplus_handler": "ok"}
+
+    monkeypatch.setattr(daily_push, "PushService", OfflinePush)
+    monkeypatch.setattr(daily_push, "local_today", lambda: DAY)
+    for now in (datetime(2026, 8, 29, 4, 55, tzinfo=UTC), datetime(2026, 8, 29, 5, 5, tzinfo=UTC)):
+        monkeypatch.setattr(jobs, "_utc_now", lambda now=now: now)
+        monkeypatch.setattr(daily_push, "_delivery_now", lambda now=now: now)
+        if now.hour == 4:
+            # 12:55 in Shanghai: the stored sleep may still be cut short, keep waiting.
+            assert jobs.reconcile_deferred_daily_reports() == 0
+            assert _delivery(isolated_database).status == "deferred"
+            continue
+        assert jobs.reconcile_deferred_daily_reports() == 1
+        assert jobs.drain_notification_deliveries() == 1
+    assert len(sent) == 1
+    assert sent[0]["delivery_metadata"]["facts_only"] is True
+    assert sent[0]["delivery_metadata"]["coverage_reason"] == "sleep_unconfirmed"
+    assert "decision" not in sent[0]
     assert _delivery(isolated_database).status == "accepted"
 
 
@@ -225,7 +264,7 @@ def test_fallback_without_same_day_facts_keeps_a_missed_record(
     monkeypatch.setattr(
         jobs,
         "_utc_now",
-        lambda: datetime(2026, 8, 29, 3, 5, tzinfo=UTC),
+        lambda: datetime(2026, 8, 29, 5, 5, tzinfo=UTC),
     )
     monkeypatch.setattr(
         daily_push,
@@ -269,7 +308,7 @@ def test_morning_deadline_closes_a_deferred_record(
     monkeypatch.setattr(
         jobs,
         "_utc_now",
-        lambda: datetime(2026, 8, 29, 4, 35, tzinfo=UTC),
+        lambda: datetime(2026, 8, 29, 6, 35, tzinfo=UTC),
     )
 
     assert jobs.reconcile_deferred_daily_reports() == 1

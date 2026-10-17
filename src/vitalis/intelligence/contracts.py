@@ -458,6 +458,21 @@ class SleepFeatures(BaseModel):
     wake_count_deviation: Deviation | None = None
     stage_timeline_available: bool = False
     stage_slice_count: int = Field(default=0, ge=0)
+    usual_duration_minutes: float | None = Field(
+        default=None, ge=0,
+        description="Median asleep minutes of the 14 nights before; unknown below 5 nights",
+    )
+    recorded_after_wake_minutes: int | None = Field(
+        default=None, ge=0,
+        description="Minutes of uploaded watch data after the wake time; unknown without data",
+    )
+    finished: bool = Field(
+        default=False,
+        description=(
+            "The main sleep has ended: at least 75% of the usual night, or 30 minutes of "
+            "watch data after the wake time without the sleep being extended"
+        ),
+    )
     limitations: list[str] = Field(default_factory=list)
     limitation_labels: list[str] = Field(default_factory=list)
 

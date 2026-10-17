@@ -130,7 +130,7 @@ def load_settings(environ: Mapping[str, str]) -> Settings:
         integer("MORNING_WAKE_START_MINUTE", 30, 0, 59),
     )
     morning_wake_end = time(
-        integer("MORNING_WAKE_END_HOUR", 11, 0, 23),
+        integer("MORNING_WAKE_END_HOUR", 13, 0, 23),
         integer("MORNING_WAKE_END_MINUTE", 0, 0, 59),
     )
     if morning_wake_end <= morning_wake_start:
@@ -179,7 +179,7 @@ def load_settings(environ: Mapping[str, str]) -> Settings:
         morning_wake_start=morning_wake_start,
         morning_wake_end=morning_wake_end,
         morning_wake_poll_interval_seconds=integer("MORNING_WAKE_POLL_INTERVAL_SECONDS", 900, 60, 1200),
-        morning_wake_max_probes=integer("MORNING_WAKE_MAX_PROBES", 14, 1, 96),
+        morning_wake_max_probes=integer("MORNING_WAKE_MAX_PROBES", 22, 1, 96),
         host=environ.get("HOST", "127.0.0.1"),
         port=local_port,
         public_url=public_url,

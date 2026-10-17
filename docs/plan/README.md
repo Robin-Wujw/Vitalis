@@ -20,7 +20,7 @@
 
 | 优先级 | 改动 | 前置 |
 | --- | --- | --- |
-| P0 | [晨报醒来窗口的一周验收](wake-triggered-morning.md) | 运行满一周（2026-10-20） |
+| P0 | [晨报醒来窗口的一周验收](wake-triggered-morning.md) | 新规则运行满一周（2026-10-24） |
 | P0 | [不用插件，在电脑网页上连接 Zepp](zepp-web-login.md) | 回填完成；稳定两周后删插件（2026-10-28） |
 | P1 | [缩短同步写事务，避免心跳争用](sync-write-transactions.md) | 先补逐事务耗时与双连接合成复现 |
 | P2 | [漏发告警的第二通道](delivery-alerts.md) | 用户选定通道 |

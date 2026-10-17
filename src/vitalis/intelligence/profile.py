@@ -105,6 +105,9 @@ class RawDailyProfile:
     report_context: dict = field(default_factory=dict)
     series: dict[str, list[SeriesPoint]] = field(default_factory=dict)
     heart_rate_samples: list[SeriesPoint] = field(default_factory=list)
+    # Newest uploaded heart-rate minute of the target day: how far the watch
+    # data reaches, which tells whether the stored main sleep has ended.
+    heart_rate_seen_until: datetime | None = None
     sleep_by_day: dict[date, dict] = field(default_factory=dict)
     activity_by_day: dict[date, dict] = field(default_factory=dict)
     training_by_day: dict[date, dict] = field(default_factory=dict)
@@ -165,6 +168,10 @@ class ProfileLoader:
         raw.user_profile = profile or self.repo.user_profile(user_id)
         raw.training_preferences = self.repo.training_preferences(user_id)
         raw.sleep_by_day = _records_by_day(self.repo.sleep_range(user_id, start, day))
+        day_start, day_end = local_day_utc_bounds(day, zone_name)
+        raw.heart_rate_seen_until = self.repo.latest_heart_rate_at(
+            user_id, day_start, min(day_end, cutoff)
+        )
         raw.activity_by_day = _records_by_day(self.repo.activity_range(user_id, start, day))
         raw.training_by_day = _records_by_day(self.repo.training_range(user_id, start, day))
         coverage_start = min(

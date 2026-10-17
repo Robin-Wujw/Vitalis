@@ -680,3 +680,53 @@ def test_feature_day_drops_the_same_stream_vendor_daily_value():
         )
     points = [point for point in raw.series["stress"] if point.day == history]
     assert [(point.value, point.sample_count) for point in points] == [(30.0, 60)]
+
+
+def test_sleep_features_say_whether_the_main_sleep_has_ended():
+    from zoneinfo import ZoneInfo
+
+    from vitalis.intelligence.analyzers import SleepAnalyzer
+
+    user_id = "sleep-ended"
+    day = date(2026, 10, 17)
+    zone = "Asia/Shanghai"
+
+    def at(hour, minute):
+        return datetime(2026, 10, 17, hour, minute, tzinfo=ZoneInfo(zone)).astimezone(timezone.utc)
+
+    def heart_rate(start, end):
+        return [
+            MetricSample(user_id=user_id, metric="heart_rate", timestamp=start + timedelta(minutes=step),
+                         value=55, unit="bpm", source="zepp", source_scope="device", device_id="DEV-1")
+            for step in range(int((end - start).total_seconds() // 60) + 1)
+        ]
+
+    def sleep_of(raw):
+        return SleepAnalyzer().analyze(raw, BaselineEngine().build(raw.series, day))[0]
+
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        repo.delete_for_user(user_id)
+        repo.upsert_user(user_id)
+        for offset in range(1, 15):
+            repo.save_daily(NormalizedDaily(user_id=user_id, date=day - timedelta(days=offset), sleep=SleepRecord(
+                user_id=user_id, date=day - timedelta(days=offset), sleep_duration=440,
+            )))
+        # The phone uploaded at 07:09 during a brief awakening.
+        repo.save_daily(NormalizedDaily(user_id=user_id, date=day, sleep=SleepRecord(
+            user_id=user_id, date=day, sleep_duration=275,
+            bedtime=datetime.strptime("02:26", "%H:%M").time(),
+            wake_time=datetime.strptime("07:04", "%H:%M").time(),
+        )))
+        repo.save_metric_samples(heart_rate(at(2, 26), at(7, 8)))
+        partial = sleep_of(ProfileLoader(repo).load(user_id, day, as_of=at(7, 30), timezone_name=zone))
+        repo.save_metric_samples(heart_rate(at(7, 9), at(7, 40)))
+        before_upload = sleep_of(ProfileLoader(repo).load(user_id, day, as_of=at(7, 30), timezone_name=zone))
+        awake = sleep_of(ProfileLoader(repo).load(user_id, day, as_of=at(7, 45), timezone_name=zone))
+
+    assert (partial.usual_duration_minutes, partial.recorded_after_wake_minutes, partial.finished) == (
+        440.0, 4, False,
+    )
+    # The analysis cutoff hides minutes uploaded after it.
+    assert (before_upload.recorded_after_wake_minutes, before_upload.finished) == (26, False)
+    assert (awake.recorded_after_wake_minutes, awake.finished) == (36, True)

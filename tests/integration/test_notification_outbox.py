@@ -34,11 +34,11 @@ DELIVERY_NOW = datetime(2026, 8, 29, 1, 45, 0, tzinfo=timezone.utc)
 def _expected_scheduled_morning_payload(payload):
     metadata = {
         "scheduled_for": "2026-08-28T23:30:00Z",
-        "partial_fallback_after": "2026-08-29T03:00:00Z",
-        "late_after": "2026-08-29T03:30:00Z",
-        "delivery_target_at": "2026-08-29T03:30:00Z",
-        "deadline_at": "2026-08-29T04:30:00Z",
-        "allowed_delay_seconds": 18000,
+        "partial_fallback_after": "2026-08-29T05:00:00Z",
+        "late_after": "2026-08-29T05:30:00Z",
+        "delivery_target_at": "2026-08-29T05:30:00Z",
+        "deadline_at": "2026-08-29T06:30:00Z",
+        "allowed_delay_seconds": 25200,
         "timezone": "Asia/Shanghai",
         "required_signals": ["sleep_complete", "prior_7d_training_history"],
         "as_of": None,
@@ -188,7 +188,7 @@ def test_scheduler_delivers_exact_saved_run_without_filesystem_marker(
         "report_context": {"training_history": {
             "status": "COMPLETE", "prior_7d_verified": True,
         }},
-        "features": {"sleep": {"status": "AVAILABLE", "wake_time": "08:00:00"}},
+        "features": {"sleep": {"status": "AVAILABLE", "wake_time": "08:00:00", "finished": True}},
     }
     try:
         with factory.begin() as db:
@@ -249,7 +249,7 @@ def test_dispatcher_delivers_before_sync_invalidates_saved_snapshot(tmp_path, mo
         "report_context": {"training_history": {
             "status": "COMPLETE", "prior_7d_verified": True,
         }},
-        "features": {"sleep": {"status": "AVAILABLE", "wake_time": "08:00:00"}},
+        "features": {"sleep": {"status": "AVAILABLE", "wake_time": "08:00:00", "finished": True}},
     }
     try:
         with factory.begin() as db:
@@ -476,7 +476,7 @@ def test_claimed_delivery_uses_latest_eligible_run_before_sending(
         "report_context": {"training_history": {
             "status": "COMPLETE", "prior_7d_verified": True,
         }},
-        "features": {"sleep": {"status": "AVAILABLE", "wake_time": "08:00:00"}},
+        "features": {"sleep": {"status": "AVAILABLE", "wake_time": "08:00:00", "finished": True}},
     }
     old_payload = {**base_payload, "report_marker": "old"}
     new_payload = {**base_payload, "report_marker": "new"}
@@ -715,7 +715,7 @@ def test_http_5xx_marks_outbox_delivery_uncertain(tmp_path, monkeypatch):
         "report_context": {"training_history": {
             "status": "COMPLETE", "prior_7d_verified": True,
         }},
-        "features": {"sleep": {"status": "AVAILABLE", "wake_time": "08:00:00"}},
+        "features": {"sleep": {"status": "AVAILABLE", "wake_time": "08:00:00", "finished": True}},
     }
     try:
         with factory.begin() as db:

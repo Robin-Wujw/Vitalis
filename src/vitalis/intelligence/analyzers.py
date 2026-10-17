@@ -42,8 +42,9 @@ from .profile import (
 )
 from .readiness import wake_charge_summary
 from .running import RunningAnalyzer
+from .sleep_completion import main_sleep_finished, minutes_recorded_after, usual_sleep_minutes
 from .strength import StrengthAnalyzer, reported_set_count
-from vitalis.time import local_sleep_window, utc_to_local
+from vitalis.time import local_clock_at, local_sleep_window, utc_to_local
 
 from .localization import (
     AVAILABILITY_LABELS,
@@ -163,6 +164,13 @@ class SleepAnalyzer:
             if wake_count is not None and wake_baseline else None
         )
         stages = record.get("stages") if isinstance(record.get("stages"), list) else []
+        usual = usual_sleep_minutes(
+            {night: item.get("sleep_duration") for night, item in raw.sleep_by_day.items()}, raw.day,
+        )
+        recorded = minutes_recorded_after(
+            local_clock_at(raw.day, record.get("wake_time"), raw.timezone_name),
+            raw.heart_rate_seen_until,
+        )
         observed_fields = record.get("observed_fields") or []
         if not isinstance(observed_fields, (list, tuple, set)):
             observed_fields = []
@@ -191,6 +199,9 @@ class SleepAnalyzer:
             wake_count_deviation=wake_deviation,
             stage_timeline_available=bool(stages),
             stage_slice_count=len(stages),
+            usual_duration_minutes=round(usual, 1) if usual is not None else None,
+            recorded_after_wake_minutes=recorded,
+            finished=main_sleep_finished(duration, usual, recorded),
             limitations=limitations,
             limitation_labels=labels(limitations, LIMITATION_LABELS),
         ), state

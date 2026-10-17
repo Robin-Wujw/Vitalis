@@ -12,21 +12,28 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
+from vitalis.intelligence.sleep_completion import (
+    MIN_MAIN_SLEEP_MINUTES,
+    main_sleep_finished,
+    minutes_recorded_after,
+)
+from vitalis.time import local_clock_at
+
 ReportPeriod = Literal["morning", "evening"]
 
 
 _UNUSABLE_SYNC_STATES = {"needs_reauth", "token_required", "failed", "cancelled"}
 # Mornings follow the wake time: the report may go out from the window start,
-# stops waiting for sleep at the window end, and only then turns late.
-DEFAULT_MORNING_WINDOW = (time(7, 30), time(11, 0))
+# stops waiting for a finished sleep at the window end (13:00, user decision
+# 2026-10-17), and only then turns late.
+DEFAULT_MORNING_WINDOW = (time(7, 30), time(13, 0))
 EVENING_SCHEDULE = time(21, 30)
 LATE_AFTER_SECONDS = 30 * 60
 MORNING_DEADLINE_AFTER_WINDOW_SECONDS = 90 * 60
 EVENING_DEADLINE_SECONDS = 6 * 3600
 EVENING_DELIVERY_TARGET_SECONDS = 60 * 60
-# A main sleep shorter than this, or ending this long before the window start,
-# is treated as a record the phone uploaded while the user was still asleep.
-MORNING_MIN_MAIN_SLEEP_MINUTES = 180
+# A main sleep ending this long before the window start is treated as a record
+# the phone uploaded while the user was still asleep.
 MORNING_EARLIEST_WAKE_BEFORE_WINDOW = timedelta(hours=3)
 
 
@@ -90,7 +97,7 @@ def wake_time_is_plausible(
     wake time (2026-10-11: a record fetched at 02:00 stayed unchanged until the
     09:57 wake). Such a record is short or ends long before the window.
     """
-    if wake_time is None or sleep_minutes is None or sleep_minutes < MORNING_MIN_MAIN_SLEEP_MINUTES:
+    if wake_time is None or sleep_minutes is None or sleep_minutes < MIN_MAIN_SLEEP_MINUTES:
         return False
     if isinstance(wake_time, str):
         try:
@@ -99,6 +106,29 @@ def wake_time_is_plausible(
             return False
     earliest = datetime.combine(target, morning_window[0]) - MORNING_EARLIEST_WAKE_BEFORE_WINDOW
     return datetime.combine(target, wake_time) >= earliest
+
+
+def morning_sleep_has_ended(
+    target: date,
+    wake_time: str | None,
+    sleep_minutes: float | None,
+    *,
+    usual_minutes: float | None,
+    data_until: datetime | None,
+    timezone: str,
+    morning_window: tuple[time, time] = DEFAULT_MORNING_WINDOW,
+) -> bool:
+    """Whether the stored main sleep may start the morning report.
+
+    Besides a plausible wake time, the sleep must have finished: close to the
+    usual night, or followed by half an hour of uploaded watch data. A brief
+    awakening that made the phone upload (2026-10-17: 02:26-07:04, 275 minutes,
+    then asleep past 09:00) is neither.
+    """
+    if not wake_time_is_plausible(target, wake_time, sleep_minutes, morning_window=morning_window):
+        return False
+    wake_at = local_clock_at(target, wake_time.strip() if isinstance(wake_time, str) else wake_time, timezone)
+    return main_sleep_finished(sleep_minutes, usual_minutes, minutes_recorded_after(wake_at, data_until))
 
 
 def retrospective_age(
@@ -116,14 +146,24 @@ def retrospective_age(
     return age
 
 
-def sleep_is_complete(daily: dict) -> bool:
+def _stored_sleep(daily: dict) -> dict | None:
+    """Last night's main sleep when the snapshot has one with a wake time."""
     sleep = daily.get("features", {}).get("sleep", {})
     wake_time = sleep.get("wake_time")
-    return (
-        sleep.get("status") == "AVAILABLE"
-        and isinstance(wake_time, str)
-        and bool(wake_time.strip())
-    )
+    if sleep.get("status") == "AVAILABLE" and isinstance(wake_time, str) and wake_time.strip():
+        return sleep
+    return None
+
+
+def sleep_is_complete(daily: dict) -> bool:
+    sleep = _stored_sleep(daily)
+    return sleep is not None and sleep.get("finished") is True
+
+
+def sleep_is_unconfirmed(daily: dict) -> bool:
+    """A stored main sleep that may still be cut short by a mid-sleep upload."""
+    sleep = _stored_sleep(daily)
+    return sleep is not None and sleep.get("finished") is not True
 
 
 def training_history(daily: dict) -> dict | None:
@@ -401,7 +441,7 @@ def _prepare_scheduled_delivery(
     late = metadata["late"]
     facts_only = bool(missing or sync_degraded or late)
     if period == "morning" and "sleep_complete" in missing:
-        reason = "sleep_incomplete"
+        reason = "sleep_unconfirmed" if sleep_is_unconfirmed(daily) else "sleep_incomplete"
     elif late:
         reason = "late_report"
     elif missing:

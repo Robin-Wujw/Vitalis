@@ -2,10 +2,12 @@
 
 from copy import deepcopy
 from datetime import UTC, date, datetime, time
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from vitalis.application import delivery_policy
+from vitalis.intelligence.public_reports import SLEEP_UNCONFIRMED_NOTICE, facts_only_notice
 
 
 DAY = date(2026, 10, 9)
@@ -78,16 +80,35 @@ def test_scheduled_evening_cannot_send_without_any_observed_facts():
 def test_scheduled_morning_waits_for_sleep_until_the_wake_window_ends():
     payload = profile(period="morning")
     payload["report_context"]["as_of"] = "2026-10-09T10:00:00Z"
-    waiting = prepare(payload, period="morning", now=datetime(2026, 10, 9, 10, 55, tzinfo=UTC))
+    waiting = prepare(payload, period="morning", now=datetime(2026, 10, 9, 12, 55, tzinfo=UTC))
     assert waiting["status"] == "deferred"
     assert waiting["reason"] == "sleep_incomplete"
-    result = prepare(payload, period="morning", now=datetime(2026, 10, 9, 11, 5, tzinfo=UTC))
+    result = prepare(payload, period="morning", now=datetime(2026, 10, 9, 13, 5, tzinfo=UTC))
     assert result["status"] == "ready"
     assert result["facts_only"] is True
+    assert result["facts_only_reason"] == "sleep_incomplete"
     assert result["payload"]["delivery_metadata"]["late"] is False
     assert "sleep_complete" in result["payload"]["delivery_metadata"]["missing_signals"]
     assert "decision" not in result["payload"]
-    assert prepare(payload, period="morning", now=datetime(2026, 10, 9, 12, 30, tzinfo=UTC))["reason"] == "stale_plan_expired"
+    assert prepare(payload, period="morning", now=datetime(2026, 10, 9, 14, 30, tzinfo=UTC))["reason"] == "stale_plan_expired"
+
+
+def test_a_sleep_cut_short_by_an_upload_waits_then_goes_out_as_facts_only():
+    payload = profile(period="morning")
+    payload["features"]["sleep"] = {
+        "status": "AVAILABLE", "duration_minutes": 275, "wake_time": "07:04:00",
+        "usual_duration_minutes": 439.5, "recorded_after_wake_minutes": 4, "finished": False,
+    }
+    payload["report_context"]["training_history"] = {"status": "COMPLETE", "prior_7d_verified": True}
+    assert delivery_policy.sleep_is_complete(payload) is False
+    waiting = prepare(payload, period="morning", now=datetime(2026, 10, 9, 7, 35, tzinfo=UTC))
+    assert (waiting["status"], waiting["reason"]) == ("deferred", "sleep_incomplete")
+    result = prepare(payload, period="morning", now=datetime(2026, 10, 9, 13, 5, tzinfo=UTC))
+    assert result["status"] == "ready"
+    assert (result["facts_only"], result["facts_only_reason"]) == (True, "sleep_unconfirmed")
+    assert "decision" not in result["payload"]
+    assert result["payload"]["features"]["sleep"]["duration_minutes"] == 275
+    assert facts_only_notice(result["payload"]["delivery_metadata"], morning=True) == SLEEP_UNCONFIRMED_NOTICE
 
 
 def test_morning_window_follows_configured_wake_times():
@@ -106,7 +127,9 @@ def test_morning_window_follows_configured_wake_times():
 
 def test_full_morning_report_can_go_out_as_soon_as_the_window_opens():
     payload = profile(period="morning")
-    payload["features"]["sleep"] = {"status": "AVAILABLE", "duration_minutes": 420, "wake_time": "07:20:00"}
+    payload["features"]["sleep"] = {
+        "status": "AVAILABLE", "duration_minutes": 420, "wake_time": "07:20:00", "finished": True,
+    }
     payload["report_context"]["training_history"] = {"status": "COMPLETE", "prior_7d_verified": True}
     assert prepare(payload, period="morning", now=datetime(2026, 10, 9, 7, 25, tzinfo=UTC))["status"] == "deferred"
     result = prepare(payload, period="morning", now=datetime(2026, 10, 9, 7, 35, tzinfo=UTC))
@@ -126,6 +149,37 @@ def test_full_morning_report_can_go_out_as_soon_as_the_window_opens():
 ])
 def test_only_a_plausible_main_sleep_triggers_the_morning(wake, minutes, expected):
     assert delivery_policy.wake_time_is_plausible(DAY, wake, minutes) is expected
+
+
+def shanghai(hour: int, minute: int) -> datetime:
+    return datetime(DAY.year, DAY.month, DAY.day, hour, minute, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+
+@pytest.mark.parametrize(("wake", "minutes", "usual", "data_until", "expected"), [
+    # 2026-10-17: the phone uploaded during a brief awakening; the night went on.
+    ("07:04:00", 275, 439.5, (7, 8), False),
+    # Half an hour of watch data after the wake without the sleep growing.
+    ("07:04:00", 275, 439.5, (7, 34), True),
+    ("07:04:00", 275, 439.5, (7, 33), False),
+    # Ordinary weekday mornings start right away.
+    ("08:26:00", 427, 439.5, (8, 37), True),
+    ("08:36:00", 330, 440.0, (8, 40), True),
+    ("08:36:00", 329, 440.0, (8, 40), False),
+    # Without five usual nights only watch data after the wake counts.
+    ("08:36:00", 455, None, (8, 40), False),
+    ("08:36:00", 455, None, (9, 6), True),
+    ("08:36:00", 455, None, None, False),
+    # The plausibility floors still apply first.
+    ("04:29:00", 400, 400.0, (6, 0), False),
+    ("09:57:00", 179, 200.0, (11, 0), False),
+    (None, 420, 420.0, (9, 0), False),
+])
+def test_the_morning_starts_only_after_the_main_sleep_has_ended(wake, minutes, usual, data_until, expected):
+    assert delivery_policy.morning_sleep_has_ended(
+        DAY, wake, minutes, usual_minutes=usual,
+        data_until=shanghai(*data_until) if data_until else None,
+        timezone="Asia/Shanghai",
+    ) is expected
 
 
 @pytest.mark.parametrize(("target", "deadline"), [

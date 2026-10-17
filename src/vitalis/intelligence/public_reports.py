@@ -18,6 +18,7 @@ PublicKind = Literal["daily", "morning", "evening", "weekly", "monthly"]
 # The lead sentence of a facts-only report; the briefing payload and the rendered
 # push must say the same thing.
 SLEEP_PENDING_NOTICE = "昨夜睡眠还没同步；以下仅展示已记录事实，今天暂不生成训练安排。"
+SLEEP_UNCONFIRMED_NOTICE = "昨夜睡眠可能还没同步完整；以下仅展示已记录事实，今天暂不生成训练安排。"
 HISTORY_PENDING_NOTICE = "部分运动记录来源还未查全；已记录的训练照常展示，今天暂不生成训练安排。"
 LATE_NOTICE = "这份报告比计划晚发出；为免安排过时，以下只列已记录的事实。"
 SYNC_PENDING_NOTICE = "这次同步没有全部完成；以下只列已记录的事实。"
@@ -33,6 +34,8 @@ def facts_only_notice(metadata: dict[str, Any] | None, *, morning: bool) -> str:
     )
     if reason == "sleep_incomplete":
         return SLEEP_PENDING_NOTICE
+    if reason == "sleep_unconfirmed":
+        return SLEEP_UNCONFIRMED_NOTICE
     if reason == "late_report":
         return LATE_NOTICE
     if reason == "sync_degraded":

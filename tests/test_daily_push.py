@@ -53,7 +53,7 @@ def _daily(*, wake_time="08:15:00", sleep_status="AVAILABLE"):
                 "prior_7d_verified": True,
             },
         },
-        "features": {"sleep": {"status": sleep_status, "wake_time": wake_time}},
+        "features": {"sleep": {"status": sleep_status, "wake_time": wake_time, "finished": wake_time is not None}},
     }
 
 
@@ -382,7 +382,7 @@ def test_retryable_sync_uses_complete_stored_profile(monkeypatch, workflow, tmp_
 @pytest.mark.parametrize("profile", [
     _daily(wake_time=None),
     {"date": "2026-08-29", "data_quality": {"status": "INSUFFICIENT"},
-     "features": {"sleep": {"status": "AVAILABLE", "wake_time": "08:15:00"}}},
+     "features": {"sleep": {"status": "AVAILABLE", "wake_time": "08:15:00", "finished": True}}},
     {**_daily(), "date": "2026-08-28"},
 ])
 def test_degraded_sync_defers_when_stored_profile_is_not_usable(workflow, tmp_path, profile):

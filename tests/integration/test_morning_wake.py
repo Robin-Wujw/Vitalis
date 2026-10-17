@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from vitalis.adapters.persistence import init_db
 from vitalis.adapters.persistence.models import (
-    AnalysisRun, NotificationDelivery, SleepRecord, SyncAttempt, User,
+    AnalysisRun, MetricSample, NotificationDelivery, SleepRecord, SyncAttempt, User,
 )
 from vitalis.adapters.persistence.repositories import _current_analysis_config_digest
 from vitalis.config import settings
@@ -20,6 +20,7 @@ from vitalis.scheduler import jobs
 
 DAY = date(2026, 10, 14)
 ZONE = ZoneInfo("Asia/Shanghai")
+USUAL_MINUTES = 440
 
 
 def local(hour: int, minute: int = 0) -> datetime:
@@ -36,6 +37,12 @@ def wake(tmp_path, monkeypatch):
     factory = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
     with factory.begin() as db:
         db.add(User(id="owner"))
+        # Fourteen ordinary nights: a usual night of 440 minutes.
+        for offset in range(1, 15):
+            night = DAY - timedelta(days=offset)
+            db.add(SleepRecord(user_id="owner", date=night, data={
+                "date": night.isoformat(), "sleep_duration": USUAL_MINUTES, "wake_time": "08:36:00",
+            }))
 
     @contextmanager
     def isolated_session_scope():
@@ -60,7 +67,7 @@ def wake(tmp_path, monkeypatch):
     monkeypatch.setattr("vitalis.adapters.persistence.session_scope", isolated_session_scope)
     monkeypatch.setattr(settings, "timezone", "Asia/Shanghai")
     monkeypatch.setattr(settings, "morning_wake_poll_interval_seconds", 900)
-    monkeypatch.setattr(settings, "morning_wake_max_probes", 14)
+    monkeypatch.setattr(settings, "morning_wake_max_probes", 22)
     monkeypatch.setattr(jobs, "_get_authorized_users", lambda: {"owner"})
     monkeypatch.setattr(jobs, "_sync_user", sync_user)
     state.factory = factory
@@ -91,6 +98,23 @@ def store_sleep(state, wake_time: str, minutes: int) -> None:
             db.add(SleepRecord(user_id="owner", date=DAY, data=data))
         else:
             row.data = data
+
+
+def forget_usual_nights(state) -> None:
+    with state.factory.begin() as db:
+        db.query(SleepRecord).filter(SleepRecord.user_id == "owner", SleepRecord.date < DAY).delete()
+
+
+def upload_heart_rate(state, start: datetime, end: datetime) -> None:
+    """Minute heart rate the phone uploads with the band data, up to ``end``."""
+    with state.factory.begin() as db:
+        moment = start
+        while moment <= end:
+            db.add(MetricSample(
+                user_id="owner", metric="heart_rate", value=52.0, unit="bpm",
+                timestamp=moment.astimezone(timezone.utc).replace(tzinfo=None),
+            ))
+            moment += timedelta(minutes=1)
 
 
 def probes(state):
@@ -128,9 +152,60 @@ def test_morning_sync_follows_the_stored_wake_within_one_poll(wake, wake_at, wri
 def test_no_sleep_probes_up_to_the_cap_then_falls_back_at_the_window_end(wake, monkeypatch):
     monkeypatch.setattr(settings, "morning_wake_max_probes", 6)
     wake.now = local(7, 30)
-    run_until(wake, local(12, 45))
+    run_until(wake, local(14, 45))
     assert len(probes(wake)) == 6
-    assert [item[4] for item in morning_syncs(wake)] == [local(11, 0)]
+    assert [item[4] for item in morning_syncs(wake)] == [local(13, 0)]
+
+
+def test_the_default_probes_cover_the_window_until_one_pm(wake):
+    wake.now = local(7, 30)
+    run_until(wake, local(13, 30))
+    probe_times = [item[4] for item in probes(wake)]
+    assert (len(probe_times), probe_times[-1]) == (22, local(12, 45))
+    assert [item[4] for item in morning_syncs(wake)] == [local(13, 0)]
+
+
+def test_an_upload_during_a_brief_awakening_waits_for_the_rest_of_the_night(wake):
+    """2026-10-17: the phone uploaded at 07:09 while the night went on past 09:30."""
+    store_sleep(wake, "07:04:00", 275)
+    upload_heart_rate(wake, local(2, 26), local(7, 8))
+    wake.now = local(7, 30)
+    run_until(wake, local(9, 50))
+    assert morning_syncs(wake) == []
+    assert len(probes(wake)) == 10
+
+    store_sleep(wake, "09:38:00", 430)
+    upload_heart_rate(wake, local(7, 9), local(9, 44))
+    run_until(wake, local(10, 10))
+    assert [item[4] for item in morning_syncs(wake)] == [local(9, 50)]
+
+
+def test_a_short_night_starts_once_the_watch_shows_half_an_hour_awake(wake):
+    store_sleep(wake, "06:31:00", 300)
+    upload_heart_rate(wake, local(1, 30), local(6, 40))
+    wake.now = local(7, 30)
+    uploaded = local(7, 52)
+
+    def arrive(now):
+        if now == uploaded:
+            upload_heart_rate(wake, local(6, 41), local(7, 51))
+
+    run_until(wake, local(8, 30), on_tick=arrive)
+    assert [item[4] for item in morning_syncs(wake)] == [uploaded]
+
+
+def test_without_usual_nights_only_watch_data_after_the_wake_counts(wake):
+    forget_usual_nights(wake)
+    store_sleep(wake, "08:36:00", 455)
+    upload_heart_rate(wake, local(1, 0), local(8, 40))
+    wake.now = local(8, 45)
+    run_until(wake, local(9, 0))
+    assert morning_syncs(wake) == []
+    upload_heart_rate(wake, local(8, 41), local(9, 10))
+    run_until(wake, local(9, 10))
+    # Minutes stored ahead of the worker clock do not count: half an hour after
+    # the 08:36 wake is 09:06.
+    assert [item[4] for item in morning_syncs(wake)] == [local(9, 6)]
 
 
 def test_a_mid_night_upload_does_not_start_the_morning(wake):
@@ -146,7 +221,7 @@ def test_a_mid_night_upload_does_not_start_the_morning(wake):
 def test_nothing_runs_outside_the_window_or_after_a_delivery_exists(wake):
     store_sleep(wake, "08:36:00", 455)
     assert jobs.morning_wake_job(now=local(7, 29)) == 0
-    assert jobs.morning_wake_job(now=local(12, 30)) == 0
+    assert jobs.morning_wake_job(now=local(14, 30)) == 0
     with wake.factory.begin() as db:
         db.add(AnalysisRun(
             id="manual-run", user_id="owner", target_date=DAY, status="SUCCEEDED",

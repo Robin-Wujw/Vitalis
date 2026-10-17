@@ -221,10 +221,12 @@ def morning_wake_job(now: datetime | None = None) -> int:
 
     From the window start a sleep-only probe runs at most once per poll
     interval, capped per day, until last night's main sleep is stored with a
-    plausible wake time. Then one full morning sync queues the analysis whose
-    delivery intent sends the report. At the window end the morning sync runs
-    anyway and the delivery policy sends facts only or keeps a missed record.
-    A restarted worker resumes from the stored attempts, so no catch-up is needed.
+    plausible wake time and has ended: close to the usual night, or followed
+    by half an hour of uploaded watch data. Then one full morning sync queues
+    the analysis whose delivery intent sends the report. At the window end the
+    morning sync runs anyway and the delivery policy sends facts only or keeps
+    a missed record. A restarted worker resumes from the stored attempts, so no
+    catch-up is needed.
     """
     from zoneinfo import ZoneInfo
 
@@ -249,7 +251,9 @@ def _morning_wake_step(
 ) -> str | None:
     """Queue at most one probe or morning sync for one user; return which."""
     from vitalis.adapters.persistence import HealthRepository, session_scope
-    from vitalis.application.delivery_policy import wake_time_is_plausible
+    from vitalis.application.delivery_policy import morning_sleep_has_ended
+    from vitalis.intelligence.sleep_completion import USUAL_SLEEP_NIGHTS, usual_sleep_minutes
+    from vitalis.time import local_day_utc_bounds
 
     with session_scope() as db:
         repo = HealthRepository(db)
@@ -270,8 +274,14 @@ def _morning_wake_step(
         if any(row.status in _ACTIVE_SYNC_STATES for row in probes):
             return None
         wake_time, sleep_minutes = repo.sleep_wake_summary(user_id, today)
-        awake = wake_time_is_plausible(
+        day_start, _ = local_day_utc_bounds(today, settings.timezone)
+        awake = morning_sleep_has_ended(
             today, wake_time, sleep_minutes,
+            usual_minutes=usual_sleep_minutes(repo.sleep_minutes_by_night(
+                user_id, today - timedelta(days=USUAL_SLEEP_NIGHTS), today - timedelta(days=1),
+            ), today),
+            data_until=repo.latest_heart_rate_at(user_id, day_start, now),
+            timezone=settings.timezone,
             morning_window=settings.morning_wake_window(),
         )
         if awake or now >= wait_until:

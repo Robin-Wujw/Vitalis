@@ -515,10 +515,12 @@ def test_systemd_notify_is_a_noop_outside_systemd(monkeypatch):
     reason="needs unix datagram sockets",
 )
 def test_systemd_notify_sends_one_datagram(monkeypatch, tmp_path):
-    path = tmp_path / "notify.sock"
+    # A socket path holds at most ~107 bytes; tmp_path inside a release worktree
+    # is longer, so bind a short name relative to it.
+    monkeypatch.chdir(tmp_path)
     with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as server:
-        server.bind(str(path))
-        monkeypatch.setenv("NOTIFY_SOCKET", str(path))
+        server.bind("notify.sock")
+        monkeypatch.setenv("NOTIFY_SOCKET", "notify.sock")
         assert jobs._notify_systemd("WATCHDOG=1") is True
         assert server.recv(64) == b"WATCHDOG=1"
 

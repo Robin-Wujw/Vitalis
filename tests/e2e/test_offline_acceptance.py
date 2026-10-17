@@ -16,6 +16,8 @@ import urllib.request
 
 ROOT = Path(__file__).parents[2]
 SKILL = ROOT / "skills" / "vitalis"
+# Loopback requests never go through a shell proxy (the release host exports one).
+_LOOPBACK = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 _ISOLATED_CLI = (
     "import dotenv; dotenv.dotenv_values=lambda *args, **kwargs: {}; "
     "from vitalis.entrypoints.cli import main; raise SystemExit(main())"
@@ -74,7 +76,7 @@ def _ready(origin, process):
         if process.poll() is not None:
             raise AssertionError(f"API exited before ready: {process.returncode}")
         try:
-            with urllib.request.urlopen(origin + "/ready", timeout=1) as response:
+            with _LOOPBACK.open(origin + "/ready", timeout=1) as response:
                 if response.status == 200:
                     return
         except (urllib.error.URLError, TimeoutError):
@@ -114,7 +116,7 @@ def _http(origin, token, path, *, body=None, key=None):
         method="POST" if body is not None else "GET",
     )
     try:
-        with urllib.request.urlopen(request, timeout=8) as response:
+        with _LOOPBACK.open(request, timeout=8) as response:
             return response.status, json.load(response)
     except urllib.error.HTTPError as exc:
         return exc.code, None

@@ -59,7 +59,7 @@ def test_refresh_preserves_facts_and_queues_historical_corrections():
         assert row.detail["strength_sets"][0]["weight_unit"] is None
         assert row.detail["strength_sets"][1:] == before_detail["strength_sets"][1:]
         jobs = repo.analysis_jobs(user)
-        assert any(job.event_type == "catalog_refresh" and job.target_date == started.date() for job in jobs)
+        assert any(job.event_type == "catalog_refresh" and job.target_date == local_day(started) for job in jobs)
         assert repo.analysis_input_revision(user) > revision
         again = refresh_zepp_mappings(db, user, apply=True)
         assert again["workouts_to_update"] == 0

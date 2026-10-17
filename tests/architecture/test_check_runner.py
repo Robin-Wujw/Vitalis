@@ -1,13 +1,22 @@
 """Failure propagation and scope of the unified verification runner."""
 
 from io import BytesIO
+from pathlib import Path
 import sys
 import tarfile
+import tempfile
 import zipfile
 
 import pytest
 
 from tools import check
+
+
+def test_tests_and_runner_keep_temporary_files_in_repository(tmp_path):
+    assert Path(tempfile.gettempdir()).resolve() == check.LOCAL_TMP
+    assert tmp_path.resolve().is_relative_to(check.LOCAL_TMP)
+    environment = check.check_environment()
+    assert {environment[name] for name in ("TMP", "TEMP", "TMPDIR")} == {str(check.LOCAL_TMP)}
 
 
 def test_child_failure_preserves_exit_code(tmp_path):

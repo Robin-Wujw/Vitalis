@@ -94,7 +94,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--day", type=date.fromisoformat, default=date(2026, 10, 7))
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args(argv)
-    with tempfile.TemporaryDirectory(prefix="vitalis-report-examples-") as directory:
+    (ROOT / ".tmp").mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="report-examples-", dir=ROOT / ".tmp") as directory:
         database = Path(directory) / "synthetic.db"
         environment = {
             **os.environ, "DATABASE_URL": f"sqlite:///{database.as_posix()}",
@@ -111,7 +112,15 @@ def main(argv: list[str] | None = None) -> int:
             print(result.stderr, file=sys.stderr)
             return result.returncode
         os.environ.update(environment)
-        examples = _render_examples(args.day)
+        from vitalis.adapters.persistence.database import get_engine
+        try:
+            examples = _render_examples(args.day)
+        finally:
+            # SQLite keeps the demo file open through the process-wide SQLAlchemy
+            # engine. Dispose it, also when rendering fails, before
+            # TemporaryDirectory removes the database on Windows; no health data
+            # or credentials leave this process.
+            get_engine().dispose()
         files: dict[str, str] = {}
         manifest = {
             "dataset": "synthetic_demo", "generator": "tools/generate_report_examples.py",
@@ -142,11 +151,6 @@ def main(argv: list[str] | None = None) -> int:
                 if destination.is_symlink():
                     raise ValueError("report examples must not overwrite a symlink")
                 destination.write_bytes(data)
-        # SQLite keeps the demo file open through the process-wide SQLAlchemy
-        # engine. Dispose it before TemporaryDirectory removes the database on
-        # Windows; no health data or credentials leave this process.
-        from vitalis.adapters.persistence.database import get_engine
-        get_engine().dispose()
         if differences:
             print("report examples differ: " + ", ".join(differences), file=sys.stderr)
             return 1

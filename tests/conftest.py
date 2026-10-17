@@ -2,13 +2,20 @@
 
 import asyncio
 import os
+import tempfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from cryptography.fernet import Fernet
 
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ["ZEPP_MOCK"] = "true"
 os.environ["VITALIS_TOKEN_ENCRYPTION_KEY"] = Fernet.generate_key().decode("ascii")
+# tmp_path、测试里的 tempfile 和子进程临时文件都留在仓库 .tmp/（AGENTS.md「本地生成文件」）。
+LOCAL_TMP = Path(__file__).resolve().parents[1] / ".tmp"
+LOCAL_TMP.mkdir(exist_ok=True)
+os.environ.update(dict.fromkeys(("TMP", "TEMP", "TMPDIR"), str(LOCAL_TMP)))
+tempfile.tempdir = str(LOCAL_TMP)
 
 import fastapi.routing  # noqa: E402
 import httpx  # noqa: E402

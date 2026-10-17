@@ -83,3 +83,4 @@ only-include = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+tmp_path_retention_policy = "failed"

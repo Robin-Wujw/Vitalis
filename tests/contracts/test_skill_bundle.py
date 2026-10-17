@@ -29,7 +29,8 @@ def test_skill_frontmatter_local_links_and_copy(tmp_path):
     assert "X-User-Id" in document
 
     installed = tmp_path / "installed" / "vitalis"
-    assert not installed.is_relative_to(ROOT)
+    # Outside tracked files: only the git-ignored .tmp/ scratch area is allowed.
+    assert not installed.is_relative_to(ROOT) or installed.is_relative_to(ROOT / ".tmp")
     shutil.copytree(SKILL, installed, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     runner = installed / "scripts" / "vitalis_api.py"
     assert runner.is_file()

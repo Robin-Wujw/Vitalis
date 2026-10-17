@@ -9,6 +9,7 @@ __pycache__/
 *.db-*
 .env
 .pytest_cache/
+/.tmp/
 node_modules/
 dist/
 build/

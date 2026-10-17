@@ -22,7 +22,8 @@ TOKEN = "synthetic-private-bearer"
 @pytest.fixture
 def installed(tmp_path):
     bundle = tmp_path / "detached" / "vitalis"
-    assert not bundle.is_relative_to(ROOT)
+    # Outside tracked files: only the git-ignored .tmp/ scratch area is allowed.
+    assert not bundle.is_relative_to(ROOT) or bundle.is_relative_to(ROOT / ".tmp")
     shutil.copytree(SKILL, bundle, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     return bundle / "scripts" / "vitalis_api.py"
 

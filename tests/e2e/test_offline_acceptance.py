@@ -35,6 +35,11 @@ def _command(env, *args, cwd, isolated=False):
     return completed.stdout
 
 
+def _outside_checkout(path):
+    """Fresh runs stay out of tracked files; .tmp/ is the git-ignored local scratch."""
+    return not path.is_relative_to(ROOT) or path.is_relative_to(ROOT / ".tmp")
+
+
 def _port():
     with socket.socket() as handle:
         handle.bind(("127.0.0.1", 0))
@@ -129,7 +134,7 @@ def _http_job(origin, token, job_id, kind):
 
 
 def test_fresh_demo_http_skill_analysis_feedback_and_restart(tmp_path):
-    assert not tmp_path.is_relative_to(ROOT), "end-to-end database must be outside repository"
+    assert _outside_checkout(tmp_path), "end-to-end database must stay outside tracked files"
     database = tmp_path / "fresh.db"
     day = datetime.now(timezone.utc).date().isoformat()
     port = _port()
@@ -202,7 +207,7 @@ def test_fresh_demo_http_skill_analysis_feedback_and_restart(tmp_path):
 
 
 def test_fresh_mock_sync_then_morning_and_evening_without_demo(tmp_path):
-    assert not tmp_path.is_relative_to(ROOT)
+    assert _outside_checkout(tmp_path)
     day = "2026-08-29"  # Saturday exercises the optional workout-detail chunk.
     database = tmp_path / "briefing.db"
     port = _port()

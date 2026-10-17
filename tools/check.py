@@ -20,6 +20,7 @@ import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
+LOCAL_TMP = ROOT / ".tmp"
 PYTHON = sys.executable
 UV = shutil.which("uv") or "uv"
 PYTEST = (PYTHON, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q")
@@ -33,9 +34,18 @@ class Check:
     timeout: int = 180
 
 
+def local_tmp() -> Path:
+    LOCAL_TMP.mkdir(exist_ok=True)
+    return LOCAL_TMP
+
+
 def check_environment(ci: bool = False) -> dict[str, str]:
     env = os.environ.copy()
+    temp = str(local_tmp())
     env.update({
+        "TMP": temp,
+        "TEMP": temp,
+        "TMPDIR": temp,
         "DATABASE_URL": "sqlite:///:memory:",
         "ZEPP_MOCK": "true",
         "VITALIS_ENV": "test",
@@ -58,7 +68,7 @@ def check_environment(ci: bool = False) -> dict[str, str]:
 
 def run_check(check: Check, *, env: dict[str, str]) -> int:
     pytest_step = check.command[:4] == (PYTHON, "-B", "-m", "pytest")
-    context = tempfile.TemporaryDirectory(prefix="vitalis-pytest-") if pytest_step else nullcontext(None)
+    context = tempfile.TemporaryDirectory(prefix="pytest-", dir=local_tmp()) if pytest_step else nullcontext(None)
     with context as temp:
         command = check.command + ((f"--basetemp={temp}",) if temp else ())
         display = subprocess.list2cmdline(command) if os.name == "nt" else shlex.join(command)
@@ -281,7 +291,7 @@ print(f'installed package: {origin}; verified CLI, extension download and {len(e
 
 
 def package_check(env: dict[str, str]) -> int:
-    with tempfile.TemporaryDirectory(prefix="vitalis-package-") as directory:
+    with tempfile.TemporaryDirectory(prefix="package-", dir=local_tmp()) as directory:
         temp = Path(directory)
         wheels = temp / "wheels"
         wheels.mkdir()

@@ -782,28 +782,59 @@ class ZeppParser:
             repetitions = ZeppParser._strength_number(
                 {"value": fields[22]}, ("value",), 1, 1000, integer=True,
             )
-            weight = ZeppParser._strength_number(
-                {"value": fields[21]}, ("value",), 0, 2000,
+            raw_weight = ZeppParser._strength_number(
+                {"value": fields[21]}, ("value",), -float("inf"), float("inf"),
+            )
+            unit_code = ZeppParser._strength_number(
+                {"value": fields[23]}, ("value",), 0, 2**31 - 1, integer=True,
             )
             code = ZeppParser._strength_number(
                 {"value": fields[28]}, ("value",), 1, 2**31 - 1, integer=True,
             )
-            if repetitions is None and weight is None and code is None:
-                continue
-            exercise_name = (
-                resolve_exercise(LAP_62_NAMESPACE, code).label_zh
+            resolution = (
+                resolve_exercise(LAP_62_NAMESPACE, code)
                 if code is not None else None
             )
+            exercise_name = resolution.label_zh if resolution else None
+            # APK tc20: 0/1 are native kg/lb; 11/12 store tenths. 13/14
+            # encode RM/RPE, not mass. Unit 15 is the bodyweight display mode.
+            weight_unit = {0: "kg", 1: "lb", 11: "kg", 12: "lb"}.get(unit_code)
+            weight = raw_weight
+            if weight is not None and unit_code in {11, 12}:
+                weight /= 10
+            if weight is not None and (not 0 <= weight <= 2000 or unit_code in {13, 14, 15}):
+                weight = None
+            bodyweight = raw_weight is not None and raw_weight <= 0 and (
+                unit_code == 15 or resolution is not None and resolution.self_weight_type == 1
+            )
+            if repetitions is None and weight is None and code is None and not bodyweight:
+                continue
             limitations = [
                 "exercise_name_reference_mapping"
                 if exercise_name is not None
                 else "exercise_name_unverified"
             ]
-            limitations.append("weight_unit_unverified" if weight is not None else "weight_unavailable")
+            if bodyweight:
+                limitations.append("bodyweight_vendor_reference")
+            elif unit_code in {13, 14, 15}:
+                limitations.append("non_mass_weight_encoding")
+            if weight is None:
+                limitations.append("weight_unavailable")
+            elif weight_unit is None and not bodyweight:
+                limitations.append("weight_unit_unverified")
+            weight_kg = None
+            if weight is not None and not bodyweight:
+                if weight_unit == "kg":
+                    weight_kg = weight
+                elif weight_unit == "lb":
+                    weight_kg = weight * 0.45359237
             output.append(StrengthSetObservation(
                 source="lap_62", order=order, vendor_exercise_code=code,
                 exercise_name=exercise_name, repetitions=repetitions,
-                weight_value=weight, limitations=limitations,
+                vendor_weight_value=raw_weight, vendor_weight_unit=unit_code,
+                weight_value=weight, weight_unit=weight_unit if weight is not None else None,
+                weight_kg=weight_kg, weight_basis="bodyweight" if bodyweight else None,
+                limitations=limitations,
             ))
         return output
 

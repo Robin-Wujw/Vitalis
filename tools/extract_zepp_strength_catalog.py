@@ -21,6 +21,9 @@ def extract(response: bytes, artifact_digest: str) -> dict:
     codes, entries, placeholders = set(), [], []
     for record in records:
         code, name = record.get("actionType"), record.get("actionName")
+        self_weight_type = record.get("selfWeightType")
+        if type(self_weight_type) is not int or self_weight_type not in {0, 1}:
+            raise ValueError("invalid selfWeightType")
         if type(code) is not int or not 0 <= code < 2**31 or code in codes:
             raise ValueError("invalid or duplicate actionType")
         if not isinstance(name, str) or not name.strip():
@@ -35,14 +38,15 @@ def extract(response: bytes, artifact_digest: str) -> dict:
             "namespace": "zepp.strength.lap_62", "vendor_code": code,
             "canonical_exercise_id": None, "labels": {"zh-CN": name},
             "verification": "verified",
+            "self_weight_type": self_weight_type,
             "provenance": {"catalog_reference": f"/sport/config/muscle?lang=zh_CN#actionType={code}"},
         })
     return {
-        "catalog_revision": "zepp-apk-10.8.7-play-muscle-7e6b4ba6-v2",
+        "catalog_revision": "zepp-apk-10.8.7-play-muscle-7e6b4ba6-v3",
         "provenance": {
             "app_version": "10.8.7-play", "artifact_digest": artifact_digest,
             "catalog_response_digest": digest,
-            "extraction_reference": "APK lap_62[28] -> strengthTrainType -> /sport/config/muscle actionType/actionName",
+            "extraction_reference": "APK lap_62[28] -> strengthTrainType -> /sport/config/muscle actionType/actionName/selfWeightType; tc20.g bodyweight display",
         },
         "source_entry_count": len(records), "placeholders": placeholders,
         "entries": sorted(entries, key=lambda entry: entry["vendor_code"]),

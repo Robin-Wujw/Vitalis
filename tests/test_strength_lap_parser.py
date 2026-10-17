@@ -27,10 +27,11 @@ OBSERVED_CODES = (
 )
 
 
-def lap_row(reps="9", weight="17.5", code="801", columns=62):
+def lap_row(reps="9", weight="17.5", code="801", columns=62, unit=""):
     fields = [""] * 62
     fields[0], fields[1], fields[2] = "1", "30", "-1"
     fields[21], fields[22], fields[28] = str(weight), str(reps), str(code)
+    fields[23] = str(unit)
     if columns > 62:
         fields.extend([""] * (columns - 62))
     return ",".join(fields[:columns])
@@ -133,15 +134,17 @@ def test_provisional_catalog_entry_never_supplies_lap_display_name(monkeypatch):
             "namespace": LAP_62_NAMESPACE, "vendor_code": 64,
             "canonical_exercise_id": None, "labels": {"zh-CN": "unverified"},
             "verification": "provisional", "provenance": {},
+            "self_weight_type": 1,
         }],
     }
     monkeypatch.setattr(catalog, "load_catalog", lambda: catalog.parse_catalog(json.dumps(provisional)))
-    observed, = detail_for(lap_row(code="64")).strength_sets
+    observed, = detail_for(lap_row(code="64", unit=0, weight=0)).strength_sets
     assert observed.vendor_exercise_code == 64
     assert observed.exercise_name is None
     assert observed.exercise_id is None
     assert "exercise_name_unverified" in observed.limitations
     assert "exercise_name_reference_mapping" not in observed.limitations
+    assert observed.weight_basis is None
 
 
 @pytest.mark.parametrize("columns", [3, 61, 63])
@@ -186,6 +189,75 @@ def test_strength_lap_preserves_explicit_zero_without_inventing_unit():
     assert observed.weight_value == 0
     assert observed.weight_kg is None
     assert observed.weight_unit is None
+
+
+@pytest.mark.parametrize("unit,raw,value,label,kg", [
+    (0, 17.5, 17.5, "kg", 17.5), (1, 20, 20, "lb", 9.0718474),
+    (11, 175, 17.5, "kg", 17.5), (12, 200, 20, "lb", 9.0718474),
+    (11, 2500, 250, "kg", 250), (0, 0, 0, "kg", 0),
+])
+def test_strength_lap_decodes_verified_weight_units_before_range_check(unit, raw, value, label, kg):
+    observed, = detail_for(lap_row(weight=raw, unit=unit)).strength_sets
+    assert observed.weight_value == value
+    assert observed.weight_unit == label
+    assert observed.weight_kg == pytest.approx(kg)
+    assert observed.vendor_weight_value == raw
+    assert observed.vendor_weight_unit == unit
+    assert "weight_unit_unverified" not in observed.limitations
+    assert WorkoutDetail.model_validate_json(detail_for(lap_row(weight=raw, unit=unit)).model_dump_json()).strength_sets == [observed]
+
+
+@pytest.mark.parametrize("unit", [13, 14])
+def test_strength_lap_effort_encoding_is_not_physical_weight(unit):
+    observed, = detail_for(lap_row(weight=80, unit=unit)).strength_sets
+    assert observed.vendor_weight_value == 80
+    assert observed.vendor_weight_unit == unit
+    assert observed.weight_value is None
+    assert observed.weight_kg is None
+    assert observed.weight_unit is None
+    assert "non_mass_weight_encoding" in observed.limitations
+
+
+@pytest.mark.parametrize("code,unit,raw,bodyweight", [
+    (64, 0, "0", True), (999999, 15, "0", True),
+    (64, 0, "-1", True), (64, 0, "12", False),
+    (999999, 0, "0", False), (64, 0, "", False),
+    (64, 0, "NaN", False), (64, 0, "bad", False),
+    (999999, 15, "NaN", False),
+])
+def test_strength_lap_bodyweight_requires_explicit_finite_vendor_evidence(code, unit, raw, bodyweight):
+    observed, = detail_for(lap_row(code=code, unit=unit, weight=raw)).strength_sets
+    assert (observed.weight_basis == "bodyweight") is bodyweight
+    if bodyweight:
+        assert observed.weight_kg is None
+        assert "bodyweight_vendor_reference" in observed.limitations
+    if raw in {"", "NaN", "bad", "-1"}:
+        assert observed.weight_value is None
+
+
+@pytest.mark.parametrize("unit", ["", "garbage", "True", "0.5", "-1", "99"])
+def test_unknown_weight_encoding_does_not_default_to_kg(unit):
+    observed, = detail_for(lap_row(unit=unit)).strength_sets
+    assert observed.weight_value == 17.5
+    assert observed.weight_unit is None
+    assert observed.weight_kg is None
+    assert "weight_unit_unverified" in observed.limitations
+
+
+def test_weight_semantics_match_between_buffered_and_streamed_parsers():
+    payload = {"data": {"trackid": int(START.timestamp()), "lap": ";".join([
+        lap_row(unit=0), lap_row(unit=1), lap_row(unit=11, weight=175),
+        lap_row(unit=12, weight=200), lap_row(unit=13, weight=80),
+        lap_row(unit=0, weight=0, code=64), lap_row(unit=15, weight=0),
+    ])}}
+    expected = parse_workout_detail(payload, ParseContext(training_family="strength"))
+    spool = spool_bytes(json.dumps(payload).encode(), max_bytes=32 * 1024 * 1024)
+    try:
+        actual = parse_workout_detail(spool, ParseContext(training_family="strength"))
+        assert actual.detail.strength_sets == expected.detail.strength_sets
+        assert actual.detail.strength_sets[5].weight_basis == "bodyweight"
+    finally:
+        spool.cleanup()
 
 
 def test_strength_lap_skips_rows_without_any_valid_observation():

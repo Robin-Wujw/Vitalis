@@ -52,7 +52,11 @@ Idempotency-Key: <new-or-reused-key>
 
 力量 `lap_62` 的普通解析和流式解析共用同一行解析器及完整已核验动作表（`adapters/zepp/data/strength_exercises.json`）。Zepp 10.8.7-play APK 证明 `lap_62[28] → strengthTrainType → actionType`，官方 `/sport/config/muscle` 中文目录共 1,134 项，其中代码 0 是“选择一项训练”界面占位，其余 **1,133 个唯一动作代码全部映射**；原来只收录实际观测的 26 项不再作为覆盖上限。目录响应 SHA-256 为 `7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb`，资源保留 APK 摘要、版本、字段关系和逐项目录定位，不伪造个人观测证据。
 
-动作名称只提供厂商参考显示名，并保留 `exercise_name_reference_mapping`；没有代码、目录外代码或暂定条目仍保留未知，不补重量单位、负重口径、用户确认或处方资格。回归测试让完整目录同时经过普通和流式解析，再验证落库路径。
+动作名称只提供厂商参考显示名，并保留 `exercise_name_reference_mapping`；没有代码、目录外代码或暂定条目仍保留未知，不补用户确认或处方资格。回归测试让完整目录同时经过普通和流式解析，再验证落库路径。
+
+同版 APK 的 `my91` 解析与 `p6c0.u` 序列化确认 `lap_62[21]` 是重量原值、`[22]` 是次数、`[23]` 是单位编码；`tc20.c/h/j` 确认编码 `0` 为 kg、`1` 为 lb，`11` 为 kg 且原值除以 10、`12` 为 lb 且原值除以 10。先缩放再检查重量范围，规范记录保留 `vendor_weight_value`、`vendor_weight_unit` 供审计，`weight_value/weight_unit` 为解码后的原单位，明确 lb 按 `0.45359237` 换算 `weight_kg`。`13/14` 是 RM/RPE，不能作为物理重量；未知编码不默认为 kg。
+
+`tc20.g` 的自重显示条件是：有限原值不大于 0，并且单位编码为 `15` 或官方动作的 `selfWeightType=1`。目录保留这项厂商标记，暂定条目不能据此判定自重。符合条件时记为 `weight_basis=bodyweight`，报告显示“自重”，不推断身体质量或容量；正重量仍作为记录的负重显示。不符合条件的零值不改成自重；缺失、非法数值与负值哨兵不补成零。没有单位与口径依据的重量仍不进入容量与 1RM。新增字段不改变明细版本或数据库表结构，已存力量记录通过[运维刷新](operations.md)从加密原始记录重读这几列。
 
 运动大类使用 `adapters/zepp/data/sport_modes.json`：对齐 APK 的 `config_sport_type_group.json`、`device_sport_categories.json` 和 `sport_categories.json`，覆盖 **208 个真实项目**，`-1/Training` 占位独立保存但不解析为运动。189 项有 APK 中文，19 项仅有 APK 英文时保留原名称；原有已核验展示名和分类继续使用，84 个新增且没有分类证据的项目归入 `other`、训练家族 `unknown`，不从名称推断健康事实。
 

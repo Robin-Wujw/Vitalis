@@ -26,6 +26,7 @@ class ExerciseResolution:
     status: Literal["verified", "provisional", "unmapped"]
     canonical_exercise_id: str | None = None
     labels: Mapping[str, str] | None = None
+    self_weight_type: int | None = None
 
     @property
     def label_zh(self) -> str | None:
@@ -40,6 +41,7 @@ class CatalogEntry:
     labels: Mapping[str, str]
     verification: Literal["verified", "provisional"]
     provenance: Mapping[str, str]
+    self_weight_type: int | None = None
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,7 @@ class StrengthCatalog:
             return ExerciseResolution(namespace, vendor_code, "provisional")
         return ExerciseResolution(
             namespace, vendor_code, "verified", entry.canonical_exercise_id, entry.labels,
+            entry.self_weight_type,
         )
 
 
@@ -111,6 +114,11 @@ def parse_catalog(text: str) -> StrengthCatalog:
         if canonical_id is not None and not _nonempty_text(canonical_id):
             raise ValueError(f"entry {index} has invalid canonical_exercise_id")
         labels = record.get("labels")
+        self_weight_type = record.get("self_weight_type")
+        if self_weight_type is not None and (
+            type(self_weight_type) is not int or self_weight_type not in {0, 1}
+        ):
+            raise ValueError(f"entry {index} has invalid self_weight_type")
         if not isinstance(labels, dict) or not labels or any(
             locale not in {"zh-CN", "en"} or not _nonempty_text(label)
             for locale, label in labels.items()
@@ -138,6 +146,7 @@ def parse_catalog(text: str) -> StrengthCatalog:
             namespace, code, canonical_id,
             MappingProxyType(dict(labels)), verification,
             MappingProxyType(dict(provenance)),
+            self_weight_type,
         )
     return StrengthCatalog(payload["catalog_revision"], MappingProxyType(entries))
 

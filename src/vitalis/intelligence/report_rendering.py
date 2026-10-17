@@ -148,8 +148,14 @@ def _subtitle(payload: dict[str, Any]) -> str:
 def _set_weight(row: dict[str, Any]) -> str:
     value = row.get("weight_value")
     basis = _BASIS.get(row.get("weight_basis"), "")
+    if row.get("weight_basis") == "bodyweight":
+        if value is None or value == 0:
+            return "自重"
+        unit = row.get("weight_unit")
+        load = f"{number(value)} {unit}" if unit else f"{number(value)}（单位未记录）"
+        return f"自重 + 负重 {load}"
     if value is None:
-        return "自重" if row.get("weight_basis") == "bodyweight" else "负重未记录"
+        return "负重未记录"
     unit = row.get("weight_unit")
     shown = number(value)
     if not unit:

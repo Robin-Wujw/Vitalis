@@ -92,6 +92,136 @@ def test_strength_capacity_abstains_when_weight_qualification_is_missing(field):
     assert summary["limitations"]
 
 
+@pytest.mark.parametrize("weight", [None, 0, 10])
+def test_bodyweight_does_not_supply_effective_mass_for_capacity_or_one_rep_max(weight):
+    confirmed = normalize_exercise(
+        "synthetic-bodyweight", "observed-strength", 1,
+        StrengthExerciseInput(
+            exercise_id="pull_up", exercise_name="引体向上", sets=3, repetitions=8,
+            weight_kg=weight, weight_unit="kg", weight_basis="bodyweight",
+        ),
+    )
+    raw = RawDailyProfile(user_id="synthetic-bodyweight", day=TARGET)
+    raw.workouts = [_workout({}, confirmed=[confirmed])]
+
+    session = StrengthAnalyzer().analyze(raw).recent_sessions[0]
+    volume_points = [
+        item for item in StrengthAnalyzer().trend_points(raw)
+        if item["metric"] == "strength_volume"
+    ]
+
+    assert estimate_one_rep_max(weight, 8, unit="kg", basis="bodyweight") is None
+    assert session.capacity_volume_kg is None
+    assert session.explicit_exercises[0].canonical_qualified is False
+    assert session.explicit_exercises[0].estimated_1rm_kg is None
+    assert volume_points and all(item["value"] is None for item in volume_points)
+
+
+def test_vendor_pounds_keep_observations_and_normalize_explicit_capacity_to_kilograms():
+    raw = RawDailyProfile(user_id="synthetic-pounds", day=TARGET)
+    raw.workouts = [_workout({"strength_sets": [{
+        "source": "strength_sets", "order": 1, "exercise_id": "bench_press",
+        "exercise_name": "卧推", "repetitions": 8, "weight_value": 20,
+        "weight_unit": "lb", "weight_basis": "total",
+    }, {
+        "source": "lap_62", "order": 2, "exercise_name": "卧推",
+        "repetitions": 8, "weight_value": 20, "weight_unit": "lb",
+        "weight_basis": "total",
+    }]})]
+
+    session = StrengthAnalyzer().analyze(raw).recent_sessions[0]
+
+    assert [(item.weight_value, item.weight_unit) for item in session.observed_sets] == [
+        (20, "lb"), (20, "lb"),
+    ]
+    explicit, = session.explicit_exercises
+    assert explicit.weight_kg == pytest.approx(9.0718474)
+    assert explicit.weight_unit == "kg"
+    assert explicit.source == "vendor_explicit"
+    assert session.capacity_volume_kg == 72.6
+    assert explicit.estimated_1rm_kg == 11.5
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize(("weight_fields", "expected"), [
+    ({}, "自重"),
+    ({"weight_value": 0, "weight_unit": "kg"}, "自重"),
+    ({"weight_kg": 0}, "自重"),
+    ({"weight_value": 10, "weight_unit": "kg"}, "自重 + 负重 10 kg"),
+    ({"weight_kg": 10}, "自重 + 负重 10 kg"),
+    ({"weight_value": 12.5, "weight_unit": "lb"}, "自重 + 负重 12.5 lb"),
+])
+def test_bodyweight_and_added_load_match_evening_facts_and_rendered_reports(explicit, weight_fields, expected):
+    item = {
+        "source": "user_confirmed" if explicit else "lap_62",
+        "order": 1, "exercise_name": "引体向上", "repetitions": 8,
+        "weight_basis": "bodyweight", **weight_fields,
+    }
+    session = {
+        "date": TARGET.isoformat(), "duration_minutes": 30,
+        "observed_sets": [] if explicit else [item],
+        "explicit_exercises": [item] if explicit else [],
+    }
+
+    report = EveningBriefingEngine().build(_payload(session))
+    facts = "\n".join(report.sections[0].facts)
+
+    assert expected in facts
+    for target in ("markdown", "html"):
+        content = render_report(report, target).content
+        assert expected in content
+        if expected == "自重":
+            assert "自重 0" not in content
+            assert "负重 0" not in content
+    if expected == "自重":
+        assert "0 千克" not in facts
+        assert "负重 0" not in facts
+
+
+def test_zero_weight_without_bodyweight_evidence_stays_a_numeric_observation():
+    session = {
+        "date": TARGET.isoformat(), "duration_minutes": 30,
+        "observed_sets": [{
+            "source": "lap_62", "order": 1, "exercise_name": "未确认动作",
+            "repetitions": 8, "weight_value": 0,
+        }],
+        "explicit_exercises": [],
+    }
+    report = EveningBriefingEngine().build(_payload(session))
+
+    for content in (
+        "\n".join(report.sections[0].facts),
+        render_report(report, "markdown").content,
+        render_report(report, "html").content,
+    ):
+        assert "负重 0" in content
+        assert "自重" not in content
+
+
+@pytest.mark.parametrize("unit", ["lb", None])
+def test_evening_keeps_observed_weight_value_and_unit_ahead_of_converted_kilograms(unit):
+    session = {
+        "date": TARGET.isoformat(), "duration_minutes": 30,
+        "observed_sets": [{
+            "source": "lap_62", "order": 1, "exercise_name": "卧推",
+            "repetitions": 8, "weight_value": 20, "weight_unit": unit,
+            "weight_kg": 9.0718474,
+        }],
+        "explicit_exercises": [],
+    }
+    report = EveningBriefingEngine().build(_payload(session))
+
+    for content in (
+        "\n".join(report.sections[0].facts),
+        render_report(report, "markdown").content,
+        render_report(report, "html").content,
+    ):
+        assert ("20 lb" if unit else "负重 20（单位未") in content
+        assert "9.1" not in content
+        assert "20 kg" not in content
+        assert "20 千克" not in content
+
+
 def test_observed_sets_keep_a_b_a_order_and_lap_does_not_become_explicit():
     raw = RawDailyProfile(user_id="synthetic-observed", day=TARGET)
     raw.workouts = [_workout({"strength_sets": [

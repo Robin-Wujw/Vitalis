@@ -164,9 +164,20 @@ PushPlus 的 HTTP 200 只表示请求完成；只有业务 `code=200` 且有有�
    ```
 
    以上 `python` 必须是当前 release 的锁定虚拟环境，并加载服务配置。先审查 dry-run 的更改数量、受影响 `activity_day`、未解析命名空间及目录外代码数量。apply 是离线维护操作：暂停 API、worker、定时器及所有其他数据库写入者，用已加载服务配置的 release 环境执行，提交后恢复全部服务并检查心跳，防止同步写入与历史更正互相覆盖。无 schema 变化时保留现库，不因显示名刷新创建数据库备份。旧的直接 SQL 力量刷新入口已经移除。
-4. 刷新通过仓储写入，只改厂商参考映射字段，保留原始数值、单位、获取时间、逐秒样本、source coverage 和用户确认。旧记录缺少命名空间时，只接受已有识别来源或同用户加密 journal 中匹配的 `sport_history` 原始类型及入口；没有证据或证据冲突时跳过并计数。不会由 `vendor_source` 猜测命名空间。
+4. 默认刷新只改厂商参考映射字段，保留原始数值、单位、获取时间、逐秒样本、source coverage 和用户确认。旧记录缺少命名空间时，只接受已有识别来源或同用户加密 journal 中匹配的 `sport_history` 原始类型及入口；没有证据或证据冲突时跳过并计数。不会由 `vendor_source` 猜测命名空间。
 5. apply 在同一事务内递增输入 revision、追加输入事件并创建 `catalog_refresh` 任务，影响范围含更正日及依赖它的已有分析日，不受普通同步近 7 天刷新上限约束。由 worker 完成重算；历史 last-good 快照保持可回看，不原地覆写。重复 dry-run 应没有可更新记录。
 6. 验收自由训练云端 16、力量训练大类、完整目录的普通/流式解析、保存后的逐组名称、分析快照和 API 报告；再次核对服务 SHA、`/live`、`/ready`、doctor 和心跳。报告显示名更新本身不触发真实 PushPlus；补发需要用户已授权的明确投递动作。发布步骤统一按[发布 SOP](deployment.md)。
+
+#### 力量单位与自重刷新
+
+力量单位、自重规则更新时，在同一候选环境额外执行以下 dry run，核对计数后使用 `--apply`：
+
+```bash
+python -m vitalis.zepp_mapping_refresh --user U --strength-weights
+python -m vitalis.zepp_mapping_refresh --user U --strength-weights --apply
+```
+
+这一步只从同用户、同来源模式、同训练与厂商来源的最新完整加密明细重读力量列，校验原始摘要并匹配组序号、动作代码、次数和原重量；不匹配、缺少原始记录或有用户确认的组保持原样并计数。刷新不重解析心率或改变获取时间、原始 journal、source coverage；原厂商重量及单位编码保留供审计。通过仓储写入后按受影响的 `activity_day` 创建分析任务并重建训练日，历史 last-good 快照保留。再次 dry run 应无待更新项；待分析任务完成后再核对最新晚报，不能把“已排队”当作报告已经更新。
 
 | 现象 | 处理 |
 | --- | --- |

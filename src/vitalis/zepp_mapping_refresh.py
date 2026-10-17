@@ -10,7 +10,9 @@ from sqlalchemy import select
 
 from vitalis.adapters.persistence import HealthRepository, session_scope
 from vitalis.adapters.persistence import models as orm
-from vitalis.adapters.persistence.source_journal import SourceJournalRecord, SourceJournalRepository
+from vitalis.adapters.persistence.source_journal import (
+    RAW_SCHEMA_VERSION, JournalError, SourceJournalRecord, SourceJournalRepository,
+)
 from vitalis.adapters.zepp.catalog import verified_lap_labels
 from vitalis.adapters.zepp.parser import ZeppParser
 from vitalis.adapters.zepp.sport_types import (
@@ -24,6 +26,14 @@ _CLOUD_SOURCES = {
     "zepp_cloud_observed", "zepp_cloud_reference", "zepp_os_cloud_compatible", "zepp_apk_cloud_catalog",
 }
 _DEVICE_SOURCES = {"public_zepp_enum", "zepp_apk_device_catalog"}
+_WEIGHT_FIELDS = (
+    "weight_value", "weight_unit", "weight_kg", "weight_basis",
+    "vendor_weight_value", "vendor_weight_unit",
+)
+_WEIGHT_FLAGS = {
+    "weight_unit_unverified", "weight_unavailable", "bodyweight_vendor_reference",
+    "non_mass_weight_encoding",
+}
 
 
 def _namespace(data: dict) -> str | None:
@@ -90,7 +100,82 @@ def _refresh_detail(original: dict, labels: dict[int, str]) -> tuple[dict, int]:
     return detail, count
 
 
-def refresh_zepp_mappings(db, user_id: str, *, apply: bool = False) -> dict:
+def _matching_weight_observation(saved: dict, parsed: dict) -> bool:
+    if saved.get("repetitions") != parsed.get("repetitions"):
+        return False
+    if any(saved.get(key) is not None for key in ("vendor_weight_value", "vendor_weight_unit")):
+        return all(saved.get(key) == parsed.get(key) for key in ("vendor_weight_value", "vendor_weight_unit"))
+    # Before weight semantics were verified, lap[21] was retained only within
+    # this range. Match that historical observation, never a newly scaled value.
+    raw_weight = parsed.get("vendor_weight_value")
+    previous_weight = raw_weight if raw_weight is not None and 0 <= raw_weight <= 2000 else None
+    return saved.get("weight_value") == previous_weight
+
+
+def _refresh_strength_weights(db, row, detail: dict, source_mode: str, counts: Counter) -> int:
+    if detail.get("schema_version") != WORKOUT_DETAIL_SCHEMA_VERSION:
+        return 0
+    saved_sets = [item for item in detail.get("strength_sets") or []
+                  if isinstance(item, dict) and item.get("source") == "lap_62"]
+    if not saved_sets:
+        return 0
+    counts["strength_weight_workouts_checked"] += 1
+    if source_mode not in {"real", "mock", "replay"} or not row.vendor_source:
+        counts["strength_weight_raw_missing"] += 1
+        return 0
+    raw_id = db.scalar(select(SourceJournalRecord.id).where(
+        SourceJournalRecord.user_id == row.user_id,
+        SourceJournalRecord.source == "zepp",
+        SourceJournalRecord.source_mode == source_mode,
+        SourceJournalRecord.stream == "workout_detail",
+        SourceJournalRecord.record_id == f"workout_detail:{row.workout_id}:{row.vendor_source}",
+        SourceJournalRecord.capability == "verified",
+        SourceJournalRecord.incomplete.is_(False),
+        SourceJournalRecord.raw_schema_version == RAW_SCHEMA_VERSION,
+    ).order_by(SourceJournalRecord.fetched_at.desc(), SourceJournalRecord.id.desc()).limit(1))
+    if raw_id is None:
+        counts["strength_weight_raw_missing"] += 1
+        return 0
+    try:
+        payload = SourceJournalRepository(db).read_payload(raw_id, user_id=row.user_id)
+        if isinstance(payload, bytes):
+            payload = json.loads(payload)
+    except (JournalError, ValueError, UnicodeError):
+        counts["strength_weight_raw_invalid"] += 1
+        return 0
+    data = payload.get("data") if isinstance(payload, dict) else None
+    data = data if isinstance(data, dict) else payload
+    if not isinstance(data, dict) or str(data.get("trackid")) != row.workout_id or not isinstance(data.get("lap"), str):
+        counts["strength_weight_raw_invalid"] += 1
+        return 0
+    if ZeppParser._strength_sets(data.get("strengthSets")):
+        counts["strength_weight_explicit_preferred"] += 1
+        return 0
+    parsed_sets = {
+        (item.order, item.vendor_exercise_code): item.model_dump(mode="json")
+        for item in ZeppParser._strength_lap_sets(data["lap"])
+    }
+    changed = 0
+    for saved in saved_sets:
+        flags = saved.get("limitations") or []
+        if not isinstance(flags, list) or "user_confirmed" in flags:
+            counts["strength_weight_sets_protected"] += 1
+            continue
+        parsed = parsed_sets.get((saved.get("order"), saved.get("vendor_exercise_code")))
+        if parsed is None or not _matching_weight_observation(saved, parsed):
+            counts["strength_weight_sets_unmatched"] += 1
+            continue
+        values = {key: parsed.get(key) for key in _WEIGHT_FIELDS}
+        updated_flags = [flag for flag in flags if flag not in _WEIGHT_FLAGS]
+        updated_flags.extend(flag for flag in parsed.get("limitations", []) if flag in _WEIGHT_FLAGS)
+        if all(saved.get(key) == value for key, value in values.items()) and flags == updated_flags:
+            continue
+        saved.update(values, limitations=updated_flags)
+        changed += 1
+    return changed
+
+
+def refresh_zepp_mappings(db, user_id: str, *, apply: bool = False, strength_weights: bool = False) -> dict:
     """Caller owns the transaction; dry run performs no writes or network calls."""
     repo = HealthRepository(db)
     if not repo.user_exists(user_id):
@@ -104,6 +189,12 @@ def refresh_zepp_mappings(db, user_id: str, *, apply: bool = False) -> dict:
     }
     journal_namespaces = _journal_namespaces(db, user_id, wanted)
     labels, counts, days = verified_lap_labels(), Counter(), set()
+    confirmed_workouts = set(db.scalars(select(orm.StrengthExercise.workout_id).where(
+        orm.StrengthExercise.user_id == user_id,
+        orm.StrengthExercise.workout_source == "zepp",
+        orm.StrengthExercise.source == "user_confirmed",
+    ))) if strength_weights else set()
+    source_mode = repo.source_mode(user_id) if strength_weights else "unknown"
     for row in rows:
         data = row.data or {}
         code = data.get("vendor_type_id")
@@ -130,18 +221,25 @@ def refresh_zepp_mappings(db, user_id: str, *, apply: bool = False) -> dict:
             for key in ("type", "sport_mode", "sport_mode_label", "training_family")
         )
         detail, changed_sets = _refresh_detail(row.detail or {}, labels)
-        if not changed_classification and not changed_sets:
+        changed_weights = 0
+        if strength_weights and classification.get("training_family", data.get("training_family")) == "strength":
+            if row.workout_id in confirmed_workouts:
+                counts["strength_weight_workouts_protected"] += 1
+            else:
+                changed_weights = _refresh_strength_weights(db, row, detail, source_mode, counts)
+        if not changed_classification and not changed_sets and not changed_weights:
             continue
         counts["workouts_to_update"] += 1
         counts["workouts_to_reclassify"] += int(changed_classification)
         counts["sets_to_label"] += changed_sets
+        counts["sets_to_refresh_weights"] += changed_weights
         if row.started_at:
             days.add(local_day(row.started_at))
         if not apply:
             continue
         if changed_classification:
             repo.save_workout_classification(user_id, row.workout_id, classification)
-        if changed_sets:
+        if changed_sets or changed_weights:
             fetched = detail.get("fetched_at")
             if not isinstance(fetched, str):
                 raise ValueError("original detail fetched_at is required")
@@ -157,6 +255,11 @@ def refresh_zepp_mappings(db, user_id: str, *, apply: bool = False) -> dict:
         **{key: counts[key] for key in (
             "workouts_to_update", "workouts_to_reclassify", "sets_to_label",
             "namespace_unresolved", "sport_codes_unmapped",
+            "sets_to_refresh_weights", "strength_weight_workouts_checked",
+            "strength_weight_raw_missing", "strength_weight_raw_invalid",
+            "strength_weight_sets_unmatched", "strength_weight_sets_protected",
+            "strength_weight_workouts_protected",
+            "strength_weight_explicit_preferred",
         )},
         "affected_activity_days": sorted(day.isoformat() for day in days),
     }
@@ -166,9 +269,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--user", required=True)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--strength-weights", action="store_true", help="Refresh saved strength weights from matching encrypted source records")
     args = parser.parse_args()
     with session_scope() as db:
-        result = refresh_zepp_mappings(db, args.user, apply=args.apply)
+        result = refresh_zepp_mappings(db, args.user, apply=args.apply, strength_weights=args.strength_weights)
         if not args.apply:
             db.rollback()
     print(json.dumps(result, ensure_ascii=False, indent=2))

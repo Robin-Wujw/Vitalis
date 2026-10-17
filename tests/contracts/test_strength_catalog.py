@@ -63,6 +63,27 @@ def test_unknown_codes_and_other_numeric_namespaces_are_unmapped():
         assert result.status == "unmapped"
         assert result.label_zh is None
         assert result.canonical_exercise_id is None
+        assert result.self_weight_type is None
+
+
+def test_catalog_preserves_verified_self_weight_type():
+    assert resolve_exercise(LAP_62_NAMESPACE, 64).self_weight_type == 1
+    assert resolve_exercise(LAP_62_NAMESPACE, 3).self_weight_type == 0
+    assert all(entry.self_weight_type in {0, 1} for entry in load_catalog().entries.values())
+
+
+@pytest.mark.parametrize("value", [True, "1", -1, 2, 1.5])
+def test_catalog_rejects_invalid_self_weight_type(catalog_payload, value):
+    catalog_payload["entries"][0]["self_weight_type"] = value
+    with pytest.raises(ValueError, match="self_weight_type"):
+        parse_catalog(json.dumps(catalog_payload))
+
+
+def test_provisional_bodyweight_metadata_cannot_qualify_an_observation(catalog_payload):
+    catalog_payload["entries"][0].update(verification="provisional", self_weight_type=1)
+    parsed = parse_catalog(json.dumps(catalog_payload))
+    result = parsed.resolve(LAP_62_NAMESPACE, catalog_payload["entries"][0]["vendor_code"])
+    assert result.self_weight_type is None
 
 
 def test_provisional_entry_is_visible_as_uncertain_without_exposing_its_label(catalog_payload):

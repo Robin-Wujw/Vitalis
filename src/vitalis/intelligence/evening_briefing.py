@@ -230,7 +230,7 @@ class EveningBriefingEngine:
 
     @staticmethod
     def _has_observed_content(item: dict) -> bool:
-        return any(
+        return item.get("weight_basis") == "bodyweight" or any(
             item.get(key) not in (None, "")
             for key in (
                 "exercise_name", "exercise_id", "vendor_exercise_code", "repetitions",
@@ -238,6 +238,20 @@ class EveningBriefingEngine:
                 "duration_seconds", "rest_seconds",
             )
         )
+
+    @staticmethod
+    def _bodyweight_text(item: dict) -> str | None:
+        if item.get("weight_basis") != "bodyweight":
+            return None
+        value = item.get("weight_value")
+        unit = item.get("weight_unit")
+        if value is None:
+            value = item.get("weight_kg")
+            unit = "kg" if value is not None else None
+        if value is None or value == 0:
+            return "自重"
+        load = f"{number(value)} {unit}" if unit else f"{number(value)}（单位未记录）"
+        return f"自重 + 负重 {load}"
 
     @classmethod
     def _observed_set_lines(cls, observed_sets: list[dict]) -> list[str]:
@@ -254,18 +268,22 @@ class EveningBriefingEngine:
             else:
                 bits.append("次数未记录")
             weight_kg = item.get("weight_kg")
-            if isinstance(weight_kg, (int, float)) and not isinstance(weight_kg, bool) and weight_kg >= 0:
+            weight_value = item.get("weight_value")
+            bodyweight = cls._bodyweight_text(item)
+            if bodyweight is not None:
+                bits.append(bodyweight)
+            elif isinstance(weight_value, (int, float)) and not isinstance(weight_value, bool) and weight_value >= 0:
+                unit = item.get("weight_unit")
+                if unit == "kg":
+                    bits.append(f"{number(weight_value)} 千克")
+                elif unit:
+                    bits.append(f"负重 {number(weight_value)} {unit}")
+                else:
+                    bits.append(f"负重 {number(weight_value)}（单位未确认）")
+            elif isinstance(weight_kg, (int, float)) and not isinstance(weight_kg, bool) and weight_kg >= 0:
                 bits.append(f"{number(weight_kg)} 千克")
             else:
-                weight_value = item.get("weight_value")
-                if isinstance(weight_value, (int, float)) and not isinstance(weight_value, bool) and weight_value >= 0:
-                    unit = item.get("weight_unit")
-                    if unit:
-                        bits.append(f"负重 {number(weight_value)} {unit}")
-                    else:
-                        bits.append(f"负重 {number(weight_value)}（单位未确认）")
-                else:
-                    bits.append("负重未记录")
+                bits.append("负重未记录")
             if item.get("duration_seconds") is not None:
                 bits.append(f"用时 {number(item['duration_seconds'], 0)} 秒")
             if item.get("rest_seconds") is not None:
@@ -273,8 +291,8 @@ class EveningBriefingEngine:
             output.append(f"第 {order} 组：{name}；" + "；".join(bits) + "。")
         return output
 
-    @staticmethod
-    def _exercise_lines(exercises: list[dict]) -> list[str]:
+    @classmethod
+    def _exercise_lines(cls, exercises: list[dict]) -> list[str]:
         output = []
         for item in exercises:
             bits = []
@@ -283,7 +301,10 @@ class EveningBriefingEngine:
             repetitions = repetitions_text(item.get("repetitions"))
             if repetitions:
                 bits.append(f"每组 {repetitions}")
-            if item.get("weight_kg") is not None:
+            bodyweight = cls._bodyweight_text(item)
+            if bodyweight is not None:
+                bits.append(bodyweight)
+            elif item.get("weight_kg") is not None:
                 bits.append(f"{number(item['weight_kg'])} 千克")
             if item.get("rest_seconds") is not None:
                 bits.append(f"休息 {number(item['rest_seconds'], 0)} 秒")

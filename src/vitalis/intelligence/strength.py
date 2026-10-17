@@ -184,7 +184,8 @@ def reported_set_count(data: dict) -> int | None:
 
 
 _CAPACITY_UNITS = {"kg", "lb"}
-_CAPACITY_BASES = {"per_hand", "total", "machine", "bodyweight"}
+# A bodyweight set records added load, not the effective body mass moved.
+_CAPACITY_BASES = {"per_hand", "total", "machine"}
 _LB_TO_KG = 0.45359237
 
 
@@ -515,7 +516,7 @@ class StrengthAnalyzer:
                 volume = (
                     float(sum(reps * weight for reps, weight in zip(dose.repetitions, dose.weights)))
                     if dose.set_count is not None and repetitions_complete and weights_complete
-                    and dose.weight_unit is not None and dose.weight_basis is not None
+                    and dose.weight_unit is not None and dose.weight_basis in _CAPACITY_BASES
                     else None
                 )
                 common = {
@@ -703,15 +704,18 @@ class StrengthAnalyzer:
                 f"{user_id}|{workout_source}|{workout_id}|vendor|{order}".encode()
             ).hexdigest()[:32]
             repetitions = value("repetitions")
-            weight_kg = value("weight_kg")
-            weight_value = value("weight_value")
-            if isinstance(weight_kg, (int, float)) and weight_kg < 0:
+            weight_kg = _capacity_number(value("weight_kg"))
+            weight_value = _capacity_number(value("weight_value"))
+            if weight_kg is not None and weight_kg < 0:
                 weight_kg = None
-            if isinstance(weight_value, (int, float)) and weight_value < 0:
+            if weight_value is not None and weight_value < 0:
                 weight_value = None
             weight_unit = value("weight_unit")
-            if weight_kg is None and weight_value is not None and str(weight_unit or "").lower() == "kg":
-                weight_kg = weight_value
+            normalized_unit = _capacity_unit(weight_unit, weight_kg)
+            if weight_kg is None and weight_value is not None and normalized_unit in _CAPACITY_UNITS:
+                weight_kg = weight_value if normalized_unit == "kg" else weight_value * _LB_TO_KG
+            if weight_kg is not None:
+                weight_unit = "kg"
             rest_seconds = value("rest_seconds")
             output.append(StrengthExerciseRecord(
                 id=stable_id,
@@ -729,7 +733,7 @@ class StrengthAnalyzer:
                 sets=1,
                 repetitions=repetitions,
                 weight_kg=float(weight_kg) if weight_kg is not None else None,
-                weight_unit=weight_unit or ("kg" if weight_kg is not None else None),
+                weight_unit=weight_unit,
                 weight_basis=value("weight_basis"),
                 rest_seconds=int(rest_seconds) if rest_seconds is not None else None,
                 source="vendor_explicit",

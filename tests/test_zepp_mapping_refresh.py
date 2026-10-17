@@ -2,12 +2,15 @@
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+import json
+from uuid import uuid4
 
 import pytest
+from sqlalchemy import event
 
 from vitalis.adapters.persistence import HealthRepository, session_scope
 from vitalis.adapters.persistence import models as orm
-from vitalis.adapters.persistence.source_journal import SourceJournalRepository, SourceRecordInput
+from vitalis.adapters.persistence.source_journal import SourceJournalRecord, SourceJournalRepository, SourceRecordInput
 from vitalis.domain import Workout, WorkoutMetricSample, WORKOUT_DETAIL_SCHEMA_VERSION
 from vitalis.intelligence.contracts import (
     DAILY_SCHEMA_VERSION, DECISION_POLICY_VERSION, EVIDENCE_VERSION, INTELLIGENCE_VERSION,
@@ -234,3 +237,225 @@ def test_historical_classification_targets_only_affected_window_and_retains_snap
             assert db.get(orm.AnalysisSnapshot, snapshot_id).payload == payload
             last_good = repo.latest_good_analysis_snapshot(user, "daily", target)
             assert last_good is not None and last_good.id == snapshot_id
+
+
+_WEIGHT_START = datetime(2026, 2, 3, 4, 5, 6, tzinfo=timezone.utc)
+_WEIGHT_WORKOUT = str(int(_WEIGHT_START.timestamp()))
+
+
+def _weight_workout(repo, user, *, weight=175, family="strength", protected=False):
+    repo.upsert_user(user)
+    repo.bind_source_mode(user, "mock")
+    repo.save_workout(Workout(
+        user_id=user, workout_id=_WEIGHT_WORKOUT, started_at=_WEIGHT_START,
+        duration=30, training_family=family, vendor_source="cloud",
+    ))
+    repo.save_workout_detail(user, _WEIGHT_WORKOUT, {
+        "schema_version": WORKOUT_DETAIL_SCHEMA_VERSION,
+        "future_detail": {"preserved": True},
+        "strength_sets": [{
+            "source": "lap_62", "order": 1, "vendor_exercise_code": 1,
+            "exercise_name": "保留的个人显示名", "repetitions": 8,
+            "weight_value": weight, "weight_unit": None,
+            "duration_seconds": 30, "future_set": "retained",
+            "limitations": ["weight_unit_unverified", "retained_flag"] + (["user_confirmed"] if protected else []),
+        }],
+    }, fetched_at=_WEIGHT_START, samples=[WorkoutMetricSample(
+        workout_id=_WEIGHT_WORKOUT, timestamp=_WEIGHT_START, metric="heart_rate",
+        value=123, unit="bpm", source_scope="synthetic-device", device_id="synthetic",
+    )])
+    return repo.workout(user, _WEIGHT_WORKOUT)
+
+
+def _weight_journal(db, user, *, weight=175, unit=11, code=1, reps=8, offset=1,
+                    trackid=_WEIGHT_WORKOUT, record_source="cloud", incomplete=False,
+                    capability="verified", stream="workout_detail", source="zepp", explicit=None):
+    fields = [""] * 62
+    fields[21], fields[22], fields[23], fields[28] = map(str, (weight, reps, unit, code))
+    data = {"trackid": trackid, "lap": ",".join(fields)}
+    if explicit is not None:
+        data["strengthSets"] = explicit
+    return SourceJournalRepository(db).append(SourceRecordInput(
+        user_id=user, source=source, source_mode="mock", stream=stream,
+        record_id=f"workout_detail:{_WEIGHT_WORKOUT}:{record_source}",
+        observed_start=_WEIGHT_START, observed_end=_WEIGHT_START + timedelta(minutes=30),
+        fetched_at=_WEIGHT_START + timedelta(hours=offset),
+        payload={"data": data},
+        incomplete=incomplete, capability=capability,
+    ))
+
+
+@pytest.mark.parametrize(("weight", "unit", "expected", "expected_unit"), [
+    (175, 11, 17.5, "kg"), (200, 12, 20, "lb"), (0, 15, None, None),
+])
+def test_strength_weight_refresh_is_scoped_preserves_observations_and_is_idempotent(weight, unit, expected, expected_unit):
+    user = f"weight-refresh-{unit}"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        row = _weight_workout(repo, user, weight=weight)
+        _weight_journal(db, user, weight=weight, unit=unit)
+        before = deepcopy(row.detail)
+        before_data = deepcopy(row.data)
+        before_coverage = repo.workout_detail_coverage(user)
+        sample_columns = tuple(orm.WorkoutMetricSample.__table__.columns.keys())
+        before_samples = [
+            tuple(getattr(sample, key) for key in sample_columns)
+            for sample in repo.workout_metric_samples(user, _WEIGHT_WORKOUT)
+        ]
+        revision = repo.analysis_input_revision(user)
+        writes = []
+
+        def record_write(_conn, _cursor, statement, _parameters, _context, _many):
+            if statement.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")):
+                writes.append(statement)
+
+        event.listen(db.get_bind(), "before_cursor_execute", record_write)
+        try:
+            assert refresh_zepp_mappings(db, user)["workouts_to_update"] == 0
+            preview = refresh_zepp_mappings(db, user, strength_weights=True)
+        finally:
+            event.remove(db.get_bind(), "before_cursor_execute", record_write)
+        assert writes == []
+        assert preview["sets_to_refresh_weights"] == 1
+        assert row.detail == before
+        assert repo.analysis_input_revision(user) == revision
+
+        applied = refresh_zepp_mappings(db, user, apply=True, strength_weights=True)
+        assert applied["sets_to_refresh_weights"] == 1
+        after = repo.workout(user, _WEIGHT_WORKOUT)
+        actual = after.detail["strength_sets"][0]
+        assert actual["weight_value"] == expected
+        assert actual["weight_unit"] == expected_unit
+        assert actual["vendor_weight_value"] == weight
+        assert actual["vendor_weight_unit"] == unit
+        if unit == 15:
+            assert actual["weight_basis"] == "bodyweight"
+            assert actual["weight_kg"] is None
+        else:
+            assert "weight_unit_unverified" not in actual["limitations"]
+        assert "retained_flag" in actual["limitations"]
+        assert after.data == before_data
+        weight_fields = {
+            "weight_value", "weight_unit", "weight_kg", "weight_basis",
+            "vendor_weight_value", "vendor_weight_unit", "limitations",
+        }
+        assert {key: value for key, value in actual.items() if key not in weight_fields} == {
+            key: value for key, value in before["strength_sets"][0].items() if key not in weight_fields
+        }
+        assert after.detail["fetched_at"] == before["fetched_at"]
+        assert after.detail["future_detail"] == before["future_detail"]
+        assert repo.workout_detail_coverage(user) == before_coverage
+        assert [
+            tuple(getattr(sample, key) for key in sample_columns)
+            for sample in repo.workout_metric_samples(user, _WEIGHT_WORKOUT)
+        ] == before_samples
+        jobs = [job for job in repo.analysis_jobs(user) if job.event_type == "catalog_refresh"]
+        assert jobs and all(job.target_date == local_day(_WEIGHT_START) for job in jobs)
+        assert all(job.delivery_period is None and job.affected_start == local_day(_WEIGHT_START) for job in jobs)
+        assert repo.analysis_input_revision(user) > revision
+        again = refresh_zepp_mappings(db, user, apply=True, strength_weights=True)
+        assert again["workouts_to_update"] == again["sets_to_refresh_weights"] == 0
+
+
+@pytest.mark.parametrize("mismatch", [
+    "missing", "owner", "mode", "source", "stream", "vendor", "incomplete", "capability",
+    "trackid", "order", "code", "reps", "weight", "family", "confirmed_flag", "confirmed_workout",
+])
+def test_strength_weight_refresh_requires_matching_qualified_raw_and_no_user_override(mismatch):
+    user = f"weight-refresh-protected-{mismatch}"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        row = _weight_workout(
+            repo, user, family="running" if mismatch == "family" else "strength",
+            protected=mismatch == "confirmed_flag",
+        )
+        if mismatch == "order":
+            detail = deepcopy(row.detail)
+            detail["strength_sets"][0]["order"] = 2
+            repo.save_workout_detail(user, _WEIGHT_WORKOUT, detail, fetched_at=_WEIGHT_START)
+        if mismatch == "confirmed_workout":
+            from vitalis.intelligence.contracts import StrengthExerciseInput
+            from vitalis.intelligence.strength import normalize_exercise
+            repo.replace_strength_exercises(user, _WEIGHT_WORKOUT, [normalize_exercise(
+                user, _WEIGHT_WORKOUT, 1,
+                StrengthExerciseInput(exercise_name="用户确认动作", weight_kg=10, weight_basis="total"),
+            )])
+        options = {
+            "source": {"source": "other"}, "stream": {"stream": "other"},
+            "vendor": {"record_source": "other"}, "incomplete": {"incomplete": True},
+            "capability": {"capability": "unverified"}, "trackid": {"trackid": "different"},
+            "code": {"code": 14}, "reps": {"reps": 9}, "weight": {"weight": 200},
+        }.get(mismatch, {})
+        if mismatch != "missing":
+            raw_owner = user
+            if mismatch in {"owner", "mode"}:
+                raw_owner = user + "-other"
+                repo.upsert_user(raw_owner)
+                repo.bind_source_mode(raw_owner, "mock")
+            raw = _weight_journal(db, raw_owner, **options)
+            if mismatch == "mode":
+                values = {column.name: getattr(raw, column.name) for column in SourceJournalRecord.__table__.columns}
+                values.update(id=uuid4().hex * 2, user_id=user, source_mode="real", origin_source_mode="real")
+                db.add(SourceJournalRecord(**values))
+                db.flush()
+        before, revision = deepcopy(row.detail), repo.analysis_input_revision(user)
+
+        result = refresh_zepp_mappings(db, user, apply=True, strength_weights=True)
+
+        assert result["sets_to_refresh_weights"] == result["workouts_to_update"] == 0
+        assert repo.workout(user, _WEIGHT_WORKOUT).detail == before
+        assert repo.analysis_input_revision(user) == revision
+
+
+@pytest.mark.parametrize("invalid", ["changed_content", "bad_digest"])
+def test_strength_weight_refresh_does_not_fall_back_from_latest_matching_journal(invalid):
+    user = f"weight-refresh-latest-{invalid}"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        row = _weight_workout(repo, user)
+        _weight_journal(db, user)
+        newer = _weight_journal(db, user, weight=200, offset=2)
+        if invalid == "bad_digest":
+            values = {column.name: getattr(newer, column.name) for column in SourceJournalRecord.__table__.columns}
+            values.update(id=uuid4().hex * 2, payload_hash="0" * 64,
+                          fetched_at=_WEIGHT_START.replace(tzinfo=None) + timedelta(hours=3))
+            db.add(SourceJournalRecord(**values))
+            db.flush()
+        before = deepcopy(row.detail)
+
+        result = refresh_zepp_mappings(db, user, apply=True, strength_weights=True)
+
+        assert result["sets_to_refresh_weights"] == result["workouts_to_update"] == 0
+        assert repo.workout(user, _WEIGHT_WORKOUT).detail == before
+
+
+@pytest.mark.parametrize("encoded", [False, True])
+def test_strength_weight_refresh_honors_explicit_set_precedence(encoded):
+    user = f"weight-refresh-explicit-{encoded}"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        row = _weight_workout(repo, user)
+        explicit = [{"exerciseName": "明确动作", "reps": 8, "weightKg": 25}]
+        _weight_journal(db, user, explicit=json.dumps(explicit) if encoded else explicit)
+        before = deepcopy(row.detail)
+
+        result = refresh_zepp_mappings(db, user, apply=True, strength_weights=True)
+
+        assert result["sets_to_refresh_weights"] == result["workouts_to_update"] == 0
+        assert repo.workout(user, _WEIGHT_WORKOUT).detail == before
+
+
+def test_strength_weight_refresh_accepts_old_detail_with_null_audit_defaults_and_empty_explicit_sets():
+    user = "weight-refresh-null-audit"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        row = _weight_workout(repo, user)
+        detail = deepcopy(row.detail)
+        detail["strength_sets"][0].update(vendor_weight_value=None, vendor_weight_unit=None)
+        repo.save_workout_detail(user, _WEIGHT_WORKOUT, detail, fetched_at=_WEIGHT_START)
+        _weight_journal(db, user, explicit=[])
+
+        result = refresh_zepp_mappings(db, user, apply=True, strength_weights=True)
+
+        assert result["sets_to_refresh_weights"] == 1
+        assert repo.workout(user, _WEIGHT_WORKOUT).detail["strength_sets"][0]["weight_value"] == 17.5

@@ -180,6 +180,8 @@ class StrengthSetObservation(BaseModel):
     source: Literal["strength_sets", "lap_62"] = "strength_sets"
     order: int | None = Field(default=None, ge=1)
     vendor_exercise_code: int | None = Field(default=None, ge=0)
+    vendor_weight_value: float | None = Field(default=None, allow_inf_nan=False)
+    vendor_weight_unit: int | None = Field(default=None, ge=0)
     weight_value: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     weight_unit: str | None = None
     weight_basis: Literal["per_hand", "total", "machine", "bodyweight"] | None = None

@@ -15,8 +15,8 @@ DateValue = date
 DAILY_SCHEMA_VERSION = "14.0"
 WEEKLY_SCHEMA_VERSION = "6.0"
 MONTHLY_SCHEMA_VERSION = "3.0"
-INTELLIGENCE_VERSION = "14.0"
-DECISION_POLICY_VERSION = "9.0"
+INTELLIGENCE_VERSION = "15.0"
+DECISION_POLICY_VERSION = "10.0"
 EVIDENCE_VERSION = "2026-09a"
 TRAINING_RESPONSE_SCHEMA_VERSION = "2.0"
 PERSONAL_MODEL_SCHEMA_VERSION = "3.0"
@@ -1688,8 +1688,8 @@ class SubjectiveFeedback(BaseModel):
 class DailyProfile(BaseModel):
     schema_version: Literal["14.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
-    intelligence_version: Literal["14.0"] = INTELLIGENCE_VERSION
-    decision_policy_version: Literal["9.0"] = DECISION_POLICY_VERSION
+    intelligence_version: Literal["15.0"] = INTELLIGENCE_VERSION
+    decision_policy_version: Literal["10.0"] = DECISION_POLICY_VERSION
     evidence_version: Literal["2026-09a"] = EVIDENCE_VERSION
     user_id: str
     date: DateValue

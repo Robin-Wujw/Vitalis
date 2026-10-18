@@ -81,7 +81,7 @@ def test_morning_push_uses_complete_report_fields_and_no_automatic_questionnaire
     assert "睡眠时长" in text and "入睡" in text and "醒来" in text
     assert "HRV" in text and "静息心率" in text
     assert "主要安排：轻松跑" in text and "可选安排：拉类力量训练" in text
-    assert "至少间隔 6 小时" not in text
+    assert "至少间隔 6 小时" in text
     assert "训练后告诉我" not in text
     assert "feedback_prompt" not in text
     assert "Zepp 厂商汇总" not in text
@@ -208,6 +208,7 @@ def test_morning_renders_all_hard_safety_conditions():
     assert message.extras["suggestions"] == [
         "主要安排：轻松跑 · 30–45 分钟 · 低强度 · 疼痛时停止。 · 症状加重时寻求评估。",
         "可选安排：拉类力量训练 · 40–60 分钟 · 中等强度 · 动作失控时停止。",
+        "可分开完成，至少间隔 6 小时",
     ]
 
 

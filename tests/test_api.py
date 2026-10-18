@@ -118,8 +118,8 @@ def test_daily_profile_after_sync(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["schema_version"] == "14.0"
-    assert body["intelligence_version"] == "14.0"
-    assert body["decision_policy_version"] == "9.0"
+    assert body["intelligence_version"] == "15.0"
+    assert body["decision_policy_version"] == "10.0"
     assert body["evidence_version"] == "2026-09a"
     assert body["features"]["overnight_vitals"]["status"] == "AVAILABLE"
     assert body["analysis_run_id"]
@@ -154,7 +154,7 @@ def test_morning_briefing_projects_persisted_daily_snapshot(client):
     assert briefing["as_of"] or briefing["report_context"].get("as_of")
     for field in ("metrics", "findings", "training", "suggestions", "alerts"):
         assert isinstance(briefing[field], list)
-    assert all(not section.get("display", False) for section in briefing["sections"])
+    assert all(section.get("display", False) == section["key"].startswith("display_coaching_") for section in briefing["sections"])
     assert len(briefing["sections"]) >= 3
     assert "feedback_prompt" not in briefing
     assert client.get(

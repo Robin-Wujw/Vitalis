@@ -7,6 +7,8 @@ from vitalis.intelligence.contracts import (
     ConfidenceBand,
     EventSeverity,
     HealthEvent,
+    INTELLIGENCE_VERSION,
+    DECISION_POLICY_VERSION,
     SubjectiveFeedbackInput,
     UserProfilePatch,
 )
@@ -96,8 +98,8 @@ def test_analysis_snapshots_are_immutable_per_run():
                 TARGET,
                 TARGET,
                 "14.0",
-                "14.0",
-                "9.0",
+                INTELLIGENCE_VERSION,
+                DECISION_POLICY_VERSION,
                 "2026-09a",
                 {"generated_at": "2026-08-28T01:00:00Z", "marker": marker},
             )

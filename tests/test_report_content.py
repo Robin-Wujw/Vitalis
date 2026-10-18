@@ -356,6 +356,8 @@ def test_four_report_scenarios_have_full_sections(scenario):
     weekly = WeeklyBriefingEngine().build(synthetic_period_fixture("weekly", scenario))
     monthly = MonthlyBriefingEngine().build(synthetic_period_fixture("monthly", scenario))
     expected_morning = ["sleep", "recovery"] + ([] if scenario == "missing" else ["today_activity"]) + ["today_plan"]
+    if scenario != "missing":
+        expected_morning += ["display_coaching_primary_session", "display_coaching_optional_session"]
     assert [item["key"] for item in morning["sections"]] == expected_morning
     evening_keys = [item.key for item in evening.sections]
     assert evening_keys[:4] == ["training", "activity", "intraday", "recovery"]
@@ -368,7 +370,7 @@ def test_four_report_scenarios_have_full_sections(scenario):
     assert (monthly.period_end - monthly.period_start).days == 27
     # Keep internal section shape as an audit, but assert user-visible output
     # only through the canonical renderer.
-    assert all(not item.get("display", False) for item in morning["sections"])
+    assert all(item.get("display", False) == item["key"].startswith("display_coaching_") for item in morning["sections"])
     assert all(not section.display for report in (weekly, monthly) for section in report.sections)
     for report in (morning, evening, weekly, monthly):
         payload = report if isinstance(report, dict) else report.model_dump(mode="json")

@@ -51,6 +51,20 @@ INTENSITY_LABELS = {
     "none": "不训练",
 }
 
+# Template muscles include assistance work so a sore triceps also gates push day.
+_FOCUS_MUSCLES = {
+    "PUSH": {"chest", "shoulders", "triceps"},
+    "PULL": {"back", "biceps"},
+    "CHEST": {"chest", "shoulders", "triceps"},
+    "BACK": {"back", "biceps"},
+    "SHOULDERS": {"shoulders", "triceps"},
+    "ARMS": {"biceps", "triceps"},
+    "UPPER": {"chest", "back", "shoulders", "biceps", "triceps"},
+    "LEGS": {"quadriceps", "hamstrings", "glutes", "core"},
+    "LOWER": {"quadriceps", "hamstrings", "glutes"},
+    "FULL_BODY": {"chest", "back", "shoulders", "biceps", "triceps", "quadriceps", "hamstrings", "glutes", "core"},
+}
+
 
 class DecisionEngine:
     def decide(
@@ -564,8 +578,6 @@ class DecisionEngine:
     def _sessions(
         self, day, primary_type, intensity, training, preferences, balance, conflicts
     ):
-        focus = training.strength.next_focus if training.strength else None
-        lower_focus = focus in {"LEGS", "LOWER"}
         lower_conflict = any(
             phrase in conflict
             for conflict in conflicts
@@ -596,7 +608,7 @@ class DecisionEngine:
                     "low" if intensity == "low" else constrained_intensity,
                     conflicts,
                 )
-                relationship = "ALTERNATIVE" if quality_allowed or lower_focus else "ADDITION"
+                relationship = "ALTERNATIVE" if primary.intensity == "high" or self._lower_body_session(optional) else "ADDITION"
             else:
                 optional = self._recovery(preferences, "跑步后的低负担恢复", "OPTIONAL")
                 relationship = "ADDITION"
@@ -609,13 +621,19 @@ class DecisionEngine:
         )
         if balance.running_due:
             optional = self._running(day, preferences, training, "OPTIONAL", False, "low")
-            relationship = "ALTERNATIVE" if lower_focus else "ADDITION"
+            relationship = "ALTERNATIVE" if self._lower_body_session(primary) else "ADDITION"
         else:
             optional = self._recovery(preferences, "力量训练后的低负担恢复", "OPTIONAL")
             relationship = "ADDITION"
         self._add_rotation_reason(primary, training, preferences)
         self._add_balance_reason(primary, training, balance)
         return primary, optional, relationship
+
+    @staticmethod
+    def _lower_body_session(session: PlannedSession) -> bool:
+        return session.session_type == "STRENGTH" and session.code in {
+            "strength_legs", "strength_lower", "strength_full_body",
+        }
 
     @staticmethod
     def _add_rotation_reason(primary, training, preferences) -> None:
@@ -705,15 +723,18 @@ class DecisionEngine:
             and latest.cardiac_drift_percent > 5
         )
         established = len(durations) >= 4
+        experienced = preferences.running_experience in {"INTERMEDIATE", "ADVANCED"}
         quality = (
             quality
+            and experienced and established
+            and preferences.pain_or_injury_status == "NONE"
             and threshold is not None
             and not recent_hard
             and not high_drift
             and (preferences.max_session_minutes or 60) >= 40
         )
         long_due = (
-            intensity != "low" and established and not recent_hard
+            intensity != "low" and experienced and established and not recent_hard
             and not any(
                 item.classification == "LONG_RUN" and (day - item.date).days <= 13
                 for item in recent
@@ -739,16 +760,21 @@ class DecisionEngine:
                 reasons.append(f"最近一次可解释的心率漂移为 {latest.cardiac_drift_percent:+.1f}%。")
 
         if quality:
-            duration = self._duration_around(preferences, typical, 0.95, 1.15, 40, 60)
+            # 3 x 6 minutes plus two 2-minute recoveries and warm/cool down.
+            # Keep the declared budget consistent with this fixed prescription.
+            duration = (40, min(44, preferences.max_session_minutes or 60))
+            extra = duration[1] - 40
+            warm_high = 10 + min(2, extra)
+            cool_high = 8 + max(0, extra - 2)
             planned_intensity = "high"
             code = "threshold_intervals"
             title = "阈值间歇跑"
             focus = "今天安排本周质量跑；工作段受控，不做冲刺"
             main_intensity = f"工作段约 {round(threshold * 0.95)}–{round(threshold) - 1} 次/分钟"
             steps = [
-                TrainingStep(order=1, name="热身", duration_minutes=(10, 12), intensity="轻松", instructions=["从快走逐渐过渡到慢跑"]),
+                TrainingStep(order=1, name="热身", duration_minutes=(10, warm_high), intensity="轻松", instructions=["从快走逐渐过渡到慢跑"]),
                 TrainingStep(order=2, name="阈值工作段", sets=3, repetitions="每组 6 分钟", rest_seconds=(120, 120), intensity=main_intensity, instructions=["组间慢跑恢复", "最后一组不冲刺"]),
-                TrainingStep(order=3, name="冷身", duration_minutes=(8, 10), intensity="轻松"),
+                TrainingStep(order=3, name="冷身", duration_minutes=(8, cool_high), intensity="轻松"),
             ]
             reasons.append("恢复和训练间隔允许，且本周尚无质量跑。")
         elif intensity == "low" or recent_hard or high_drift:
@@ -759,14 +785,14 @@ class DecisionEngine:
             focus = "缩短跑量，用很轻松的强度维持跑步节奏"
             steps = self._continuous_run_steps(duration, "恢复跑", self._easy_zone(threshold, True), latest)
         elif long_due:
-            duration = self._duration_around(preferences, typical, 1.15, 1.3, 45, 75)
+            duration = self._duration_around(preferences, typical, 1.15, 1.3, min(45, round(typical * 1.15)), 75)
             planned_intensity = "low"
             code = "long_easy_run"
             title = "长距离轻松跑"
             focus = "在近期个人时长基础上小幅延长，全程保持低强度"
             steps = self._continuous_run_steps(duration, "长距离轻松跑", self._easy_zone(threshold), latest)
             reasons.append(f"近期跑步时长中位数约 {typical} 分钟，且近两周没有长跑。")
-        elif established and intensity == "moderate" and latest and latest.classification in {"RECOVERY_RUN", "EASY_RUN"}:
+        elif experienced and established and intensity == "moderate" and latest and latest.classification in {"RECOVERY_RUN", "EASY_RUN"}:
             duration = self._duration_around(preferences, typical, 0.9, 1.1, 30, 55)
             planned_intensity = "moderate"
             code = "steady_run"
@@ -821,6 +847,8 @@ class DecisionEngine:
             and weekly.today_minutes is not None
         ):
             cap = preferences.max_session_minutes or 90
+            if primary.total_duration_minutes:
+                cap = min(cap, primary.total_duration_minutes[1])
             low = max(20, min(cap, int(round(weekly.today_minutes * 0.9))))
             high = max(low, min(cap, int(round(weekly.today_minutes * 1.1))))
             primary.total_duration_minutes = (low, high)
@@ -842,17 +870,16 @@ class DecisionEngine:
     @staticmethod
     def _continuous_run_steps(duration, name: str, zone: str, latest):
         low, high = duration
-        warm_low, warm_high = 6, min(10, max(6, low // 5))
-        cool_low, cool_high = 5, min(8, max(5, low // 6))
-        main_low = max(10, low - warm_high - cool_high)
-        main_high = max(main_low, high - warm_low - cool_low)
+        warm = min(10, max(6, low // 5))
+        cool = min(8, max(5, low // 6))
+        main_low, main_high = low - warm - cool, high - warm - cool
         instructions = ["保持能连续说出完整短句", "步频自然，不追求统一目标"]
         if latest and latest.median_cadence_spm is not None:
             instructions[-1] = f"沿用你最近自然步频约 {latest.median_cadence_spm:.0f} 步/分钟，不刻意提频"
         return [
-            TrainingStep(order=1, name="热身", duration_minutes=(warm_low, warm_high), intensity="轻松", instructions=["快走后逐渐进入慢跑"]),
+            TrainingStep(order=1, name="热身", duration_minutes=(warm, warm), intensity="轻松", instructions=["快走后逐渐进入慢跑"]),
             TrainingStep(order=2, name=name, duration_minutes=(main_low, main_high), intensity=zone, instructions=instructions),
-            TrainingStep(order=3, name="冷身", duration_minutes=(cool_low, cool_high), intensity="轻松"),
+            TrainingStep(order=3, name="冷身", duration_minutes=(cool, cool), intensity="轻松"),
         ]
 
     @staticmethod
@@ -913,10 +940,38 @@ class DecisionEngine:
             )
             prior = safe_prior
             focus = safe_prior.focus if safe_prior else "UPPER"
+        recovery = training.strength.muscle_recovery if training.strength else []
+        blocked = {
+            item.muscle_group for item in recovery
+            if (item.days_since_last_trained is not None and item.days_since_last_trained <= 1)
+            or (item.latest_soreness is not None and item.latest_soreness >= 4)
+        }
+
+        def muscles(session):
+            return set(session.muscle_groups) | {
+                muscle for exercise in session.explicit_exercises for muscle in exercise.muscle_groups
+            }
+
+        planned_muscles = muscles(prior) if prior else _FOCUS_MUSCLES.get(focus, set())
+        adjusted = planned_muscles & blocked
+        if adjusted:
+            # Reuse a qualified alternative; elapsed time alone cannot establish
+            # recovery, and an unknown muscle must not become a safe alternative.
+            prior = next((
+                item for item in sessions
+                if item.focus != "UNKNOWN" and item.explicit_exercises and muscles(item)
+                and not muscles(item) & blocked
+                and not (lower_conflict and item.focus in {"LEGS", "LOWER", "FULL_BODY"})
+            ), None)
+            if prior is None:
+                return self._recovery(preferences, "原定肌群近期练过或仍有明显酸痛，暂无合适的已记录替代动作", role)
+            focus = prior.focus
         title, focus_text, steps = (
             self._strength_from_prior(prior, intensity)
             if prior else self._strength_steps(focus, intensity)
         )
+        duration = self._duration(preferences, (40, 60))
+        steps, shortened = self._fit_strength_time(steps, duration[1])
         planned_intensity = "moderate" if intensity == "high" else intensity
         reasons = []
         if prior:
@@ -941,6 +996,11 @@ class DecisionEngine:
                 )
         if lower_conflict:
             reasons.append("近期跑步或下肢负担较高，已降低力量训练剂量并避开下肢重点。")
+        if adjusted:
+            names = "、".join(item.muscle_group_label for item in recovery if item.muscle_group in adjusted)
+            reasons.insert(0, f"{names}近期练过或仍有明显酸痛，今天调整为{prior.focus_label}。")
+        if shortened:
+            reasons.insert(0, "按今天可用时间采用精简版，减少工作组或动作；不压缩组间休息，到时结束，剩余动作顺延。")
         reasons.extend(self._muscle_freshness(training))
         return PlannedSession(
             role=role,
@@ -953,7 +1013,7 @@ class DecisionEngine:
             goal="维持主要动作模式和肌群训练频次，同时不给跑步关键课堆叠下肢疲劳",
             intensity=planned_intensity,
             intensity_label=INTENSITY_LABELS[planned_intensity],
-            total_duration_minutes=self._duration(preferences, (40, 60)),
+            total_duration_minutes=duration,
             steps=steps,
             evidence=[
                 f"近 7 天完成力量训练 {training.strength.sessions_7d if training.strength else 0} 次。",
@@ -974,6 +1034,34 @@ class DecisionEngine:
             progression=["所有工作组达到次数上限且仍满足余力要求时，下次增加少量重量或每组 1–2 次。"],
             stop_conditions=["出现尖锐疼痛、动作失控、异常头晕或胸闷时立即停止。", "无法保持目标余力时减少重量或结束该动作。"],
         )
+
+    @staticmethod
+    def _fit_strength_time(steps: list[TrainingStep], cap: int) -> tuple[list[TrainingStep], bool]:
+        """Budget 45s per work set and 30s per transition; keep prescribed rests.
+
+        This is a planning estimate, never a measurement of completed training.
+        Different dose records of one exercise still need rest between them.
+        """
+        def estimate(items):
+            seconds = 0
+            previous = None
+            for step in items:
+                if step.duration_minutes:
+                    seconds += step.duration_minutes[1] * 60
+                if step.sets:
+                    rest = step.rest_seconds[1] if step.rest_seconds else 0
+                    seconds += step.sets * 45 + max(0, step.sets - 1) * rest + 30
+                    if previous == step.name:
+                        seconds += rest
+                    previous = step.name
+            return seconds
+
+        if estimate(steps) <= cap * 60:
+            return steps, False
+        fitted = [step.model_copy(update={"sets": 1}) if step.sets else step.model_copy() for step in steps]
+        while estimate(fitted) > cap * 60 and len(fitted) > 2:
+            fitted.pop()
+        return fitted, True
 
     @staticmethod
     def _muscle_freshness(training) -> list[str]:

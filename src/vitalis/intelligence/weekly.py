@@ -41,6 +41,7 @@ from .report_periods import (
     resolve_week_period,
 )
 from .trend import TrendEngine
+from .weekly_coaching import build_weekly_coaching
 
 PERIOD_DAYS = 7
 MIN_COMPARISON_DAYS = comparison_gate(PERIOD_DAYS)
@@ -124,6 +125,15 @@ class WeeklyProfileEngine:
             limitations=limitations,
         )
         report_context = _report_context(period_raw, period, coverage, raw)
+        recommendations = _recommend(
+            facts,
+            period_events,
+            getattr(period_raw, "training_preferences", None),
+            coverage,
+        )
+        recommendations.extend(build_weekly_coaching(
+            period_raw, period_start, facts, period_events, coverage, recommendations,
+        ))
         return WeeklyProfile(
             analysis_run_id=analysis_run_id,
             user_id=period_raw.user_id,
@@ -135,12 +145,7 @@ class WeeklyProfileEngine:
             facts=facts,
             inferences=inferences,
             actions=WeeklyActions(
-                recommendations=_recommend(
-                    facts,
-                    period_events,
-                    getattr(period_raw, "training_preferences", None),
-                    coverage,
-                )
+                recommendations=recommendations,
             ),
             evidence_refs=evidence_refs or [],
             open_health_period_summary=period_summary(

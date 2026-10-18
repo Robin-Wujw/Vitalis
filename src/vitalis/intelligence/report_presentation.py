@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import date, datetime
+import re
 from typing import Any
 
 from .period_activity import comparison_gate
@@ -22,6 +23,8 @@ from .report_formatting import (
     value_with_unit,
 )
 from .strength import MUSCLE_LABELS, strength_session_capacity
+
+_INTERNAL_REFERENCE_WINDOW = re.compile(r"(?:近\s*4\s*周|(?:28|60|90)\s*[日天])")
 
 
 def _number(value: Any) -> float | None:
@@ -703,6 +706,7 @@ def _findings(payload: dict[str, Any]) -> list[str]:
 
 def _suggestions(payload: dict[str, Any]) -> list[str]:
     output = []
+    coaching = []
     for item in (payload.get("actions") or {}).get("recommendations") or []:
         if not isinstance(item, dict):
             continue
@@ -710,8 +714,12 @@ def _suggestions(payload: dict[str, Any]) -> list[str]:
             continue
         action = item.get("action")
         if action:
-            output.append(f"{item.get('title')}：{action}" if item.get("title") else str(action))
-    return unique(output)[:2]
+            line = f"{item.get('title')}：{action}" if item.get("title") else str(action)
+            if str(item.get("code") or "").startswith("WEEKLY_COACH_"):
+                coaching.append(" ".join([line, *[str(reason) for reason in item.get("reasons") or []]]))
+            else:
+                output.append(line)
+    return unique(output)[:2] + unique(coaching)
 
 
 def _period_alerts(payload: dict[str, Any]) -> list[str]:
@@ -779,10 +787,63 @@ def _daily_suggestions(payload: dict[str, Any]) -> list[str]:
         if primary.get("session_type") == "STRENGTH" and str(reason).startswith(("今天适合练", "避开"))
     ]
     weekly = _weekly_load_lines(payload, morning=True)
+    relationship = plan.get("session_relationship_label") if plan.get("optional_session") else None
     return (
         unique(output)[:2] + (["；".join(muscles)] if muscles else [])
+        + ([str(relationship)] if relationship and plan.get("session_relationship") == "ADDITION" else [])
         + (["；".join(weekly[:2])] if weekly else [])
     )
+
+
+def daily_coaching_sections(payload: Any) -> list[dict[str, Any]]:
+    """Format saved session steps; no exercise, dose or recovery is inferred here."""
+    raw = payload_of(payload)
+    metadata = _context(raw).get("delivery_metadata") or {}
+    if metadata.get("facts_only") or metadata.get("retrospective"):
+        return []
+    decision = raw.get("decision") or {}
+    if decision.get("action") == "INSUFFICIENT_DATA":
+        return []
+    plan = decision.get("action_plan") or {}
+    training = (raw.get("features") or {}).get("training") or {}
+    weekly_reason = (training.get("weekly_load") or {}).get("reason")
+    sections = []
+    for key, label in (("primary_session", "主要安排"), ("optional_session", "可选安排")):
+        session = plan.get(key) or {}
+        if session.get("session_type") not in {"RUNNING", "STRENGTH"}:
+            continue
+        if key == "optional_session" and plan.get("session_relationship") == "ALTERNATIVE":
+            label = "替代选择（二选一）"
+        lines = [f"训练重点：{session['focus']}"] if session.get("focus") else []
+        for step in session.get("steps") or []:
+            parts = [str(step.get("name") or "训练步骤")]
+            sets = _integer(step.get("sets"))
+            if sets is not None:
+                parts.append(f"{sets} 组")
+            if step.get("repetitions"):
+                parts.append(str(step["repetitions"]))
+            duration = _range_text(step.get("duration_minutes"), "分钟")
+            if duration:
+                parts.append(duration)
+            rest = _range_text(step.get("rest_seconds"), "秒")
+            if rest:
+                parts.append(f"组间休息 {rest}")
+            if step.get("intensity"):
+                parts.append(str(step["intensity"]))
+            parts.extend(str(item) for item in step.get("instructions") or [])
+            lines.append(" · ".join(parts))
+        reasons = [
+            str(item) for item in session.get("personalization_reasons") or []
+            if str(item) != weekly_reason
+            and not _INTERNAL_REFERENCE_WINDOW.search(str(item))
+            and not str(item).startswith(("今天适合练", "避开", "近 7 天跑步/力量"))
+        ][:2]
+        sections.append({
+            "key": f"display_coaching_{key}", "title": f"{label}怎么练",
+            "facts": lines, "interpretation": unique(reasons + list(session.get("progression") or [])),
+            "limitations": list(session.get("stop_conditions") or []), "display": True,
+        })
+    return sections
 
 
 def _weekly_load_lines(payload: dict[str, Any], *, morning: bool) -> list[str]:
@@ -1064,6 +1125,22 @@ def daily_display_sections(payload: Any, *, facts_only: bool = False) -> list[di
     if pressure:
         sections.append(pressure)
     if not facts_only:
+        muscle_lines = []
+        strength = training.get("strength") or {}
+        for session in _strength_sessions(training):
+            if _same_day(session.get("date"), raw.get("date")) and session.get("explicit_exercises"):
+                labels = session.get("muscle_group_labels") or []
+                if labels:
+                    muscle_lines.append("本次已记录肌群：" + "、".join(str(label) for label in labels))
+        if muscle_lines:
+            if strength.get("detected_split") not in {None, "UNRESOLVED"} and strength.get("detected_split_label"):
+                muscle_lines.append(f"已识别分化：{strength['detected_split_label']}")
+            if strength.get("next_focus_label"):
+                muscle_lines.append(f"下次力量轮换候选：{strength['next_focus_label']}；暂定，以次晨恢复和补齐记录后的安排为准。")
+            sections.append({
+                "key": "display_muscle_review", "title": "肌群分化回顾", "facts": unique(muscle_lines),
+                "interpretation": [], "limitations": [], "display": True,
+            })
         running_card = _running_display_section(raw)
         if running_card:
             sections.append(running_card)

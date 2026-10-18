@@ -9,7 +9,7 @@ from vitalis.time import local_day
 
 from .contracts import DailyProfile, MorningBriefing
 from .public_reports import SYNC_PENDING_NOTICE, facts_only_notice
-from .report_presentation import daily_presentation, internal_sections
+from .report_presentation import daily_coaching_sections, daily_presentation, internal_sections
 from .report_formatting import (
     baseline_text,
     clock_text,
@@ -68,7 +68,7 @@ class MorningBriefingEngine:
             "report_context": report_context,
             **presentation,
             "summary": [],
-            "sections": internal_sections(sections),
+            "sections": internal_sections(sections) + daily_coaching_sections(presentation_payload),
             "observations": [{"text": item} for item in observations],
             "key_reasons": [{"text": item} for item in reasons],
             "cautions": cautions,

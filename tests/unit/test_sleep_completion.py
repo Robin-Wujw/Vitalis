@@ -6,7 +6,7 @@ import pytest
 
 from vitalis.intelligence.sleep_completion import (
     main_sleep_finished,
-    minutes_recorded_after,
+    minutes_after,
     usual_sleep_minutes,
 )
 
@@ -30,25 +30,35 @@ def test_usual_night_is_unknown_below_five_recorded_nights():
     assert usual_sleep_minutes(nights(440, 440, 440, 440, 400), DAY) == 440
 
 
-def test_recorded_minutes_after_the_wake_never_go_negative():
+def test_minutes_after_the_wake_never_go_negative():
     wake = datetime(2026, 10, 16, 23, 4, tzinfo=timezone.utc)
-    assert minutes_recorded_after(wake, wake + timedelta(minutes=4, seconds=59)) == 4
-    assert minutes_recorded_after(wake, wake - timedelta(minutes=3)) == 0
-    assert minutes_recorded_after(wake, None) is None
-    assert minutes_recorded_after(None, wake) is None
+    assert minutes_after(wake, wake + timedelta(minutes=4, seconds=59)) == 4
+    assert minutes_after(wake, wake - timedelta(minutes=3)) == 0
+    assert minutes_after(wake, None) is None
+    assert minutes_after(None, wake) is None
 
 
-@pytest.mark.parametrize(("minutes", "usual", "recorded", "finished"), [
-    (275, 439.5, 4, False),
-    (275, 439.5, 30, True),
-    (330, 440, None, True),
-    (329, 440, 29, False),
-    (455, None, 29, False),
-    (455, None, 30, True),
-    (179, 200, 120, False),
-    (None, 440, 120, False),
+@pytest.mark.parametrize(("minutes", "usual", "recorded", "checked", "finished"), [
+    # 2026-10-18: 364 minutes read two minutes after the 08:27 wake; the user
+    # slept on until 09:35 (429 minutes).
+    (364, 439.5, 2, 8, False),
+    (364, 439.5, 2, 60, False),
+    (429, 439.5, 4, 59, False),
+    (429, 439.5, 4, 60, True),
+    (396, 440, None, 60, True),
+    (396, 440, None, None, False),
+    # 2026-10-17: a brief awakening; the night went on.
+    (275, 439.5, 4, 60, False),
+    (275, 439.5, 30, 60, True),
+    (275, 439.5, 30, 45, False),
+    (395, 440, 29, 120, False),
+    (395, 440, 30, 60, True),
+    (455, None, 29, 120, False),
+    (455, None, 30, 60, True),
+    (179, 200, 120, 120, False),
+    (None, 440, 120, 120, False),
 ])
-def test_a_sleep_has_ended_near_the_usual_night_or_after_half_an_hour_awake(
-    minutes, usual, recorded, finished,
+def test_a_sleep_has_ended_once_its_wake_time_stood_for_an_hour(
+    minutes, usual, recorded, checked, finished,
 ):
-    assert main_sleep_finished(minutes, usual, recorded) is finished
+    assert main_sleep_finished(minutes, usual, recorded, checked) is finished

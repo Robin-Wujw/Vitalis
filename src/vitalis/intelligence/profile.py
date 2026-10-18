@@ -108,6 +108,8 @@ class RawDailyProfile:
     # Newest uploaded heart-rate minute of the target day: how far the watch
     # data reaches, which tells whether the stored main sleep has ended.
     heart_rate_seen_until: datetime | None = None
+    # Latest successful read of the target day's sleep from the source.
+    sleep_checked_at: datetime | None = None
     sleep_by_day: dict[date, dict] = field(default_factory=dict)
     activity_by_day: dict[date, dict] = field(default_factory=dict)
     training_by_day: dict[date, dict] = field(default_factory=dict)
@@ -172,6 +174,7 @@ class ProfileLoader:
         raw.heart_rate_seen_until = self.repo.latest_heart_rate_at(
             user_id, day_start, min(day_end, cutoff)
         )
+        raw.sleep_checked_at = self.repo.sleep_checked_at(user_id, day_start, day_end, cutoff)
         raw.activity_by_day = _records_by_day(self.repo.activity_range(user_id, start, day))
         raw.training_by_day = _records_by_day(self.repo.training_range(user_id, start, day))
         coverage_start = min(

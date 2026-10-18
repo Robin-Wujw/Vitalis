@@ -14,8 +14,9 @@ from zoneinfo import ZoneInfo
 
 from vitalis.intelligence.sleep_completion import (
     MIN_MAIN_SLEEP_MINUTES,
+    SETTLED_WAKE_MINUTES,
     main_sleep_finished,
-    minutes_recorded_after,
+    minutes_after,
 )
 from vitalis.time import local_clock_at
 
@@ -30,7 +31,9 @@ DEFAULT_MORNING_WINDOW = (time(7, 30), time(13, 0))
 EVENING_SCHEDULE = time(23, 0)
 LATE_AFTER_SECONDS = 30 * 60
 MORNING_DEADLINE_AFTER_WINDOW_SECONDS = 90 * 60
-EVENING_DEADLINE_SECONDS = 6 * 3600
+# An evening report not sent by 00:30 is dropped rather than pushed while the
+# user sleeps (user decision 2026-10-18); the next morning covers late training.
+EVENING_DEADLINE_SECONDS = 90 * 60
 EVENING_DELIVERY_TARGET_SECONDS = 60 * 60
 # A main sleep ending this long before the window start is treated as a record
 # the phone uploaded while the user was still asleep.
@@ -108,6 +111,25 @@ def wake_time_is_plausible(
     return datetime.combine(target, wake_time) >= earliest
 
 
+def _wake_at(target: date, wake_time: str | time | None, timezone: str) -> datetime | None:
+    return local_clock_at(target, wake_time.strip() if isinstance(wake_time, str) else wake_time, timezone)
+
+
+def morning_wake_settles_at(
+    target: date,
+    wake_time: str | None,
+    sleep_minutes: float | None,
+    *,
+    timezone: str,
+    morning_window: tuple[time, time] = DEFAULT_MORNING_WINDOW,
+) -> datetime | None:
+    """When a plausible stored wake time has stood long enough to start the report."""
+    if not wake_time_is_plausible(target, wake_time, sleep_minutes, morning_window=morning_window):
+        return None
+    wake_at = _wake_at(target, wake_time, timezone)
+    return None if wake_at is None else wake_at + timedelta(minutes=SETTLED_WAKE_MINUTES)
+
+
 def morning_sleep_has_ended(
     target: date,
     wake_time: str | None,
@@ -115,20 +137,25 @@ def morning_sleep_has_ended(
     *,
     usual_minutes: float | None,
     data_until: datetime | None,
+    checked_at: datetime | None,
     timezone: str,
     morning_window: tuple[time, time] = DEFAULT_MORNING_WINDOW,
 ) -> bool:
     """Whether the stored main sleep may start the morning report.
 
-    Besides a plausible wake time, the sleep must have finished: close to the
-    usual night, or followed by half an hour of uploaded watch data. A brief
-    awakening that made the phone upload (2026-10-17: 02:26-07:04, 275 minutes,
-    then asleep past 09:00) is neither.
+    Besides a plausible wake time, the source must still have shown it when
+    read an hour later, and a night short of the usual one needs half an hour
+    of uploaded watch data after it. Brief awakenings that made the phone upload
+    (2026-10-17: 02:26-07:04, 275 minutes, asleep until 10:21; 2026-10-18:
+    02:10-08:27, 364 minutes, asleep until 09:35) are neither.
     """
     if not wake_time_is_plausible(target, wake_time, sleep_minutes, morning_window=morning_window):
         return False
-    wake_at = local_clock_at(target, wake_time.strip() if isinstance(wake_time, str) else wake_time, timezone)
-    return main_sleep_finished(sleep_minutes, usual_minutes, minutes_recorded_after(wake_at, data_until))
+    wake_at = _wake_at(target, wake_time, timezone)
+    return main_sleep_finished(
+        sleep_minutes, usual_minutes,
+        minutes_after(wake_at, data_until), minutes_after(wake_at, checked_at),
+    )
 
 
 def retrospective_age(

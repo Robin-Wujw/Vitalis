@@ -902,6 +902,30 @@ class HealthRepository:
         )).scalar_one_or_none()
         return value.replace(tzinfo=timezone.utc) if value is not None else None
 
+    def sleep_checked_at(
+        self, user_id: str, start: datetime, end: datetime, until: datetime,
+    ) -> datetime | None:
+        """UTC time of the latest successful read of the sleep for the local day ``[start, end)``.
+
+        Every read rewrites the stored main sleep, so a stored wake time well
+        before this instant was still standing then.
+        """
+        value = self.db.execute(
+            select(func.max(orm.SyncChunk.finished_at))
+            .join(orm.SyncAttempt, orm.SyncAttempt.id == orm.SyncChunk.attempt_id)
+            .where(
+                orm.SyncAttempt.user_id == user_id,
+                # No read of the day's sleep starts before the day does.
+                orm.SyncAttempt.created_at >= _naive_utc(start),
+                func.coalesce(orm.SyncChunk.health_stream, orm.SyncChunk.stream) == "sleep",
+                orm.SyncChunk.status == "succeeded",
+                orm.SyncChunk.window_start >= _naive_utc(start),
+                orm.SyncChunk.window_start < _naive_utc(end),
+                orm.SyncChunk.finished_at <= _naive_utc(until),
+            )
+        ).scalar_one_or_none()
+        return value.replace(tzinfo=timezone.utc) if value is not None else None
+
     def sleep_range(self, user_id: str, start: date, end: date) -> list[dict]:
         rows = self.db.execute(
             select(orm.SleepRecord).where(

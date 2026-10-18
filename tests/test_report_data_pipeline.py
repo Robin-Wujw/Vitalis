@@ -115,6 +115,12 @@ def synthetic_pipeline_example(*, morning=False, explicit_strength=True, history
             "stream": "workouts", "partition": sport, "ordinal": index,
             "window_start": window.start, "window_end": window.end, "allow_unavailable": True,
         } for index, sport in enumerate(SPORTS)]
+        # The report sync also reads the target day's sleep, an hour or more after the wake.
+        specs.append({
+            "stable_key": stable_chunk_key("sleep", "sleep", day_start, day_end, None),
+            "stream": "sleep", "health_stream": "sleep", "partition": "sleep", "ordinal": len(SPORTS),
+            "window_start": day_start, "window_end": day_end, "allow_unavailable": True,
+        })
         attempt = repo.create_or_reuse_sync_attempt(
             user, plan_version=PLAN_VERSION, window_start=window.start,
             window_end=window.end, manifest=specs,
@@ -127,7 +133,7 @@ def synthetic_pipeline_example(*, morning=False, explicit_strength=True, history
             unavailable = not history_complete and chunk.partition == SPORTS[-1]
             chunk.status = "unavailable" if unavailable else "succeeded"
             chunk.fetch_status = "unavailable" if unavailable else "success"
-            chunk.parse_status = "not_run" if unavailable else "success" if chunk.partition in {"run", "strength"} else "empty"
+            chunk.parse_status = "not_run" if unavailable else "success" if chunk.partition in {"run", "strength", "sleep"} else "empty"
             chunk.write_status = "success" if chunk.parse_status == "success" else "not_run"
             chunk.finished_at = finished
 

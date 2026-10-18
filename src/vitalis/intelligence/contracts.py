@@ -466,11 +466,18 @@ class SleepFeatures(BaseModel):
         default=None, ge=0,
         description="Minutes of uploaded watch data after the wake time; unknown without data",
     )
+    checked_after_wake_minutes: int | None = Field(
+        default=None, ge=0,
+        description=(
+            "Minutes from the wake time to the latest successful read of this sleep from "
+            "the source; unknown without a read"
+        ),
+    )
     finished: bool = Field(
         default=False,
         description=(
-            "The main sleep has ended: at least 75% of the usual night, or 30 minutes of "
-            "watch data after the wake time without the sleep being extended"
+            "The main sleep has ended: a read 60 minutes after the wake time still shows it, "
+            "and the night reached 90% of the usual one or 30 minutes of watch data followed it"
         ),
     )
     limitations: list[str] = Field(default_factory=list)

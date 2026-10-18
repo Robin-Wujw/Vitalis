@@ -685,6 +685,7 @@ def test_feature_day_drops_the_same_stream_vendor_daily_value():
 def test_sleep_features_say_whether_the_main_sleep_has_ended():
     from zoneinfo import ZoneInfo
 
+    from vitalis.adapters.persistence import models as orm
     from vitalis.intelligence.analyzers import SleepAnalyzer
 
     user_id = "sleep-ended"
@@ -704,6 +705,23 @@ def test_sleep_features_say_whether_the_main_sleep_has_ended():
     def sleep_of(raw):
         return SleepAnalyzer().analyze(raw, BaselineEngine().build(raw.series, day))[0]
 
+    def read_sleep(db, when):
+        """A successful read of the day's band summary, as the dispatcher records it."""
+        start = datetime(2026, 10, 17, tzinfo=ZoneInfo(zone)).astimezone(timezone.utc).replace(tzinfo=None)
+        attempt_id = f"{user_id}-{when:%H%M}"
+        db.add(orm.SyncAttempt(
+            id=attempt_id, user_id=user_id, trigger="morning_probe", request_key=attempt_id,
+            window_start=start, window_end=start + timedelta(days=1), status="succeeded",
+            created_at=when.replace(tzinfo=None),
+        ))
+        db.flush()
+        db.add(orm.SyncChunk(
+            attempt_id=attempt_id, stable_key="sleep", stream="sleep", health_stream="sleep",
+            status="succeeded", window_start=start, window_end=start + timedelta(days=1),
+            started_at=when.replace(tzinfo=None), finished_at=when.replace(tzinfo=None),
+        ))
+        db.flush()
+
     with session_scope() as db:
         repo = HealthRepository(db)
         repo.delete_for_user(user_id)
@@ -719,14 +737,23 @@ def test_sleep_features_say_whether_the_main_sleep_has_ended():
             wake_time=datetime.strptime("07:04", "%H:%M").time(),
         )))
         repo.save_metric_samples(heart_rate(at(2, 26), at(7, 8)))
+        read_sleep(db, at(7, 30))
         partial = sleep_of(ProfileLoader(repo).load(user_id, day, as_of=at(7, 30), timezone_name=zone))
         repo.save_metric_samples(heart_rate(at(7, 9), at(7, 40)))
-        before_upload = sleep_of(ProfileLoader(repo).load(user_id, day, as_of=at(7, 30), timezone_name=zone))
-        awake = sleep_of(ProfileLoader(repo).load(user_id, day, as_of=at(7, 45), timezone_name=zone))
+        read_sleep(db, at(8, 5))
+        before_read = sleep_of(ProfileLoader(repo).load(user_id, day, as_of=at(8, 0), timezone_name=zone))
+        awake = sleep_of(ProfileLoader(repo).load(user_id, day, as_of=at(8, 10), timezone_name=zone))
 
-    assert (partial.usual_duration_minutes, partial.recorded_after_wake_minutes, partial.finished) == (
-        440.0, 4, False,
+    assert (
+        partial.usual_duration_minutes, partial.recorded_after_wake_minutes,
+        partial.checked_after_wake_minutes, partial.finished,
+    ) == (440.0, 4, 26, False)
+    # The analysis cutoff hides the read made after it: half an hour awake is
+    # not enough until the source still shows the wake an hour later.
+    assert (
+        before_read.recorded_after_wake_minutes, before_read.checked_after_wake_minutes,
+        before_read.finished,
+    ) == (36, 26, False)
+    assert (awake.recorded_after_wake_minutes, awake.checked_after_wake_minutes, awake.finished) == (
+        36, 61, True,
     )
-    # The analysis cutoff hides minutes uploaded after it.
-    assert (before_upload.recorded_after_wake_minutes, before_upload.finished) == (26, False)
-    assert (awake.recorded_after_wake_minutes, awake.finished) == (36, True)

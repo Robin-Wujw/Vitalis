@@ -455,8 +455,9 @@ def _add_attempt(factory, attempt_id, trigger, created_at, trigger_ref="owner", 
     ((2026, 10, 12, 23, 1), []),
     ((2026, 10, 12, 23, 2), [("owner", 1, "evening")]),
     ((2026, 10, 13, 0, 10), [("owner", 1, "evening")]),
-    ((2026, 10, 13, 4, 59), [("owner", 1, "evening")]),
-    ((2026, 10, 13, 5, 0), []),
+    ((2026, 10, 13, 0, 29), [("owner", 1, "evening")]),
+    ((2026, 10, 13, 0, 30), []),
+    ((2026, 10, 13, 4, 59), []),
 ])
 def test_missed_report_sync_is_caught_up_once_inside_its_window(
     catch_up_database, monkeypatch, local_now, expected,

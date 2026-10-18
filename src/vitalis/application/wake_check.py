@@ -1,10 +1,11 @@
 """Daily record of the wake-triggered morning report, for the one-week review.
 
-Per day: the stored wake time, when the morning sync was queued (the first
-probe that found a plausible main sleep, or the window end), how many probes
-ran, and when the report intent was created and last updated.  A morning sync
+Per day: the stored wake time, when the morning sync was queued (the read
+that found a main sleep an hour old, or the window end), how many probes ran,
+and when the report intent was created and last updated.  A morning sync
 queued before the finally stored wake time means the report started from a
-partial overnight upload.
+partial overnight upload; one queued less than an hour after it, before the
+window end, started before the user was up.
 """
 
 from __future__ import annotations
@@ -13,6 +14,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from statistics import median
 from zoneinfo import ZoneInfo
+
+from vitalis.intelligence.sleep_completion import SETTLED_WAKE_MINUTES
 
 
 @dataclass(frozen=True)
@@ -36,7 +39,7 @@ def summarize(days: list[WakeDay], *, timezone_name: str, poll_interval_seconds:
               window_end: time) -> dict:
     zone = ZoneInfo(timezone_name)
     rows, delays = [], []
-    partial = 0
+    partial = early = 0
     for item in sorted(days, key=lambda value: value.day):
         wake = None
         if item.wake_time:
@@ -47,6 +50,11 @@ def summarize(days: list[WakeDay], *, timezone_name: str, poll_interval_seconds:
         started_early = bool(wake and synced and synced < wake)
         partial += int(started_early)
         at_window_end = bool(synced and synced.time() >= window_end)
+        within_hour = bool(
+            wake and synced and not at_window_end
+            and synced < wake + timedelta(minutes=SETTLED_WAKE_MINUTES)
+        )
+        early += int(within_hour)
         delay = round((created - wake).total_seconds() / 60) if wake and created and created >= wake else None
         if delay is not None:
             delays.append(delay)
@@ -59,16 +67,18 @@ def summarize(days: list[WakeDay], *, timezone_name: str, poll_interval_seconds:
             "report_status": item.report_status,
             "minutes_after_wake": delay,
             "started_before_wake": started_early,
+            "started_within_hour": within_hour,
             "waited_for_window_end": at_window_end,
         })
-    limit = poll_interval_seconds / 60 + 10
+    limit = SETTLED_WAKE_MINUTES + poll_interval_seconds / 60 + 10
     middle = median(delays) if delays else None
     return {
         "days": rows,
         "median_minutes_after_wake": middle,
         "limit_minutes": limit,
         "partial_sleep_reports": partial,
-        "passes": bool(delays) and middle <= limit and partial == 0,
+        "early_reports": early,
+        "passes": bool(delays) and middle <= limit and partial == 0 and early == 0,
     }
 
 

@@ -231,12 +231,13 @@ def morning_wake_job(now: datetime | None = None) -> int:
 
     From the window start a sleep-only probe runs at most once per poll
     interval, capped per day, until last night's main sleep is stored with a
-    plausible wake time and has ended: close to the usual night, or followed
-    by half an hour of uploaded watch data. Then one full morning sync queues
-    the analysis whose delivery intent sends the report. At the window end the
-    morning sync runs anyway and the delivery policy sends facts only or keeps
-    a missed record. A restarted worker resumes from the stored attempts, so no
-    catch-up is needed.
+    plausible wake time that a read an hour later still shows (a short night
+    also needs half an hour of uploaded watch data after it). An extra probe
+    reads the source as soon as the wake time is an hour old. Then one full
+    morning sync queues the analysis whose delivery intent sends the report.
+    At the window end the morning sync runs anyway and the delivery policy
+    sends facts only or keeps a missed record. A restarted worker resumes from
+    the stored attempts, so no catch-up is needed.
     """
     from zoneinfo import ZoneInfo
 
@@ -261,7 +262,7 @@ def _morning_wake_step(
 ) -> str | None:
     """Queue at most one probe or morning sync for one user; return which."""
     from vitalis.adapters.persistence import HealthRepository, session_scope
-    from vitalis.application.delivery_policy import morning_sleep_has_ended
+    from vitalis.application.delivery_policy import morning_sleep_has_ended, morning_wake_settles_at
     from vitalis.intelligence.sleep_completion import USUAL_SLEEP_NIGHTS, usual_sleep_minutes
     from vitalis.time import local_day_utc_bounds
 
@@ -284,13 +285,14 @@ def _morning_wake_step(
         if any(row.status in _ACTIVE_SYNC_STATES for row in probes):
             return None
         wake_time, sleep_minutes = repo.sleep_wake_summary(user_id, today)
-        day_start, _ = local_day_utc_bounds(today, settings.timezone)
+        day_start, day_end = local_day_utc_bounds(today, settings.timezone)
         awake = morning_sleep_has_ended(
             today, wake_time, sleep_minutes,
             usual_minutes=usual_sleep_minutes(repo.sleep_minutes_by_night(
                 user_id, today - timedelta(days=USUAL_SLEEP_NIGHTS), today - timedelta(days=1),
             ), today),
             data_until=repo.latest_heart_rate_at(user_id, day_start, now),
+            checked_at=repo.sleep_checked_at(user_id, day_start, day_end, now),
             timezone=settings.timezone,
             morning_window=settings.morning_wake_window(),
         )
@@ -310,7 +312,16 @@ def _morning_wake_step(
             return None
         latest = max((row.created_at for row in probes), default=None)
         interval = timedelta(seconds=settings.morning_wake_poll_interval_seconds)
-        if latest is not None and now.astimezone(timezone.utc).replace(tzinfo=None) < latest + interval:
+        current = now.astimezone(timezone.utc).replace(tzinfo=None)
+        settles_at = morning_wake_settles_at(
+            today, wake_time, sleep_minutes,
+            timezone=settings.timezone, morning_window=settings.morning_wake_window(),
+        )
+        settled = None if settles_at is None else settles_at.astimezone(timezone.utc).replace(tzinfo=None)
+        # Read the source once as soon as the wake time is an hour old, so the
+        # report follows it closely rather than up to a poll interval later.
+        confirm = settled is not None and settled <= current and (latest is None or latest < settled)
+        if not confirm and latest is not None and current < latest + interval:
             return None
         _sync_user(
             user_id, days=1, label=MORNING_PROBE_TRIGGER,

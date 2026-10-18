@@ -31,7 +31,7 @@ def profile(*, period="evening"):
 
 
 def prepare(payload, *, period="evening", now=None, today=None, **kwargs):
-    now = now or datetime(2026, 10, 10, 0, 30, tzinfo=UTC)
+    now = now or datetime(2026, 10, 10, 0, 15, tzinfo=UTC)
     return delivery_policy.prepare_delivery(
         payload, period=period, target_date=DAY, today=today or now.date(),
         as_of=now, timezone="UTC", scheduled_delivery=True, **kwargs,
@@ -48,27 +48,27 @@ def test_scheduled_evening_survives_midnight_as_visible_facts_only():
     assert metadata["late"] is True
     assert metadata["partial"] is True
     assert metadata["as_of"] == "2026-10-09T21:45:00Z"
-    assert metadata["delivered_as_of"] == "2026-10-10T00:30:00Z"
+    assert metadata["delivered_as_of"] == "2026-10-10T00:15:00Z"
     assert metadata["scheduled_for"] == "2026-10-09T23:00:00Z"
     assert metadata["late_after"] == "2026-10-09T23:30:00Z"
     assert metadata["delivery_target_at"] == "2026-10-10T00:00:00Z"
-    assert metadata["deadline_at"] == "2026-10-10T05:00:00Z"
-    assert metadata["allowed_delay_seconds"] == 21600
+    assert metadata["deadline_at"] == "2026-10-10T00:30:00Z"
+    assert metadata["allowed_delay_seconds"] == 5400
     assert "decision" not in outcome["payload"]
     assert outcome["payload"]["report_context"]["delivery_metadata"] == metadata
     assert payload == original
 
 
 @pytest.mark.parametrize("now", [
+    datetime(2026, 10, 10, 0, 30, tzinfo=UTC),
     datetime(2026, 10, 10, 5, 0, tzinfo=UTC),
-    datetime(2026, 10, 11, 0, 0, tzinfo=UTC),
 ])
-def test_scheduled_reports_stop_at_finite_deadline(now):
+def test_scheduled_evening_is_dropped_at_half_past_midnight(now):
     result = prepare(profile(), now=now)
     assert result["status"] == "deferred"
     assert result["reason"] == "stale_plan_expired"
     assert result["delivery_metadata"]["failure_code"] == "delivery_deadline_expired"
-    assert result["delivery_metadata"]["deadline_at"] == "2026-10-10T05:00:00Z"
+    assert result["delivery_metadata"]["deadline_at"] == "2026-10-10T00:30:00Z"
 
 
 def test_scheduled_evening_cannot_send_without_any_observed_facts():
@@ -158,44 +158,64 @@ def shanghai(hour: int, minute: int) -> datetime:
     return datetime(DAY.year, DAY.month, DAY.day, hour, minute, tzinfo=ZoneInfo("Asia/Shanghai"))
 
 
-@pytest.mark.parametrize(("wake", "minutes", "usual", "data_until", "expected"), [
+@pytest.mark.parametrize(("wake", "minutes", "usual", "data_until", "checked", "expected"), [
+    # 2026-10-18: read at 08:35, two minutes of watch data after the 08:27 wake.
+    ("08:27:00", 364, 439.5, (8, 29), (8, 35), False),
+    # Still the same an hour later, but 83% of the usual night and no watch
+    # data showing the user awake: they slept on until 09:35.
+    ("08:27:00", 364, 439.5, (8, 29), (9, 27), False),
+    ("09:35:00", 429, 439.5, (9, 39), (10, 35), True),
+    ("09:35:00", 429, 439.5, (9, 39), (10, 34), False),
     # 2026-10-17: the phone uploaded during a brief awakening; the night went on.
-    ("07:04:00", 275, 439.5, (7, 8), False),
-    # Half an hour of watch data after the wake without the sleep growing.
-    ("07:04:00", 275, 439.5, (7, 34), True),
-    ("07:04:00", 275, 439.5, (7, 33), False),
-    # Ordinary weekday mornings start right away.
-    ("08:26:00", 427, 439.5, (8, 37), True),
-    ("08:36:00", 330, 440.0, (8, 40), True),
-    ("08:36:00", 329, 440.0, (8, 40), False),
+    ("07:04:00", 275, 439.5, (7, 8), (8, 4), False),
+    # A short night also needs half an hour of watch data after the wake.
+    ("07:04:00", 275, 439.5, (7, 34), (8, 4), True),
+    ("07:04:00", 275, 439.5, (7, 34), (8, 3), False),
+    ("07:04:00", 275, 439.5, (7, 33), (9, 0), False),
+    ("08:36:00", 396, 440.0, (8, 40), (9, 36), True),
+    ("08:36:00", 395, 440.0, (8, 40), (9, 36), False),
+    ("08:36:00", 395, 440.0, (9, 6), (9, 36), True),
     # Without five usual nights only watch data after the wake counts.
-    ("08:36:00", 455, None, (8, 40), False),
-    ("08:36:00", 455, None, (9, 6), True),
-    ("08:36:00", 455, None, None, False),
+    ("08:36:00", 455, None, (8, 40), (9, 36), False),
+    ("08:36:00", 455, None, (9, 6), (9, 36), True),
+    ("08:36:00", 455, None, None, (9, 36), False),
+    # Without a read of the sleep nothing has been confirmed.
+    ("08:36:00", 455, 440.0, (9, 40), None, False),
     # The plausibility floors still apply first.
-    ("04:29:00", 400, 400.0, (6, 0), False),
-    ("09:57:00", 179, 200.0, (11, 0), False),
-    (None, 420, 420.0, (9, 0), False),
+    ("04:29:00", 400, 400.0, (6, 0), (6, 0), False),
+    ("09:57:00", 179, 200.0, (11, 0), (11, 0), False),
+    (None, 420, 420.0, (9, 0), (9, 0), False),
 ])
-def test_the_morning_starts_only_after_the_main_sleep_has_ended(wake, minutes, usual, data_until, expected):
+def test_the_morning_starts_an_hour_after_the_main_sleep_ended(
+    wake, minutes, usual, data_until, checked, expected,
+):
     assert delivery_policy.morning_sleep_has_ended(
         DAY, wake, minutes, usual_minutes=usual,
         data_until=shanghai(*data_until) if data_until else None,
+        checked_at=shanghai(*checked) if checked else None,
         timezone="Asia/Shanghai",
     ) is expected
 
 
-@pytest.mark.parametrize(("target", "deadline"), [
-    (date(2026, 3, 7), "2026-03-08T10:00:00Z"),
-    (date(2026, 10, 31), "2026-11-01T09:00:00Z"),
+def test_a_plausible_wake_settles_an_hour_later():
+    assert delivery_policy.morning_wake_settles_at(
+        DAY, "08:27:00", 364, timezone="Asia/Shanghai",
+    ) == shanghai(9, 27)
+    assert delivery_policy.morning_wake_settles_at(DAY, "02:59:00", 200, timezone="Asia/Shanghai") is None
+    assert delivery_policy.morning_wake_settles_at(DAY, None, 420, timezone="Asia/Shanghai") is None
+
+
+@pytest.mark.parametrize(("zone", "deadline", "local_deadline"), [
+    ("America/New_York", "2026-03-08T05:30:00Z", "00:30"),
+    # Havana springs forward at midnight: still 90 real minutes.
+    ("America/Havana", "2026-03-08T05:30:00Z", "01:30"),
 ])
-def test_evening_delay_uses_six_real_hours_across_dst(target, deadline):
-    window = delivery_policy.scheduled_report_window(target, "evening", "America/New_York")
+def test_evening_deadline_is_ninety_real_minutes(zone, deadline, local_deadline):
+    window = delivery_policy.scheduled_report_window(date(2026, 3, 7), "evening", zone)
+    end = datetime.fromisoformat(window["deadline_at"].replace("Z", "+00:00"))
     assert window["deadline_at"] == deadline
-    assert (
-        datetime.fromisoformat(window["deadline_at"].replace("Z", "+00:00"))
-        - datetime.fromisoformat(window["scheduled_for"].replace("Z", "+00:00"))
-    ).total_seconds() == 21600
+    assert end.astimezone(ZoneInfo(zone)).strftime("%H:%M") == local_deadline
+    assert (end - datetime.fromisoformat(window["scheduled_for"].replace("Z", "+00:00"))).total_seconds() == 5400
 
 
 def test_prior_workouts_are_not_same_day_facts():
@@ -230,7 +250,7 @@ def test_empty_available_activity_is_not_a_fact():
 
 
 def test_explicit_plan_expiry_cannot_extend_scheduled_deadline():
-    result = prepare(profile(), now=datetime(2026, 10, 10, 5, tzinfo=UTC),
+    result = prepare(profile(), now=datetime(2026, 10, 10, 0, 30, tzinfo=UTC),
                      plan_expires_at=datetime(2100, 1, 1, tzinfo=UTC))
     assert result["status"] == "deferred"
     assert result["reason"] == "stale_plan_expired"

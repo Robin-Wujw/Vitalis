@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from vitalis.adapters.persistence import init_db
 from vitalis.adapters.persistence.models import (
-    AnalysisRun, MetricSample, NotificationDelivery, SleepRecord, SyncAttempt, User,
+    AnalysisRun, MetricSample, NotificationDelivery, SleepRecord, SyncAttempt, SyncChunk, User,
 )
 from vitalis.adapters.persistence.repositories import _current_analysis_config_digest
 from vitalis.config import settings
@@ -75,7 +75,33 @@ def wake(tmp_path, monkeypatch):
     engine.dispose()
 
 
-def run_until(state, end: datetime, *, step=timedelta(minutes=1), on_tick=None):
+def add_sleep_read(db, attempt_id: str, at: datetime) -> None:
+    """The dispatcher's successful read of the day's band summary for one attempt."""
+    start = datetime(DAY.year, DAY.month, DAY.day, tzinfo=ZONE).astimezone(timezone.utc)
+    db.add(SyncChunk(
+        attempt_id=attempt_id, stable_key=f"sleep:{attempt_id}", stream="sleep",
+        health_stream="sleep", status="succeeded",
+        window_start=start.replace(tzinfo=None),
+        window_end=(start + timedelta(days=1)).replace(tzinfo=None),
+        started_at=at.astimezone(timezone.utc).replace(tzinfo=None),
+        finished_at=at.astimezone(timezone.utc).replace(tzinfo=None),
+    ))
+
+
+def read_sleep(state, at: datetime) -> None:
+    """A sync outside the probes read the day's sleep at ``at``."""
+    with state.factory.begin() as db:
+        attempt_id = f"read-{at:%H%M}"
+        db.add(SyncAttempt(
+            id=attempt_id, user_id="owner", trigger="freshness", request_key=attempt_id,
+            window_start=datetime(2026, 10, 13, 16), window_end=datetime(2026, 10, 14, 16),
+            status="succeeded", created_at=at.astimezone(timezone.utc).replace(tzinfo=None),
+        ))
+        db.flush()
+        add_sleep_read(db, attempt_id, at)
+
+
+def run_until(state, end: datetime, *, step=timedelta(minutes=1), on_tick=None, probe_status="succeeded"):
     """Advance the worker clock minute by minute, finishing probes as a dispatcher would."""
     while state.now < end:
         if on_tick is not None:
@@ -86,7 +112,9 @@ def run_until(state, end: datetime, *, step=timedelta(minutes=1), on_tick=None):
                 SyncAttempt.trigger == jobs.MORNING_PROBE_TRIGGER,
                 SyncAttempt.status == "queued",
             ):
-                row.status = "succeeded"
+                row.status = probe_status
+                if probe_status == "succeeded":
+                    add_sleep_read(db, row.id, state.now)
         state.now += step
 
 
@@ -126,27 +154,30 @@ def morning_syncs(state):
 
 
 @pytest.mark.parametrize(("wake_at", "written_at"), [((8, 40), (8, 50)), ((9, 57), (10, 6))])
-def test_morning_sync_follows_the_stored_wake_within_one_poll(wake, wake_at, written_at):
+def test_morning_sync_starts_once_the_stored_wake_is_an_hour_old(wake, wake_at, written_at):
     wake.now = local(7, 25)
     written = local(*written_at)
+    settled = local(*wake_at) + timedelta(hours=1)
 
     def arrive(now):
         if now == written:
             store_sleep(wake, f"{wake_at[0]:02d}:{wake_at[1]:02d}:00", 470)
 
-    run_until(wake, local(11, 30), on_tick=arrive)
+    run_until(wake, local(12, 30), on_tick=arrive)
 
     syncs = morning_syncs(wake)
     assert len(syncs) == 1
     label, days, ref, sleep_only, queued_at = syncs[0]
     assert (days, ref, sleep_only) == (2, f"morning:{DAY.isoformat()}:1", False)
-    assert written <= queued_at <= written + timedelta(seconds=settings.morning_wake_poll_interval_seconds)
+    # One extra probe reads the source as soon as the wake time is an hour old.
     probe_times = [item[4] for item in probes(wake)]
+    assert probe_times[-1] == settled
+    assert queued_at == settled + timedelta(minutes=1)
     assert probe_times[0] == local(7, 30)
-    assert all(later - earlier >= timedelta(minutes=15) for earlier, later in zip(probe_times, probe_times[1:]))
+    regular = probe_times[:-1]
+    assert all(later - earlier >= timedelta(minutes=15) for earlier, later in zip(regular, regular[1:]))
     assert all(item[1:4] == (1, f"morning-probe:{DAY.isoformat()}:{index}", True)
                for index, item in enumerate(probes(wake), 1))
-    assert max(probe_times) < queued_at
 
 
 def test_no_sleep_probes_up_to_the_cap_then_falls_back_at_the_window_end(wake, monkeypatch):
@@ -165,22 +196,76 @@ def test_the_default_probes_cover_the_window_until_one_pm(wake):
     assert [item[4] for item in morning_syncs(wake)] == [local(13, 0)]
 
 
+def test_a_normal_night_read_minutes_after_the_wake_waits_an_hour(wake):
+    store_sleep(wake, "08:36:00", 440)
+    upload_heart_rate(wake, local(1, 30), local(8, 40))
+    read_sleep(wake, local(8, 45))
+    wake.now = local(8, 46)
+    run_until(wake, local(9, 36))
+    assert morning_syncs(wake) == []
+    run_until(wake, local(9, 45))
+    assert [item[4] for item in morning_syncs(wake)] == [local(9, 37)]
+
+
+def test_a_cut_short_night_waits_for_the_real_wake(wake):
+    """2026-10-18: a 08:27 wake read at 08:35 started the report at 08:40; the
+    user slept on and the phone uploaded the 09:35 wake at 09:39."""
+    store_sleep(wake, "08:27:00", 364)
+    upload_heart_rate(wake, local(2, 10), local(8, 29))
+    read_sleep(wake, local(8, 35))
+    wake.now = local(8, 36)
+    run_until(wake, local(9, 39))
+    assert morning_syncs(wake) == []
+    store_sleep(wake, "09:35:00", 429)
+    upload_heart_rate(wake, local(8, 30), local(9, 39))
+    run_until(wake, local(10, 35))
+    assert morning_syncs(wake) == []
+    run_until(wake, local(10, 45))
+    assert [item[4] for item in morning_syncs(wake)] == [local(10, 36)]
+
+
+def test_an_extended_sleep_restarts_the_hour(wake):
+    store_sleep(wake, "08:27:00", 420)
+    read_sleep(wake, local(8, 35))
+    wake.now = local(8, 36)
+    extended = local(9, 10)
+
+    def arrive(now):
+        if now == extended:
+            # The user fell asleep again; the next upload moved the wake time.
+            store_sleep(wake, "09:05:00", 455)
+
+    run_until(wake, local(10, 15), on_tick=arrive)
+    assert [item[4] for item in morning_syncs(wake)] == [local(10, 6)]
+
+
+def test_a_failed_hour_probe_falls_back_to_the_poll_interval(wake):
+    store_sleep(wake, "08:27:00", 420)
+    read_sleep(wake, local(8, 35))
+    wake.now = local(9, 27)
+    run_until(wake, local(9, 28), probe_status="failed")
+    run_until(wake, local(9, 50))
+    assert [item[4] for item in probes(wake)] == [local(9, 27), local(9, 42)]
+    assert [item[4] for item in morning_syncs(wake)] == [local(9, 43)]
+
+
 def test_an_upload_during_a_brief_awakening_waits_for_the_rest_of_the_night(wake):
-    """2026-10-17: the phone uploaded at 07:09 while the night went on past 09:30."""
+    """2026-10-17: the phone uploaded at 07:09 while the night went on past 10:00."""
     store_sleep(wake, "07:04:00", 275)
     upload_heart_rate(wake, local(2, 26), local(7, 8))
     wake.now = local(7, 30)
     run_until(wake, local(9, 50))
     assert morning_syncs(wake) == []
-    assert len(probes(wake)) == 10
 
     store_sleep(wake, "09:38:00", 430)
     upload_heart_rate(wake, local(7, 9), local(9, 44))
-    run_until(wake, local(10, 10))
-    assert [item[4] for item in morning_syncs(wake)] == [local(9, 50)]
+    run_until(wake, local(10, 38))
+    assert morning_syncs(wake) == []
+    run_until(wake, local(10, 45))
+    assert [item[4] for item in morning_syncs(wake)] == [local(10, 39)]
 
 
-def test_a_short_night_starts_once_the_watch_shows_half_an_hour_awake(wake):
+def test_a_short_night_also_needs_half_an_hour_of_watch_data(wake):
     store_sleep(wake, "06:31:00", 300)
     upload_heart_rate(wake, local(1, 30), local(6, 40))
     wake.now = local(7, 30)
@@ -199,13 +284,12 @@ def test_without_usual_nights_only_watch_data_after_the_wake_counts(wake):
     store_sleep(wake, "08:36:00", 455)
     upload_heart_rate(wake, local(1, 0), local(8, 40))
     wake.now = local(8, 45)
-    run_until(wake, local(9, 0))
+    run_until(wake, local(10, 0))
+    # An hour has passed, but nothing shows more than a brief awakening.
     assert morning_syncs(wake) == []
-    upload_heart_rate(wake, local(8, 41), local(9, 10))
-    run_until(wake, local(9, 10))
-    # Minutes stored ahead of the worker clock do not count: half an hour after
-    # the 08:36 wake is 09:06.
-    assert [item[4] for item in morning_syncs(wake)] == [local(9, 6)]
+    upload_heart_rate(wake, local(8, 41), local(9, 20))
+    run_until(wake, local(10, 5))
+    assert [item[4] for item in morning_syncs(wake)] == [local(10, 0)]
 
 
 def test_a_mid_night_upload_does_not_start_the_morning(wake):
@@ -213,9 +297,9 @@ def test_a_mid_night_upload_does_not_start_the_morning(wake):
     wake.now = local(7, 30)
     run_until(wake, local(9, 50))
     assert morning_syncs(wake) == []
-    store_sleep(wake, "09:57:00", 553)
-    run_until(wake, local(10, 20))
-    assert [item[4] for item in morning_syncs(wake)] == [local(9, 50)]
+    store_sleep(wake, "09:47:00", 553)
+    run_until(wake, local(11, 0))
+    assert [item[4] for item in morning_syncs(wake)] == [local(10, 48)]
 
 
 def test_nothing_runs_outside_the_window_or_after_a_delivery_exists(wake):
@@ -256,11 +340,12 @@ def test_one_probe_at_a_time(wake):
 ])
 def test_morning_sync_is_retried_once_only_when_it_wrote_nothing(wake, status, written, retried):
     store_sleep(wake, "08:36:00", 455)
+    read_sleep(wake, local(9, 36))
     wake.status, wake.written = status, written
-    assert jobs.morning_wake_job(now=local(8, 50)) == 1
+    assert jobs.morning_wake_job(now=local(9, 37)) == 1
     wake.status, wake.written = "failed", 0
-    assert jobs.morning_wake_job(now=local(8, 51)) == int(retried)
-    assert jobs.morning_wake_job(now=local(8, 52)) == 0
+    assert jobs.morning_wake_job(now=local(9, 38)) == int(retried)
+    assert jobs.morning_wake_job(now=local(9, 39)) == 0
     assert len(morning_syncs(wake)) == 1 + int(retried)
     if retried:
         assert morning_syncs(wake)[1][2] == f"morning:{DAY.isoformat()}:2"

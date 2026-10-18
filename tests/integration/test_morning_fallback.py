@@ -118,15 +118,17 @@ def _delivery(factory) -> NotificationDelivery:
         return db.query(NotificationDelivery).one()
 
 
-@pytest.mark.parametrize("hour,expected", [(0, 1), (4, 1), (5, 0)])
-def test_previous_evening_rearms_only_before_its_deadline(isolated_database, monkeypatch, hour, expected):
+@pytest.mark.parametrize("minutes,expected", [(0, 1), (29, 1), (30, 0), (240, 0)])
+def test_previous_evening_rearms_only_before_its_half_past_midnight_deadline(
+    isolated_database, monkeypatch, minutes, expected,
+):
     from zoneinfo import ZoneInfo
 
     _seed(isolated_database, _payload(sleep_complete=True, same_day_facts=True), "stored_data_incomplete")
     with isolated_database.begin() as db:
         db.query(NotificationDelivery).one().period = "evening"
     next_day = DAY + timedelta(days=1)
-    now = datetime.combine(next_day, datetime.min.time(), ZoneInfo("Asia/Shanghai")) + timedelta(hours=hour)
+    now = datetime.combine(next_day, datetime.min.time(), ZoneInfo("Asia/Shanghai")) + timedelta(minutes=minutes)
     monkeypatch.setattr("vitalis.time.local_today", lambda: next_day)
     monkeypatch.setattr(jobs, "_utc_now", lambda: now.astimezone(UTC))
 

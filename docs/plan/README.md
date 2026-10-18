@@ -23,5 +23,6 @@
 | P0 | [晨报醒来窗口的一周验收](wake-triggered-morning.md) | 醒后 60 分钟规则运行满一周（2026-10-25） |
 | P0 | [不用插件，在电脑网页上连接 Zepp](zepp-web-login.md) | 回填完成；稳定两周后删插件（2026-10-28） |
 | P1 | [缩短同步写事务，避免心跳争用](sync-write-transactions.md) | 先补逐事务耗时与双连接合成复现 |
+| P1 | [周报跨重启补触发与缺失意图告警](weekly-delivery-reliability.md) | 先定义补偿窗口并复现跨调度时刻重启 |
 | P2 | [漏发告警的第二通道](delivery-alerts.md) | 用户选定通道 |
 | P2 | [一键反馈的真实验收](feedback-tags.md) | 用户提交一次反馈 |

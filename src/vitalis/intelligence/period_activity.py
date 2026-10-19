@@ -10,6 +10,7 @@ from statistics import median
 from vitalis.time import local_day
 
 from .contracts import PeriodActivityMetric, Provenance
+from .workout_effort import session_rpe_summary
 
 
 ACTIVITY_METRICS = ("steps", "distance_km", "active_minutes")
@@ -473,6 +474,7 @@ def period_training_details(raw, period_start: date, period_end: date) -> dict:
 
     return {
         "running_sessions": len(running) if running else None,
+        "session_rpe_summary": session_rpe_summary(raw, period_start, period_end),
         "running_distance_km": _rounded(running_distance),
         "running_duration_minutes": _rounded(running_duration),
         "running_classification_counts": dict(sorted(classification_counts.items())),

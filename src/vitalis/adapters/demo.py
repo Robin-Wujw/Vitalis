@@ -7,7 +7,7 @@ from vitalis.adapters.persistence import HealthRepository, session_scope
 from vitalis.adapters.zepp.client import SPORTS
 from vitalis.adapters.zepp.fetcher import FetchWindow
 from vitalis.adapters.zepp.sync_coordinator import PLAN_VERSION, stable_chunk_key
-from vitalis.domain import Workout
+from vitalis.domain import Workout, WorkoutRpe
 from vitalis.time import local_day_utc_bounds
 
 
@@ -25,7 +25,11 @@ def seed_demo_workouts(start: date, end: date, as_of: datetime, timezone_name: s
                     training_family="strength", sport_mode_label="力量训练",
                     started_at=day_start + timedelta(hours=18), duration=45, load=50,
                     calories=210, heart_rate_avg=108, vendor_reported_sets=12,
-                    observed_fields=["calories", "duration", "load", "vendor_reported_sets"],
+                    session_rpe=WorkoutRpe(
+                        value=7, source="zepp", source_scope="workout_summary", source_field="rpe",
+                        observed_at=day_start + timedelta(hours=18),
+                    ),
+                    observed_fields=["calories", "duration", "load", "vendor_reported_sets", "session_rpe"],
                 ))
                 curls = (12, 10, 8) if day == end else (10, 8, 6)
                 sets = []

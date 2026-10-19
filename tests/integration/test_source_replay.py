@@ -700,3 +700,48 @@ def test_replay_apply_refuses_an_unrelated_or_long_window(sessions, offline):
             replay_apply.apply(
                 db, "source-owner", "replay-owner", DAY, DAY + timedelta(days=20), timezone_name="UTC",
             )
+
+
+def test_replay_apply_maps_workout_rpe_to_original_owner_journal(sessions, offline):
+    from vitalis.adapters import replay_apply
+
+    payload = {"data": {"summary": [{
+        "trackid": int(START.timestamp()),
+        "end_time": int((START + timedelta(minutes=30)).timestamp()),
+        "type": 52, "rpe": 8,
+    }]}}
+    workout_id = str(int(START.timestamp()))
+    with sessions.begin() as db:
+        repo = _owner(db)
+        original = SourceJournalRepository(db).append(SourceRecordInput(
+            user_id="source-owner", source="zepp", source_mode="mock", stream="workouts",
+            record_id="sport_history:run:synthetic-rpe", observed_start=START,
+            observed_end=END, fetched_at=FETCHED, payload=payload,
+        ))
+        original_id = original.id
+        old_payload = deepcopy(payload)
+        old_payload["data"]["summary"][0].pop("rpe")
+        workout, = ZeppParser().parse_sport_history(old_payload)
+        repo.save_workout(workout.model_copy(update={"user_id": "source-owner"}))
+
+    _replay(sessions)
+    with sessions.begin() as db:
+        repo = HealthRepository(db)
+        replayed = repo.workout("replay-owner", workout_id, source="zepp")
+        replay_journal_id = replayed.data["session_rpe"]["source_record_id"]
+        assert replay_journal_id != original_id
+        assert db.get(SourceJournalRecord, replay_journal_id).origin_journal_id == original_id
+        applied = replay_apply.apply(db, "source-owner", "replay-owner", DAY, DAY, timezone_name="UTC")
+        db.expire_all()
+        saved = repo.workout("source-owner", workout_id, source="zepp")
+        rating = saved.data["session_rpe"]
+        assert rating["source_record_id"] == original_id
+        assert rating["value"] == 8
+        assert datetime.fromisoformat(rating["fetched_at"]) == FETCHED
+        source_record = db.get(SourceJournalRecord, rating["source_record_id"])
+        assert source_record.user_id == "source-owner" and source_record.stream == "workouts"
+        # Applying the projection cannot mutate the independent replay source.
+        assert repo.workout("replay-owner", workout_id, source="zepp").data["session_rpe"]["source_record_id"] == replay_journal_id
+        replay_apply.undo(db, applied["application_id"])
+        db.expire_all()
+        assert "session_rpe" not in repo.workout("source-owner", workout_id, source="zepp").data

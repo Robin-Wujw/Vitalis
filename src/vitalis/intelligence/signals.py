@@ -92,6 +92,7 @@ class SignalDefinition(_SignalModel):
     source_fields: tuple[str, ...] = Field(min_length=1)
     unit: str
     calendar_semantics: CalendarSemantics
+    aggregation_basis: Literal["day", "workout"] = "day"
     qualification: SignalQualification
     coverage_rule: SignalCoverageRule
     visible_channels: tuple[Literal["morning", "evening", "hermes", "api"], ...]
@@ -260,7 +261,9 @@ _LATEST_METRICS = {
 
 def _qualification(metric: str) -> SignalQualification:
     kwargs: dict = {"minimum": 0.0}
-    if metric in _SCORE_METRICS:
+    if metric == "session_rpe":
+        kwargs.update(minimum=1.0, maximum=10.0)
+    elif metric in _SCORE_METRICS:
         kwargs["maximum"] = 100.0
     elif metric in {"skin_temp_delta", "skin_temp_baseline_delta"}:
         kwargs.update(minimum=-2.0, maximum=2.0)
@@ -325,12 +328,18 @@ def _definition(
         source_fields=fields,
         unit=unit,
         calendar_semantics=semantics,
+        aggregation_basis="workout" if metric == "session_rpe" else "day",
         qualification=_qualification(metric),
         coverage_rule=SignalCoverageRule(
             requires_closed_day=metric in _CLOSED_DAY_METRICS,
             sample_window=metric in {"heart_rate", "stress"},
             daily_reduction="latest" if metric in _LATEST_METRICS else "median",
             aggregation=aggregation,
+            **({
+                "baseline_window_days": 0, "baseline_minimum_days": 0,
+                "period_comparison_rule": "No daily baseline; mean over rated workouts in the declared activity-day window.",
+                "missing_day_rule": "Count rated/recorded workouts; unreported effort remains unknown.",
+            } if metric == "session_rpe" else {}),
         ),
         visible_channels=("morning", "evening", "hermes", "api") if recovery else ("evening", "hermes", "api"),
         decision_role=role,
@@ -369,6 +378,7 @@ def _registry() -> dict[str, SignalDefinition]:
         _definition("cycling_distance", "m", "activity_day", ("daily.cycling_distance", "totalCyclingDistance"), aggregation="mean_per_effective_day"),
         _definition("training_load", "load", "activity_day", ("training.total_load", "daily.training_load", "trainingLoad", "wtlSum", "currnetDayTrainLoad", "load"), "yes", aggregation="mean_per_effective_day"),
         _definition("training_duration", "min", "activity_day", ("training.total_duration",), aggregation="mean_per_effective_day"),
+        _definition("session_rpe", "score_1_10", "activity_day", ("workout.session_rpe.value", "sport_history.rpe", "feedback.session_rpe"), "yes"),
         _definition("vo2max", "ml/kg/min", "calendar_day", ("daily.vo2max", "vo2max", "vo2Max", "VO2_MAX", "VO2_max", "vo2_max_run", "vo2_max_walking"), "shadow"),
         _definition("lactate_threshold_hr", "bpm", "calendar_day", ("daily.lactate_threshold_hr", "lactateThresholdHr"), "shadow"),
         _definition("lactate_threshold_pace", "s/km", "calendar_day", ("daily.lactate_threshold_pace", "lactateThresholdPace"), "shadow"),
@@ -435,7 +445,7 @@ def build_signal_states(
     raw: RawDailyProfile,
     baselines: dict[str, list[BaselineStats]],
 ) -> dict[str, list[SignalState]]:
-    """Return every registered metric, with independent provenance streams.
+    """Return registered daily metrics, with independent provenance streams.
 
     Baselines supplied by the caller are reused only when identical to a
     qualified 28-day recomputation. BaselineStats has no as_of or timestamps,
@@ -443,6 +453,8 @@ def build_signal_states(
     """
     output: dict[str, list[SignalState]] = {}
     for metric, definition in SIGNAL_REGISTRY.items():
+        if definition.aggregation_basis != "day":
+            continue
         considered = _considered_points(raw, metric)
         streams = _group_streams(considered)
         states = [
@@ -489,6 +501,8 @@ def build_period_signals(
             pass
     output: dict[str, list[PeriodSignalState]] = {}
     for metric, definition in SIGNAL_REGISTRY.items():
+        if definition.aggregation_basis != "day":
+            continue
         considered = [
             point for point in _considered_points(raw, metric)
             if reference_start <= point.day <= end

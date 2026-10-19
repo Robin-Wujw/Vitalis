@@ -163,7 +163,7 @@ def test_active_safety_events_suppress_new_strength_and_running_plans(event_type
 
 
 @pytest.mark.parametrize(("restriction", "reason"), [
-    ("pain", "会诱发疼痛"), ("rpe", "用力程度 8 分"),
+    ("pain", "会诱发疼痛"), ("rpe", "平均主观用力为 9/10"),
     ("fatigue", "身体疲劳较重"), ("soreness", "肌肉酸痛较重"), ("sleep", "睡眠"),
 ])
 def test_subjective_and_sleep_safety_gates_are_never_bypassed(restriction, reason):
@@ -180,6 +180,10 @@ def test_subjective_and_sleep_safety_gates_are_never_bypassed(restriction, reaso
             "rpe": {"session_rpe": 9}, "fatigue": {"physical_fatigue": 5},
             "soreness": {"muscle_soreness": 5},
         }[restriction]]
+        if restriction == "rpe":
+            raw.feedback_by_workout[("zepp", raw.workouts[0]["workout_id"])] = [SimpleNamespace(
+                id="weekly-rpe", created_at=raw.as_of, session_rpe=9, muscle_soreness=None,
+            )]
 
     profile = _build(raw, feedback=feedback)
 

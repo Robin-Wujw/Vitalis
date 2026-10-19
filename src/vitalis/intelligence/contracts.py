@@ -7,16 +7,17 @@ from typing import Any, Generic, Literal, TypeVar
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from vitalis.domain import StrengthSetObservation
+from vitalis.domain.models import WorkoutRpe
 
 
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "14.0"
-WEEKLY_SCHEMA_VERSION = "6.0"
-MONTHLY_SCHEMA_VERSION = "3.0"
-INTELLIGENCE_VERSION = "15.0"
-DECISION_POLICY_VERSION = "10.0"
+DAILY_SCHEMA_VERSION = "14.1"
+WEEKLY_SCHEMA_VERSION = "6.1"
+MONTHLY_SCHEMA_VERSION = "3.1"
+INTELLIGENCE_VERSION = "15.1"
+DECISION_POLICY_VERSION = "10.1"
 EVIDENCE_VERSION = "2026-09a"
 TRAINING_RESPONSE_SCHEMA_VERSION = "2.0"
 PERSONAL_MODEL_SCHEMA_VERSION = "3.0"
@@ -697,6 +698,7 @@ class WorkoutFeature(BaseModel):
     heart_rate_avg_bpm: int | None = Field(default=None, ge=1)
     heart_rate_max_bpm: int | None = Field(default=None, ge=1)
     detail_available: bool = False
+    session_rpe: WorkoutRpe | None = None
 
 
 class RunningHeartRateZone(BaseModel):
@@ -1306,7 +1308,26 @@ class WeeklyRecoveryFacts(BaseModel):
     rhr_change_percent: float | None = None
 
 
+class SessionRpeRecord(BaseModel):
+    workout_id: str
+    workout_source: str
+    date: date
+    rating: WorkoutRpe
+
+
+class SessionRpeSummary(BaseModel):
+    period_start: date
+    period_end: date
+    workout_count: int = Field(ge=0)
+    rated_workouts: int = Field(ge=0)
+    average_rpe: float | None = Field(default=None, ge=1, le=10)
+    high_effort_workouts: int = Field(default=0, ge=0)
+    ratings: list[SessionRpeRecord] = Field(default_factory=list)
+    source_counts: dict[str, int] = Field(default_factory=dict)
+
+
 class PeriodTrainingDetails(BaseModel):
+    session_rpe_summary: SessionRpeSummary | None = None
     vendor_reported_sets: int | None = Field(default=None, ge=0)
     vendor_sets_sessions: int = Field(default=0, ge=0)
     running_sessions: int | None = Field(default=None, ge=0)
@@ -1686,10 +1707,10 @@ class SubjectiveFeedback(BaseModel):
 
 
 class DailyProfile(BaseModel):
-    schema_version: Literal["14.0"] = DAILY_SCHEMA_VERSION
+    schema_version: Literal["14.1"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
-    intelligence_version: Literal["15.0"] = INTELLIGENCE_VERSION
-    decision_policy_version: Literal["10.0"] = DECISION_POLICY_VERSION
+    intelligence_version: Literal["15.1"] = INTELLIGENCE_VERSION
+    decision_policy_version: Literal["10.1"] = DECISION_POLICY_VERSION
     evidence_version: Literal["2026-09a"] = EVIDENCE_VERSION
     user_id: str
     date: DateValue

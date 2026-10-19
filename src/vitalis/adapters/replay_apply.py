@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 from collections import defaultdict
+from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 import gzip
 import json
@@ -267,6 +268,20 @@ def apply(
             values["user_id"] = source_user_id
             if name == "metric_samples" and values.get("source_record_id"):
                 values["source_record_id"] = origin.get(values["source_record_id"]) or ""
+            if name == "workouts":
+                rating = (values.get("data") or {}).get("session_rpe")
+                if isinstance(rating, dict) and rating.get("source_scope") == "workout_summary" and rating.get("source_record_id"):
+                    original_id = origin.get(rating["source_record_id"])
+                    original = db.scalar(select(SourceJournalRecord.id).where(
+                        SourceJournalRecord.id == original_id,
+                        SourceJournalRecord.user_id == source_user_id,
+                        SourceJournalRecord.source == values["source"],
+                        SourceJournalRecord.stream == "workouts",
+                    )) if original_id else None
+                    if original is None:
+                        raise ReplayError("replay workout RPE has no source journal origin")
+                    values["data"] = deepcopy(values["data"])
+                    values["data"]["session_rpe"]["source_record_id"] = original
             incoming[name].append(values)
     application = orm.ReplayApplication(
         id=uuid4().hex, source_user_id=source_user_id, replay_user_id=replay_user_id,

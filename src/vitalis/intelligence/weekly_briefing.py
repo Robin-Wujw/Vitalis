@@ -203,6 +203,22 @@ class WeeklyBriefingEngine:
             lines.append(f"设备记录组数合计 {number(details['vendor_reported_sets'], 0)} 组，来自 {number(details.get('vendor_sets_sessions', 0), 0)} 场有组数记录的力量训练；不等同于已取得逐组动作明细。")
         if details.get("workout_calories_kcal") is not None:
             lines.append(f"训练热量 {number(details['workout_calories_kcal'])} 千卡，来自 {number(details.get('workout_calories_sessions', 0), 0)} 场有热量记录。")
+        effort = training.get("session_rpe_summary") or {}
+        if effort.get("rated_workouts"):
+            sources = effort.get("source_counts") or {}
+            source_label = "、".join(
+                {"zepp": "Zepp", "vitalis": "Vitalis 反馈"}.get(key, key)
+                for key, count in sources.items() if count
+            )
+            high_effort = (
+                f"其中 {effort['high_effort_workouts']} 次达到 8 分或以上。"
+                if effort.get("high_effort_workouts") else ""
+            )
+            lines.append(
+                f"已记录的 {effort['workout_count']} 次训练中，{effort['rated_workouts']} 次填了 RPE"
+                f"（{source_label}），平均 {number(effort.get('average_rpe'))}/10。"
+                f"{high_effort}RPE 越高，主观感觉越吃力。"
+            )
         if not lines:
             lines.append("本周期没有可用训练总量或专项结构事实。")
         limitations = list(training.get("limitations") or [])
@@ -259,7 +275,7 @@ class WeeklyBriefingEngine:
             lines.append(text)
             limitations.extend(metric.get("limitations") or [])
         if feedback.get("response_count", 0):
-            lines.append(f"已记录主观反馈 {number(feedback['response_count'], 0)} 条" + self._feedback_tail(feedback) + "。")
+            lines.append(f"在 Vitalis 记录了 {number(feedback['response_count'], 0)} 条反馈" + self._feedback_tail(feedback) + "。")
         if not lines:
             lines.append("本周期没有可用活动或已记录反馈事实。")
         activity_change = activity.get("steps_change_percent")
@@ -275,7 +291,7 @@ class WeeklyBriefingEngine:
     @staticmethod
     def _feedback_tail(feedback: dict[str, Any]) -> str:
         parts = []
-        for key, label in (("average_session_rpe", "平均训练 RPE"), ("average_physical_fatigue", "平均身体疲劳"), ("average_muscle_soreness", "平均肌肉酸痛")):
+        for key, label in (("average_physical_fatigue", "平均身体疲劳"), ("average_muscle_soreness", "平均肌肉酸痛")):
             if feedback.get(key) is not None:
                 parts.append(f"；{label} {number(feedback[key])}")
         return "".join(parts)

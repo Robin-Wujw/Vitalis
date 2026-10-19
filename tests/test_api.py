@@ -117,9 +117,9 @@ def test_daily_profile_after_sync(client):
     resp = client.get("/api/reports/daily", headers={"X-User-Id": "001"})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["schema_version"] == "14.0"
-    assert body["intelligence_version"] == "15.0"
-    assert body["decision_policy_version"] == "10.0"
+    assert body["schema_version"] == "14.1"
+    assert body["intelligence_version"] == "15.1"
+    assert body["decision_policy_version"] == "10.1"
     assert body["evidence_version"] == "2026-09a"
     assert body["features"]["overnight_vitals"]["status"] == "AVAILABLE"
     assert body["analysis_run_id"]

@@ -192,7 +192,7 @@ def _theme(key: str) -> str:
         return "recovery"
     if key.startswith(("sleep", "deep_sleep", "rem_sleep", "light_sleep", "awake", "bedtime", "wake_time")):
         return "sleep"
-    if any(part in key for part in ("training", "workout", "strength", "running", "vo2", "lactate", "pai", "cadence", "pace", "drift")):
+    if any(part in key for part in ("training", "workout", "strength", "running", "vo2", "lactate", "pai", "cadence", "pace", "drift", "session_rpe")):
         return "training"
     if any(part in key for part in ("activity", "steps", "distance", "calorie", "energy", "stress", "heart_rate", "intraday")):
         return "activity"
@@ -395,8 +395,17 @@ def _period_facts(raw: dict[str, Any], as_of: datetime | None, days: int) -> lis
         if value == 0 and training.get("coverage_status") != "COMPLETE":
             continue
         add(metric, value, unit, count=training.get("record_days"), aggregation="sum")
+    effort = training.get("session_rpe_summary") or {}
+    if effort.get("average_rpe") is not None:
+        output.append(_fact("session_rpe", {
+            **effort, "label": "已评分训练的平均主观用力 RPE", "value": effort["average_rpe"],
+            "unit": "score_1_10", "source": "vitalis", "source_scope": "period_workout_effort",
+            "qualification": "user_reported", "calendar_semantics": "activity_day",
+            "aggregation": "mean_per_rated_workout", "sample_count": effort.get("rated_workouts"),
+            "coverage": {"rated_workouts": effort.get("rated_workouts"), "recorded_workouts": effort.get("workout_count")},
+        }, as_of))
     feedback = facts.get("feedback") or {}
-    for key, label in (("session_rpe", "训练 RPE"), ("physical_fatigue", "身体疲劳"), ("mental_state", "精神状态"), ("muscle_soreness", "肌肉酸痛")):
+    for key, label in (("physical_fatigue", "身体疲劳"), ("mental_state", "精神状态"), ("muscle_soreness", "肌肉酸痛")):
         if feedback.get(f"average_{key}") is not None:
             output.append(_fact(f"feedback_{key}", {"label": f"已记录反馈平均{label}", "value": feedback[f"average_{key}"],
                                "unit": "score", "source": "user", "aggregation": "mean", "sample_count": feedback.get("response_count")}, as_of))

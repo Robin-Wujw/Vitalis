@@ -103,7 +103,7 @@ class WeeklyProfileEngine:
             )
         if recovery.hrv_median_ms is None:
             limitations.append("本周缺少可比较的设备级 HRV 趋势。")
-        if feedback_facts.response_count == 0:
+        if feedback_facts.response_count == 0 and not training.session_rpe_summary.rated_workouts:
             limitations.append("本周尚未记录主观训练反馈。")
         coverage = _training_coverage(period_raw, period_start, period_days)
         if coverage["coverage_status"] != "COMPLETE":
@@ -600,16 +600,16 @@ def _recommend(
             action="已记录的睡眠平均不足 7 小时，下周先保证每晚至少 7 小时，训练先不加量。",
             reasons=[f"本周平均睡眠 {facts.sleep.average_minutes:.0f} 分钟。"],
         ))
-    if (
-        facts.feedback.average_session_rpe is not None
-        and facts.feedback.average_session_rpe >= 8
-    ):
+    effort = facts.training.session_rpe_summary
+    average_rpe = effort.average_rpe if effort else None
+    if average_rpe is not None and average_rpe >= 8:
+        basis = f"本周有 RPE 记录的 {effort.rated_workouts} 次训练，平均主观用力为 {average_rpe:g}/10。"
         output.append(WeeklyRecommendation(
             priority=len(output) + 1,
             code="REDUCE_SUBJECTIVE_LOAD",
-            title="降低主观训练压力",
-            action="下周避免连续安排主观用力程度 8 分以上的训练。",
-            reasons=[f"本周平均训练 RPE 为 {facts.feedback.average_session_rpe:.1f}。"],
+            title="训练感觉偏吃力",
+            action=basis + "下周把高强度训练隔开，之间安排轻松训练或休息。",
+            reasons=[basis],
         ))
 
     # A partial/unknown calendar cannot justify catch-up volume or a normal-plan claim.

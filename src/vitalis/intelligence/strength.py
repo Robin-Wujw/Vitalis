@@ -26,6 +26,7 @@ from .contracts import (
 )
 from .localization import AVAILABILITY_LABELS, CONFIDENCE_LABELS
 from .running import RunningAnalyzer
+from .workout_effort import workout_rpe
 
 PATTERN_LABELS = {
     "squat": "下蹲",
@@ -581,6 +582,7 @@ class StrengthAnalyzer:
             key=lambda item: item.created_at,
         )
         latest = feedback[-1] if feedback else None
+        effort = workout_rpe(raw, workout)
         total_sets = sum(item.sets or 0 for item in explicit) if any(item.sets for item in explicit) else None
         limitations = []
         if not explicit:
@@ -641,7 +643,7 @@ class StrengthAnalyzer:
                 if heart_rate else self._positive((workout.get("data") or {}).get("heart_rate_max"))
             ),
             heart_rate_zones=RunningAnalyzer._zones(heart_rate, threshold),
-            session_rpe=latest.session_rpe if latest else None,
+            session_rpe=effort.value if effort else None,
             muscle_soreness=latest.muscle_soreness if latest else None,
             limitations=limitations,
         )

@@ -506,6 +506,13 @@ def _running_facts(session: dict[str, Any]) -> list[str]:
 
 def _generic_facts(workout: dict[str, Any]) -> list[str]:
     facts = []
+    effort = workout.get("session_rpe") or {}
+    if isinstance(effort, dict) and (rating := number(effort.get("value"))) is not None:
+        source = (
+            f"{'Zepp' if effort.get('source') == 'zepp' else effort.get('source', '设备')} 记录"
+            if effort.get("source_scope") == "workout_summary" else "你的反馈"
+        )
+        facts.append(f"主观用力 RPE {rating}/10（{source}；越高越吃力）")
     shown = number(workout.get("distance_km"), 2)
     if shown is not None and workout.get("training_family") != "strength":
         facts.append(f"距离 {shown} 公里")

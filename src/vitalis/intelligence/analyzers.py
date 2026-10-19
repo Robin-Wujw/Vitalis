@@ -10,6 +10,7 @@ from statistics import median
 from .activity import workout_calories_kcal, workout_distance_km
 from .baseline import BaselineEngine, daily_stream_values
 from .weekly_load import weekly_load_plan
+from .workout_effort import workout_rpe
 from .contracts import (
     Availability,
     BaselineStats,
@@ -1150,11 +1151,13 @@ class TrainingAnalyzer:
                 heart_rate_avg_bpm=int(data.get("heart_rate_avg", 0) or 0) or None,
                 heart_rate_max_bpm=int(data.get("heart_rate_max", 0) or 0) or None,
                 detail_available=bool(workout.get("detail_available")),
+                session_rpe=workout_rpe(raw, workout),
             ))
         limitations = ["training_load_is_vendor_derived"]
         if reference is None:
             limitations.append("training_load_comparison_insufficient")
-        limitations.append("session_rpe_unavailable")
+        if not any(item.session_rpe is not None for item in recent_workouts):
+            limitations.append("session_rpe_unavailable")
         running = RunningAnalyzer().analyze(raw)
         strength = StrengthAnalyzer().analyze(raw)
         training_status = self._training_status(raw)

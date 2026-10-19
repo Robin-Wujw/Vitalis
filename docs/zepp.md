@@ -62,6 +62,12 @@ Idempotency-Key: <new-or-reused-key>
 
 设备 ID 与云端类型是两个命名空间：例如“自由训练”设备 ID **5** 对应云端 **16**，公开水域游泳设备 7 对应云端 15，户外徒步设备 15 对应云端 22。`/run` 历史入口按云端目录解析，旧分运动入口按设备目录解析，禁止跨目录回退。标准化记录保留 `vendor_type_id` 和 `vendor_type_namespace`，即使代码未知也保存来源命名空间。
 
+### 运动后主观用力（RPE）
+
+运动摘要的 `data.summary[].rpe` 保存为 `Workout.session_rpe`。Zepp 10.8.7-play APK 中 `HistoryRecord.rpe`、`Trackrecord.rpe` 对应运动记录，`SportSummary2.OtherMessage.manualRPE_` 和详情页的 `UpdateSportRecordUseCase.UpdateRequest.rpe` 保留手动评分路径；`moving_ui_rpe_rate_your_effort`、`moving_ui_your_rpe` 与 `moving_ui_rpe_rate_1` 至 `_10` 是对应界面资源。此项是 Zepp 记录的用户主观用力，来源资格为 `zepp / workout_summary / rpe / user_reported`，不能改称厂商自动训练评分。
+
+只接受原字段中有限、非布尔的 1–10 数值；缺失、空值、字符串、越界及 `0/-1/255` 都保留未知，不补零，也不尝试解析其它同名评分。规范字段保留 `score_1_10` 单位；`observed_at` 仅关联活动起点，`time_basis=activity_day`，不表示用户填写评分的时刻。`fetched_at` 与 `source_record_id` 来自同用户、同来源的运动摘要原始记录；没有该依据时保持未知，不用当前时间代填。同值、同来源、同活动时间的重复同步保留首次获取依据，评分变化会触发受影响范围重算。来源评分通过训练 JSON 保存，不另建用户反馈、不更改数据库 schema。
+
 ### 更新目录
 
 APK、原始响应和个人健康数据不进入仓库；只提交最小规范化映射及来源摘要。用仓库外的原始证据运行生成器：

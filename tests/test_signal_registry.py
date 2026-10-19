@@ -84,8 +84,8 @@ def test_registry_covers_existing_parser_metrics_and_declares_policy():
         assert entry.source_fields and entry.unit
         assert entry.calendar_semantics in {"sleep_day", "activity_day", "calendar_day"}
         assert entry.qualification
-        assert entry.coverage_rule.baseline_window_days == 28
-        assert entry.coverage_rule.baseline_minimum_days == 14
+        assert entry.coverage_rule.baseline_window_days == (28 if entry.aggregation_basis == "day" else 0)
+        assert entry.coverage_rule.baseline_minimum_days == (14 if entry.aggregation_basis == "day" else 0)
         assert entry.visible_channels
         assert entry.decision_role in {"yes", "no", "shadow"}
         assert entry.missing_late_policy
@@ -114,7 +114,10 @@ def test_registry_includes_all_normalized_workout_detail_metrics():
 def test_every_registered_signal_has_an_unknown_state_without_invented_values():
     raw = _raw()
     states = _states(raw)
-    assert set(states) == set(SIGNAL_REGISTRY)
+    assert set(states) == {
+        key for key, definition in SIGNAL_REGISTRY.items()
+        if definition.aggregation_basis == "day"
+    }
     for metric, items in states.items():
         assert len(items) == 1
         state = items[0]

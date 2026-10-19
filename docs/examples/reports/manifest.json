@@ -10,14 +10,14 @@
         "title": "Vitalis 晨报 · 今天安排：正常训练",
         "media_type": "text/markdown",
         "template": "markdown",
-        "renderer_version": "4.1",
+        "renderer_version": "4.2",
         "content_sha256": "b2adf74cb00629a4f6447adca6b0b766bed21fb9f8cac0a306526ad0d8fee42c"
       },
       "html": {
         "title": "Vitalis 晨报 · 今天安排：正常训练",
         "media_type": "text/html",
         "template": "html",
-        "renderer_version": "4.1",
+        "renderer_version": "4.2",
         "content_sha256": "d2130928fde5710d1d0bf81818f744730e15311c94295e04ca0705a2b1b1da85"
       }
     },
@@ -26,15 +26,15 @@
         "title": "Vitalis 日报 · 本地日完整事实快照",
         "media_type": "text/markdown",
         "template": "markdown",
-        "renderer_version": "4.1",
-        "content_sha256": "6aec34943f6c04175aac7e87dfd1eb6388072caa17261dbdc7c9684cd5685113"
+        "renderer_version": "4.2",
+        "content_sha256": "a1258f7dc3ff47ca606f7702140716631cbd911dfdaae78bc9f117413921a68a"
       },
       "html": {
         "title": "Vitalis 日报 · 本地日完整事实快照",
         "media_type": "text/html",
         "template": "html",
-        "renderer_version": "4.1",
-        "content_sha256": "ac04c7287e9949d306476c4d7f7ae4dfc710a796cafb969ffe8d9fe0c244cad4"
+        "renderer_version": "4.2",
+        "content_sha256": "e6c56a4827507d775ee52f24b7f24c38f3816114cf53f38dae8a89d98f3c2274"
       }
     },
     "evening": {
@@ -42,15 +42,15 @@
         "title": "Vitalis 晚报 · 二头肌弯举总次数增加",
         "media_type": "text/markdown",
         "template": "markdown",
-        "renderer_version": "4.1",
-        "content_sha256": "bf3b8a96a49079ddb8e6574b57d052254f0087a544e939f3dbfbf94f91033576"
+        "renderer_version": "4.2",
+        "content_sha256": "d790f751dafeaeff50142d8e904c27e77886ec96211d7957ba26e2414fec281e"
       },
       "html": {
         "title": "Vitalis 晚报 · 二头肌弯举总次数增加",
         "media_type": "text/html",
         "template": "html",
-        "renderer_version": "4.1",
-        "content_sha256": "a50cb07b4446aa92755c913a62fb4e05dad61f1c15c2234d82d08b2836c5ec62"
+        "renderer_version": "4.2",
+        "content_sha256": "1ab3d3809aea8e09be772808c04ad157823f81e07fa2a587b748932640def60c"
       }
     },
     "weekly": {
@@ -58,15 +58,15 @@
         "title": "Vitalis 周报 · 本周睡眠与训练结构",
         "media_type": "text/markdown",
         "template": "markdown",
-        "renderer_version": "4.1",
-        "content_sha256": "f85a779b8615112a3c2ce7a0e6652759db33918b61279d81d1c8710ce42d1284"
+        "renderer_version": "4.2",
+        "content_sha256": "23a8441f5f2b0cd1096db9962e1b3e1b6972a4a8ccc9f8a3963b49df2967bfac"
       },
       "html": {
         "title": "Vitalis 周报 · 本周睡眠与训练结构",
         "media_type": "text/html",
         "template": "html",
-        "renderer_version": "4.1",
-        "content_sha256": "ddc3e01039f18454f8fcf80c11d026a6b3515000de82c3ae5449a5f695a98df3"
+        "renderer_version": "4.2",
+        "content_sha256": "044daf645185651929aa18444f72c0df6df64049a2ce25e7640cb6a6527bf772"
       }
     },
     "monthly": {
@@ -74,14 +74,14 @@
         "title": "Vitalis 月报 · 本月睡眠与训练结构",
         "media_type": "text/markdown",
         "template": "markdown",
-        "renderer_version": "4.1",
+        "renderer_version": "4.2",
         "content_sha256": "6bb5242b977cb3e335e05fcab9785e52fe5671498ff6e6d9dba4ea30d7167f1a"
       },
       "html": {
         "title": "Vitalis 月报 · 本月睡眠与训练结构",
         "media_type": "text/html",
         "template": "html",
-        "renderer_version": "4.1",
+        "renderer_version": "4.2",
         "content_sha256": "3a865c4f8769788bb07a77890447a3eba957ae3f5a8d0d3fdff60e01102e5d5d"
       }
     },
@@ -90,14 +90,14 @@
         "title": "Vitalis 周报 · 本周睡眠与训练结构",
         "media_type": "text/markdown",
         "template": "markdown",
-        "renderer_version": "4.1",
+        "renderer_version": "4.2",
         "content_sha256": "891b41bba9b914c8a385c3f7a7b01223d3c747ba9d57258fa95af0ac69110a00"
       },
       "html": {
         "title": "Vitalis 周报 · 本周睡眠与训练结构",
         "media_type": "text/html",
         "template": "html",
-        "renderer_version": "4.1",
+        "renderer_version": "4.2",
         "content_sha256": "4db8727673f30755597cd83f9e6424e18265f0dfe7a9f0228c7bfd2f9bd8b334"
       }
     }

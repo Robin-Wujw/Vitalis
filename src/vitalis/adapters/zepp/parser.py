@@ -22,6 +22,7 @@ from vitalis.domain import (
     SleepRecord,
     TrainingRecord,
     Workout,
+    WorkoutRpe,
     WorkoutDetail,
     WorkoutLap,
     WorkoutMetricSample,
@@ -281,6 +282,17 @@ class ZeppParser:
             distance = self._nonnegative_number(it, ("distance", "dis"))
             groups = self._nonnegative_number(it, ("total_group",)) if mode.family == "strength" else None
             reported_sets = int(groups) if groups is not None and groups > 0 and groups.is_integer() else None
+            rpe_value = it.get("rpe")
+            session_rpe = (
+                WorkoutRpe(
+                    value=float(rpe_value), source=self.source,
+                    source_scope="workout_summary", source_field="rpe",
+                    observed_at=started,
+                )
+                if isinstance(rpe_value, (int, float)) and not isinstance(rpe_value, bool)
+                and 1 <= rpe_value <= 10 and isfinite(rpe_value)
+                else None
+            )
             observed_fields = [
                 name for name, value in (
                     ("heart_rate_avg", avg_hr), ("heart_rate_max", max_hr),
@@ -289,6 +301,8 @@ class ZeppParser:
             ]
             if reported_sets is not None:
                 observed_fields.append("vendor_reported_sets")
+            if session_rpe is not None:
+                observed_fields.append("session_rpe")
             if calories is not None:
                 observed_fields.append("calories")
             if distance is not None:
@@ -320,6 +334,7 @@ class ZeppParser:
                 ),
                 observed_fields=observed_fields,
                 vendor_reported_sets=reported_sets,
+                session_rpe=session_rpe,
                 vendor_source=str(it.get("source")) if it.get("source") else None,
                 vendor_type_id=numeric_type,
                 vendor_type_namespace=mode.namespace,

@@ -81,6 +81,24 @@ class SleepStageSlice(BaseModel):
     end_time: datetime
 
 
+class WorkoutRpe(BaseModel):
+    """User-reported session effort with its original source qualification."""
+
+    value: float = Field(ge=1, le=10, allow_inf_nan=False, strict=True)
+    unit: Literal["score_1_10"] = "score_1_10"
+    source: str
+    source_scope: Literal["workout_summary", "subjective_feedback"]
+    source_field: str
+    qualification: Literal["user_reported"] = "user_reported"
+    observed_at: datetime | None = Field(
+        default=None,
+        description="Activity start context, not the time the user entered their RPE",
+    )
+    time_basis: Literal["activity_day"] = "activity_day"
+    fetched_at: datetime | None = None
+    source_record_id: str | None = None
+
+
 class Workout(BaseModel):
     """单次训练记录。"""
 
@@ -107,6 +125,7 @@ class Workout(BaseModel):
     calories: int | None = Field(default=None, ge=0)
     vendor_reported_sets: int | None = Field(default=None, ge=1, description="Positive group count explicitly reported in the vendor strength summary")
     distance_km: float | None = Field(default=None, ge=0)
+    session_rpe: WorkoutRpe | None = None
     observed_fields: list[str] = Field(
         default_factory=list,
         description="Normalized fields whose vendor payload explicitly contained an observation",

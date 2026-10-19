@@ -25,6 +25,7 @@ def _workout(day, workout_id, exercises=None, focus=None, samples=None, detail=N
         ))
     return {
         "workout_id": workout_id,
+        "source": "zepp",
         "local_day": day,
         "confirmed_exercises": confirmed,
         "samples": samples or [],
@@ -165,11 +166,13 @@ def test_strength_analysis_detects_push_pull_legs_and_next_focus():
         ),
     ]
     raw = _raw(workouts)
-    raw.feedback_by_workout["legs"] = [SubjectiveFeedback(
+    raw.feedback_by_workout[("zepp", "legs")] = [SubjectiveFeedback(
         id="feedback",
         user_id=raw.user_id,
         date=TARGET,
         workout_id="legs",
+        workout_source="zepp",
+        created_at=raw.as_of - timedelta(seconds=1),
         session_rpe=8,
         muscle_soreness=3,
     )]

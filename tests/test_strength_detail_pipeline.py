@@ -26,6 +26,7 @@ from vitalis.intelligence.contracts import (
     TrainingPreferences,
 )
 from vitalis.intelligence.decision import DecisionEngine
+from vitalis.intelligence.profile import RawDailyProfile
 from vitalis.intelligence.strength import StrengthAnalyzer, normalize_exercise
 
 
@@ -165,7 +166,7 @@ def test_confirmed_exercises_are_the_only_source_when_present():
     confirmed = normalize_exercise(
         "u", "w", 1, StrengthExerciseInput(exercise_name="卧推", sets=4), "PUSH"
     )
-    raw = SimpleNamespace(user_id="u", feedback_by_workout={})
+    raw = RawDailyProfile(user_id="u", day=TARGET, as_of=datetime(2026, 8, 29, tzinfo=timezone.utc))
     workout = {
         "workout_id": "w",
         "source": "zepp",
@@ -234,7 +235,7 @@ def test_parser_to_analyzer_to_planner_preserves_four_variable_dose_sets():
             ],
         }
     })
-    raw = SimpleNamespace(user_id="u", feedback_by_workout={})
+    raw = RawDailyProfile(user_id="u", day=TARGET, as_of=datetime(2026, 8, 29, tzinfo=timezone.utc))
     session = StrengthAnalyzer()._session(raw, {
         "workout_id": "w",
         "source": "zepp",
@@ -394,7 +395,7 @@ def test_empty_cloud_sets_do_not_turn_assessment_ids_into_exercises():
         "lap": "0,59,-1,0,0;1,45,-1,0,0",
     }})
     session = StrengthAnalyzer()._session(
-        SimpleNamespace(user_id="u", feedback_by_workout={}),
+        RawDailyProfile(user_id="u", day=TARGET, as_of=datetime(2026, 8, 29, tzinfo=timezone.utc)),
         {
             "workout_id": "cloud-empty", "local_day": TARGET,
             "detail_available": True, "detail": detail.model_dump(),

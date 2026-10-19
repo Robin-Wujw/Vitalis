@@ -33,6 +33,7 @@ from vitalis.domain import (
     MetricSample,
     TrainingRecord,
     Workout,
+    WorkoutRpe,
     WORKOUT_DETAIL_SCHEMA_VERSION,
     WorkoutMetricSample,
 )
@@ -1660,7 +1661,7 @@ class HealthRepository:
                 orm.Workout.user_id == workout.user_id,
                 orm.Workout.source == workout.source,
                 orm.Workout.workout_id == workout.workout_id,
-            )
+            ).execution_options(populate_existing=True)
         ).scalar_one_or_none()
         affected = {
             local_day(existing.started_at)
@@ -1670,13 +1671,50 @@ class HealthRepository:
         started_at = _naive_utc(workout.started_at) if workout.started_at else None
         if workout.started_at is not None:
             affected.add(local_day(workout.started_at))
+        data = workout.model_dump(mode="json", exclude_none=True)
+        rpe = workout.session_rpe
+        if rpe is not None and rpe.source_scope == "workout_summary":
+            previous_data = (existing.data or {}).get("session_rpe") if existing else None
+            previous = WorkoutRpe.model_validate(previous_data) if previous_data else None
+            provenance_fields = {"fetched_at", "source_record_id"}
+            unchanged_rpe = previous is not None and (
+                rpe.model_dump(exclude=provenance_fields)
+                == previous.model_dump(exclude=provenance_fields)
+            )
+            if unchanged_rpe:
+                # Another workout in this response may change while this RPE
+                # remains the same observation. Keep its first fetch metadata.
+                rpe = rpe.model_copy(update={
+                    "fetched_at": previous.fetched_at,
+                    "source_record_id": previous.source_record_id,
+                })
+            else:
+                rpe = rpe.model_copy(update={"fetched_at": None, "source_record_id": None})
+            if not unchanged_rpe or rpe.fetched_at is None or rpe.source_record_id is None:
+                from .source_journal import SourceJournalRecord
+
+                journal_id = self.db.info.get("active_source_record_id")
+                journal = self.db.execute(select(
+                    SourceJournalRecord.id, SourceJournalRecord.fetched_at,
+                ).where(
+                    SourceJournalRecord.id == journal_id,
+                    SourceJournalRecord.user_id == workout.user_id,
+                    SourceJournalRecord.source == workout.source,
+                    SourceJournalRecord.stream == "workouts",
+                )).one_or_none() if journal_id else None
+                if journal is not None:
+                    rpe = rpe.model_copy(update={
+                        "fetched_at": journal.fetched_at.replace(tzinfo=timezone.utc),
+                        "source_record_id": journal.id,
+                    })
+            data["session_rpe"] = rpe.model_dump(mode="json", exclude_none=True)
         values = {
             "user_id": workout.user_id,
             "source": workout.source,
             "workout_id": workout.workout_id,
             "started_at": started_at,
             "vendor_source": workout.vendor_source,
-            "data": workout.model_dump(mode="json", exclude_none=True),
+            "data": data,
         }
 
         changed = False

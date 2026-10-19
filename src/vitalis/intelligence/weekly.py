@@ -131,9 +131,18 @@ class WeeklyProfileEngine:
             getattr(period_raw, "training_preferences", None),
             coverage,
         )
-        recommendations.extend(build_weekly_coaching(
+        coaching = build_weekly_coaching(
             period_raw, period_start, facts, period_events, coverage, recommendations,
-        ))
+        )
+        coaching_codes = {item.code for item in coaching}
+        replaced = set()
+        if coaching_codes & {"WEEKLY_COACH_STRENGTH", "WEEKLY_COACH_ADJUSTMENT"}:
+            replaced.add("MAINTAIN_STRENGTH_RHYTHM")
+        if "WEEKLY_COACH_ADJUSTMENT" in coaching_codes:
+            replaced.add("MAINTAIN_PLAN")
+        recommendations = [item for item in recommendations if item.code not in replaced]
+        recommendations.extend(coaching)
+        recommendations = [item.model_copy(update={"priority": index}) for index, item in enumerate(recommendations, 1)]
         return WeeklyProfile(
             analysis_run_id=analysis_run_id,
             user_id=period_raw.user_id,
@@ -575,9 +584,12 @@ def _recommend(
         output.append(WeeklyRecommendation(
             priority=1,
             code="PRIORITIZE_RECOVERY",
-            title="优先恢复",
-            action="下周先降低高强度训练密度，并保留至少 1 个完整休息日。",
-            reasons=["本周存在持续恢复相关事件。"],
+            title="先减轻训练",
+            action=(
+                _recovery_explanation(events)
+                + "下周跑步先放慢到能完整说话，力量训练先不加重量或组数，并留至少 1 个完整休息日。"
+            ),
+            reasons=[_recovery_explanation(events)],
         ))
 
     if facts.sleep.average_minutes is not None and facts.sleep.average_minutes < 420:
@@ -585,7 +597,7 @@ def _recommend(
             priority=len(output) + 1,
             code="IMPROVE_SLEEP_DURATION",
             title="补足睡眠",
-            action="下周优先把平均睡眠恢复到每晚至少 7 小时。",
+            action="已记录的睡眠平均不足 7 小时，下周先保证每晚至少 7 小时，训练先不加量。",
             reasons=[f"本周平均睡眠 {facts.sleep.average_minutes:.0f} 分钟。"],
         ))
     if (
@@ -608,7 +620,10 @@ def _recommend(
             priority=1,
             code="WEEKLY_INSUFFICIENT_DATA",
             title="先补齐周期记录",
-            action="先完成后续同步，待 7 天训练覆盖明确后再评估训练量变化。",
+            action=(
+                f"本周还有 {coverage.get('unknown_days', PERIOD_DAYS)} 天的训练记录没核实，"
+                "先不增加训练量，记录补齐后再安排。"
+            ),
             reasons=[(
                 f"本周训练历史已记录 {coverage.get('record_days', 0)} 天，"
                 f"仍有 {coverage.get('unknown_days', PERIOD_DAYS)} 天未知。"
@@ -619,6 +634,7 @@ def _recommend(
     # generic aerobic/strength quotas are intentionally not used as catch-up goals.
     if (
         preferences is not None
+        and not output
         and getattr(preferences, "strength_required", True)
         and getattr(preferences, "weekly_strength_target", None) is not None
         and facts.training.strength_sessions is not None
@@ -626,7 +642,9 @@ def _recommend(
         and not (
             recovery_events
             or pain_present
-            or active_events & {"TRAINING_LOAD_SPIKE", "TRAINING_GAP", "SLEEP_DEFICIT"}
+            or active_events & {"TRAINING_LOAD_SPIKE", "TRAINING_GAP", "SLEEP_DEFICIT", "BODY_SIGNAL_WARNING"}
+            or (facts.feedback.average_physical_fatigue or 0) >= 4
+            or (facts.feedback.average_muscle_soreness or 0) >= 4
         )
     ):
         gap = preferences.weekly_strength_target - facts.training.strength_sessions
@@ -649,6 +667,32 @@ def _recommend(
             reasons=["完整周期内没有触发需要优先调整的确定性规则。"],
         ))
     return output[:3]
+
+
+def _recovery_explanation(events: list[HealthEvent]) -> str:
+    """Name the saved signal and distinguish improving from ongoing findings."""
+    labels = {
+        "HRV_BELOW_BASELINE": "心率变异性低于平时",
+        "HRV_RECENT_7D_BELOW": "心率变异性比前一周低",
+        "RHR_ABOVE_BASELINE": "静息心率高于平时",
+        "SLEEP_BELOW_BASELINE": "睡眠比平时少",
+        "SLEEP_SHORT_DURATION": "睡眠不足 7 小时",
+        "TRAINING_LOAD_ELEVATED": "训练负荷比平时高",
+    }
+    relevant = [item for item in events if item.lifecycle != "RESOLVED" and item.type in {
+        "RECOVERY_SUPPRESSED", "HRV_DROP", "RHR_ELEVATED",
+    }]
+    signals = []
+    for item in relevant:
+        if item.type == "HRV_DROP":
+            signals.append("心率变异性低于平时")
+        elif item.type == "RHR_ELEVATED":
+            signals.append("静息心率高于平时")
+        else:
+            signals.extend(labels[e.fact] for e in item.evidence if e.fact in labels)
+    reason = "、".join(dict.fromkeys(signals)) or "多个恢复指标比平时差"
+    improving = bool(relevant) and all(item.lifecycle == "IMPROVING" for item in relevant)
+    return f"本周出现{reason}，最近已有好转。" if improving else f"本周出现{reason}。"
 
 
 def _best_weekly_trend(

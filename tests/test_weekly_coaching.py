@@ -1,6 +1,7 @@
 """Weekly coaching stays grounded in the completed period and its safety gates."""
 
 from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +10,7 @@ from vitalis.intelligence.contracts import (
     ConfidenceBand,
     EventSeverity,
     HealthEvent,
+    HealthEventEvidence,
     StrengthExerciseInput,
     TrainingPreferences,
 )
@@ -100,7 +102,7 @@ def test_high_confidence_split_is_preserved_without_forcing_a_weekly_reset():
 
     item = _coaching(_build(raw), "WEEKLY_COACH_STRENGTH")
 
-    assert "保留" in item.action
+    assert "继续" in item.action
     assert "推→拉→腿" in item.action
     assert "上肢→下肢→全身" not in item.action
 
@@ -125,13 +127,21 @@ def test_incomplete_week_keeps_observed_muscle_facts_without_prescribing_a_split
     item = _coaching(profile, "WEEKLY_COACH_STRENGTH")
 
     assert "胸部 2 天" in " ".join(item.reasons)
-    assert "覆盖" in item.action
     assert "上肢→" not in item.action
-    assert "WEEKLY_INSUFFICIENT_DATA" in {rec.code for rec in profile.actions.recommendations}
+    explanation = _coaching(profile, "WEEKLY_INSUFFICIENT_DATA").action
+    assert "6 天的训练记录没核实" in explanation
+    assert "不增加训练量" in explanation
+    assert "疼痛" not in explanation
 
 
-@pytest.mark.parametrize("event_type", ["HRV_DROP", "TRAINING_LOAD_SPIKE", "TRAINING_GAP", "SLEEP_DEFICIT", "BODY_SIGNAL_WARNING"])
-def test_active_safety_events_suppress_new_strength_and_running_plans(event_type):
+@pytest.mark.parametrize(("event_type", "reason"), [
+    ("HRV_DROP", "心率变异性低于平时"),
+    ("TRAINING_LOAD_SPIKE", "训练量增加较快"),
+    ("TRAINING_GAP", "训练有中断"),
+    ("SLEEP_DEFICIT", "睡眠偏少"),
+    ("BODY_SIGNAL_WARNING", "身体指标偏离平时水平"),
+])
+def test_active_safety_events_suppress_new_strength_and_running_plans(event_type, reason):
     event = HealthEvent(
         id="coaching-safety", type=event_type, type_label="恢复限制",
         severity=EventSeverity.MODERATE, severity_label="中等", metric="training_load",
@@ -143,12 +153,20 @@ def test_active_safety_events_suppress_new_strength_and_running_plans(event_type
 
     for code in ("WEEKLY_COACH_STRENGTH", "WEEKLY_COACH_RUNNING"):
         item = _coaching(profile, code)
-        assert "暂不编排" in item.action
+        assert "本周" in item.action
         assert "上肢→" not in item.action and "轻松跑为主" not in item.action
+    advice = " ".join(item.action for item in profile.actions.recommendations)
+    assert reason in advice
+    assert advice.count(reason) == 1
+    assert "疼痛" not in advice and "没核实" not in advice
+    assert "MAINTAIN_PLAN" not in {item.code for item in profile.actions.recommendations}
 
 
-@pytest.mark.parametrize("restriction", ["pain", "rpe", "fatigue", "soreness", "sleep"])
-def test_subjective_and_sleep_safety_gates_are_never_bypassed(restriction):
+@pytest.mark.parametrize(("restriction", "reason"), [
+    ("pain", "会诱发疼痛"), ("rpe", "用力程度 8 分"),
+    ("fatigue", "身体疲劳较重"), ("soreness", "肌肉酸痛较重"), ("sleep", "睡眠"),
+])
+def test_subjective_and_sleep_safety_gates_are_never_bypassed(restriction, reason):
     raw = _raw()
     feedback = None
     if restriction == "pain":
@@ -166,16 +184,24 @@ def test_subjective_and_sleep_safety_gates_are_never_bypassed(restriction):
     profile = _build(raw, feedback=feedback)
 
     for code in ("WEEKLY_COACH_STRENGTH", "WEEKLY_COACH_RUNNING"):
-        assert "暂不编排" in _coaching(profile, code).action
+        action = _coaching(profile, code).action
+        assert "本周" in action
+        assert "上肢→" not in action and "轻松跑为主" not in action
+        assert "较快跑步" not in action
+    advice = " ".join(item.action for item in profile.actions.recommendations)
+    assert reason in advice
+    if restriction != "pain":
+        assert "疼痛" not in advice
+    assert "没核实" not in advice
 
 
 def test_running_coaching_uses_easy_effort_and_does_not_invent_quality_training():
     item = _coaching(_build(_raw()), "WEEKLY_COACH_RUNNING")
 
     assert "轻松跑为主" in item.action
-    assert "可交谈" in item.action
-    assert "不新增" in item.action and "质量课" in item.action
-    assert "下肢" in item.action and "休息" in item.action
+    assert "能完整说话" in item.action
+    assert "不新增快跑" in item.action
+    assert "练腿" in item.action and "休息" in item.action
     assert "2 次" in " ".join(item.reasons)
     assert "60 分钟" in " ".join(item.reasons)
     assert "配速" not in item.action
@@ -203,7 +229,8 @@ def test_many_weekly_sessions_do_not_silently_turn_the_eight_session_view_into_a
     item = _coaching(_build(raw), "WEEKLY_COACH_STRENGTH")
 
     assert "8/9" in " ".join(item.reasons)
-    assert "暂不编排" in item.action
+    assert "只分析了最近 8 次" in item.action
+    assert "上肢→" not in item.action and "全身 A/B" not in item.action
 
 
 def test_frequency_without_saved_preferences_is_an_observed_candidate_only():
@@ -250,8 +277,8 @@ def _established_runner():
 def test_quality_training_requires_established_observed_history_and_experience():
     item = _coaching(_build(_established_runner()), "WEEKLY_COACH_RUNNING")
 
-    assert "至多维持 1 次已有同类质量课" in item.action
-    assert "其余跑步保持轻松" in item.action
+    assert "最多保留 1 次你已习惯的较快跑步" in item.action
+    assert "其余慢跑" in item.action
     assert "近 28 天" in " ".join(item.reasons)
 
 
@@ -261,5 +288,87 @@ def test_quality_training_is_not_approved_from_an_unverified_history_calendar():
 
     item = _coaching(_build(raw), "WEEKLY_COACH_RUNNING")
 
-    assert "至多维持 1 次" not in item.action
-    assert "不新增质量课" in item.action
+    assert "最多保留 1 次" not in item.action
+    assert "不新增快跑" in item.action
+
+
+def test_recovery_advice_names_its_evidence_and_does_not_repeat_blocked_plans():
+    from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
+
+    event = HealthEvent(
+        id="readable-recovery", type="HRV_DROP", type_label="心率变异性持续下降",
+        severity=EventSeverity.MODERATE, severity_label="中等", metric="sleep_hrv",
+        metric_label="睡眠 HRV", start_date=END - timedelta(days=2), end_date=END,
+        duration_days=3, confidence=ConfidenceBand.HIGH, confidence_label="较高",
+        summary="合成恢复事件", lifecycle="IMPROVING",
+    )
+    report = WeeklyBriefingEngine().build(_build(_raw(), [event]))
+    advice = "\n".join(report.suggestions)
+
+    assert "心率变异性" in advice and "好转" in advice
+    assert "完整休息日" in advice and "能完整说话" in advice
+    assert "疼痛" not in advice and "覆盖" not in advice
+    assert "暂不编排" not in advice and "限制尚未解除" not in advice
+    assert "本周跑步 2 次" in advice
+
+
+def test_running_summary_is_readable_and_does_not_expose_classification_audit():
+    from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
+
+    raw = _raw()
+    for item in raw.workouts:
+        if item["data"]["type"] == "running":
+            item["data"]["distance_km"] = 8.0195
+    report = WeeklyBriefingEngine().build(_build(raw))
+    advice = "\n".join(report.suggestions)
+
+    assert "16.0 公里" in advice and "60 分钟" in advice
+    assert "16.039" not in advice and " km" not in advice
+    assert "已分析课型" not in advice and "质量课" not in advice
+    assert "10-05 至 10-11" not in advice
+
+
+@pytest.mark.parametrize(("field", "reason", "absent"), [
+    ("session_rpe", "用力程度达到 9 分", "酸痛"),
+    ("muscle_soreness", "肌肉酸痛", "用力程度"),
+])
+def test_unknown_strength_actions_do_not_hide_specific_session_strain(field, reason, absent):
+    raw = _raw()
+    raw.workouts = [_strength(2, ("未识别动作",))]
+    raw.feedback_by_workout = {("zepp", "strength-2"): [SimpleNamespace(
+        created_at=raw.as_of, session_rpe=9 if field == "session_rpe" else None,
+        muscle_soreness=5 if field == "muscle_soreness" else None,
+    )]}
+
+    action = _coaching(_build(raw), "WEEKLY_COACH_STRENGTH").action
+
+    assert reason in action and absent not in action
+    assert "先别加重量或组数" in action
+    assert "上肢→" not in action
+
+
+def test_recovery_reason_names_only_saved_signals_and_respects_event_resolution():
+    recovery = HealthEvent(
+        id="specific-recovery", type="RECOVERY_SUPPRESSED", type_label="恢复偏低",
+        severity=EventSeverity.MODERATE, severity_label="中等",
+        start_date=END - timedelta(days=2), end_date=END, duration_days=3,
+        confidence=ConfidenceBand.HIGH, confidence_label="较高", summary="合成事件",
+        lifecycle="IMPROVING", evidence=[
+            HealthEventEvidence(fact="RHR_ABOVE_BASELINE", fact_label="静息心率高于基线"),
+            HealthEventEvidence(fact="SLEEP_SHORT_DURATION", fact_label="睡眠不足 7 小时"),
+        ],
+    )
+    resolved = recovery.model_copy(update={"id": "resolved-hrv", "type": "HRV_DROP", "lifecycle": "RESOLVED"})
+
+    action = _coaching(_build(_raw(), [recovery, resolved]), "PRIORITIZE_RECOVERY").action
+
+    assert "静息心率高于平时" in action and "睡眠不足 7 小时" in action
+    assert "最近已有好转" in action
+    assert "心率变异性" not in action and "疼痛" not in action
+
+
+def test_specific_strength_plan_does_not_compete_with_a_remaining_sessions_quota():
+    profile = _build(_raw(3))
+
+    assert "MAINTAIN_STRENGTH_RHYTHM" not in {item.code for item in profile.actions.recommendations}
+    assert "下周按 3 次力量训练安排" in _coaching(profile, "WEEKLY_COACH_STRENGTH").action

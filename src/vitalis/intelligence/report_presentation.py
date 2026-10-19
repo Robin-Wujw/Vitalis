@@ -5,9 +5,9 @@ health scores, trends, prescriptions, or inferred exercise progress.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from datetime import date, datetime
-import re
 from typing import Any
 
 from .period_activity import comparison_gate
@@ -710,13 +710,13 @@ def _suggestions(payload: dict[str, Any]) -> list[str]:
     for item in (payload.get("actions") or {}).get("recommendations") or []:
         if not isinstance(item, dict):
             continue
-        if str(item.get("code") or "") in {"WEEKLY_INSUFFICIENT_DATA", "MONTHLY_INSUFFICIENT_DATA"}:
+        if str(item.get("code") or "") == "MONTHLY_INSUFFICIENT_DATA":
             continue
         action = item.get("action")
         if action:
             line = f"{item.get('title')}：{action}" if item.get("title") else str(action)
             if str(item.get("code") or "").startswith("WEEKLY_COACH_"):
-                coaching.append(" ".join([line, *[str(reason) for reason in item.get("reasons") or []]]))
+                coaching.append(line)
             else:
                 output.append(line)
     return unique(output)[:2] + unique(coaching)
@@ -851,8 +851,10 @@ def _weekly_load_lines(payload: dict[str, Any], *, morning: bool) -> list[str]:
     if not isinstance(weekly, dict) or _number(weekly.get("target_load")) is None:
         return []
     lines = [
-        f"本周负荷目标 {number(weekly['target_load'], 0)}，已完成 {number(weekly.get('done_load'), 0)}"
-        f"（{(_number(weekly.get('progress_ratio')) or 0):.0%}），{weekly.get('status_label', '')}"
+        (
+            f"本周负荷目标 {number(weekly['target_load'], 0)}，已完成 {number(weekly.get('done_load'), 0)}"
+            f"（{(_number(weekly.get('progress_ratio')) or 0):.0%}），{weekly.get('status_label', '')}"
+        )
     ]
     remaining = _number(weekly.get("remaining_load"))
     if morning and _number(weekly.get("today_target_load")) is not None:

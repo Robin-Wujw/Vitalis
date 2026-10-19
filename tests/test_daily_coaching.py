@@ -6,13 +6,22 @@ import pytest
 
 from tests.test_report_content import synthetic_daily_fixture
 from vitalis.intelligence.contracts import (
-    Availability, ConfidenceBand, MuscleRecoveryStatus, StrengthAnalysis,
-    StrengthExerciseInput, StrengthSessionAnalysis, TrainingPreferences,
-    RunningAnalysis, RunningSessionAnalysis, TrainingFeatures,
+    Availability,
+    ConfidenceBand,
+    MuscleRecoveryStatus,
+    RunningAnalysis,
+    RunningSessionAnalysis,
+    StrengthAnalysis,
+    StrengthExerciseInput,
+    StrengthSessionAnalysis,
+    TrainingFeatures,
+    TrainingPreferences,
 )
 from vitalis.intelligence.decision import DecisionEngine
 from vitalis.intelligence.morning_briefing import MorningBriefingEngine
-from vitalis.intelligence.report_presentation import daily_presentation, period_presentation
+from vitalis.intelligence.report_presentation import (
+    period_presentation,
+)
 from vitalis.intelligence.report_rendering import render_report, visible_text
 from vitalis.intelligence.strength import normalize_exercise
 
@@ -103,7 +112,7 @@ def test_facts_only_and_retrospective_mornings_do_not_leak_coaching(metadata):
     assert not report["suggestions"]
 
 
-def test_period_coaching_is_visible_after_existing_high_priority_recommendations():
+def test_period_coaching_shows_saved_action_without_dumping_audit_reasons():
     payload = {"actions": {"recommendations": [
         {"code": "SLEEP", "action": "先保证睡眠"},
         {"code": "LOAD", "action": "控制加量"},
@@ -113,7 +122,7 @@ def test_period_coaching_is_visible_after_existing_high_priority_recommendations
     ]}}
     text = "\n".join(period_presentation(payload, "weekly")["suggestions"])
     assert "先保证睡眠" in text and "上肢／下肢交替" in text and "以轻松跑为主" in text
-    assert "已识别胸部、背部各 1 天" in text
+    assert "已识别胸部、背部各 1 天" not in text
 
 
 @pytest.mark.parametrize("experience", [None, "BEGINNER"])

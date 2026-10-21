@@ -129,12 +129,17 @@ def _strength_coaching(raw, start, analysis, blocked, coverage):
         strain_reasons.append("用力程度达到 9 分或以上")
     session_strain = bool(strain_reasons)
     if len(known) < len(sessions):
+        references = analysis.reference_muscle_doses_7d
         mapped_names = any(
             item.source == "lap_62" and item.exercise_name
             and "exercise_name_reference_mapping" in item.limitations
             for session in sessions for item in session.observed_sets
         )
-        if mapped_names:
+        if references:
+            parts = '、'.join(f'{d.muscle_group_label}直接 {d.direct_sets:g} 组/间接 {d.indirect_sets:g} 组' for d in references[:5])
+            reasons.append('厂商部位参考汇总：' + parts + '；不是实际肌肉受力或有效组测量。')
+            action = summary + '可参考已有部位分布选择下一次方向；工作组和局部恢复信息不足，先沿用熟悉剂量，不补课或自动加量。'
+        elif mapped_names:
             action = summary + "手表记录的动作名称目前仅供参考，还不能据此判断练了哪些部位，暂时排不了按部位轮换的计划。"
         elif any(item.explicit_exercises for item in sessions):
             action = summary + "部分动作对应的部位仍未知，暂时排不了按部位轮换的计划。"

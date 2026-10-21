@@ -24,7 +24,7 @@
 | P0 | [不用插件，在电脑网页上连接 Zepp](zepp-web-login.md) | 回填完成；稳定两周后删插件（2026-10-28） |
 | P1 | [缩短同步写事务，避免心跳争用](sync-write-transactions.md) | 先补逐事务耗时与双连接合成复现 |
 | P1 | [周报跨重启补触发与缺失意图告警](weekly-delivery-reliability.md) | 先定义补偿窗口并复现跨调度时刻重启 |
-| P1 | [力量动作肌群映射、容量估算与下次训练推荐](strength-muscle-mapping.md) | 核验 APK 人体区域映射、完整目录与按输出划分的来源资格 |
-| P1 | [跑力模型、单次训练评分与改进建议](running-performance-model.md) | 可比跑步事实、目标记录与能力模型的时间留出验证 |
+| P1 | [力量训练映射与评分的真实验收](strength-muscle-mapping.md) | 实际常用动作、负重口径与候选评分审核 |
+| P1 | [跑力与训练评分的独立验证及启用](running-performance-model.md) | 独立成绩、时间留出与分组误差验证 |
 | P2 | [漏发告警的第二通道](delivery-alerts.md) | 用户选定通道 |
 | P2 | [一键反馈的真实验收](feedback-tags.md) | 用户提交一次反馈 |

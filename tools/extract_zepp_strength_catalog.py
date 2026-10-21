@@ -8,6 +8,23 @@ from pathlib import Path
 
 APKM_DIGEST = "64e1d87b6ab79e0ecedfbead176cc6bb781f9754b46915d52c0d2ccfbcef5949"
 CATALOG_DIGEST = "7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb"
+# Reviewed identities only; unreviewed variations retain their vendor identity.
+# This crosswalk does not upgrade a watch observation into user confirmation.
+REVIEWED_ACTIONS = {
+    1: "bodyweight_squat", 3: "barbell_squat", 5: "bent_over_row",
+    6: "bench_press", 9: "dumbbell_fly", 14: "lateral_raise",
+    18: "barbell_row", 26: "smith_squat", 30: "dumbbell_bench_press",
+    32: "smith_bench_press", 40: "dumbbell_lateral_raise", 60: "lat_pulldown",
+    61: "deadlift", 62: "push_up", 63: "overhead_press", 64: "pull_up",
+    65: "biceps_curl", 66: "seated_row", 68: "straight_arm_pulldown",
+    70: "barbell_deadlift", 71: "push_up", 72: "dumbbell_overhead_press",
+    75: "chin_up", 76: "dumbbell_biceps_curl", 79: "kneeling_push_up",
+    84: "hammer_curl", 90: "barbell_biceps_curl", 97: "plank",
+    98: "barbell_hip_thrust", 100: "weighted_calf_raise",
+    109: "incline_dumbbell_bench_press", 110: "incline_barbell_bench_press",
+    111: "decline_dumbbell_bench_press", 112: "decline_barbell_bench_press",
+    113: "machine_chest_fly", 114: "machine_reverse_fly",
+}
 
 
 def extract(response: bytes, artifact_digest: str) -> dict:
@@ -36,21 +53,30 @@ def extract(response: bytes, artifact_digest: str) -> dict:
             continue
         entries.append({
             "namespace": "zepp.strength.lap_62", "vendor_code": code,
-            "canonical_exercise_id": None, "labels": {"zh-CN": name},
+            "canonical_exercise_id": REVIEWED_ACTIONS.get(code), "labels": {"zh-CN": name},
             "verification": "verified",
             "self_weight_type": self_weight_type,
+            "primary_regions": _regions(record.get("mainPositions")),
+            "secondary_regions": _regions(record.get("subPositions")),
             "provenance": {"catalog_reference": f"/sport/config/muscle?lang=zh_CN#actionType={code}"},
         })
     return {
-        "catalog_revision": "zepp-apk-10.8.7-play-muscle-7e6b4ba6-v3",
+        "catalog_revision": "zepp-apk-10.8.7-play-muscle-7e6b4ba6-v4",
         "provenance": {
             "app_version": "10.8.7-play", "artifact_digest": artifact_digest,
             "catalog_response_digest": digest,
-            "extraction_reference": "APK lap_62[28] -> strengthTrainType -> /sport/config/muscle actionType/actionName/selfWeightType; tc20.g bodyweight display",
+            "extraction_reference": "APK lap_62[28] -> actionType; StrengthTrainingUtils.s -> mainPositions/subPositions; STBodyPositionView.c -> body region overlays; tc20.g -> selfWeightType; reviewed canonical crosswalk strength-knowledge-1",
         },
         "source_entry_count": len(records), "placeholders": placeholders,
         "entries": sorted(entries, key=lambda entry: entry["vendor_code"]),
     }
+
+
+def _regions(value: object) -> list[int]:
+    valid = set(range(1, 50)) - {9, 18, 21}
+    if not isinstance(value, list) or any(type(x) is not int or x not in valid for x in value):
+        raise ValueError("invalid body regions")
+    return value
 
 
 def main() -> int:

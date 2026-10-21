@@ -114,6 +114,8 @@ class RawDailyProfile:
     activity_by_day: dict[date, dict] = field(default_factory=dict)
     training_by_day: dict[date, dict] = field(default_factory=dict)
     workouts: list[dict] = field(default_factory=list)
+    running_model_baselines: dict[str, dict] = field(default_factory=dict)
+    running_model_samples_complete: bool = True
     feedback_by_workout: dict[tuple[str, str], list] = field(default_factory=dict)
     training_preferences: TrainingPreferences | None = None
     user_profile: UserProfile = field(default_factory=lambda: UserProfile(user_id=""))
@@ -215,17 +217,17 @@ class ProfileLoader:
                 row for row in workout_rows
                 if row.detail_synced
                 and row.started_at
-                and local_day(row.started_at, raw.timezone_name) >= day - timedelta(days=27)
+                and local_day(row.started_at, raw.timezone_name) >= day - timedelta(days=41 if workout_type == "running" else 27)
                 and str((row.data or {}).get("type") or "").lower() == workout_type
             ]
             detail_keys.extend(
                 (row.source, row.workout_id)
-                for row in family_rows[:DETAIL_WORKOUTS_PER_FAMILY]
+                for row in (family_rows if workout_type == "running" else family_rows[:DETAIL_WORKOUTS_PER_FAMILY])
             )
         samples_by_workout: dict[tuple[str, str], list] = defaultdict(list)
-        for sample in self.repo.workout_metric_samples_for_workouts(
-            user_id, detail_keys
-        ):
+        model_samples = self.repo.workout_metric_samples_for_workouts(user_id, detail_keys, limit=2_000_001)
+        raw.running_model_samples_complete = len(model_samples) < 2_000_001
+        for sample in model_samples:
             samples_by_workout[(sample.source, sample.workout_id)].append(sample)
         workout_keys = [(row.source, row.workout_id) for row in workout_rows]
         exercises_by_workout = self.repo.strength_exercises_for_workout_keys(
@@ -251,6 +253,22 @@ class ProfileLoader:
             }
             for row in workout_rows
         ]
+        raw.running_model_baselines = self.repo.running_performance_baselines(user_id, day, cutoff)
+        linked = {
+            (r.linked_workout_source, r.linked_workout_id): r
+            for r in self.repo.recommendations(user_id, start, day)
+            if r.linked_workout_source and r.linked_workout_id
+            and r.completed_at and _observed_key(r.completed_at) <= cutoff.replace(tzinfo=None)
+        }
+        for workout in raw.workouts:
+            recommendation = linked.get((workout["source"], workout["workout_id"]))
+            if recommendation and _observed_key(recommendation.created_at) < _observed_key(workout["started_at"]):
+                plan = recommendation.decision.action_plan
+                expected = str(workout["data"].get("type") or "").upper()
+                candidates = [p for p in (plan.primary_session, plan.optional_session) if p and p.session_type == expected]
+                if len(candidates) == 1:
+                    workout["training_target"] = {"recommendation_id": recommendation.id,
+                        "recorded_at": recommendation.created_at, "session": candidates[0].model_dump(mode="python")}
         self._add_energy_observations(raw)
         raw.facts = facts_for_day(raw)
         raw.data_quality = self._quality(raw)

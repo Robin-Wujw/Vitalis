@@ -46,8 +46,8 @@ def _payload(session):
     }
 
 
-def test_strength_capacity_requires_known_unit_basis_and_canonical_exercise():
-    assert estimate_one_rep_max(60, 8, unit="kg", basis="total") == 76.0
+def test_strength_capacity_separates_physical_load_from_muscle_and_effort_qualification():
+    assert estimate_one_rep_max(60, 8, unit="kg", basis="total", rir=0) == 76.0
     summary = strength_session_capacity(
         {
             "explicit_exercises": [{
@@ -60,19 +60,12 @@ def test_strength_capacity_requires_known_unit_basis_and_canonical_exercise():
                 "repetitions": 12, "weight_value": 20,
             }],
         },
-        history=[{
-            "explicit_exercises": [{
-                "source": "user_confirmed", "exercise_id": "bench_press", "exercise_name": "卧推",
-                "sets": 3, "repetitions": 8, "weight_kg": 50,
-                "weight_unit": "kg", "weight_basis": "total",
-            }],
-        }],
     )
 
     assert summary["capacity"][0]["volume"] == 1440.0
-    assert summary["capacity"][0]["estimated_1rm"] == 76.0
-    assert summary["capacity"][0]["personal_record"] is True
-    assert sum(summary["muscle_ratios"].values()) == pytest.approx(1.0, abs=0.001)
+    assert summary["capacity"][0]["estimated_1rm"] is None
+    assert summary["capacity"][0]["personal_record"] is False
+    assert next(x for x in summary['muscle_doses'] if x['muscle_group'] == 'chest')['direct_sets'] == 3
     assert not any(item.get("exercise_id") == "999999" for item in summary["capacity"])
 
 
@@ -88,7 +81,7 @@ def test_strength_capacity_abstains_when_weight_qualification_is_missing(field):
     summary = strength_session_capacity({"explicit_exercises": [exercise]})
 
     assert summary["capacity"] == []
-    assert summary["muscle_ratios"] == {}
+    assert summary["muscle_doses"]
     assert summary["limitations"]
 
 
@@ -112,7 +105,7 @@ def test_bodyweight_does_not_supply_effective_mass_for_capacity_or_one_rep_max(w
 
     assert estimate_one_rep_max(weight, 8, unit="kg", basis="bodyweight") is None
     assert session.capacity_volume_kg is None
-    assert session.explicit_exercises[0].canonical_qualified is False
+    assert session.explicit_exercises[0].canonical_qualified is True
     assert session.explicit_exercises[0].estimated_1rm_kg is None
     assert volume_points and all(item["value"] is None for item in volume_points)
 
@@ -138,8 +131,9 @@ def test_vendor_pounds_keep_observations_and_normalize_explicit_capacity_to_kilo
     assert explicit.weight_kg == pytest.approx(9.0718474)
     assert explicit.weight_unit == "kg"
     assert explicit.source == "vendor_explicit"
-    assert session.capacity_volume_kg == 72.6
-    assert explicit.estimated_1rm_kg == 11.5
+    assert session.capacity_volume_kg == 145.1
+    assert session.dose_coverage.volume_sets == 2
+    assert explicit.estimated_1rm_kg is None
 
 
 @pytest.mark.parametrize("explicit", [False, True])

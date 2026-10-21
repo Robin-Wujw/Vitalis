@@ -13,11 +13,11 @@ from vitalis.domain.models import WorkoutRpe
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "14.1"
-WEEKLY_SCHEMA_VERSION = "6.1"
-MONTHLY_SCHEMA_VERSION = "3.1"
-INTELLIGENCE_VERSION = "15.1"
-DECISION_POLICY_VERSION = "10.1"
+DAILY_SCHEMA_VERSION = "15.0"
+WEEKLY_SCHEMA_VERSION = "7.0"
+MONTHLY_SCHEMA_VERSION = "4.0"
+INTELLIGENCE_VERSION = "16.0"
+DECISION_POLICY_VERSION = "11.0"
 EVIDENCE_VERSION = "2026-09a"
 TRAINING_RESPONSE_SCHEMA_VERSION = "2.0"
 PERSONAL_MODEL_SCHEMA_VERSION = "3.0"
@@ -790,10 +790,24 @@ class RunningSessionAnalysis(BaseModel):
     kilometer_splits: list[RunningKilometerSplit] = Field(default_factory=list, max_length=200)
     evidence: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
+    evaluation: "TrainingEvaluation | None" = None
+
+
+class TrainingEvaluation(BaseModel):
+    version: Literal["training-review-1"] = "training-review-1"
+    state: Literal["AVAILABLE", "PARTIAL", "INSUFFICIENT_DATA"] = "PARTIAL"
+    target_origin: Literal["recorded", "inferred", "unavailable"] = "unavailable"
+    total_score: float | None = Field(default=None, ge=0, le=100)
+    candidate_score: float | None = Field(default=None, ge=0, le=100)
+    dimension_scores: dict[str, float | None] = Field(default_factory=dict)
+    score_validation: Literal["unvalidated"] = "unvalidated"
+    observations: list[str] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list, max_length=2)
+    limitations: list[str] = Field(default_factory=list)
 
 
 class RunningAnalysis(BaseModel):
-    schema_version: Literal["2.0"] = "2.0"
+    schema_version: Literal["3.0"] = "3.0"
     status: Availability
     status_label: str
     zone_method: Literal["device_workout", "lactate_threshold", "mixed", "unavailable"] = "unavailable"
@@ -808,9 +822,59 @@ class RunningAnalysis(BaseModel):
     session_type_counts_28d: dict[str, int] = Field(default_factory=dict)
     recent_sessions: list[RunningSessionAnalysis] = Field(default_factory=list, max_length=8)
     limitations: list[str] = Field(default_factory=list)
+    performance: "RunningPerformance | None" = None
 
 
-StrengthWeightBasis = Literal["per_hand", "total", "machine", "bodyweight"]
+class CriticalSpeedEstimate(BaseModel):
+    shadow_only: Literal[True] = True
+    qualification: Literal["observed", "test"] = "observed"
+    critical_speed_mps: float | None = Field(default=None, gt=0)
+    critical_speed_interval_mps: tuple[float, float] | None = None
+    uncertainty_method: str | None = None
+    distance_capacity_m: float | None = Field(default=None, gt=0)
+    sample_sessions: int = Field(default=0, ge=0)
+    sample_points: int = Field(default=0, ge=0)
+    fit_error_percent: float | None = Field(default=None, ge=0)
+    leave_one_session_error_percent: float | None = Field(default=None, ge=0)
+    evidence_workouts: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class RunningPerformanceCohort(BaseModel):
+    cohort_id: str
+    source: str
+    source_scope: str = "unknown"
+    time_basis: Literal["activity_day"] = "activity_day"
+    observed_at: datetime | None = Field(default=None, description="Latest contributing activity start")
+    fetched_at: datetime | None = Field(default=None, description="Latest fetch only when all contributing fetch times are known")
+    device_id: str | None = None
+    sport_mode: str
+    window_start: DateValue
+    window_end: DateValue
+    sample_sessions: int = Field(ge=0)
+    valid_minutes: float = Field(default=0, ge=0)
+    speed: CriticalSpeedEstimate
+    reference_heart_rate_bpm: float | None = None
+    efficiency_speed_mps: float | None = Field(default=None, gt=0)
+    durability_ratio: float | None = Field(default=None, gt=0)
+    durability_sessions: int = Field(default=0, ge=0)
+    durability_protocol: dict[str, int] = Field(default_factory=dict)
+    baseline_version: str | None = None
+    baseline_values: dict[str, float] = Field(default_factory=dict)
+    candidate_index: float | None = Field(default=None, gt=0)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class RunningPerformance(BaseModel):
+    version: Literal["running-performance-1"] = "running-performance-1"
+    shadow_only: Literal[True] = True
+    validation_state: Literal["unvalidated"] = "unvalidated"
+    composite_index: float | None = None
+    cohorts: list[RunningPerformanceCohort] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
+StrengthWeightBasis = Literal["per_hand", "total", "machine", "bodyweight", "assistance"]
 
 
 class StrengthExerciseInput(BaseModel):
@@ -922,11 +986,41 @@ class MuscleLoadStatus(BaseModel):
     short_load: float | None = Field(default=None, ge=0)
     long_load: float | None = Field(default=None, ge=0)
     short_long_ratio: float | None = Field(default=None, ge=0)
-    status: Literal["PRODUCTIVE", "MAINTAINING", "OVERTRAINING", "INSUFFICIENT_DATA"] = "INSUFFICIENT_DATA"
+    status: Literal["INCREASED", "SIMILAR", "DECREASED", "INSUFFICIENT_DATA"] = "INSUFFICIENT_DATA"
     status_label: str = "数据不足"
     freshness_days: int | None = Field(default=None, ge=0)
     qualified: bool = False
     limitations: list[str] = Field(default_factory=list)
+
+
+class StrengthDoseCoverage(BaseModel):
+    recorded_sets: int = Field(default=0, ge=0)
+    mapped_sets: int = Field(default=0, ge=0)
+    volume_sets: int = Field(default=0, ge=0)
+    working_sets: int = Field(default=0, ge=0)
+    reference_sets: int = Field(default=0, ge=0)
+    unmapped_region_sets: int = Field(default=0, ge=0)
+    unmapped_region_ids: list[int] = Field(default_factory=list)
+    summary_sets: int | None = Field(default=None, ge=0)
+    detail_complete: bool = False
+
+
+class MuscleTrainingDose(BaseModel):
+    muscle_group: str
+    muscle_group_label: str
+    side: Literal["left", "right", "bilateral", "unknown"] = "unknown"
+    direct_sets: float = Field(default=0, ge=0)
+    indirect_sets: float = Field(default=0, ge=0)
+    equivalent_sets: float = Field(default=0, ge=0)
+    working_sets_known: bool = False
+    qualification: Literal["qualified", "vendor_reference"]
+    mapping_version: str = "strength-knowledge-1"
+    unit: Literal['sets'] = 'sets'
+    time_basis: Literal['activity_day'] = 'activity_day'
+    source: str = 'unknown'
+    source_scope: str = 'unknown'
+    observed_at: datetime | DateValue | None = None
+    fetched_at: datetime | None = None
 
 
 class StrengthSessionAnalysis(BaseModel):
@@ -961,7 +1055,15 @@ class StrengthSessionAnalysis(BaseModel):
     muscle_soreness: int | None = Field(default=None, ge=1, le=5)
     capacity_volume_kg: float | None = Field(default=None, ge=0)
     capacity_unit: str | None = None
+    capacity_details: list[dict[str, Any]] = Field(default_factory=list)
+    started_at: datetime | None = None
+    fetched_at: datetime | None = None
     muscle_load: list[MuscleLoadStatus] = Field(default_factory=list)
+    volume_by_basis: dict[str, float] = Field(default_factory=dict)
+    dose_coverage: StrengthDoseCoverage = Field(default_factory=StrengthDoseCoverage)
+    muscle_doses: list[MuscleTrainingDose] = Field(default_factory=list)
+    reference_muscle_doses: list[MuscleTrainingDose] = Field(default_factory=list)
+    evaluation: TrainingEvaluation | None = None
     limitations: list[str] = Field(default_factory=list)
 
 
@@ -974,7 +1076,7 @@ class MuscleRecoveryStatus(BaseModel):
 
 
 class StrengthAnalysis(BaseModel):
-    schema_version: Literal["2.0"] = "2.0"
+    schema_version: Literal["3.0"] = "3.0"
     status: Availability
     status_label: str
     sessions_7d: int = Field(ge=0)
@@ -991,6 +1093,11 @@ class StrengthAnalysis(BaseModel):
     recent_sessions: list[StrengthSessionAnalysis] = Field(default_factory=list, max_length=8)
     muscle_recovery: list[MuscleRecoveryStatus] = Field(default_factory=list)
     muscle_load: list[MuscleLoadStatus] = Field(default_factory=list)
+    muscle_doses_7d: list[MuscleTrainingDose] = Field(default_factory=list)
+    reference_muscle_doses_7d: list[MuscleTrainingDose] = Field(default_factory=list)
+    alternative_focus: str | None = None
+    next_focus_reasons: list[str] = Field(default_factory=list)
+    recommendation_status: Literal["PARTIAL", "AVAILABLE", "INSUFFICIENT_DATA"] = "INSUFFICIENT_DATA"
     limitations: list[str] = Field(default_factory=list)
 
 
@@ -1103,6 +1210,7 @@ class TrainingStep(BaseModel):
     rest_seconds: tuple[int, int] | None = None
     intensity: str | None = None
     instructions: list[str] = Field(default_factory=list)
+    target_repetitions: tuple[int, int] | None = None
 
 
 class TrainingPreferenceInput(BaseModel):
@@ -1177,6 +1285,8 @@ class PlannedSession(BaseModel):
     intensity: Literal["high", "moderate", "low", "none"]
     intensity_label: str
     total_duration_minutes: tuple[int, int] | None = None
+    target_heart_rate_bpm: tuple[int, int] | None = None
+    target_rir: tuple[float, float] | None = None
     steps: list[TrainingStep] = Field(default_factory=list)
     evidence: list[str] = Field(default_factory=list)
     evidence_ref_ids: list[str] = Field(default_factory=list)
@@ -1707,10 +1817,10 @@ class SubjectiveFeedback(BaseModel):
 
 
 class DailyProfile(BaseModel):
-    schema_version: Literal["14.1"] = DAILY_SCHEMA_VERSION
+    schema_version: Literal["15.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
-    intelligence_version: Literal["15.1"] = INTELLIGENCE_VERSION
-    decision_policy_version: Literal["10.1"] = DECISION_POLICY_VERSION
+    intelligence_version: Literal["16.0"] = INTELLIGENCE_VERSION
+    decision_policy_version: Literal["11.0"] = DECISION_POLICY_VERSION
     evidence_version: Literal["2026-09a"] = EVIDENCE_VERSION
     user_id: str
     date: DateValue

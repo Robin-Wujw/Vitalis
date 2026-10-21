@@ -27,6 +27,8 @@ class ExerciseResolution:
     canonical_exercise_id: str | None = None
     labels: Mapping[str, str] | None = None
     self_weight_type: int | None = None
+    primary_regions: tuple[int, ...] = ()
+    secondary_regions: tuple[int, ...] = ()
 
     @property
     def label_zh(self) -> str | None:
@@ -42,6 +44,8 @@ class CatalogEntry:
     verification: Literal["verified", "provisional"]
     provenance: Mapping[str, str]
     self_weight_type: int | None = None
+    primary_regions: tuple[int, ...] = ()
+    secondary_regions: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -58,6 +62,7 @@ class StrengthCatalog:
         return ExerciseResolution(
             namespace, vendor_code, "verified", entry.canonical_exercise_id, entry.labels,
             entry.self_weight_type,
+            entry.primary_regions, entry.secondary_regions,
         )
 
 
@@ -115,6 +120,14 @@ def parse_catalog(text: str) -> StrengthCatalog:
             raise ValueError(f"entry {index} has invalid canonical_exercise_id")
         labels = record.get("labels")
         self_weight_type = record.get("self_weight_type")
+        region_arrays = []
+        for field in ("primary_regions", "secondary_regions"):
+            if verification == 'verified' and field not in record:
+                raise ValueError(f"entry {index} needs {field} evidence")
+            values = record.get(field, [])
+            if not isinstance(values, list) or any(type(v) is not int or v not in set(range(1, 50)) - {9, 18, 21} for v in values):
+                raise ValueError(f"entry {index} has invalid {field}")
+            region_arrays.append(tuple(values))
         if self_weight_type is not None and (
             type(self_weight_type) is not int or self_weight_type not in {0, 1}
         ):
@@ -147,6 +160,7 @@ def parse_catalog(text: str) -> StrengthCatalog:
             MappingProxyType(dict(labels)), verification,
             MappingProxyType(dict(provenance)),
             self_weight_type,
+            *region_arrays,
         )
     return StrengthCatalog(payload["catalog_revision"], MappingProxyType(entries))
 

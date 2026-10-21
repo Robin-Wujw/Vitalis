@@ -192,7 +192,7 @@ def test_running_analysis_uses_device_zones_dynamics_and_comparable_runs():
     analysis = RunningAnalyzer().analyze(_raw([*history, target], threshold=200))
     session = analysis.recent_sessions[0]
 
-    assert analysis.schema_version == "2.0"
+    assert analysis.schema_version == "3.0"
     assert analysis.zone_method == "device_workout"
     assert session.heart_rate_zone_source == "device_workout"
     assert session.heart_rate_zones[3].lower_bpm == 162

@@ -278,7 +278,7 @@ def test_visible_daily_activity_suppresses_contradictory_vendor_active_minutes()
     assert any("设备活动总时长小于当天已记录训练时长" in item for item in activity["limitations"])
 
 
-def test_strength_card_shows_qualified_capacity_and_mapped_ratios_only():
+def test_strength_card_projects_saved_capacity_without_recalculating_raw_sets():
     payload = _daily()
     payload["features"]["training"]["strength"]["recent_sessions"] = [
         {
@@ -291,6 +291,10 @@ def test_strength_card_shows_qualified_capacity_and_mapped_ratios_only():
         },
         {
             "date": "2026-10-07",
+            "capacity_details": [{"exercise_name": "卧推", "volume": 1200,
+                                  "weight_basis": "total", "estimated_1rm": None}],
+            "dose_coverage": {"recorded_sets": 4, "volume_sets": 3},
+            "muscle_doses": [{"muscle_group_label": "胸部", "direct_sets": 3, "indirect_sets": 0}],
             "explicit_exercises": [{
                 "source": "user_confirmed", "exercise_id": "bench_press", "exercise_name": "卧推",
                 "sets": 3, "repetitions": 8, "weight_kg": 60,
@@ -305,10 +309,12 @@ def test_strength_card_shows_qualified_capacity_and_mapped_ratios_only():
     card = next(item for item in daily_display_sections(payload) if item["key"] == "display_strength_card")
     text = " ".join(card["facts"])
 
-    assert "卧推容量 1,440 kg·次" in text
-    assert "估算 1RM 76 kg" in text
-    assert "高于已记录的可比较历史" in text
-    assert "已映射肌群的记录容量占比" in text
+    assert "卧推容量 1,200 kg·次" in text
+    assert "记录 4 组；其中 3 组可计算负重容量" in text
+    assert "胸部：直接 3 组" in text
+    assert "1,440" not in text
+    assert "估算 1RM" not in text
+    assert "容量占比" not in text
     assert "999999" not in text
 
 

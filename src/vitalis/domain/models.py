@@ -203,7 +203,9 @@ class StrengthSetObservation(BaseModel):
     vendor_weight_unit: int | None = Field(default=None, ge=0)
     weight_value: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     weight_unit: str | None = None
-    weight_basis: Literal["per_hand", "total", "machine", "bodyweight"] | None = None
+    weight_basis: Literal["per_hand", "total", "machine", "bodyweight", "assistance"] | None = None
+    set_kind: Literal["warmup", "working", "technique", "unknown"] = "unknown"
+    side: Literal["left", "right", "bilateral", "unknown"] = "unknown"
     limitations: list[str] = Field(default_factory=list)
     started_at: datetime | None = None
     ended_at: datetime | None = None

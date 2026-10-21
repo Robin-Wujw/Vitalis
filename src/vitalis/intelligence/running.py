@@ -54,6 +54,8 @@ class RunningAnalyzer:
     """Analyze running without population HR formulas or universal cadence targets."""
 
     def analyze(self, raw) -> RunningAnalysis:
+        from .running_performance import analyze_running_performance
+        from .training_evaluation import review_running
         current_start = raw.day - timedelta(days=27)
         previous_start = raw.day - timedelta(days=55)
         workouts = self._available_workouts(raw)
@@ -72,6 +74,7 @@ class RunningAnalyzer:
                 sessions_28d=0,
                 duration_minutes_28d=0,
                 limitations=["近 28 天没有跑步记录。"],
+                performance=analyze_running_performance(raw),
             )
 
         analyses = []
@@ -84,6 +87,7 @@ class RunningAnalyzer:
             analysis = self._session(
                 workout, threshold, historical_durations, prior_runs
             )
+            analysis = analysis.model_copy(update={"evaluation": review_running(analysis, target=workout.get("training_target"), workout=workout)})
             analyses.append(analysis)
             historical_durations.append(analysis.duration_minutes)
 
@@ -133,6 +137,7 @@ class RunningAnalyzer:
             session_type_counts_28d=dict(sorted(type_counts.items())),
             recent_sessions=list(reversed(analyses[-8:])),
             limitations=limitations,
+            performance=analyze_running_performance(raw),
         )
 
     def trend_points(self, raw) -> list[dict]:

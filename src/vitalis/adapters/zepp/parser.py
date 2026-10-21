@@ -750,6 +750,8 @@ class ZeppParser:
             weight_basis = ZeppParser._strength_weight_basis(item)
             observation = StrengthSetObservation(
                 order=order,
+                set_kind=item.get('set_kind') if item.get('set_kind') in {'warmup', 'working', 'technique'} else 'unknown',
+                side=item.get('side') if item.get('side') in {'left', 'right', 'bilateral'} else 'unknown',
                 started_at=ZeppParser._utc(started) if started else None,
                 ended_at=ZeppParser._utc(ended) if ended else None,
                 exercise_id=ZeppParser._first_text(
@@ -896,7 +898,7 @@ class ZeppParser:
         if value is None:
             return None
         normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
-        return normalized if normalized in {"per_hand", "total", "machine", "bodyweight"} else None
+        return normalized if normalized in {"per_hand", "total", "machine", "bodyweight", "assistance"} else None
 
     @staticmethod
     def _deduplicate_workout_samples(

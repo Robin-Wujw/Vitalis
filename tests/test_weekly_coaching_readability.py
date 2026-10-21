@@ -61,9 +61,9 @@ def _assert_no_unsupported_split(recommendation):
 def test_mapped_watch_names_are_explained_as_reference_without_zero_coverage_jargon():
     recommendation, text = _week(reference_names=True)
 
-    assert "手表记录的动作名称" in text
-    assert "仅供参考" in text
-    assert "还不能据此判断练了哪些部位" in text
+    assert "厂商部位参考汇总" in text
+    assert "直接 3 组" in text
+    assert "不补课或自动加量" in text
     assert "动作可识别肌群" not in text
     assert not re.search(r"0\s*/\s*3", text)
     assert not any(claim in text for claim in ("未同步", "没同步", "没有动作明细"))

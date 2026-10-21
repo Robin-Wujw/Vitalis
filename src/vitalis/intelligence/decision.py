@@ -822,6 +822,11 @@ class DecisionEngine:
             intensity=planned_intensity,
             intensity_label=INTENSITY_LABELS[planned_intensity],
             total_duration_minutes=duration,
+            target_heart_rate_bpm=(
+                (round(threshold * {'recovery_run': .75, 'steady_run': .90, 'threshold_intervals': .95}.get(code, .85)),
+                 round(threshold * {'recovery_run': .85, 'steady_run': .95, 'threshold_intervals': 1.0}.get(code, .90)) - 1)
+                if threshold else None
+            ),
             steps=steps,
             evidence=[
                 f"近 7 天完成跑步 {running.sessions_7d if running else 0} 次。",
@@ -903,6 +908,19 @@ class DecisionEngine:
         conflicts = conflicts or []
         focus = training.strength.next_focus if training.strength else None
         sessions = training.strength.recent_sessions if training.strength else []
+        if focus and training.strength.recommendation_status == 'PARTIAL' and not any(s.explicit_exercises for s in sessions):
+            label = training.strength.next_focus_label or '熟悉部位'
+            return PlannedSession(
+                role=role, role_label=ROLE_LABELS[role], session_type='STRENGTH',
+                session_type_label=TYPE_LABELS['STRENGTH'], code=f'strength_reference_{focus.lower()}',
+                title=f'{label}轻量练习', focus=label, goal='结合实际恢复情况选择熟悉动作，保持日常训练习惯',
+                intensity='low', intensity_label=INTENSITY_LABELS['low'], total_duration_minutes=(15, 30),
+                steps=[TrainingStep(order=1, name='轻量热身', duration_minutes=(5, 8), intensity='轻松'),
+                       TrainingStep(order=2, name=f'熟悉的{label}动作', duration_minutes=(10, 20), intensity='保留充足余力',
+                                    instructions=['先确认局部无不适，再选择已熟悉的动作；不照搬厂商参考中的重量或组数。'])],
+                evidence=training.strength.next_focus_reasons,
+                stop_conditions=['出现疼痛、头晕或其他异常不适时停止。'],
+            )
         prior = next(
             (
                 item for item in sessions
@@ -985,7 +1003,7 @@ class DecisionEngine:
             if prior.session_rpe is not None:
                 reasons.append(f"上次整堂训练主观用力为 {prior.session_rpe:.1f}/10。")
         elif training.strength and training.strength.next_focus_label:
-            reasons.append(f"按已识别的训练轮换，下一项是{training.strength.next_focus_label}。")
+            reasons.append(f"结合已有肌群接触和约束，下一次可优先考虑{training.strength.next_focus_label}。")
         else:
             reasons.append("近期没有可复用的已确认动作，训练分化证据不足，仅安排保守动作模式。")
             latest_strength = sessions[0] if sessions else None
@@ -1011,6 +1029,7 @@ class DecisionEngine:
             title=title,
             focus=focus_text,
             goal="维持主要动作模式和肌群训练频次，同时不给跑步关键课堆叠下肢疲劳",
+            target_rir=(3, 4) if planned_intensity == 'low' else (2, 2),
             intensity=planned_intensity,
             intensity_label=INTENSITY_LABELS[planned_intensity],
             total_duration_minutes=duration,
@@ -1065,24 +1084,8 @@ class DecisionEngine:
 
     @staticmethod
     def _muscle_freshness(training) -> list[str]:
-        """Which trained muscle groups are rested enough today, and which are not."""
-        recovery = training.strength.muscle_recovery if training.strength else []
-        known = [item for item in recovery if item.days_since_last_trained is not None]
-        rested = sorted(
-            (item for item in known if item.days_since_last_trained >= 3
-             and not (item.latest_soreness is not None and item.latest_soreness >= 4)),
-            key=lambda item: -item.days_since_last_trained,
-        )[:3]
-        recent = [item for item in known if item.days_since_last_trained <= 1]
-        lines = []
-        if rested:
-            lines.append(
-                "今天适合练：" + "、".join(item.muscle_group_label for item in rested)
-                + "（已休息 3 天以上）。"
-            )
-        if recent:
-            lines.append("避开：" + "、".join(item.muscle_group_label for item in recent) + "（48 小时内练过）。")
-        return lines
+        """Carry saved scheduling evidence without declaring muscle recovery."""
+        return list(training.strength.next_focus_reasons) if training.strength else []
 
     @staticmethod
     def _strength_from_prior(prior, intensity: str):
@@ -1119,6 +1122,7 @@ class DecisionEngine:
                     f"{exercise.repetitions} 次"
                     if exercise.repetitions is not None else "6–12 次"
                 ),
+                target_repetitions=(exercise.repetitions, exercise.repetitions) if exercise.repetitions is not None else None,
                 load_kg=exercise.weight_kg,
                 rest_seconds=(exercise.rest_seconds, exercise.rest_seconds) if exercise.rest_seconds is not None else (90, 150),
                 intensity=target_rir,

@@ -22,7 +22,7 @@ from .report_formatting import (
     unique,
     value_with_unit,
 )
-from .strength import MUSCLE_LABELS, strength_session_capacity
+from .strength import MUSCLE_LABELS
 
 _INTERNAL_REFERENCE_WINDOW = re.compile(r"(?:近\s*4\s*周|(?:28|60|90)\s*[日天])")
 
@@ -925,25 +925,21 @@ def _strength_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
     facts: list[str] = []
     limitations: list[str] = []
     for session in sessions:
-        history = [
-            item for item in _strength_sessions(training)
-            if _date(item.get("date")) is not None and _date(item.get("date")) < _date(session.get("date"))
-        ]
-        summary = strength_session_capacity(session, history)
-        for item in summary["capacity"]:
+        for item in session.get("capacity_details") or []:
             name = item["exercise_name"]
-            facts.append(
-                f"{name}容量 {number(item['volume'])} kg·次（已记录重量×次数）"
-                f"；估算 1RM {number(item['estimated_1rm'])} kg（Epley，仅估算）"
-            )
-            if item["personal_record"]:
-                facts.append(f"{name}估算 1RM 高于已记录的可比较历史。")
-        if summary["muscle_ratios"]:
-            ratio_text = "、".join(
-                f"{MUSCLE_LABELS.get(muscle, muscle)} {ratio:.0%}"
-                for muscle, ratio in summary["muscle_ratios"].items()
-            )
-            facts.append("已映射肌群的记录容量占比：" + ratio_text + "。")
+            basis = {"per_hand": "单手记录重量", "total": "记录总重", "machine": "器械标称重量"}.get(item.get("weight_basis"), "已记录重量")
+            line = f"{name}容量 {number(item['volume'])} kg·次（{basis}）"
+            if _number(item.get('estimated_1rm')) is not None:
+                line += f"；估算 1RM {number(item['estimated_1rm'])} kg（仅估算）"
+            facts.append(line + '。')
+        coverage = session.get('dose_coverage') or {}
+        if coverage.get('recorded_sets'):
+            facts.append(f"记录 {coverage['recorded_sets']} 组；其中 {coverage.get('volume_sets', 0)} 组可计算负重容量。")
+        for field in ('muscle_doses', 'reference_muscle_doses'):
+            for dose in (session.get(field) or [])[:5]:
+                source = '厂商部位参考' if field == 'reference_muscle_doses' else '按已记录动作估算'
+                side = {'left': '左侧', 'right': '右侧', 'bilateral': '双侧'}.get(dose.get('side'), '')
+                facts.append(f"{side}{dose['muscle_group_label']}：直接 {number(dose['direct_sets'])} 组、间接 {number(dose['indirect_sets'])} 组（{source}）。")
         for load in session.get("muscle_load") or []:
             if not isinstance(load, dict) or load.get("qualified") is not True:
                 continue
@@ -951,12 +947,15 @@ def _strength_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
             ratio = _number(load.get("short_long_ratio"))
             status = load.get("status_label")
             if label and ratio is not None and status:
-                facts.append(f"{label}短长期容量比 {ratio:.2f}（{status}）。")
-        limitations.extend(summary["limitations"])
+                facts.append(f"{label}近期训练接触比 {ratio:.2f}（{status}）。")
+        limitations.extend(session.get('limitations') or [])
+        evaluation = session.get('evaluation') or {}
+        for suggestion in evaluation.get('suggestions') or []:
+            facts.append('建议：' + suggestion)
     if not facts and not limitations:
         return None
     return {
-        "key": "display_strength_card", "title": "力量容量", "facts": unique(facts),
+        "key": "display_strength_card", "title": "力量容量与肌群", "facts": unique(facts),
         "interpretation": [], "limitations": unique(limitations), "display": True,
     }
 
@@ -1022,6 +1021,9 @@ def _running_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
             facts.append("；".join(parts) + "。")
         else:
             limitations.append(f"{title}没有足够的相近距离历史样本，未作配速对照。")
+        evaluation = session.get('evaluation') or {}
+        for suggestion in evaluation.get('suggestions') or []:
+            facts.append('建议：' + suggestion)
     return {
         "key": "display_running_card", "title": "跑步卡", "facts": unique(facts),
         "interpretation": [], "limitations": unique(limitations), "display": True,

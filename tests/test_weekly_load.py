@@ -78,7 +78,7 @@ def test_most_of_the_target_early_in_the_week_is_ahead_not_on_track():
     assert plan.status == "AHEAD" and plan.status_label == "已超前"
 
 
-def test_strength_day_names_rested_and_recent_muscle_groups():
+def test_strength_day_reuses_saved_constraints_instead_of_declaring_recovery_by_days():
     from types import SimpleNamespace
 
     from vitalis.intelligence.decision import DecisionEngine
@@ -89,9 +89,10 @@ def test_strength_day_names_rested_and_recent_muscle_groups():
             days_since_last_trained=days, latest_soreness=soreness,
         )
 
-    training = SimpleNamespace(strength=SimpleNamespace(muscle_recovery=[
+    reasons = ['背部最近主要接触较早，但仍需核对局部不适。']
+    training = SimpleNamespace(strength=SimpleNamespace(next_focus_reasons=reasons, muscle_recovery=[
         status("back", "背部", 5), status("chest", "胸部", 4), status("quadriceps", "股四头肌", 1),
         status("shoulders", "肩部", 6, soreness=4),
     ]))
     lines = DecisionEngine._muscle_freshness(training)
-    assert lines == ["今天适合练：背部、胸部（已休息 3 天以上）。", "避开：股四头肌（48 小时内练过）。"]
+    assert lines == reasons

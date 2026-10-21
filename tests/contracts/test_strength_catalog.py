@@ -36,7 +36,8 @@ def test_catalog_resource_covers_complete_official_display_catalog(monkeypatch, 
     for record in catalog_payload["entries"]:
         code = record["vendor_code"]
         assert record["namespace"] == LAP_62_NAMESPACE
-        assert record["canonical_exercise_id"] is None
+        if code == 3:
+            assert record["canonical_exercise_id"] == "barbell_squat"
         assert record["verification"] == "verified"
         evidence = catalog.entries[(LAP_62_NAMESPACE, code)].provenance
         assert evidence["app_version"] == "10.8.7-play"

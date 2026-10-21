@@ -210,6 +210,7 @@ def sdist_sources() -> set[str]:
         "tools/check.py", "tools/check_docs.py", "tools/generate_api_reference.py",
         "tools/generate_report_examples.py",
         "tools/extract_zepp_strength_catalog.py", "tools/extract_zepp_sport_catalog.py",
+        "tools/validate_running_performance.py",
         "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.en.md",
     }
     for kind in ("morning", "daily", "evening", "weekly", "monthly", "insufficient-data"):

@@ -227,9 +227,9 @@ def test_strength_analysis_estimates_bouts_without_guessing_exercises():
     assert session.heart_rate_zones
 
 
-def test_strength_analysis_supports_explicit_five_day_rotation():
+def test_strength_analysis_detects_split_but_ranks_recent_muscle_exposure():
     focuses = ["CHEST", "BACK", "LEGS", "SHOULDERS", "ARMS"]
-    names = ["卧推", "划船", "深蹲", "侧平举", "弯举"]
+    names = ["卧推", "划船", "深蹲", "侧平举", "二头肌弯举"]
     workouts = [
         _workout(
             TARGET - timedelta(days=4 - index),
@@ -243,7 +243,8 @@ def test_strength_analysis_supports_explicit_five_day_rotation():
     analysis = StrengthAnalyzer().analyze(_raw(workouts))
 
     assert analysis.detected_split == "FIVE_DAY"
-    assert analysis.next_focus == "CHEST"
+    assert analysis.next_focus == "LEGS"
+    assert analysis.next_focus_reasons
 
 
 def _comparison_workout(day, workout_id, rows, *, source="zepp"):
@@ -350,10 +351,10 @@ def test_vendor_display_catalog_does_not_assert_complete_muscle_knowledge():
         assert classify_exercise(None, exercise.label_zh)[0] != "unknown"
 
 
-def test_secondary_muscles_count_half_of_the_volume():
+def test_secondary_muscles_count_half_a_set_without_normalizing_physical_load():
     from vitalis.intelligence.strength import muscle_weights
 
     weights = muscle_weights(None, "卧推")
-    assert weights == {"chest": 0.5, "triceps": 0.25, "shoulders": 0.25}
+    assert weights == {"chest": 1.0, "triceps": 0.5, "shoulders": 0.5}
     assert muscle_weights(None, "二头肌弯举") == {"biceps": 1.0}
-    assert muscle_weights(None, "蝴蝶机反向飞鸟") == {"shoulders": 2 / 3, "back": 1 / 3}
+    assert muscle_weights(None, "蝴蝶机反向飞鸟") == {"shoulders": 1.0, "back": 0.5}

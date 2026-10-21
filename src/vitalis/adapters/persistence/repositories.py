@@ -4541,6 +4541,29 @@ class HealthRepository:
             orm.ShadowResult.day <= on_or_before,
         ).order_by(orm.ShadowResult.day.desc()).limit(1)).scalars().first()
 
+    def running_performance_baselines(self, user_id: str, day: date, cutoff: datetime) -> dict:
+        """Reuse frozen protocols from saved snapshots without global-revision gating."""
+        rows = self.db.execute(select(orm.AnalysisSnapshot.payload['features']['training']['running']['performance']).where(
+            orm.AnalysisSnapshot.user_id == user_id,
+            orm.AnalysisSnapshot.profile_type == "daily",
+            orm.AnalysisSnapshot.period_end <= day,
+            orm.AnalysisSnapshot.generated_at <= _naive_utc(cutoff),
+        ).order_by(orm.AnalysisSnapshot.period_end.desc(), orm.AnalysisSnapshot.generated_at.desc()).limit(180)).scalars()
+        result = {}
+        for performance in rows:
+            performance = performance or {}
+            if performance.get("version") != "running-performance-1":
+                continue
+            for cohort in performance.get("cohorts") or []:
+                if cohort.get("baseline_version") and cohort.get("reference_heart_rate_bpm") and cohort.get("cohort_id") not in result:
+                    result[cohort["cohort_id"]] = {
+                        "reference_heart_rate_bpm": cohort["reference_heart_rate_bpm"],
+                        "baseline_version": cohort["baseline_version"],
+                        "baseline_values": cohort.get("baseline_values") or {},
+                        "durability_protocol": cohort.get("durability_protocol") or {},
+                    }
+        return result
+
     def latest_analysis_snapshot(
         self,
         user_id: str,

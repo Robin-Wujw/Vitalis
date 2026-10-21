@@ -452,7 +452,8 @@ class StrengthAnalyzer:
         total_sets = sum(item.sets or 0 for item in explicit) if any(item.sets for item in explicit) else None
         limitations = []
         if not explicit:
-            limitations.append("没有已确认动作，未推测具体动作或目标肌群。")
+            if not observed_sets:
+                limitations.append("缺少逐组动作明细，仅保留已记录训练摘要。")
             mapped_observed = any(
                 item.source == "lap_62"
                 and item.exercise_name
@@ -466,7 +467,7 @@ class StrengthAnalyzer:
                 for item in observed_sets
             )
             if mapped_observed:
-                limitations.append("观测动作名称中的已映射名称来自已核验编码对照，仅用于展示，不据此处方。")
+                limitations.append("设备动作名称来自已核验编码对照，肌群组数为估算。")
             if unverified_observed:
                 limitations.append("观测组动作名称未确认；仅作为本次事实展示，不用于处方。")
             if not mapped_observed and not unverified_observed and observed_sets:

@@ -51,6 +51,7 @@ def test_missing_weight_still_displays_quantified_muscle_training():
     text = ' '.join(card['facts'])
     assert '胸部 5 组' in text
     assert '0 组可计算' not in text
+    assert '未推测具体动作或目标肌群' not in ' '.join(card['limitations'])
 
 
 def test_partial_history_keeps_older_usable_sessions_and_individual_weeks():

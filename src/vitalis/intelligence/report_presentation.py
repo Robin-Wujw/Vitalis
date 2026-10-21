@@ -936,10 +936,26 @@ def _strength_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
         if coverage.get('recorded_sets'):
             facts.append(f"记录 {coverage['recorded_sets']} 组；其中 {coverage.get('volume_sets', 0)} 组可计算负重容量。")
         for field in ('muscle_doses', 'reference_muscle_doses'):
-            for dose in (session.get(field) or [])[:5]:
-                source = '厂商部位参考' if field == 'reference_muscle_doses' else '按已记录动作估算'
+            primary, secondary = [], []
+            doses = sorted(session.get(field) or [], key=lambda d: -d.get('direct_sets', 0))
+            for dose in doses:
                 side = {'left': '左侧', 'right': '右侧', 'bilateral': '双侧'}.get(dose.get('side'), '')
-                facts.append(f"{side}{dose['muscle_group_label']}：直接 {number(dose['direct_sets'])} 组、间接 {number(dose['indirect_sets'])} 组（{source}）。")
+                label = side + dose['muscle_group_label']
+                if dose.get('direct_sets', 0) > 0:
+                    primary.append(label)
+                if dose.get('indirect_sets', 0) > 0:
+                    secondary.append(label)
+            primary = unique(primary)
+            secondary = [label for label in unique(secondary) if label not in primary]
+            parts = []
+            if primary:
+                parts.append('本次主要练到' + '、'.join(primary))
+            if secondary:
+                parts.append('、'.join(secondary) + '辅助参与')
+            if parts:
+                source = 'Zepp 动作目录' if field == 'reference_muscle_doses' else '已记录动作'
+                facts.append(f"根据{source}，" + '；'.join(parts) + '。')
+                limitations.append('肌群参与按动作关系估算，实际刺激会随动作做法和用力程度变化。')
         for load in session.get("muscle_load") or []:
             if not isinstance(load, dict) or load.get("qualified") is not True:
                 continue

@@ -136,8 +136,12 @@ def _strength_coaching(raw, start, analysis, blocked, coverage):
             for session in sessions for item in session.observed_sets
         )
         if references:
-            parts = '、'.join(f'{d.muscle_group_label}直接 {d.direct_sets:g} 组/间接 {d.indirect_sets:g} 组' for d in references[:5])
-            reasons.append('厂商部位参考汇总：' + parts + '；不是实际肌肉受力或有效组测量。')
+            primary = list(dict.fromkeys(d.muscle_group_label for d in references if d.direct_sets > 0))
+            secondary = list(dict.fromkeys(d.muscle_group_label for d in references if d.indirect_sets > 0 and d.muscle_group_label not in primary))
+            parts = (['主要练到' + '、'.join(primary)] if primary else [])
+            if secondary:
+                parts.append('、'.join(secondary) + '辅助参与')
+            reasons.append('根据 Zepp 动作目录，' + '；'.join(parts) + '。实际刺激会随动作做法和用力程度变化。')
             action = summary + '可参考已有部位分布选择下一次方向；工作组和局部恢复信息不足，先沿用熟悉剂量，不补课或自动加量。'
         elif mapped_names:
             action = summary + "手表记录的动作名称目前仅供参考，还不能据此判断练了哪些部位，暂时排不了按部位轮换的计划。"

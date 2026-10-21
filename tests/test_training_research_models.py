@@ -226,9 +226,9 @@ def test_unknown_week_does_not_mark_unseen_muscles_as_untrained():
     assert StrengthAnalyzer().analyze(raw).next_focus is None
     raw.workouts[0]['data']['vendor_reported_sets'] = 1
     analysis = StrengthAnalyzer().analyze(raw)
-    first, _, reasons, _ = recommend_focus(raw, analysis.recent_sessions)
-    assert first in {'PULL', 'LEGS'}
-    assert any('完整核实' in reason for reason in reasons)
+    recommendation = recommend_focus(raw, analysis.recent_sessions)
+    assert set(recommendation.candidates) == {'PULL', 'LEGS'}
+    assert all(h.recent_complete for h in recommendation.history)
 
 
 def test_identical_doses_separated_by_another_exercise_keep_their_order():

@@ -180,6 +180,7 @@ class ProfileLoader:
         raw.activity_by_day = _records_by_day(self.repo.activity_range(user_id, start, day))
         raw.training_by_day = _records_by_day(self.repo.training_range(user_id, start, day))
         coverage_start = min(
+            start,
             day - timedelta(days=55),
             resolve_month_period(day).reference_start,
         )

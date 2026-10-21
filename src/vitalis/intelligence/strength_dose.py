@@ -10,6 +10,13 @@ from math import isfinite
 from vitalis.adapters.zepp.catalog import LAP_62_NAMESPACE, load_catalog
 
 
+FOCUS_GROUPS = {
+    'PUSH': {'chest', 'shoulders', 'triceps', 'arm_back'},
+    'PULL': {'back', 'biceps', 'arm_front'},
+    'LEGS': {'quadriceps', 'hamstrings', 'glutes', 'thigh_front', 'thigh_back', 'calves', 'lower_leg_front'},
+}
+
+
 REFERENCE_REGIONS = {
     **dict.fromkeys((1, 2, 7, 8), ("core", "腹部")),
     **dict.fromkeys((3, 4, 38, 39), ("shoulders", "肩部")),
@@ -96,6 +103,7 @@ def session_capacity(session, knowledge, muscle_labels):
     coverage = {"recorded_sets": len(rows), "volume_sets": 0, "mapped_sets": 0,
                 "working_sets": 0, "reference_sets": 0, "unmapped_region_sets": 0, "unmapped_region_ids": [],
                 "summary_sets": session.get("vendor_reported_sets"), "detail_complete": False}
+    focus_counts = defaultdict(lambda: [0, 0])
     reference_version = load_catalog().catalog_revision
     for row in rows:
         side = row.get('side') if row.get('side') in {'left', 'right', 'bilateral'} else 'unknown'
@@ -120,6 +128,15 @@ def session_capacity(session, knowledge, muscle_labels):
                     for muscle in muscles:
                         qualified[(muscle, muscle_labels[muscle], side)][position] += 1
                         qualified[(muscle, muscle_labels[muscle], side)][2] += working
+        # Count a row only once per direction, even when several muscles assist.
+        if row.get('set_kind') != 'warmup':
+            main_ids = set(main) if main or sub else {m[0] for m in primary}
+            sub_ids = set(sub) if main or sub else {m[0] for m in secondary}
+            for focus, groups in FOCUS_GROUPS.items():
+                if main_ids & groups:
+                    focus_counts[focus][0] += 1
+                elif sub_ids & groups:
+                    focus_counts[focus][1] += 1
         reps = row.get("repetitions")
         w = number(row.get("weight_kg"))
         unit = "kg" if w is not None else row.get("weight_unit")
@@ -148,9 +165,9 @@ def session_capacity(session, knowledge, muscle_labels):
         item["volume"] = round(item["volume"], 1)
     limitations = []
     if coverage["volume_sets"] < len(rows):
-        limitations.append("部分组缺少明确物理负重、次数或负重口径；容量仅包含合格记录，自重与辅助负重另列。")
+        limitations.append("重量容量仅统计重量、次数与口径明确的组；其余组仍计入可识别肌群的训练组数。")
     if coverage["working_sets"] < len(rows):
-        limitations.append("部分组未标记热身或工作组；肌群组数表示训练接触，不等于有效增肌组。")
+        limitations.append("未区分热身的组保留在训练量估算中；已标记热身组排除，估算不等于有效增肌组。")
     if not rows:
         limitations.append("缺少逐组记录，未估算容量或肌群组数。")
     if coverage['unmapped_region_sets']:
@@ -161,6 +178,8 @@ def session_capacity(session, knowledge, muscle_labels):
     if rows and all(r.get('source') == 'user_confirmed' for r in rows):
         qualified_origin['source'] = 'user'
     return {
+        "focus_doses": [{'focus': focus, 'direct_sets': counts[0], 'indirect_sets': counts[1], **provenance}
+                        for focus, counts in sorted(focus_counts.items())],
         "capacity": list(capacity.values()), "volume_by_basis": {k: round(v, 1) for k, v in volume_by_basis.items()},
         "coverage": coverage, "muscle_doses": _doses(qualified, "qualified", "strength-knowledge-1", qualified_origin),
         "reference_muscle_doses": _doses(references, "vendor_reference", reference_version, {**provenance, 'source_scope': 'catalog_and_workout_detail'}),

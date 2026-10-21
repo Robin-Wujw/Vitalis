@@ -348,7 +348,7 @@ def test_lap_observation_does_not_raise_coverage_focus_or_prescription():
     assert session.explicit_exercises == []
     assert session.focus == "UNKNOWN"
     assert session.muscle_groups == []
-    assert planned.code == "strength_full_body"
+    assert planned.code == "recovery_activity"
     assert ZEPP_STRENGTH_LAP_LABELS[64] not in " ".join(step.name for step in planned.steps)
 
 

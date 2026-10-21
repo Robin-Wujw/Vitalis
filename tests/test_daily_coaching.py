@@ -149,7 +149,8 @@ def test_evening_muscle_recap_uses_known_muscles_without_weight_inference():
     payload = synthetic_daily_fixture()
     strength = payload["features"]["training"]["strength"]
     strength.update({"detected_split": "PUSH_PULL_LEGS", "detected_split_label": "推、拉、腿三分化",
-                     "next_focus": "PULL", "next_focus_label": "拉类"})
+                     "next_focus": "PULL", "next_focus_label": "拉类",
+                     "next_focus_reasons": ["下次候选：拉类；根据已记录肌群训练顺序。"]})
     strength["recent_sessions"] = [{
         "date": payload["date"], "focus_label": "推类", "muscle_group_labels": ["胸部", "肩部", "肱三头肌"],
         "explicit_exercises": [{"exercise_name": "卧推", "muscle_groups": ["chest", "shoulders", "triceps"]}],

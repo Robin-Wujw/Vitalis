@@ -13,11 +13,11 @@ from vitalis.domain.models import WorkoutRpe
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "15.0"
-WEEKLY_SCHEMA_VERSION = "7.0"
-MONTHLY_SCHEMA_VERSION = "4.0"
-INTELLIGENCE_VERSION = "16.0"
-DECISION_POLICY_VERSION = "11.0"
+DAILY_SCHEMA_VERSION = "16.0"
+WEEKLY_SCHEMA_VERSION = "8.0"
+MONTHLY_SCHEMA_VERSION = "5.0"
+INTELLIGENCE_VERSION = "17.0"
+DECISION_POLICY_VERSION = "12.0"
 EVIDENCE_VERSION = "2026-09a"
 TRAINING_RESPONSE_SCHEMA_VERSION = "2.0"
 PERSONAL_MODEL_SCHEMA_VERSION = "3.0"
@@ -1023,6 +1023,74 @@ class MuscleTrainingDose(BaseModel):
     fetched_at: datetime | None = None
 
 
+class FocusTrainingDose(BaseModel):
+    focus: Literal['PUSH', 'PULL', 'LEGS']
+    direct_sets: float = Field(default=0, ge=0)
+    indirect_sets: float = Field(default=0, ge=0)
+    unit: Literal['sets'] = 'sets'
+    qualification: Literal['estimated'] = 'estimated'
+    source: str = 'unknown'
+    observed_at: datetime | DateValue | None = None
+    fetched_at: datetime | None = None
+    time_basis: Literal['activity_day'] = 'activity_day'
+
+
+class StrengthFocusHistory(BaseModel):
+    focus: str
+    label: str
+    last_main_day: DateValue | None = None
+    last_contact_day: DateValue | None = None
+    recent_direct_sets: float = Field(default=0, ge=0)
+    recent_indirect_sets: float = Field(default=0, ge=0)
+    recent_complete: bool = False
+    recent_start: DateValue
+    recent_end: DateValue
+    baseline_start: DateValue
+    baseline_end: DateValue
+    baseline_sessions: int = 0
+    baseline_missing_sessions: int = 0
+    baseline_complete_weeks: int = 0
+    baseline_verified_days: int = 0
+    typical_session_sets: float | None = None
+    typical_interval_days: float | None = None
+    baseline_weekly_sets: float | None = None
+    weekly_ratio: float | None = None
+    estimated_equivalent_sets: float = 0
+    qualification: Literal['estimated'] = 'estimated'
+    unit: Literal['sets'] = 'sets'
+    time_basis: Literal['activity_day'] = 'activity_day'
+    sources: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class MuscleTrainingHistory(BaseModel):
+    muscle_group: str
+    muscle_group_label: str
+    side: str
+    last_main_day: DateValue | None = None
+    last_contact_day: DateValue | None = None
+    direct_sets_7d: float = 0
+    indirect_sets_7d: float = 0
+    estimated_sets_7d: float = 0
+    typical_session_sets: float | None = None
+    baseline_sessions: int = 0
+    recent_sessions: int = 0
+    history_start: DateValue
+    history_end: DateValue
+    sources: list[str] = Field(default_factory=list)
+    qualification: Literal['estimated'] = 'estimated'
+    unit: Literal['sets'] = 'sets'
+    time_basis: Literal['activity_day'] = 'activity_day'
+
+
+class StrengthFocusRecommendation(BaseModel):
+    candidates: list[str] = Field(default_factory=list)
+    alternative: str | None = None
+    history: list[StrengthFocusHistory] = Field(default_factory=list)
+    reasons: list[str] = Field(default_factory=list)
+    status: Literal['PARTIAL', 'AVAILABLE', 'INSUFFICIENT_DATA'] = 'PARTIAL'
+
+
 class StrengthSessionAnalysis(BaseModel):
     vendor_reported_sets: int | None = Field(default=None, ge=1)
     workout_id: str
@@ -1063,6 +1131,7 @@ class StrengthSessionAnalysis(BaseModel):
     dose_coverage: StrengthDoseCoverage = Field(default_factory=StrengthDoseCoverage)
     muscle_doses: list[MuscleTrainingDose] = Field(default_factory=list)
     reference_muscle_doses: list[MuscleTrainingDose] = Field(default_factory=list)
+    focus_doses: list[FocusTrainingDose] = Field(default_factory=list)
     evaluation: TrainingEvaluation | None = None
     limitations: list[str] = Field(default_factory=list)
 
@@ -1076,7 +1145,7 @@ class MuscleRecoveryStatus(BaseModel):
 
 
 class StrengthAnalysis(BaseModel):
-    schema_version: Literal["3.0"] = "3.0"
+    schema_version: Literal["4.0"] = "4.0"
     status: Availability
     status_label: str
     sessions_7d: int = Field(ge=0)
@@ -1096,6 +1165,11 @@ class StrengthAnalysis(BaseModel):
     muscle_doses_7d: list[MuscleTrainingDose] = Field(default_factory=list)
     reference_muscle_doses_7d: list[MuscleTrainingDose] = Field(default_factory=list)
     alternative_focus: str | None = None
+    next_focus_candidates: list[str] = Field(default_factory=list)
+    focus_history: list[StrengthFocusHistory] = Field(default_factory=list)
+    muscle_history: list[MuscleTrainingHistory] = Field(default_factory=list)
+    history_sessions: int = 0
+    history_start: DateValue | None = None
     next_focus_reasons: list[str] = Field(default_factory=list)
     recommendation_status: Literal["PARTIAL", "AVAILABLE", "INSUFFICIENT_DATA"] = "INSUFFICIENT_DATA"
     limitations: list[str] = Field(default_factory=list)
@@ -1817,10 +1891,10 @@ class SubjectiveFeedback(BaseModel):
 
 
 class DailyProfile(BaseModel):
-    schema_version: Literal["15.0"] = DAILY_SCHEMA_VERSION
+    schema_version: Literal["16.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
-    intelligence_version: Literal["16.0"] = INTELLIGENCE_VERSION
-    decision_policy_version: Literal["11.0"] = DECISION_POLICY_VERSION
+    intelligence_version: Literal["17.0"] = INTELLIGENCE_VERSION
+    decision_policy_version: Literal["12.0"] = DECISION_POLICY_VERSION
     evidence_version: Literal["2026-09a"] = EVIDENCE_VERSION
     user_id: str
     date: DateValue

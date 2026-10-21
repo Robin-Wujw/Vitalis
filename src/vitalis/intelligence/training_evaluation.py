@@ -7,18 +7,16 @@ def review_strength(session, *, target=None):
     c = session.dose_coverage
     observations, suggestions = [], []
     if c.recorded_sets:
-        observations.append(f"记录 {c.recorded_sets} 组；明确负重容量覆盖 {c.volume_sets}/{c.recorded_sets} 组。")
+        observations.append(f"记录 {c.recorded_sets} 组；重量缺失不影响已识别动作的肌群组数统计。")
     for dose in (session.muscle_doses or session.reference_muscle_doses):
         source = "厂商动作参考" if dose.qualification == "vendor_reference" else "动作知识映射"
-        observations.append(f"{dose.muscle_group_label}：直接 {dose.direct_sets:g} 组、间接 {dose.indirect_sets:g} 组（{source}）。")
+        observations.append(f"{dose.muscle_group_label}：主要练到 {dose.direct_sets:g} 组、辅助参与 {dose.indirect_sets:g} 组（{source}）。")
     if session.muscle_soreness is not None and session.muscle_soreness >= 4:
         suggestions.append("已记录明显酸痛；下次先避开受影响部位，结合实际不适调整安排。")
     elif session.session_rpe is not None and session.session_rpe >= 9:
         suggestions.append("本场主观用力较高；下次先保持或减少剂量，核对恢复后再考虑进阶。")
     elif not c.working_sets or c.working_sets < c.recorded_sets:
-        suggestions.append("下次可区分热身和工作组；先沿用熟悉剂量，便于比较肌群训练量。")
-    if c.volume_sets < c.recorded_sets:
-        suggestions.append("补充缺失组的实际重量和负重口径，可提高容量比较覆盖。")
+        suggestions.append("先按已记录组数比较近期训练量；标记热身组可以进一步提高估算准确度。")
     review = TrainingEvaluation(
         state="PARTIAL" if observations else "INSUFFICIENT_DATA",
         observations=observations, suggestions=suggestions[:2],

@@ -908,6 +908,23 @@ class DecisionEngine:
         conflicts = conflicts or []
         focus = training.strength.next_focus if training.strength else None
         sessions = training.strength.recent_sessions if training.strength else []
+        candidates = training.strength.next_focus_candidates if training.strength else []
+        if training.strength and any(h.last_contact_day for h in training.strength.focus_history) and not candidates:
+            return self._recovery(preferences, '近期力量训练或不适限制了候选，先恢复，不重复刚练过的部位。', role=role)
+        if len(candidates) > 1:
+            labels = [h.label for h in training.strength.focus_history if h.focus in candidates]
+            label = '或'.join(labels)
+            return PlannedSession(
+                role=role, role_label=ROLE_LABELS[role], session_type='STRENGTH',
+                session_type_label=TYPE_LABELS['STRENGTH'], code='strength_joint_candidates',
+                title=f'{label}择一练习', focus=label, goal='根据当天状态从并列候选中选一个方向',
+                intensity='low', intensity_label=INTENSITY_LABELS['low'], total_duration_minutes=(15,30),
+                steps=[TrainingStep(order=1, name='轻量热身', duration_minutes=(5,8), intensity='轻松'),
+                       TrainingStep(order=2, name='候选方向择一', duration_minutes=(10,20), intensity='保留充足余力',
+                                    instructions=['选择一个无不适的熟悉方向，不把并列候选全部加练。'])],
+                evidence=training.strength.next_focus_reasons,
+                stop_conditions=['出现疼痛或其他异常不适时停止。'],
+            )
         if focus and training.strength.recommendation_status == 'PARTIAL' and not any(s.explicit_exercises for s in sessions):
             label = training.strength.next_focus_label or '熟悉部位'
             return PlannedSession(

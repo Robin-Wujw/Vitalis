@@ -313,9 +313,10 @@ def test_strength_card_projects_saved_capacity_without_recalculating_raw_sets():
     text = " ".join(card["facts"])
 
     assert "卧推容量 1,200 kg·次" in text
-    assert "记录 4 组；其中 3 组可计算负重容量" in text
+    assert "本次记录 4 组" in text
+    assert "其中 3 组有明确重量容量" in text
     assert "主要练到胸部" in text
-    assert "肱三头肌辅助参与" in text
+    assert "肱三头肌 3 组辅助参与" in text
     assert "直接 3 组" not in text
     assert "间接 3 组" not in text
     assert "1,440" not in text

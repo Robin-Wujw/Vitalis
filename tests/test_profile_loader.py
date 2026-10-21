@@ -97,7 +97,7 @@ def test_profile_loader_reports_missing_signals_without_fabricating_facts():
     assert raw.facts == {}
 
 
-def test_training_coverage_reaches_previous_calendar_month(monkeypatch):
+def test_training_coverage_reaches_full_personal_strength_history(monkeypatch):
     user_id = "calendar-coverage-start"
     day = date(2026, 10, 8)
     captured = {}
@@ -115,7 +115,7 @@ def test_training_coverage_reaches_previous_calendar_month(monkeypatch):
 
     assert captured == {
         "user": user_id,
-        "start": date(2026, 8, 1),
+        "start": day - timedelta(days=179),
         "end": day,
     }
 

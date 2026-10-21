@@ -227,7 +227,7 @@ def strength_session_capacity(session: dict) -> dict:
 
 
 def _apply_session_capacity(session: StrengthSessionAnalysis, *, target=None) -> StrengthSessionAnalysis:
-    from .contracts import MuscleTrainingDose, StrengthDoseCoverage
+    from .contracts import FocusTrainingDose, MuscleTrainingDose, StrengthDoseCoverage
     from .training_evaluation import review_strength
     summary = strength_session_capacity(session.model_dump(mode='python'))
     exercises = []
@@ -252,6 +252,7 @@ def _apply_session_capacity(session: StrengthSessionAnalysis, *, target=None) ->
         'capacity_unit': 'kg*reps' if len(volumes) == 1 else None,
         'capacity_details': summary['capacity'], 'volume_by_basis': volumes,
         'dose_coverage': StrengthDoseCoverage(**summary['coverage']),
+        'focus_doses': [FocusTrainingDose(**x) for x in summary['focus_doses']],
         'muscle_doses': [MuscleTrainingDose(**x) for x in summary['muscle_doses']],
         'reference_muscle_doses': [MuscleTrainingDose(**x) for x in summary['reference_muscle_doses']],
         'limitations': list(dict.fromkeys(session.limitations + summary['limitations'])),
@@ -287,8 +288,8 @@ def _muscle_load_status(day: date, sessions: list[StrengthSessionAnalysis], *, c
 class StrengthAnalyzer:
     def analyze(self, raw) -> StrengthAnalysis:
         from .strength_dose import aggregate_doses
-        from .strength_recommendations import recommend_focus
-        start = raw.day - timedelta(days=27)
+        from .strength_recommendations import muscle_history, recommend_focus
+        start = raw.day - timedelta(days=179)
         workouts = [
             item for item in RunningAnalyzer._available_workouts(raw)
             if start <= self._date(item) <= raw.day
@@ -301,7 +302,7 @@ class StrengthAnalyzer:
                 sessions_7d=0,
                 sessions_28d=0,
                 explicit_session_coverage=0,
-                limitations=["近 28 天没有力量训练记录。"],
+                limitations=["近 180 天没有力量训练记录。"],
             )
         threshold = RunningAnalyzer._lactate_threshold(raw)
         sessions = [
@@ -317,30 +318,38 @@ class StrengthAnalyzer:
             })
             qualified_sessions.append(session)
         sessions = qualified_sessions
+        history_sessions = sessions
+        recommendation = recommend_focus(raw, history_sessions)
+        sessions = [s for s in history_sessions if s.date >= raw.day - timedelta(days=27)]
         muscle_load = _muscle_load_status(raw.day, sessions)
         explicit_count = sum(bool(item.explicit_exercises) for item in sessions)
         split, split_confidence = self._split(sessions)
-        next_focus, alternative, focus_reasons, recommendation_status = recommend_focus(raw, sessions)
+        next_focus = recommendation.candidates[0] if len(recommendation.candidates) == 1 else None
         limitations = ["力量训练心率区间仅表示心肺负担，不代表负重强度。"]
         if explicit_count < len(sessions):
-            limitations.append("部分力量训练缺少已确认动作，不能完整计算肌群训练量。")
+            limitations.append("肌群训练量包含已记录动作及 Zepp 动作映射估算，无需逐项确认才能统计。")
         if split == "UNRESOLVED":
             limitations.append("动作覆盖不足，尚不能判断三分化、五分化或其他训练结构。")
         return StrengthAnalysis(
             status=Availability.AVAILABLE,
             status_label=AVAILABILITY_LABELS[Availability.AVAILABLE.value],
             sessions_7d=sum(self._date(item) >= raw.day - timedelta(days=6) for item in workouts),
-            sessions_28d=len(workouts),
-            explicit_session_coverage=round(explicit_count / len(sessions), 3),
+            sessions_28d=len(sessions),
+            history_sessions=len(history_sessions),
+            history_start=start,
+            focus_history=recommendation.history,
+            muscle_history=muscle_history(raw.day, history_sessions),
+            next_focus_candidates=recommendation.candidates,
+            explicit_session_coverage=round(explicit_count / len(sessions) if sessions else 0, 3),
             detected_split=split,
             detected_split_label=SPLIT_LABELS[split],
             split_confidence=split_confidence,
             split_confidence_label=CONFIDENCE_LABELS[split_confidence.value],
             next_focus=next_focus,
-            next_focus_label=FOCUS_LABELS.get(next_focus) if next_focus else None,
-            alternative_focus=alternative,
-            next_focus_reasons=focus_reasons,
-            recommendation_status=recommendation_status,
+            next_focus_label=next((h.label for h in recommendation.history if h.focus == next_focus), None),
+            alternative_focus=recommendation.alternative,
+            next_focus_reasons=recommendation.reasons,
+            recommendation_status=recommendation.status,
             muscle_doses_7d=aggregate_doses([s for s in sessions if s.date >= raw.day - timedelta(days=6)], 'muscle_doses'),
             reference_muscle_doses_7d=aggregate_doses([s for s in sessions if s.date >= raw.day - timedelta(days=6)], 'reference_muscle_doses'),
             recent_sessions=list(reversed(sessions[-8:])),

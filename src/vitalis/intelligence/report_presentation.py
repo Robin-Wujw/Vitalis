@@ -934,7 +934,9 @@ def _strength_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
             facts.append(line + '。')
         coverage = session.get('dose_coverage') or {}
         if coverage.get('recorded_sets'):
-            facts.append(f"记录 {coverage['recorded_sets']} 组；其中 {coverage.get('volume_sets', 0)} 组可计算负重容量。")
+            facts.append(f"本次记录 {coverage['recorded_sets']} 组，以下按动作估算肌群训练量。")
+            if coverage.get('volume_sets'):
+                facts.append(f"其中 {coverage['volume_sets']} 组有明确重量容量。")
         for field in ('muscle_doses', 'reference_muscle_doses'):
             primary, secondary = [], []
             doses = sorted(session.get(field) or [], key=lambda d: -d.get('direct_sets', 0))
@@ -942,11 +944,11 @@ def _strength_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
                 side = {'left': '左侧', 'right': '右侧', 'bilateral': '双侧'}.get(dose.get('side'), '')
                 label = side + dose['muscle_group_label']
                 if dose.get('direct_sets', 0) > 0:
-                    primary.append(label)
+                    primary.append(f"{label} {number(dose['direct_sets'])} 组")
                 if dose.get('indirect_sets', 0) > 0:
-                    secondary.append(label)
+                    secondary.append(f"{label} {number(dose['indirect_sets'])} 组")
             primary = unique(primary)
-            secondary = [label for label in unique(secondary) if label not in primary]
+            secondary = unique(secondary)
             parts = []
             if primary:
                 parts.append('本次主要练到' + '、'.join(primary))
@@ -955,7 +957,7 @@ def _strength_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
             if parts:
                 source = 'Zepp 动作目录' if field == 'reference_muscle_doses' else '已记录动作'
                 facts.append(f"根据{source}，" + '；'.join(parts) + '。')
-                limitations.append('肌群参与按动作关系估算，实际刺激会随动作做法和用力程度变化。')
+                limitations.append('同一组可涉及多个肌群，各肌群组数不能相加作为总组数；实际刺激随动作和用力变化。')
         for load in session.get("muscle_load") or []:
             if not isinstance(load, dict) or load.get("qualified") is not True:
                 continue
@@ -968,10 +970,12 @@ def _strength_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
         evaluation = session.get('evaluation') or {}
         for suggestion in evaluation.get('suggestions') or []:
             facts.append('建议：' + suggestion)
+    strength = training.get('strength') or {}
+    facts.extend(strength.get('next_focus_reasons') or [])
     if not facts and not limitations:
         return None
     return {
-        "key": "display_strength_card", "title": "力量容量与肌群", "facts": unique(facts),
+        "key": "display_strength_card", "title": "力量训练量与下次安排", "facts": unique(facts),
         "interpretation": [], "limitations": unique(limitations), "display": True,
     }
 
@@ -1162,8 +1166,6 @@ def daily_display_sections(payload: Any, *, facts_only: bool = False) -> list[di
         if muscle_lines:
             if strength.get("detected_split") not in {None, "UNRESOLVED"} and strength.get("detected_split_label"):
                 muscle_lines.append(f"已识别分化：{strength['detected_split_label']}")
-            if strength.get("next_focus_label"):
-                muscle_lines.append(f"下次力量轮换候选：{strength['next_focus_label']}；暂定，以次晨恢复和补齐记录后的安排为准。")
             sections.append({
                 "key": "display_muscle_review", "title": "肌群分化回顾", "facts": unique(muscle_lines),
                 "interpretation": [], "limitations": [], "display": True,

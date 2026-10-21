@@ -912,6 +912,31 @@ def _pressure_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
     return {"key": "display_signals", "title": "日内记录", "facts": facts, "interpretation": [], "limitations": [], "display": True}
 
 
+def _strength_next_advice(strength: dict[str, Any]) -> list[str]:
+    """Project saved scheduling facts; keep dose/history audit in the snapshot."""
+    labels = {'PUSH': '胸肩、三头肌', 'PULL': '背部、二头肌', 'LEGS': '腿臀'}
+    candidates = strength.get('next_focus_candidates') or []
+    if not candidates and strength.get('next_focus'):
+        candidates = [strength['next_focus']]
+    names = unique([labels[item] for item in candidates if item in labels])
+    if not names:
+        # The scheduler already records the actionable restriction when abstaining.
+        return list(strength.get('next_focus_reasons') or [])[:1]
+    suffix = '，择一' if len(names) > 1 else ''
+    lines = ['下次力量建议：' + '或'.join(names) + suffix + '。']
+    dates = []
+    for item in strength.get('focus_history') or []:
+        value = item.get('last_main_day')
+        if not value or item.get('focus') not in labels:
+            continue
+        day = date.fromisoformat(str(value)[:10])
+        dates.append(f"{labels[item['focus']]} {day.month}月{day.day}日")
+    if dates:
+        lines.append('上次集中训练：' + '；'.join(dates) + '。')
+    lines.append('热身时若仍有明显不适，调整训练或休息。')
+    return lines
+
+
 def _strength_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
     """Expose qualified strength capacity without interpreting unknown vendor codes."""
     training = (payload.get("features") or {}).get("training") or {}
@@ -971,7 +996,7 @@ def _strength_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
         for suggestion in evaluation.get('suggestions') or []:
             facts.append('建议：' + suggestion)
     strength = training.get('strength') or {}
-    facts.extend(strength.get('next_focus_reasons') or [])
+    facts.extend(_strength_next_advice(strength))
     if not facts and not limitations:
         return None
     return {

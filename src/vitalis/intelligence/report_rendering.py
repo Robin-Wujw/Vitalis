@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from .public_reports import PublicReportView, report_presentation, to_public_report_view
 from .report_formatting import minutes_text, number, payload_of, timestamp_text
 
-RENDERER_VERSION = "4.5"
+RENDERER_VERSION = "4.6"
 ReportTarget = Literal["markdown", "html"]
 _MEDIA_TYPES = {"markdown": "text/markdown", "html": "text/html"}
 _LABELS = {"morning": "晨报", "daily": "日报", "evening": "晚报", "weekly": "周报", "monthly": "月报"}

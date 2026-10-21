@@ -158,4 +158,4 @@ def test_evening_muscle_recap_uses_known_muscles_without_weight_inference():
     report = EveningBriefingEngine().build_payload(payload)
     text = visible_text(render_report(report, "html").content, "html")
     assert "肌群分化回顾" in text and "胸部、肩部、肱三头肌" in text
-    assert "推、拉、腿三分化" in text and "拉类" in text
+    assert "推、拉、腿三分化" in text and "下次力量建议：背部、二头肌。" in text

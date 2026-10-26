@@ -16,7 +16,7 @@ DateValue = date
 DAILY_SCHEMA_VERSION = "16.0"
 WEEKLY_SCHEMA_VERSION = "8.0"
 MONTHLY_SCHEMA_VERSION = "5.0"
-INTELLIGENCE_VERSION = "17.0"
+INTELLIGENCE_VERSION = "18.0"
 DECISION_POLICY_VERSION = "12.0"
 EVIDENCE_VERSION = "2026-09a"
 TRAINING_RESPONSE_SCHEMA_VERSION = "2.0"
@@ -465,20 +465,20 @@ class SleepFeatures(BaseModel):
     )
     recorded_after_wake_minutes: int | None = Field(
         default=None, ge=0,
-        description="Minutes of uploaded watch data after the wake time; unknown without data",
+        description="Minutes of device data after waking in the same successful sleep response; unknown without data",
     )
     checked_after_wake_minutes: int | None = Field(
         default=None, ge=0,
         description=(
-            "Minutes from the wake time to the latest successful read of this sleep from "
+            "Minutes from the wake time to the start of the latest successful read of this sleep from "
             "the source; unknown without a read"
         ),
     )
     finished: bool = Field(
         default=False,
         description=(
-            "The main sleep has ended: a read 60 minutes after the wake time still shows it, "
-            "and the night reached 90% of the usual one or 30 minutes of watch data followed it"
+            "A successful sleep read after 60 minutes still shows the wake time and contains "
+            "device data reaching at least 60 minutes beyond it"
         ),
     )
     limitations: list[str] = Field(default_factory=list)
@@ -1893,7 +1893,7 @@ class SubjectiveFeedback(BaseModel):
 class DailyProfile(BaseModel):
     schema_version: Literal["16.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
-    intelligence_version: Literal["17.0"] = INTELLIGENCE_VERSION
+    intelligence_version: Literal["18.0"] = INTELLIGENCE_VERSION
     decision_policy_version: Literal["12.0"] = DECISION_POLICY_VERSION
     evidence_version: Literal["2026-09a"] = EVIDENCE_VERSION
     user_id: str

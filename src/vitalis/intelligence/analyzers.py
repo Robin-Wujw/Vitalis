@@ -202,7 +202,7 @@ class SleepAnalyzer:
             usual_duration_minutes=round(usual, 1) if usual is not None else None,
             recorded_after_wake_minutes=recorded,
             checked_after_wake_minutes=checked,
-            finished=main_sleep_finished(duration, usual, recorded, checked),
+            finished=main_sleep_finished(duration, recorded, checked),
             limitations=limitations,
             limitation_labels=labels(limitations, LIMITATION_LABELS),
         ), state

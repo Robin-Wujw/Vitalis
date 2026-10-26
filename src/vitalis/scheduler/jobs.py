@@ -231,8 +231,8 @@ def morning_wake_job(now: datetime | None = None) -> int:
 
     From the window start a sleep-only probe runs at most once per poll
     interval, capped per day, until last night's main sleep is stored with a
-    plausible wake time that a read an hour later still shows (a short night
-    also needs half an hour of uploaded watch data after it). An extra probe
+    plausible wake time that a read an hour later still shows, with device data
+    in that response reaching an hour beyond the wake. An extra probe
     reads the source as soon as the wake time is an hour old. Then one full
     morning sync queues the analysis whose delivery intent sends the report.
     At the window end the morning sync runs anyway and the delivery policy
@@ -263,12 +263,19 @@ def _morning_wake_step(
     """Queue at most one probe or morning sync for one user; return which."""
     from vitalis.adapters.persistence import HealthRepository, session_scope
     from vitalis.application.delivery_policy import morning_sleep_has_ended, morning_wake_settles_at
-    from vitalis.intelligence.sleep_completion import USUAL_SLEEP_NIGHTS, usual_sleep_minutes
     from vitalis.time import local_day_utc_bounds
 
     with session_scope() as db:
         repo = HealthRepository(db)
-        if repo.notification_delivery_for_key(user_id, today, "morning") is not None:
+        delivery = repo.notification_delivery_for_key(user_id, today, "morning")
+        waiting_for_sleep = (
+            delivery is not None and delivery.status == "deferred"
+            and delivery.last_error == "sleep_incomplete"
+        )
+        if delivery is not None and not waiting_for_sleep:
+            return None
+        if waiting_for_sleep and now >= wait_until:
+            # Reconciliation owns the existing intent's window-end fallback.
             return None
         attempts = repo.sync_attempts_for_trigger_prefix(
             user_id, "zepp",
@@ -277,26 +284,28 @@ def _morning_wake_step(
         )
         syncs = [row for row in attempts if row.trigger == "morning"]
         probes = [row for row in attempts if row.trigger == MORNING_PROBE_TRIGGER]
-        if any(row.status not in {"failed", "cancelled"} for row in syncs):
+        if any(row.status in _ACTIVE_SYNC_STATES for row in syncs):
+            return None
+        if not waiting_for_sleep and any(row.status not in {"failed", "cancelled"} for row in syncs):
             # Queued, running or finished: its analysis owns today's report.
             return None
-        if any(row.records_written for row in syncs) or len(syncs) >= MORNING_REPORT_SYNCS_PER_DAY:
+        if not waiting_for_sleep and (
+            any(row.records_written for row in syncs) or len(syncs) >= MORNING_REPORT_SYNCS_PER_DAY
+        ):
             return None
         if any(row.status in _ACTIVE_SYNC_STATES for row in probes):
             return None
         wake_time, sleep_minutes = repo.sleep_wake_summary(user_id, today)
         day_start, day_end = local_day_utc_bounds(today, settings.timezone)
+        checked_at, data_until = repo.sleep_confirmation(user_id, day_start, day_end, now)
         awake = morning_sleep_has_ended(
             today, wake_time, sleep_minutes,
-            usual_minutes=usual_sleep_minutes(repo.sleep_minutes_by_night(
-                user_id, today - timedelta(days=USUAL_SLEEP_NIGHTS), today - timedelta(days=1),
-            ), today),
-            data_until=repo.latest_heart_rate_at(user_id, day_start, now),
-            checked_at=repo.sleep_checked_at(user_id, day_start, day_end, now),
+            data_until=data_until,
+            checked_at=checked_at,
             timezone=settings.timezone,
             morning_window=settings.morning_wake_window(),
         )
-        if awake or now >= wait_until:
+        if not waiting_for_sleep and (awake or now >= wait_until):
             reason = "sleep_found" if awake else "window_end"
             _sync_user(
                 user_id, days=MORNING_REPORT_SYNC_DAYS, label="morning",

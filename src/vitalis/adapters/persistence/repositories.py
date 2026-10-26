@@ -880,52 +880,64 @@ class HealthRepository:
             float(minutes) if isinstance(minutes, (int, float)) and not isinstance(minutes, bool) else None,
         )
 
-    def sleep_minutes_by_night(self, user_id: str, start: date, end: date) -> dict[date, object]:
-        """Stored asleep minutes per wake date in ``[start, end]``."""
-        rows = self.db.execute(
-            select(orm.SleepRecord.date, orm.SleepRecord.data).where(
-                orm.SleepRecord.user_id == user_id,
-                orm.SleepRecord.date.between(start, end),
-            )
-        ).all()
-        return {night: (data or {}).get("sleep_duration") for night, data in rows}
-
-    def latest_heart_rate_at(self, user_id: str, start: datetime, end: datetime) -> datetime | None:
-        """UTC time of the newest stored heart-rate sample in ``[start, end]``.
-
-        The watch uploads minute heart rate together with the sleep summary, so
-        this is how far the uploaded data reaches.
-        """
-        value = self.db.execute(select(func.max(orm.MetricSample.timestamp)).where(
-            orm.MetricSample.user_id == user_id,
-            orm.MetricSample.metric == "heart_rate",
-            orm.MetricSample.timestamp.between(_naive_utc(start), _naive_utc(end)),
-        )).scalar_one_or_none()
-        return value.replace(tzinfo=timezone.utc) if value is not None else None
-
-    def sleep_checked_at(
+    def sleep_confirmation(
         self, user_id: str, start: datetime, end: datetime, until: datetime,
-    ) -> datetime | None:
-        """UTC time of the latest successful read of the sleep for the local day ``[start, end)``.
+        *, attempt_id: str | None = None,
+    ) -> tuple[datetime | None, datetime | None]:
+        """Read time and same-response heart-rate watermark for one local sleep day.
 
-        Every read rewrites the stored main sleep, so a stored wake time well
-        before this instant was still standing then.
+        Empty, partial and activity-only band responses cannot confirm a stored
+        sleep. The request start is a conservative lower bound on its read time;
+        waiting to persist a response must not advance the wake confirmation.
+        Later heart-rate streams cannot alter this response's evidence.
         """
-        value = self.db.execute(
-            select(func.max(orm.SyncChunk.finished_at))
+        rows = self.db.execute(
+            select(orm.SyncChunk, orm.SyncAttempt.timezone)
             .join(orm.SyncAttempt, orm.SyncAttempt.id == orm.SyncChunk.attempt_id)
             .where(
                 orm.SyncAttempt.user_id == user_id,
+                *([orm.SyncAttempt.id == attempt_id] if attempt_id is not None else []),
                 # No read of the day's sleep starts before the day does.
                 orm.SyncAttempt.created_at >= _naive_utc(start),
                 func.coalesce(orm.SyncChunk.health_stream, orm.SyncChunk.stream) == "sleep",
-                orm.SyncChunk.status == "succeeded",
                 orm.SyncChunk.window_start >= _naive_utc(start),
                 orm.SyncChunk.window_start < _naive_utc(end),
                 orm.SyncChunk.finished_at <= _naive_utc(until),
             )
-        ).scalar_one_or_none()
-        return value.replace(tzinfo=timezone.utc) if value is not None else None
+            .order_by(orm.SyncChunk.finished_at.desc(), orm.SyncChunk.id.desc())
+        ).all()
+        for chunk, zone in rows:
+            stages = chunk.stages or {}
+            day = local_day(start, zone).isoformat()
+            if day not in stages.get("sleep_dates", []):
+                continue
+            # This is the most recently published sleep. An incomplete writer
+            # invalidates its confirmation; it cannot borrow an older read's
+            # watermark. Empty/activity-only responses leave the sleep alone.
+            if (
+                chunk.status != "succeeded"
+                or chunk.fetch_status != "success"
+                or chunk.parse_status != "success"
+                or chunk.write_status != "success"
+                or chunk.records_written <= 0
+                or chunk.started_at is None
+            ):
+                return None, None
+            seen_until = (stages.get("heart_rate_seen_until") or {}).get(day)
+            try:
+                observed = datetime.fromisoformat(seen_until) if isinstance(seen_until, str) else None
+            except ValueError:
+                observed = None
+            if observed is not None and (
+                observed.tzinfo is None
+                or not _naive_utc(start) <= _naive_utc(observed) < _naive_utc(end)
+                or _naive_utc(observed) > _naive_utc(until)
+            ):
+                observed = None
+            return chunk.started_at.replace(tzinfo=timezone.utc), (
+                observed.astimezone(timezone.utc) if observed is not None else None
+            )
+        return None, None
 
     def sleep_range(self, user_id: str, start: date, end: date) -> list[dict]:
         rows = self.db.execute(

@@ -705,20 +705,24 @@ def test_sleep_features_say_whether_the_main_sleep_has_ended():
     def sleep_of(raw):
         return SleepAnalyzer().analyze(raw, BaselineEngine().build(raw.series, day))[0]
 
-    def read_sleep(db, when):
+    def read_sleep(db, when, data_until):
         """A successful read of the day's band summary, as the dispatcher records it."""
         start = datetime(2026, 10, 17, tzinfo=ZoneInfo(zone)).astimezone(timezone.utc).replace(tzinfo=None)
         attempt_id = f"{user_id}-{when:%H%M}"
         db.add(orm.SyncAttempt(
             id=attempt_id, user_id=user_id, trigger="morning_probe", request_key=attempt_id,
             window_start=start, window_end=start + timedelta(days=1), status="succeeded",
-            created_at=when.replace(tzinfo=None),
+            created_at=when.replace(tzinfo=None), timezone=zone,
         ))
         db.flush()
         db.add(orm.SyncChunk(
             attempt_id=attempt_id, stable_key="sleep", stream="sleep", health_stream="sleep",
             status="succeeded", window_start=start, window_end=start + timedelta(days=1),
             started_at=when.replace(tzinfo=None), finished_at=when.replace(tzinfo=None),
+            fetch_status="success", parse_status="success", write_status="success", records_written=1,
+            stages={"sleep_dates": [day.isoformat()], "heart_rate_seen_until": {
+                day.isoformat(): data_until.isoformat(),
+            }},
         ))
         db.flush()
 
@@ -737,23 +741,30 @@ def test_sleep_features_say_whether_the_main_sleep_has_ended():
             wake_time=datetime.strptime("07:04", "%H:%M").time(),
         )))
         repo.save_metric_samples(heart_rate(at(2, 26), at(7, 8)))
-        read_sleep(db, at(7, 30))
+        read_sleep(db, at(7, 30), at(7, 8))
         partial = sleep_of(ProfileLoader(repo).load(user_id, day, as_of=at(7, 30), timezone_name=zone))
         repo.save_metric_samples(heart_rate(at(7, 9), at(7, 40)))
-        read_sleep(db, at(8, 5))
+        read_sleep(db, at(8, 5), at(7, 40))
         before_read = sleep_of(ProfileLoader(repo).load(user_id, day, as_of=at(8, 0), timezone_name=zone))
+        still_partial = sleep_of(ProfileLoader(repo).load(user_id, day, as_of=at(8, 5), timezone_name=zone))
+        repo.save_metric_samples(heart_rate(at(7, 41), at(8, 6)))
+        read_sleep(db, at(8, 7), at(8, 6))
         awake = sleep_of(ProfileLoader(repo).load(user_id, day, as_of=at(8, 10), timezone_name=zone))
+        repo.save_metric_samples(heart_rate(at(20, 0), at(20, 1)))
+        evening = sleep_of(ProfileLoader(repo).load(user_id, day, as_of=at(20, 5), timezone_name=zone))
 
     assert (
         partial.usual_duration_minutes, partial.recorded_after_wake_minutes,
         partial.checked_after_wake_minutes, partial.finished,
     ) == (440.0, 4, 26, False)
-    # The analysis cutoff hides the read made after it: half an hour awake is
-    # not enough until the source still shows the wake an hour later.
+    # The cutoff hides later reads and their device-data watermarks together.
     assert (
         before_read.recorded_after_wake_minutes, before_read.checked_after_wake_minutes,
         before_read.finished,
-    ) == (36, 26, False)
+    ) == (4, 26, False)
+    assert (still_partial.recorded_after_wake_minutes, still_partial.finished) == (36, False)
     assert (awake.recorded_after_wake_minutes, awake.checked_after_wake_minutes, awake.finished) == (
-        36, 61, True,
+        62, 63, True,
     )
+    assert evening.recorded_after_wake_minutes == 62
+    assert evening.finished is True

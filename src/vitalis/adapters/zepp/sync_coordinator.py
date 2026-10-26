@@ -1166,6 +1166,11 @@ class ZeppSyncCoordinator:
                     "incomplete": incomplete,
                     "incomplete_reason": incomplete_reason if incomplete else None,
                 }
+                if chunk["stream"] == "sleep":
+                    stage_status.update(
+                        sleep_dates=report.sleep_dates,
+                        heart_rate_seen_until=report.heart_rate_seen_until,
+                    )
                 final_status = "succeeded"
                 error_kind = report.error_kind
                 error = report.message
@@ -1177,6 +1182,10 @@ class ZeppSyncCoordinator:
                     chunk["allow_unavailable"] or optional_detail_limit
                 ):
                     final_status = "failed"
+                if chunk["stream"] == "sleep":
+                    # Order sleep evidence by the actual write, including time
+                    # spent waiting for its transaction or parsing the response.
+                    now = self.wall_clock()
                 ok = repo.finalize_chunk(
                     claim.lease.entity_id, claim.lease.token, claim.lease.epoch,
                     final_status, now=now, stages=stage_status,
@@ -1316,7 +1325,7 @@ class ZeppSyncCoordinator:
         }:
             return
         trigger = attempt.get("trigger")
-        if trigger in {"nightly", "freshness"}:
+        if trigger in {"nightly", "freshness", "morning_probe"}:
             delivery_period = None
         elif trigger in {"morning", "evening", "weekly", "monthly"}:
             delivery_period = trigger
@@ -1334,6 +1343,20 @@ class ZeppSyncCoordinator:
         target_date = local_day(
             window_end - timedelta(microseconds=1), timezone_name
         )
+        repository = HealthRepository(db)
+        if trigger == "morning_probe":
+            delivery = repository.notification_delivery_for_key(attempt["user_id"], target_date, "morning")
+            if delivery is None or (delivery.status, delivery.last_error) != ("deferred", "sleep_incomplete"):
+                return
+            checked_at, data_until = repository.sleep_confirmation(
+                attempt["user_id"], window_start, window_end, self.wall_clock(),
+                attempt_id=attempt["id"],
+            )
+            if checked_at is None or data_until is None:
+                return
+            # A later complete response can confirm the same sleep facts without
+            # changing them. Refresh the waiting report while keeping its one
+            # existing delivery intent; ordinary pre-report probes do no work.
         affected_dates = {
             local_day(window_start, timezone_name),
             local_day(window_end - timedelta(microseconds=1), timezone_name),
@@ -1371,7 +1394,6 @@ class ZeppSyncCoordinator:
             "oauth_callback": "oauth_callback_sync",
             "token_import": "token_import_sync",
         }.get(trigger, "sync_completion")
-        repository = HealthRepository(db)
         if delivery_period is not None and repository.promote_queued_sync_analysis_job(
             attempt["user_id"],
             target_date,

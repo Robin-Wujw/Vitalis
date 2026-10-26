@@ -15,7 +15,7 @@ from vitalis.intelligence.report_rendering import render_report
 from vitalis.adapters.zepp.sync_coordinator import PLAN_VERSION, stable_chunk_key
 from vitalis.adapters.persistence import HealthRepository, session_scope
 from vitalis.adapters.persistence.database import get_engine
-from vitalis.time import local_day_utc_bounds
+from vitalis.time import local_day_utc_bounds, local_timezone
 
 
 TARGET = date(2026, 8, 28)
@@ -123,7 +123,7 @@ def synthetic_pipeline_example(*, morning=False, explicit_strength=True, history
         })
         attempt = repo.create_or_reuse_sync_attempt(
             user, plan_version=PLAN_VERSION, window_start=window.start,
-            window_end=window.end, manifest=specs,
+            window_end=window.end, manifest=specs, timezone_name=str(local_timezone()),
         )
         finished = (analysis_time - timedelta(minutes=1)).replace(tzinfo=None)
         attempt.created_at = finished - timedelta(minutes=1)
@@ -136,6 +136,13 @@ def synthetic_pipeline_example(*, morning=False, explicit_strength=True, history
             chunk.parse_status = "not_run" if unavailable else "success" if chunk.partition in {"run", "strength", "sleep"} else "empty"
             chunk.write_status = "success" if chunk.parse_status == "success" else "not_run"
             chunk.finished_at = finished
+            if chunk.stream == "sleep":
+                chunk.started_at = finished - timedelta(seconds=1)
+                chunk.records_written = 1
+                chunk.stages = {
+                    "sleep_dates": [TARGET.isoformat()],
+                    "heart_rate_seen_until": {TARGET.isoformat(): (day_start + timedelta(hours=9)).isoformat()},
+                }
 
     class ExampleClock(datetime):
         @classmethod

@@ -38,27 +38,35 @@ def test_minutes_after_the_wake_never_go_negative():
     assert minutes_after(None, wake) is None
 
 
-@pytest.mark.parametrize(("minutes", "usual", "recorded", "checked", "finished"), [
+@pytest.mark.parametrize(("minutes", "recorded", "checked", "finished"), [
     # 2026-10-18: 364 minutes read two minutes after the 08:27 wake; the user
     # slept on until 09:35 (429 minutes).
-    (364, 439.5, 2, 8, False),
-    (364, 439.5, 2, 60, False),
-    (429, 439.5, 4, 59, False),
-    (429, 439.5, 4, 60, True),
-    (396, 440, None, 60, True),
-    (396, 440, None, None, False),
+    (364, 2, 8, False),
+    (364, 2, 60, False),
+    (429, 4, 59, False),
+    (429, 4, 60, False),
+    (396, None, 60, False),
+    (396, None, None, False),
     # 2026-10-17: a brief awakening; the night went on.
-    (275, 439.5, 4, 60, False),
-    (275, 439.5, 30, 60, True),
-    (275, 439.5, 30, 45, False),
-    (395, 440, 29, 120, False),
-    (395, 440, 30, 60, True),
-    (455, None, 29, 120, False),
-    (455, None, 30, 60, True),
-    (179, 200, 120, 120, False),
-    (None, 440, 120, 120, False),
+    (275, 4, 60, False),
+    (275, 30, 60, False),
+    (275, 30, 45, False),
+    (395, 29, 120, False),
+    (395, 30, 60, False),
+    (455, 29, 120, False),
+    (455, 30, 60, False),
+    # Heart rate continues during sleep. A mid-sleep upload can carry over
+    # half an hour of samples beyond the provisional wake without finishing it.
+    (350, 38, 62, False),
+    (350, 39, 62, False),
+    (440, 59, 90, False),
+    (350, 60, 62, True),
+    (440, 60, 62, True),
+    (455, 60, 62, True),
+    (179, 120, 120, False),
+    (None, 120, 120, False),
 ])
 def test_a_sleep_has_ended_once_its_wake_time_stood_for_an_hour(
-    minutes, usual, recorded, checked, finished,
+    minutes, recorded, checked, finished,
 ):
-    assert main_sleep_finished(minutes, usual, recorded, checked) is finished
+    assert main_sleep_finished(minutes, recorded, checked) is finished

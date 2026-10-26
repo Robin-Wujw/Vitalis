@@ -29,6 +29,7 @@ from vitalis.domain import (
     User,
 )
 from vitalis.adapters.persistence import HealthRepository
+from vitalis.time import local_day
 
 
 _user_sync_locks_guard = threading.Lock()
@@ -60,6 +61,16 @@ class StreamReport:
     written_at: datetime | None = None
     error_kind: str | None = None
     diagnostics: list["StreamReport"] = field(default_factory=list)
+    sleep_dates: list[str] = field(default_factory=list)
+    heart_rate_seen_until: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class _StreamWriteResult:
+    written: int
+    parsed: int
+    sleep_dates: list[str] = field(default_factory=list)
+    heart_rate_seen_until: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -563,9 +574,14 @@ class SyncManager:
                     report.message = "训练明细响应无法识别"
                     return report
 
-            written, parsed = self._write_stream_result(
+            result = self._write_stream_result(
                 record, repo, user, detail_result=detail_result,
+                sleep_dates=report.sleep_dates,
+                heart_rate_seen_until=report.heart_rate_seen_until,
             )
+            written, parsed = result.written, result.parsed
+            report.sleep_dates = result.sleep_dates
+            report.heart_rate_seen_until = result.heart_rate_seen_until
             report.records_written = written
             report.parsed_at = datetime.now(timezone.utc)
             if detail_result is not None:
@@ -726,19 +742,24 @@ class SyncManager:
 
     def _write_stream(self, record: FetchedRecord, repo: HealthRepository, user: User) -> int:
         """将单条记录写入存储，返回写入条数。"""
-        written, _ = self._write_stream_result(record, repo, user)
-        return written
+        return self._write_stream_result(record, repo, user).written
 
     def _write_stream_result(
         self, record: FetchedRecord, repo: HealthRepository, user: User,
         *, detail_result: ParseResult | None = None,
-    ) -> tuple[int, int]:
-        """Write one record and return `(written, parsed)` counts."""
+        sleep_dates: list[str] | None = None,
+        heart_rate_seen_until: dict[str, str] | None = None,
+    ) -> _StreamWriteResult:
+        """Write one response and retain its counts and sleep confirmation evidence."""
         stream = record.raw.stream
         payload = record.raw.payload
         parser = ZeppParser()
         written = 0
         parsed = 0
+        # Update the caller's evidence as each write succeeds. A later parse
+        # failure must still identify the sleep this response already replaced.
+        sleep_dates = [] if sleep_dates is None else sleep_dates
+        heart_rate_seen_until = {} if heart_rate_seen_until is None else heart_rate_seen_until
 
         if stream == "sleep":
             sleeps, activities = parser.parse_band(payload)
@@ -747,6 +768,7 @@ class SyncManager:
                 daily = NormalizedDaily(user_id=user.id, date=day, sleep=sleep)
                 repo.save_daily(daily)
                 written += 1
+                sleep_dates.append(day.isoformat())
             # band_data 中同时也含 activity
             for day, act in activities.items():
                 act.user_id = user.id
@@ -757,6 +779,10 @@ class SyncManager:
             for sample in heart_rate:
                 sample.user_id = user.id
             written += repo.save_metric_samples(heart_rate)
+            for sample in heart_rate:
+                day = local_day(sample.timestamp, getattr(self.fetcher, "timezone_name", None)).isoformat()
+                observed = sample.timestamp.astimezone(timezone.utc).isoformat()
+                heart_rate_seen_until[day] = max(heart_rate_seen_until.get(day, ""), observed)
 
         elif stream == "workouts":
             parts = record.raw.source_key.split(":", 2)
@@ -785,7 +811,7 @@ class SyncManager:
             workout_id, context = self._workout_detail_inputs(record, repo, user)
             result = detail_result or parse_workout_detail(payload, context)
             if result.status == "unrecognized" or result.detail is None:
-                return 0, 0
+                return _StreamWriteResult(0, 0)
             detail = result.detail
             parsed = int(bool(workout_id))
             from vitalis.adapters.zepp.workout_streaming import SpoolPayload
@@ -964,7 +990,7 @@ class SyncManager:
                 written += repo.save_dense_data_files(decoded.files)
                 written += repo.save_metric_samples(decoded.samples)
 
-        return written, parsed
+        return _StreamWriteResult(written, parsed, sorted(sleep_dates), heart_rate_seen_until)
 
     def _stream_failure_report(
         self,

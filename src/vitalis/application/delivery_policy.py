@@ -135,7 +135,6 @@ def morning_sleep_has_ended(
     wake_time: str | None,
     sleep_minutes: float | None,
     *,
-    usual_minutes: float | None,
     data_until: datetime | None,
     checked_at: datetime | None,
     timezone: str,
@@ -143,17 +142,15 @@ def morning_sleep_has_ended(
 ) -> bool:
     """Whether the stored main sleep may start the morning report.
 
-    Besides a plausible wake time, the source must still have shown it when
-    read an hour later, and a night short of the usual one needs half an hour
-    of uploaded watch data after it. Brief awakenings that made the phone upload
-    (2026-10-17: 02:26-07:04, 275 minutes, asleep until 10:21; 2026-10-18:
-    02:10-08:27, 364 minutes, asleep until 09:35) are neither.
+    Besides a plausible wake time, a successful band response read an hour
+    later must contain both this sleep and device data reaching an hour beyond
+    the wake. A separate heart-rate stream cannot confirm an older sleep read.
     """
     if not wake_time_is_plausible(target, wake_time, sleep_minutes, morning_window=morning_window):
         return False
     wake_at = _wake_at(target, wake_time, timezone)
     return main_sleep_finished(
-        sleep_minutes, usual_minutes,
+        sleep_minutes,
         minutes_after(wake_at, data_until), minutes_after(wake_at, checked_at),
     )
 

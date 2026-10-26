@@ -158,39 +158,42 @@ def shanghai(hour: int, minute: int) -> datetime:
     return datetime(DAY.year, DAY.month, DAY.day, hour, minute, tzinfo=ZoneInfo("Asia/Shanghai"))
 
 
-@pytest.mark.parametrize(("wake", "minutes", "usual", "data_until", "checked", "expected"), [
+@pytest.mark.parametrize(("wake", "minutes", "data_until", "checked", "expected"), [
     # 2026-10-18: read at 08:35, two minutes of watch data after the 08:27 wake.
-    ("08:27:00", 364, 439.5, (8, 29), (8, 35), False),
+    ('08:27:00', 364, (8, 29), (8, 35), False),
     # Still the same an hour later, but 83% of the usual night and no watch
     # data showing the user awake: they slept on until 09:35.
-    ("08:27:00", 364, 439.5, (8, 29), (9, 27), False),
-    ("09:35:00", 429, 439.5, (9, 39), (10, 35), True),
-    ("09:35:00", 429, 439.5, (9, 39), (10, 34), False),
+    ('08:27:00', 364, (8, 29), (9, 27), False),
+    ('09:35:00', 429, (9, 39), (10, 35), False),
+    ('09:35:00', 429, (9, 39), (10, 34), False),
     # 2026-10-17: the phone uploaded during a brief awakening; the night went on.
-    ("07:04:00", 275, 439.5, (7, 8), (8, 4), False),
-    # A short night also needs half an hour of watch data after the wake.
-    ("07:04:00", 275, 439.5, (7, 34), (8, 4), True),
-    ("07:04:00", 275, 439.5, (7, 34), (8, 3), False),
-    ("07:04:00", 275, 439.5, (7, 33), (9, 0), False),
-    ("08:36:00", 396, 440.0, (8, 40), (9, 36), True),
-    ("08:36:00", 395, 440.0, (8, 40), (9, 36), False),
-    ("08:36:00", 395, 440.0, (9, 6), (9, 36), True),
-    # Without five usual nights only watch data after the wake counts.
-    ("08:36:00", 455, None, (8, 40), (9, 36), False),
-    ("08:36:00", 455, None, (9, 6), (9, 36), True),
-    ("08:36:00", 455, None, None, (9, 36), False),
+    ('07:04:00', 275, (7, 8), (8, 4), False),
+    # A short night needs an upload reaching the end of the whole waiting hour.
+    ('07:04:00', 275, (7, 34), (8, 4), False),
+    ('07:04:00', 275, (8, 4), (8, 5), True),
+    ('07:04:00', 275, (7, 34), (8, 3), False),
+    ('07:04:00', 275, (7, 33), (9, 0), False),
+    ('08:36:00', 396, (8, 40), (9, 36), False),
+    ('08:36:00', 395, (8, 40), (9, 36), False),
+    ('08:36:00', 395, (9, 6), (9, 36), False),
+    ('08:36:00', 395, (9, 36), (9, 37), True),
+    # The same rule applies without a personal sleep history.
+    ('08:36:00', 455, (8, 40), (9, 36), False),
+    ('08:36:00', 455, (9, 6), (9, 36), False),
+    ('08:36:00', 455, (9, 36), (9, 37), True),
+    ('08:36:00', 455, None, (9, 36), False),
     # Without a read of the sleep nothing has been confirmed.
-    ("08:36:00", 455, 440.0, (9, 40), None, False),
+    ('08:36:00', 455, (9, 40), None, False),
     # The plausibility floors still apply first.
-    ("04:29:00", 400, 400.0, (6, 0), (6, 0), False),
-    ("09:57:00", 179, 200.0, (11, 0), (11, 0), False),
-    (None, 420, 420.0, (9, 0), (9, 0), False),
+    ('04:29:00', 400, (6, 0), (6, 0), False),
+    ('09:57:00', 179, (11, 0), (11, 0), False),
+    (None, 420, (9, 0), (9, 0), False),
 ])
 def test_the_morning_starts_an_hour_after_the_main_sleep_ended(
-    wake, minutes, usual, data_until, checked, expected,
+    wake, minutes, data_until, checked, expected,
 ):
     assert delivery_policy.morning_sleep_has_ended(
-        DAY, wake, minutes, usual_minutes=usual,
+        DAY, wake, minutes,
         data_until=shanghai(*data_until) if data_until else None,
         checked_at=shanghai(*checked) if checked else None,
         timezone="Asia/Shanghai",

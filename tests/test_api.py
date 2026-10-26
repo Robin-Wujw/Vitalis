@@ -118,7 +118,7 @@ def test_daily_profile_after_sync(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["schema_version"] == "16.0"
-    assert body["intelligence_version"] == "18.0"
+    assert body["intelligence_version"] == "19.0"
     assert body["decision_policy_version"] == "12.0"
     assert body["evidence_version"] == "2026-09a"
     assert body["features"]["overnight_vitals"]["status"] == "AVAILABLE"

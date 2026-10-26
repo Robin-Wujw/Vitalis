@@ -24,6 +24,7 @@
 | P0 | [不用插件，在电脑网页上连接 Zepp](zepp-web-login.md) | 回填完成；稳定两周后删插件（2026-10-28） |
 | P1 | [缩短同步写事务，避免心跳争用](sync-write-transactions.md) | 先补逐事务耗时与双连接合成复现 |
 | P1 | [周报跨重启补触发与缺失意图告警](weekly-delivery-reliability.md) | 先定义补偿窗口并复现跨调度时刻重启 |
+| P1 | [月报摘要比较口径统一](monthly-comparison-consistency.md) | 明确自然月与滚动月的主事实、覆盖和统计量 |
 | P1 | [力量训练映射与评分的真实验收](strength-muscle-mapping.md) | 实际常用动作、负重口径与候选评分审核 |
 | P1 | [跑力与训练评分的独立验证及启用](running-performance-model.md) | 独立成绩、时间留出与分组误差验证 |
 | P2 | [漏发告警的第二通道](delivery-alerts.md) | 用户选定通道 |

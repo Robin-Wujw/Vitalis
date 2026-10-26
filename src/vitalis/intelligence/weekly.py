@@ -12,7 +12,6 @@ from .contracts import (
     HealthEvent,
     OpenHealthBundle,
     QualityStatus,
-    TrendDirection,
     TrendFeature,
     WeeklyActions,
     WeeklyActivityFacts,
@@ -94,7 +93,6 @@ class WeeklyProfileEngine:
             and item.status == Availability.AVAILABLE
             and _weekly_trend_has_comparable_sleep_coverage(item, period_days)
         ]
-        key_changes = _key_changes(relevant_trends)
         limitations = []
         comparison_days = MIN_COMPARISON_DAYS
         if sleep.available_days < comparison_days:
@@ -121,7 +119,7 @@ class WeeklyProfileEngine:
         inferences = WeeklyInferences(
             trends=relevant_trends,
             events=period_events,
-            key_changes=key_changes,
+            key_changes=_key_changes(facts),
             limitations=limitations,
         )
         report_context = _report_context(period_raw, period, coverage, raw)
@@ -273,21 +271,23 @@ def _recovery_facts(
     sleep_hrv_device_id, sleep_hrv_daily = _weekly_sleep_hrv_daily(
         raw, hrv.device_id if hrv and hrv.metric == "sleep_hrv" else None
     )
+    hrv_comparable = hrv is not None and _weekly_trend_has_comparable_sleep_coverage(hrv, PERIOD_DAYS)
+    rhr_comparable = rhr is not None and _weekly_trend_has_comparable_sleep_coverage(rhr, PERIOD_DAYS)
     return WeeklyRecoveryFacts(
         hrv_available_days=hrv.current_distinct_days if hrv else 0,
         hrv_metric=hrv.metric if hrv else None,
         hrv_metric_label=hrv.metric_label if hrv else None,
         hrv_device_id=hrv.device_id if hrv else None,
         hrv_median_ms=hrv.current_median if hrv else None,
-        hrv_previous_median_ms=hrv.previous_median if hrv else None,
-        hrv_change_percent=hrv.change_percent if hrv else None,
+        hrv_previous_median_ms=hrv.previous_median if hrv_comparable else None,
+        hrv_change_percent=hrv.change_percent if hrv_comparable else None,
         sleep_hrv_device_id=sleep_hrv_device_id,
         sleep_hrv_daily=sleep_hrv_daily,
         rhr_available_days=rhr.current_distinct_days if rhr else 0,
         rhr_metric=rhr.metric if rhr else None,
         rhr_median_bpm=rhr.current_median if rhr else None,
-        rhr_previous_median_bpm=rhr.previous_median if rhr else None,
-        rhr_change_percent=rhr.change_percent if rhr else None,
+        rhr_previous_median_bpm=rhr.previous_median if rhr_comparable else None,
+        rhr_change_percent=rhr.change_percent if rhr_comparable else None,
     )
 
 
@@ -529,26 +529,24 @@ def _quality(
     )
 
 
-def _key_changes(trends: list[TrendFeature]) -> list[str]:
-    priority = {
-        "sleep_duration": 1,
-        "hrv_rmssd": 2,
-        "sleep_hrv": 2,
-        "hrv_sdnn": 2,
-        "sleep_rhr": 3,
-        "resting_hr": 3,
-        "training_load": 4,
-    }
-    selected = [
-        item for item in trends
-        if item.metric in priority
-        and item.direction != TrendDirection.STABLE
-        and item.change_percent is not None
+def _key_changes(facts: WeeklyFacts) -> list[str]:
+    """Summarize the selected weekly facts, preserving their comparison gates.
+
+    Per-stream trends remain available for audit, but their daily medians must
+    not replace weekly averages/totals or introduce another recovery stream.
+    """
+    recovery = facts.recovery
+    rhr_label = "睡眠静息心率" if recovery.rhr_metric == "sleep_rhr" else "静息心率"
+    comparisons = [
+        ("平均睡眠时长", facts.sleep.change_percent),
+        (f"{recovery.hrv_metric_label}（周中位数）", recovery.hrv_change_percent),
+        (f"{rhr_label}（周中位数）", recovery.rhr_change_percent),
+        ("训练总负荷（设备估算）", facts.training.load_change_percent),
     ]
-    selected.sort(key=lambda item: (priority[item.metric], item.device_id or ""))
     return [
-        f"{item.metric_label}较前一周{item.direction_label} {abs(item.change_percent):.1f}%。"
-        for item in selected[:6]
+        f"{label}较前一周{'上升' if change > 0 else '下降'} {abs(change):.1f}%。"
+        for label, change in comparisons
+        if change is not None and abs(change) > 5
     ]
 
 

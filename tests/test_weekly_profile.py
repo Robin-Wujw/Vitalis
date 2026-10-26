@@ -1,5 +1,7 @@
 from datetime import UTC, date, datetime, timedelta
 
+import pytest
+
 from vitalis.intelligence.contracts import (
     ConfidenceBand,
     EventSeverity,
@@ -421,3 +423,108 @@ def test_weekly_report_names_the_sleep_midpoint_and_repeated_late_nights():
     text = render_report(WeeklyBriefingEngine().build(profile), "markdown").content
     assert "睡眠中点大约在 05:00。" in text
     assert "本周有多晚在凌晨 1 点后入睡" in text
+
+
+@pytest.mark.parametrize("mode,offset", [("rolling", 0), ("calendar", 3)])
+def test_weekly_changes_follow_selected_recovery_stream_and_render_once(mode, offset):
+    from vitalis.intelligence.report_rendering import render_report
+    from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
+
+    raw = _raw_week()
+    raw.series.pop("sleep_hrv")
+    raw.series.pop("hrv_rmssd")
+    raw.series["hrv_sdnn"] = (
+        _series("hrv_sdnn", [50] * 7 + [60] * 7, "ms", device="watch-a")
+        + _series("hrv_sdnn", [50] * 7 + [40] * 7, "ms", device="watch-b")
+    )
+    raw.day += timedelta(days=offset)
+
+    profile = WeeklyProfileEngine().build("two-devices", raw, [], [], period_mode=mode)
+
+    assert profile.facts.recovery.hrv_change_percent == -20.0
+    changes = [item for item in profile.inferences.key_changes if "SDNN" in item]
+    assert len(changes) == 1
+    assert "中位数" in changes[0] and "下降 20.0%" in changes[0]
+    assert len([t for t in profile.inferences.trends if t.metric == "hrv_sdnn"]) == 2
+    briefing = WeeklyBriefingEngine().build(profile)
+    for target in ("markdown", "html"):
+        content = render_report(briefing, target).content
+        assert content.count(changes[0]) == 1
+
+
+def test_weekly_changes_do_not_replace_selected_sleep_hrv_with_spot_hrv():
+    raw = _raw_week()
+    raw.series["sleep_hrv"] = _series("sleep_hrv", [60] * 14, "ms", scope="user_fused")
+    raw.series["hrv_sdnn"] = _series("hrv_sdnn", [50] * 7 + [40] * 7, "ms", device="watch")
+
+    profile = WeeklyProfileEngine().build("stable-sleep-hrv", raw, [], [], period_mode="rolling")
+
+    assert profile.facts.recovery.hrv_metric == "sleep_hrv"
+    assert profile.facts.recovery.hrv_change_percent == 0
+    assert not any("SDNN" in item or "RMSSD" in item for item in profile.inferences.key_changes)
+
+
+def test_weekly_load_change_uses_verified_week_total_not_stream_medians():
+    raw = _raw_week()
+    loads = [1000] * 6 + [13000] + [2000] * 6 + [8900]
+    raw.series["training_load"] = (
+        _series("training_load", loads, "load")
+        + _series("training_load", [40] * 7 + [20] * 7, "load", scope="user_fused")
+    )
+    for offset, value in enumerate(reversed(loads)):
+        raw.training_by_day[TARGET - timedelta(days=offset)]["total_load"] = value
+    raw.training_history_coverage["verified_days"] = [
+        (TARGET - timedelta(days=offset)).isoformat() for offset in range(14)
+    ]
+
+    profile = WeeklyProfileEngine().build("weekly-load-total", raw, [], [], period_mode="rolling")
+
+    assert profile.facts.training.load_change_percent == 10.0
+    changes = [item for item in profile.inferences.key_changes if "负荷" in item]
+    assert len(changes) == 1
+    assert "总负荷" in changes[0] and "上升 10.0%" in changes[0]
+
+
+def test_weekly_load_changes_respect_both_weeks_training_coverage():
+    raw = _raw_week()  # Only the current week's training history is verified.
+
+    profile = WeeklyProfileEngine().build("unverified-prior-week", raw, [], [], period_mode="rolling")
+
+    assert profile.facts.training.load_change_percent is None
+    assert any(t.metric == "training_load" and t.change_percent is not None for t in profile.inferences.trends)
+    assert not any("负荷" in item for item in profile.inferences.key_changes)
+
+
+@pytest.mark.parametrize("metric,prefix", [("sleep_hrv", "hrv"), ("sleep_rhr", "rhr")])
+@pytest.mark.parametrize("sparse_week", ["current", "previous"])
+@pytest.mark.parametrize("days", [4, 5])
+def test_weekly_recovery_comparison_keeps_five_day_sleep_gate(metric, prefix, sparse_week, days):
+    raw = RawDailyProfile(user_id="sleep-recovery-coverage", day=TARGET)
+    raw.series[metric] = [
+        point for point in _series(metric, [50] * 7 + [60] * 7, "ms" if prefix == "hrv" else "bpm", scope="user_fused")
+        if (TARGET - point.day).days not in (
+            range(days, 7) if sparse_week == "current" else range(7 + days, 14)
+        )
+    ]
+
+    profile = WeeklyProfileEngine().build("sleep-coverage", raw, [], [], period_mode="rolling")
+
+    assert getattr(profile.facts.recovery, f"{prefix}_change_percent") == (20.0 if days == 5 else None)
+    previous_field = f"{prefix}_previous_median_{'ms' if prefix == 'hrv' else 'bpm'}"
+    assert getattr(profile.facts.recovery, previous_field) == (50.0 if days == 5 else None)
+    assert bool(profile.inferences.key_changes) is (days == 5)
+
+
+def test_weekly_sleep_change_uses_the_average_in_the_weekly_facts():
+    raw = _raw_week()
+    values = [300] * 6 + [580] + [350] * 6 + [140]
+    raw.series["sleep_duration"] = _series("sleep_duration", values, "min")
+    for offset, value in enumerate(reversed(values)):
+        raw.sleep_by_day[TARGET - timedelta(days=offset)]["sleep_duration"] = value
+
+    profile = WeeklyProfileEngine().build("sleep-average", raw, [], [], period_mode="rolling")
+
+    assert profile.facts.sleep.change_percent == -5.9
+    changes = [item for item in profile.inferences.key_changes if "睡眠时长" in item]
+    assert len(changes) == 1
+    assert "平均" in changes[0] and "下降 5.9%" in changes[0]

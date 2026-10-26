@@ -59,14 +59,14 @@
         "media_type": "text/markdown",
         "template": "markdown",
         "renderer_version": "4.6",
-        "content_sha256": "23a8441f5f2b0cd1096db9962e1b3e1b6972a4a8ccc9f8a3963b49df2967bfac"
+        "content_sha256": "9b6a07d1f148e8c49bf5776388967956c4ae16ceaa975c3189d99d059d9fb0df"
       },
       "html": {
         "title": "Vitalis 周报 · 本周睡眠与训练结构",
         "media_type": "text/html",
         "template": "html",
         "renderer_version": "4.6",
-        "content_sha256": "044daf645185651929aa18444f72c0df6df64049a2ce25e7640cb6a6527bf772"
+        "content_sha256": "5ab753182d48b8d189a44cd01c5465ff0bcfa1c696e98ef8a2bdb412854e4217"
       }
     },
     "monthly": {

@@ -20,7 +20,7 @@ class Arguments(argparse.ArgumentParser):
         raise ValueError("invalid_arguments")
 
 
-def private_token(path: Path) -> str:
+def private_token(path: Path, failure_code: str = "invalid_access_token") -> str:
     try:
         with path.open("rb") as handle:
             raw = handle.read(4097)
@@ -29,13 +29,14 @@ def private_token(path: Path) -> str:
             raise ValueError
         return token
     except (OSError, ValueError) as exc:
-        raise ValueError("invalid_access_token") from exc
+        raise ValueError(failure_code) from exc
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = Arguments(description=__doc__)
     parser.add_argument("--home", type=Path, required=True)
     parser.add_argument("--token-file", type=Path, required=True)
+    parser.add_argument("--model-key-file", type=Path)
     parser.add_argument("--api-base-url", required=True)
     parser.add_argument("--hermes-command", default="hermes")
     parser.add_argument("hermes_args", nargs=argparse.REMAINDER)
@@ -46,6 +47,7 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("invalid_hermes_home")
         origin = _SKILL["api_origin"](args.api_base_url)
         token = private_token(args.token_file.expanduser())
+        model_key = private_token(args.model_key_file.expanduser(), "invalid_model_key") if args.model_key_file else None
         if not args.hermes_command.strip():
             raise ValueError("invalid_arguments")
         scratch = ROOT / ".tmp" / "hermes-launcher"
@@ -61,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8",
         })
+        if model_key is not None:
+            environment["OPENAI_API_KEY"] = model_key
         remainder = args.hermes_args
         if remainder[:1] == ["--"]:
             remainder = remainder[1:]
@@ -70,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     except _SKILL["ClientError"] as exc:
         code, status = exc.code, 2
     except ValueError as exc:
-        known = {"invalid_arguments", "invalid_hermes_home", "invalid_access_token"}
+        known = {"invalid_arguments", "invalid_hermes_home", "invalid_access_token", "invalid_model_key"}
         code, status = str(exc) if str(exc) in known else "invalid_arguments", 2
     except FileNotFoundError:
         code, status = "hermes_command_unavailable", 127

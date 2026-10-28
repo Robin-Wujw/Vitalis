@@ -12,6 +12,7 @@ from tools import run_hermes
 
 
 TOKEN = "synthetic-hermes-private-token"
+MODEL_KEY = "synthetic-private-model-api-key"
 
 
 @pytest.fixture
@@ -38,6 +39,7 @@ def test_launch_injects_private_environment_and_preserves_failure(configured, mo
     monkeypatch.setenv("VITALIS_API", "legacy")
     monkeypatch.setenv("VITALIS_USER", "legacy-user")
     monkeypatch.setenv("HERMES_LAUNCH_TEST", "inherited")
+    monkeypatch.setenv("OPENAI_API_KEY", "inherited-model-key")
     calls = []
 
     def child(command, *, cwd, env, check):
@@ -49,6 +51,7 @@ def test_launch_injects_private_environment_and_preserves_failure(configured, mo
         assert env["VITALIS_ACCESS_TOKEN"] == TOKEN
         assert env["VITALIS_API_BASE_URL"] == "http://127.0.0.1:8000"
         assert env["HERMES_LAUNCH_TEST"] == "inherited"
+        assert env["OPENAI_API_KEY"] == "inherited-model-key"
         assert "VITALIS_API" not in env and "VITALIS_USER" not in env
         assert env["PYTHONDONTWRITEBYTECODE"] == "1"
         assert env["PYTHONUTF8"] == "1" and env["PYTHONIOENCODING"] == "utf-8"
@@ -65,23 +68,64 @@ def test_launch_injects_private_environment_and_preserves_failure(configured, mo
     assert os.environ.get("VITALIS_API") == "legacy"
 
 
-def test_real_child_receives_token_without_token_in_command(configured, capfd):
+def test_real_child_receives_both_credentials_without_secrets_in_command(configured, capfd):
+    model_file = configured[1].with_name("model-api.key")
+    model_file.write_text(MODEL_KEY + "\n", encoding="utf-8")
     script = (
         "import hashlib,json,os,sys; "
         "print(json.dumps({'digest':hashlib.sha256(os.environ['VITALIS_ACCESS_TOKEN'].encode()).hexdigest(),"
+        "'model_digest':hashlib.sha256(os.environ['OPENAI_API_KEY'].encode()).hexdigest(),"
         "'home':os.getcwd(),'args':sys.argv[1:]})); sys.exit(17)"
     )
-    command = arguments(configured) + ["--", "-c", script, "synthetic-argument"]
-    assert TOKEN not in repr(command)
+    command = arguments(configured) + ["--model-key-file", str(model_file),
+                                       "--", "-c", script, "synthetic-argument"]
+    assert TOKEN not in repr(command) and MODEL_KEY not in repr(command)
     assert run_hermes.main(command) == 17
     output = capfd.readouterr()
-    assert TOKEN not in output.out + output.err
+    assert TOKEN not in output.out + output.err and MODEL_KEY not in output.out + output.err
     payload = json.loads(output.out)
     assert payload == {
         "digest": hashlib.sha256(TOKEN.encode()).hexdigest(),
+        "model_digest": hashlib.sha256(MODEL_KEY.encode()).hexdigest(),
         "home": str(configured[0].resolve()),
         "args": ["synthetic-argument"],
     }
+
+
+def test_model_key_overrides_only_child_environment(configured, monkeypatch, capsys):
+    model_file = configured[1].with_name("model-api.key")
+    model_file.write_text(MODEL_KEY + "\n", encoding="utf-8")
+    monkeypatch.setenv("OPENAI_API_KEY", "ambient-model-key")
+    calls = []
+
+    def child(command, *, cwd, env, check):
+        calls.append(command)
+        assert env["OPENAI_API_KEY"] == MODEL_KEY
+        assert env["VITALIS_ACCESS_TOKEN"] == TOKEN
+        assert TOKEN not in repr(command) and MODEL_KEY not in repr(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(run_hermes.subprocess, "run", child)
+    assert run_hermes.main(arguments(configured) + ["--model-key-file", str(model_file),
+                                                   "--", "gateway", "run"]) == 0
+    assert calls
+    assert os.environ["OPENAI_API_KEY"] == "ambient-model-key"
+    output = capsys.readouterr()
+    assert TOKEN not in output.out + output.err and MODEL_KEY not in output.out + output.err
+
+
+@pytest.mark.parametrize("content", [None, "\n", MODEL_KEY + " invalid", "非ASCII", MODEL_KEY * 500],
+                         ids=["missing", "blank", "whitespace", "non-ascii", "oversize"])
+def test_invalid_model_key_never_launches(configured, content, monkeypatch, capsys):
+    model_file = configured[1].with_name("model-api.key")
+    if content is not None:
+        model_file.write_text(content, encoding="utf-8")
+    monkeypatch.setattr(run_hermes.subprocess, "run", lambda *a, **k: pytest.fail("child launched"))
+    assert run_hermes.main(arguments(configured) + ["--model-key-file", str(model_file)]) == 2
+    output = capsys.readouterr()
+    assert TOKEN not in output.out + output.err and MODEL_KEY not in output.out + output.err
+    assert json.loads(output.err)["failure_code"] == "invalid_model_key"
+    assert not (run_hermes.ROOT / ".tmp" / "hermes-launcher").exists()
 
 
 @pytest.mark.parametrize("invalid", [

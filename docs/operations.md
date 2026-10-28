@@ -160,7 +160,7 @@ uv run --locked --extra dev vitalis token issue --user demo --scope read --outpu
 
 同步排查顺序是：确认来源 token 状态，再查 `GET /api/data-status`，再查 `GET /api/jobs/{job_id}` 的 attempt/chunk，最后查看 worker 日志中的非敏感错误类别。需要重新认证、部分覆盖、超时、取消和未知状态不能互相替代；先保留 `uncertain`，不要盲目重试可能已送达的 PushPlus 请求。
 
-PushPlus 的 HTTP 200 只表示请求完成；只有业务 `code=200` 且有有效 provider message id 才记录 `accepted`。记录 `accepted`、provider message id、最终 `delivered`/`failed`/`uncertain` 分开；投递不会写目标完成或主观反馈。周报/月报开关默认关闭，开启前应使用合成目标做一次受理合同验证；真实 PushPlus 受理已在 2026-10-10 用测试补发验证，Hermes 联调尚未完成。报告的排队、计算和投递耗时等产品指标用 `GET /api/product/metrics` 查看。
+PushPlus 的 HTTP 200 只表示请求完成；只有业务 `code=200` 且有有效 provider message id 才记录 `accepted`。记录 `accepted`、provider message id、最终 `delivered`/`failed`/`uncertain` 分开；投递不会写目标完成或主观反馈。周报/月报开关默认关闭，开启前应使用合成目标做一次受理合同验证；真实 PushPlus 受理已在 2026-10-10 用测试补发验证，Hermes 的接入与验收见[智能体集成](agents.md)。报告的排队、计算和投递耗时等产品指标用 `GET /api/product/metrics` 查看。
 
 ## 常见故障
 

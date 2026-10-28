@@ -52,6 +52,8 @@ uv run --locked --extra dev python tools/run_hermes.py --home .tmp/hermes-telegr
 
 Windows 上若 Git 装在非默认目录，在该 home 的私密 `.env` 中设置 `HERMES_GIT_BASH_PATH` 为 Git Bash 可执行文件的绝对路径。系统的 `bash.exe` 可能是 WSL 入口，不能处理 Hermes 为本机后端生成的 `/d/...` 路径；先通过 Hermes 终端工具读取一次 Skill `status`，确认返回绑定用户且退出码为零。
 
+Windows 系统代理未必会被 Hermes 的 Telegram transport 自动采用。若系统网络请求成功但网关连接 Telegram 超时，在该 home 的私密 `.env` 中显式配置 `TELEGRAM_PROXY`，然后正常停止并重新启动网关。已有 Windows 开机计划任务时，`gateway stop` 只停止当前进程；迁移到独立 home 或服务器前还要禁用旧自启动项。若任务管理返回“拒绝访问”，由用户在管理员 PowerShell 执行 `Disable-ScheduledTask -TaskName '<旧任务名>'`，再核对任务 `Enabled=false`，避免下次登录时旧网关重新抢占同一机器人。
+
 在 Telegram 私聊里验证：读取指定日期报告；询问尚无快照的日期；只讨论建议但不要求记录；明确要求记录一条合成反馈并查询写入结果；明确要求分析并等待任务完成；重启网关后再次读取。只讨论建议不能产生反馈；写入后先核对 API 成功结果再回复“已记录”。检查白名单拒绝陌生账号的路径时使用合成测试，不向他人发测试消息。`getMe` 成功只证明 bot token 有效；必须收到用户发起的消息、执行 Skill 并把结果返回该私聊，才能确认 Telegram 对话验收。
 
 ## 移到服务器
@@ -63,3 +65,5 @@ Hermes 与 Vitalis API 位于同一主机时，仍使用 `http://127.0.0.1:<port
 ## 验收边界
 
 离仓 Skill 的 mock 和合同测试只证明客户端边界、Bearer 处理和 JSON 合同；不证明真实 Hermes 环境、真实 Zepp 账户、浏览器扩展或 PushPlus 已联调。实际接入要在新临时目录使用合成数据，保存任务状态但不发送真实通知。遇到 401/403、404、网络错误、未完成任务和 `uncertain` 投递分别说明，不把其中任一项写成无数据或成功。
+
+2026-10-28 本地已用独立合成库完成实际验收：第三方兼容模型 `gpt-6.1-sol` 的工具调用、Hermes 通过离仓 Skill 读取报告、只读请求不产生反馈或分析任务、明确授权的反馈仅提交一次且对应分析成功；本人从 Telegram 私聊发起测试，后台核对了入站消息、Skill 调用成功和带测试标记的合成回复，用户确认收到。旧网关已正常停止，旧 Windows 自启动任务已核对为禁用。当前本地实例绑定 `demo`；服务器切换真实用户时须重新签发令牌并完成同一收发验收。

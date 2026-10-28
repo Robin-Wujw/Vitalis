@@ -135,6 +135,7 @@ def clients_checks(ci: bool) -> list[Check]:
             "tests/test_vitalis_skill.py",
             "tests/contracts/test_skill_bundle.py",
             "tests/contracts/test_skill_http_client.py",
+            "tests/contracts/test_hermes_launcher.py",
         ), timeout=180),
     ]
     for name in ("background.js", "popup.js", "page_credential.js"):
@@ -211,6 +212,7 @@ def sdist_sources() -> set[str]:
         "tools/generate_report_examples.py",
         "tools/extract_zepp_strength_catalog.py", "tools/extract_zepp_sport_catalog.py",
         "tools/validate_running_performance.py",
+        "tools/run_hermes.py",
         "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.en.md",
     }
     for kind in ("morning", "daily", "evening", "weekly", "monthly", "insufficient-data"):

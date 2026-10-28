@@ -86,8 +86,9 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def api_origin() -> str:
-    value = os.environ.get("VITALIS_API_BASE_URL", "")
+def api_origin(value: str | None = None) -> str:
+    if value is None:
+        value = os.environ.get("VITALIS_API_BASE_URL", "")
     try:
         parts = urllib.parse.urlsplit(value)
         if (

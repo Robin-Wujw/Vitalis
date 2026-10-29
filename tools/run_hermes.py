@@ -39,9 +39,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model-key-file", type=Path)
     parser.add_argument("--api-base-url", required=True)
     parser.add_argument("--hermes-command", default="hermes")
+    parser.add_argument("--exec", dest="replace_process", action="store_true",
+                        help="Replace this process on POSIX so a supervisor owns the gateway PID")
     parser.add_argument("hermes_args", nargs=argparse.REMAINDER)
     try:
         args = parser.parse_args(argv)
+        if args.replace_process and os.name != "posix":
+            raise ValueError("exec_requires_posix")
         home = args.home.expanduser().resolve()
         if not (home / "config.yaml").is_file() or not (home / "skills" / "vitalis" / "SKILL.md").is_file():
             raise ValueError("invalid_hermes_home")
@@ -68,13 +72,17 @@ def main(argv: list[str] | None = None) -> int:
         remainder = args.hermes_args
         if remainder[:1] == ["--"]:
             remainder = remainder[1:]
+        command = [args.hermes_command, *remainder]
+        if args.replace_process:
+            os.chdir(home)
+            os.execvpe(command[0], command, environment)
         return subprocess.run(
-            [args.hermes_command, *remainder], cwd=home, env=environment, check=False,
+            command, cwd=home, env=environment, check=False,
         ).returncode
     except _SKILL["ClientError"] as exc:
         code, status = exc.code, 2
     except ValueError as exc:
-        known = {"invalid_arguments", "invalid_hermes_home", "invalid_access_token", "invalid_model_key"}
+        known = {"invalid_arguments", "invalid_hermes_home", "invalid_access_token", "invalid_model_key", "exec_requires_posix"}
         code, status = str(exc) if str(exc) in known else "invalid_arguments", 2
     except FileNotFoundError:
         code, status = "hermes_command_unavailable", 127

@@ -1,10 +1,14 @@
 """The local Hermes launcher keeps credentials in the child environment."""
 
 import hashlib
+from configparser import ConfigParser
 import json
 import os
+from pathlib import Path
+import shlex
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -181,3 +185,99 @@ def test_unexpected_launch_value_error_never_exposes_its_message(configured, mon
     output = capsys.readouterr()
     assert TOKEN not in output.out + output.err
     assert json.loads(output.err)["failure_code"] == "invalid_arguments"
+
+
+def test_exec_replaces_process_with_private_environment(configured, monkeypatch, capsys):
+    home, token_file = configured
+    model_file = token_file.with_name("model-api.key")
+    model_file.write_text(MODEL_KEY + "\n", encoding="utf-8")
+    monkeypatch.setenv("OPENAI_API_KEY", "ambient-model-key")
+    changed_directory = []
+
+    class Replaced(Exception):
+        pass
+
+    def replace(executable, command, environment):
+        assert changed_directory == [home.resolve()]
+        assert executable == sys.executable
+        assert command == [sys.executable, "gateway", "run", "--external-supervisor"]
+        assert TOKEN not in repr(command) and MODEL_KEY not in repr(command)
+        assert environment["VITALIS_ACCESS_TOKEN"] == TOKEN
+        assert environment["OPENAI_API_KEY"] == MODEL_KEY
+        assert environment["HERMES_HOME"] == str(home.resolve())
+        raise Replaced
+
+    monkeypatch.setattr(run_hermes, "os", SimpleNamespace(
+        name="posix", environ=os.environ, chdir=changed_directory.append, execvpe=replace,
+    ))
+    monkeypatch.setattr(run_hermes.subprocess, "run", lambda *a, **kw: pytest.fail("child spawned"))
+    with pytest.raises(Replaced):
+        run_hermes.main(arguments(configured) + ["--model-key-file", str(model_file), "--exec",
+                                                "--", "gateway", "run", "--external-supervisor"])
+    assert os.environ["OPENAI_API_KEY"] == "ambient-model-key"
+    output = capsys.readouterr()
+    assert TOKEN not in output.out + output.err and MODEL_KEY not in output.out + output.err
+
+
+def test_exec_requires_posix_without_starting_child(configured, monkeypatch, capsys):
+    monkeypatch.setattr(run_hermes, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(run_hermes.subprocess, "run", lambda *a, **kw: pytest.fail("child spawned"))
+    assert run_hermes.main(arguments(configured) + ["--exec"]) == 2
+    assert json.loads(capsys.readouterr().err)["failure_code"] == "exec_requires_posix"
+    assert not (run_hermes.ROOT / ".tmp").exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX exec preserves the supervised PID")
+def test_real_exec_preserves_pid_credentials_and_exit_status(configured):
+    home, token_file = configured
+    model_file = token_file.with_name("model-api.key")
+    model_file.write_text(MODEL_KEY + "\n", encoding="utf-8")
+    bootstrap = (
+        "import sys; from pathlib import Path; from tools import run_hermes; "
+        "run_hermes.ROOT=Path(sys.argv[1]); raise SystemExit(run_hermes.main(sys.argv[2:]))"
+    )
+    child = (
+        "import hashlib,json,os,sys; print(json.dumps({'pid':os.getpid(),'home':os.getcwd(),"
+        "'token':hashlib.sha256(os.environ['VITALIS_ACCESS_TOKEN'].encode()).hexdigest(),"
+        "'model':hashlib.sha256(os.environ['OPENAI_API_KEY'].encode()).hexdigest()})); sys.exit(23)"
+    )
+    command = [sys.executable, "-B", "-c", bootstrap, str(run_hermes.ROOT),
+               *arguments(configured), "--model-key-file", str(model_file), "--exec", "--", "-c", child]
+    assert TOKEN not in repr(command) and MODEL_KEY not in repr(command)
+    with subprocess.Popen(command, cwd=Path(__file__).resolve().parents[2],
+                          env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as process:
+        output, errors = process.communicate(timeout=15)
+        assert process.returncode == 23
+        assert errors == "" and TOKEN not in output and MODEL_KEY not in output
+        assert json.loads(output) == {
+            "pid": process.pid, "home": str(home.resolve()),
+            "token": hashlib.sha256(TOKEN.encode()).hexdigest(),
+            "model": hashlib.sha256(MODEL_KEY.encode()).hexdigest(),
+        }
+
+
+def test_linux_unit_supervises_gateway_pid_with_private_state():
+    unit = Path(__file__).resolve().parents[2] / "deploy" / "systemd" / "vitalis-hermes.service"
+    config = ConfigParser(interpolation=None, strict=False)
+    assert config.read(unit, encoding="utf-8")
+    service = config["Service"]
+    assert service["User"] == service["Group"] == "vitalis-hermes"
+    assert service["StateDirectory"] == "vitalis-hermes" and service["StateDirectoryMode"] == "0700"
+    assert service["Type"] == "simple"
+    command = shlex.split(service["ExecStart"])
+    separator = command.index("--")
+    assert "--exec" in command[:separator]
+    assert command[separator + 1:] == ["gateway", "run", "--external-supervisor"]
+    assert command[command.index("--hermes-command") + 1] == "/opt/hermes/current/venv/bin/hermes"
+    assert "--token-file" in command and "--model-key-file" in command
+    assert service["KillMode"] == "mixed" and service["KillSignal"] == "SIGTERM"
+    assert service["ExecStop"] == "/opt/hermes/current/venv/bin/python -m gateway.systemd_stop_mark"
+    assert int(service["TimeoutStopSec"]) >= 70
+    assert service["RestartForceExitStatus"] == service["SuccessExitStatus"] == "75"
+    assert service["RestartPreventExitStatus"] == "78"
+    assert service["ProtectSystem"] == "strict" and service["NoNewPrivileges"] == "true"
+    assert "/var/lib/vitalis-hermes" in service["ReadWritePaths"]
+    assert "/opt/vitalis/current/.tmp" in service["ReadWritePaths"]
+    assert "HERMES_HOME=/var/lib/vitalis-hermes" in unit.read_text(encoding="utf-8")
+    assert not config.has_option("Service", "EnvironmentFile")

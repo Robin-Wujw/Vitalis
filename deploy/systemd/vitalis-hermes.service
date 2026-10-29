@@ -1,0 +1,40 @@
+[Unit]
+Description=Vitalis Hermes Telegram agent
+After=network-online.target vitalis-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vitalis-hermes
+Group=vitalis-hermes
+StateDirectory=vitalis-hermes
+StateDirectoryMode=0700
+UMask=0077
+# Render current paths to the verified release and virtual environments.
+# Pre-create the release .tmp directory owned by vitalis-hermes.
+WorkingDirectory=/opt/vitalis/current
+Environment=HOME=/var/lib/vitalis-hermes
+Environment=HERMES_HOME=/var/lib/vitalis-hermes
+Environment=HERMES_SUPERVISED_CHILD=1
+Environment=VIRTUAL_ENV=/opt/hermes/current/venv
+Environment=PATH=/opt/hermes/current/venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/vitalis/current/.venv/bin/python /opt/vitalis/current/tools/run_hermes.py --home /var/lib/vitalis-hermes --token-file /etc/vitalis-hermes/access.token --model-key-file /etc/vitalis-hermes/model-api.key --api-base-url http://127.0.0.1:8000 --hermes-command /opt/hermes/current/venv/bin/hermes --exec -- gateway run --external-supervisor
+Restart=on-failure
+RestartSec=5
+RestartForceExitStatus=75
+SuccessExitStatus=75
+RestartPreventExitStatus=78
+KillMode=mixed
+KillSignal=SIGTERM
+ExecStop=/opt/hermes/current/venv/bin/python -m gateway.systemd_stop_mark
+TimeoutStopSec=90
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/vitalis-hermes /opt/vitalis/current/.tmp
+
+[Install]
+WantedBy=multi-user.target

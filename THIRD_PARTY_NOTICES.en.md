@@ -34,6 +34,15 @@ endorsed by, or functionally equivalent to ZeppBridge or Zepp Health.
 
 The normalized mappings in `src/vitalis/adapters/zepp/data/` come from three sport assets in the user-supplied Zepp 10.8.7-play APK and the official Chinese `/sport/config/muscle` catalog. They retain only identifiers, labels, crosswalks, and source digests needed for interoperability; APKs, images, decompiled implementations, and personal responses are not distributed. See [Zepp](docs/zepp.md) for the provenance, excluded placeholders, and update procedure for 208 sport modes and 1,133 action labels. Vendor labels do not establish user confirmation or eligibility for exercise prescriptions.
 
+## Healthy Fitness Coach knowledge adaptation
+
+- Upstream repository: <https://github.com/Surge-Dan/healthy-fitness-coach-skill>
+- Reviewed commit: `d4471a86b2edc8dedd2d86ad115476f9edd43a5a`.
+- Derived scope: the knowledge-only entry and six Chinese educational references under `skills/healthy-fitness-coach/`; `provenance.json` in that directory records source files and adapted ranges.
+- Upstream license: MIT, Copyright (c) 2026 梅乃丹; the complete original is distributed in `skills/healthy-fitness-coach/LICENSE`.
+- The adaptation excludes executable scripts, the Xunji connector, automatic personal profiles, training DNA, independent scoring, and images. Upstream third-party images, dependencies, and data are not distributed here.
+- This adaptation does not claim full upstream functionality, medical validation, author endorsement, or eligibility as a personal health algorithm; educational references do not override Vitalis stored facts or authorization boundaries.
+
 ## OpenStrap analytics
 
 Portions of the Open Health Insights shadow algorithms are ported or adapted from OpenStrap analytics.

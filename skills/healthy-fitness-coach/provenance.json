@@ -1,0 +1,44 @@
+{
+  "upstream_repository": "https://github.com/Surge-Dan/healthy-fitness-coach-skill",
+  "upstream_commit": "d4471a86b2edc8dedd2d86ad115476f9edd43a5a",
+  "adaptation": "knowledge-only",
+  "independently_verified_research": false,
+  "license": {"spdx": "MIT", "upstream_path": "LICENSE", "local_path": "LICENSE"},
+  "entrypoint_notes": "SKILL.md is a new Vitalis-bound knowledge-only entrypoint, not a copy of the upstream orchestrator. Source Markdown was read as untrusted reference data; no upstream code was executed. Research links and upstream dates are preserved as attribution, not independently verified findings.",
+  "excluded_capabilities": ["orchestrator", "readiness and scoring engines", "program compiler contracts", "scripts", "MCP and Xunji", "images", "external network access", "raw log ingestion", "automatic personal assets", "shadow profiles", "training DNA", "personal metrics and prescriptions", "caches and writes"],
+  "references": {
+    "safety-boundaries": {
+      "local_path": "references/safety-boundaries.md",
+      "adaptation_notes": "Condensed safety education; red flags precede tools. Applicability is not assumed. No diagnosis or individual progression authority.",
+      "sources": [{"path": "healthy-fitness-coach/references/safety-screening.md", "line_ranges": [[1, 64]], "url": "https://github.com/Surge-Dan/healthy-fitness-coach-skill/blob/d4471a86b2edc8dedd2d86ad115476f9edd43a5a/healthy-fitness-coach/references/safety-screening.md"}]
+    },
+    "evidence-and-uncertainty": {
+      "local_path": "references/evidence-and-uncertainty.md",
+      "adaptation_notes": "Retained evidence hierarchy and five upstream public source links; no claim of independent medical verification or personalized evidence engine.",
+      "sources": [{"path": "healthy-fitness-coach/references/evidence-rules.md", "line_ranges": [[1, 58]], "url": "https://github.com/Surge-Dan/healthy-fitness-coach-skill/blob/d4471a86b2edc8dedd2d86ad115476f9edd43a5a/healthy-fitness-coach/references/evidence-rules.md"}]
+    },
+    "training-principles": {
+      "local_path": "references/training-principles.md",
+      "adaptation_notes": "Condensed domains, general population activity guidance, technique and progression concepts. Explicit hypothetical example only. Excluded programming lines 21–33 compiler contracts, individual schedules, metric derivation and prescriptions.",
+      "sources": [
+        {"path": "healthy-fitness-coach/references/training-domains.md", "line_ranges": [[1, 90]], "url": "https://github.com/Surge-Dan/healthy-fitness-coach-skill/blob/d4471a86b2edc8dedd2d86ad115476f9edd43a5a/healthy-fitness-coach/references/training-domains.md"},
+        {"path": "healthy-fitness-coach/references/programming.md", "line_ranges": [[3, 20], [34, 86]], "url": "https://github.com/Surge-Dan/healthy-fitness-coach-skill/blob/d4471a86b2edc8dedd2d86ad115476f9edd43a5a/healthy-fitness-coach/references/programming.md"}
+      ]
+    },
+    "technique-and-session-education": {
+      "local_path": "references/technique-and-session-education.md",
+      "adaptation_notes": "Retained warm-up, short cues, rest and substitution concepts. Removed historical-load calculations, automatic set adjustments and record writing; rest intervals are hypothetical only.",
+      "sources": [{"path": "healthy-fitness-coach/references/exercise-coaching.md", "line_ranges": [[21, 60]], "url": "https://github.com/Surge-Dan/healthy-fitness-coach-skill/blob/d4471a86b2edc8dedd2d86ad115476f9edd43a5a/healthy-fitness-coach/references/exercise-coaching.md"}]
+    },
+    "nutrition-education": {
+      "local_path": "references/nutrition-education.md",
+      "adaptation_notes": "Retained plate, habit and eating-relationship education. Removed personal calorie/protein calculation, trend inference and dietary prescriptions; food example is explicitly hypothetical.",
+      "sources": [{"path": "healthy-fitness-coach/references/nutrition.md", "line_ranges": [[1, 64]], "url": "https://github.com/Surge-Dan/healthy-fitness-coach-skill/blob/d4471a86b2edc8dedd2d86ad115476f9edd43a5a/healthy-fitness-coach/references/nutrition.md"}]
+    },
+    "recovery-and-discomfort": {
+      "local_path": "references/recovery-and-discomfort.md",
+      "adaptation_notes": "Retained sleep, recovery and help-seeking education. Removed traffic-light classification, readiness scoring, individual percentage deloads and automatic records.",
+      "sources": [{"path": "healthy-fitness-coach/references/recovery-pain.md", "line_ranges": [[1, 58]], "url": "https://github.com/Surge-Dan/healthy-fitness-coach-skill/blob/d4471a86b2edc8dedd2d86ad115476f9edd43a5a/healthy-fitness-coach/references/recovery-pain.md"}]
+    }
+  }
+}

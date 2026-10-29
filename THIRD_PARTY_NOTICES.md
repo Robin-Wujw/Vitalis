@@ -24,6 +24,15 @@
 
 `src/vitalis/adapters/zepp/data/` 的规范化映射来自用户提供的 Zepp 10.8.7-play APK 三份运动目录及官方 `/sport/config/muscle` 中文动作目录。只保留互操作所需的编号、名称、交叉关系和来源摘要；不分发 APK、图片、反编译实现或个人响应。208 个运动模式与 1,133 个动作名称的来源、占位排除及更新方法见 [Zepp](docs/zepp.md)。这些厂商标签不表示用户确认或 Vitalis 对训练动作的处方资格。
 
+## Healthy Fitness Coach 知识适配
+
+- 上游仓库：<https://github.com/Surge-Dan/healthy-fitness-coach-skill>
+- 已审查提交：`d4471a86b2edc8dedd2d86ad115476f9edd43a5a`。
+- 衍生范围：`skills/healthy-fitness-coach/` 中的知识型入口与六份中文教学参考；逐文件来源和改写范围见该目录的 `provenance.json`。
+- 上游许可：MIT，Copyright (c) 2026 梅乃丹；完整原文随包保存在 `skills/healthy-fitness-coach/LICENSE`。
+- Vitalis 适配移除了执行脚本、训记连接器、自动个人档案、训练 DNA、独立评分及图片功能。上游的第三方图片、依赖和数据不在本次分发范围内。
+- 本适配不代表上游完整功能、医疗验证、来源作者背书或个人健康算法资格；上游教学资料不能覆盖 Vitalis 已保存事实及授权边界。
+
 ## OpenStrap analytics
 
 Open Health Insights shadow 算法的部分内容移植或改编自 OpenStrap analytics。

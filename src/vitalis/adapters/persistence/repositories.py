@@ -11,7 +11,7 @@ import json
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from sqlalchemy import DateTime, Integer, Text, and_, case, cast, delete, exists, func, or_, select, text, tuple_, update
+from sqlalchemy import DateTime, Integer, Text, and_, bindparam, case, cast, delete, exists, func, or_, select, text, tuple_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -3714,13 +3714,37 @@ class HealthRepository:
             )).scalars().all()
             return {local_day(item, timezone_name) for item in timestamps}
         if stream == "workout_detail":
-            timestamps = self.db.execute(select(orm.WorkoutMetricSample.timestamp).where(
-                orm.WorkoutMetricSample.user_id == user_id,
-                orm.WorkoutMetricSample.source == source,
-                orm.WorkoutMetricSample.timestamp >= start_utc,
-                orm.WorkoutMetricSample.timestamp < end_utc,
-            )).scalars().all()
-            return {local_day(item, timezone_name) for item in timestamps}
+            if self.db.get_bind().dialect.name == "sqlite":
+                # The unique workout key only bounds user/source here. Force
+                # the existing time index so old dense history is never scanned.
+                statement = text("""
+                    SELECT 1 FROM workout_metric_samples
+                    INDEXED BY ix_workout_metric_samples_timestamp
+                    WHERE user_id = :user_id AND source = :source
+                      AND timestamp >= :day_start AND timestamp < :day_end
+                    LIMIT 1
+                """).bindparams(
+                    bindparam("day_start", type_=DateTime),
+                    bindparam("day_end", type_=DateTime),
+                )
+            else:
+                statement = select(1).select_from(orm.WorkoutMetricSample).where(
+                    orm.WorkoutMetricSample.user_id == bindparam("user_id"),
+                    orm.WorkoutMetricSample.source == bindparam("source"),
+                    orm.WorkoutMetricSample.timestamp >= bindparam("day_start", type_=DateTime),
+                    orm.WorkoutMetricSample.timestamp < bindparam("day_end", type_=DateTime),
+                ).limit(1)
+            days = set()
+            current = start
+            while current <= end:
+                day_start, day_end = local_day_utc_bounds(current, timezone_name)
+                if self.db.scalar(statement, {
+                    "user_id": user_id, "source": source,
+                    "day_start": _naive_utc(day_start), "day_end": _naive_utc(day_end),
+                }) is not None:
+                    days.add(current)
+                current += timedelta(days=1)
+            return days
         if stream in {"dense_files", "heart_rate/dense_file", "heart_rate/dense_archive"}:
             dates = self.db.execute(select(orm.DenseDataFile.date).where(
                 orm.DenseDataFile.user_id == user_id,

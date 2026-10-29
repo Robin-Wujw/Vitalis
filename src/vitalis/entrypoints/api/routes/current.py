@@ -230,22 +230,30 @@ def list_workouts(
     from_date: date | None = Query(None, alias="from"),
     to_date: date | None = Query(None, alias="to"),
     limit: int = Query(100, ge=1, le=500),
+    include_strength_details: bool = Query(False, description="Include saved strength sets; requires limit 1..20"),
     user_id: str = Depends(require_user_id),
 ) -> dict:
+    if include_strength_details and limit > 20:
+        raise HTTPException(status_code=422, detail="Strength details require limit 1..20")
     end = to_date or local_today()
     start = from_date or (end - timedelta(days=27))
     if start > end:
         start, end = end, start
-    return get_health_query().list_workouts(user_id, start, end, limit)
+    return get_health_query().list_workouts(
+        user_id, start, end, limit, include_strength_details=include_strength_details,
+    )
 
 
 @router.get("/workouts/{workout_id}", operation_id="get_workout")
 def get_workout(
     workout_id: str,
     source: str = Query(..., min_length=1, max_length=32),
+    include_samples: bool = Query(False, description="Opt in to stored workout metric samples"),
     user_id: str = Depends(require_user_id),
 ) -> dict:
-    result = get_health_query().workout_detail(user_id, workout_id, source)
+    result = get_health_query().workout_detail(
+        user_id, workout_id, source, include_samples=include_samples,
+    )
     if result is None:
         raise HTTPException(status_code=404, detail="运动记录不存在")
     return result

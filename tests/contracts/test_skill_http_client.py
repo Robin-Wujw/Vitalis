@@ -203,6 +203,49 @@ def test_token_file_rejects_special_paths(installed, tmp_path, monkeypatch, kind
         client["access_token"]()
 
 
+@pytest.mark.parametrize("limit", [None, "1", "20"])
+def test_strength_detail_list_is_one_bounded_read(installed, limit):
+    with mock_api() as (base, calls, responses):
+        expected = {"workouts": [
+            {"workout_id": "latest", "strength_details": {"state": "missing", "strength_sets": []}},
+            {"workout_id": "older", "strength_details": {"state": "available", "strength_sets": [
+                {"source": "lap_62", "exercise_name": None, "weight_value": None,
+                 "weight_unit": None, "weight_kg": None, "limitations": ["unknown_weight_unit"]},
+            ]}},
+        ]}
+        responses[("GET", "/api/workouts")] = [(200, expected, {})]
+        arguments = ["workouts", "--strength-details", "--from", "2026-08-01"]
+        if limit is not None:
+            arguments += ["--limit", limit]
+        assert invoke(installed, base, *arguments) == (0, expected)
+        assert len(calls) == 1 and calls[0][0] == "GET"
+        assert parse_qs(urlsplit(calls[0][1]).query) == {
+            "from": ["2026-08-01"], "limit": [limit or "20"],
+            "include_strength_details": ["true"],
+        }
+
+
+@pytest.mark.parametrize("arguments", [
+    ["--strength-details", "--limit", "21"],
+    ["--strength-details", "--limit", "0"],
+    ["--strength-details", "--id", "run-1", "--source", "zepp"],
+    ["--samples"],
+    ["--strength-details", "--samples"],
+])
+def test_invalid_workout_expansions_do_not_send_requests(installed, arguments):
+    with mock_api() as (base, calls, _responses):
+        assert invoke(installed, base, "workouts", *arguments) == (
+            1, {"status": "error", "error": "invalid_arguments"},
+        )
+        assert calls == []
+
+
+def test_detail_samples_are_explicit_client_opt_in(installed):
+    with mock_api() as (base, calls, _responses):
+        assert invoke(installed, base, "workouts", "--id", "run-1", "--source", "zepp", "--samples")[0] == 0
+        assert parse_qs(urlsplit(calls[0][1]).query) == {"source": ["zepp"], "include_samples": ["true"]}
+
+
 def test_read_operations_and_bearer_only(installed):
     with mock_api() as (base, calls, responses):
         assert invoke(installed, base, "status") == (0, {"status": "available"})
@@ -222,7 +265,7 @@ def test_read_operations_and_bearer_only(installed):
         ]
         assert parse_qs(urlsplit(calls[1][1]).query) == {"day": ["2026-09-20"]}
         assert parse_qs(urlsplit(calls[2][1]).query) == {"from": ["2026-09-01"], "limit": ["2"]}
-        assert parse_qs(urlsplit(calls[3][1]).query) == {"source": ["zepp"]}
+        assert parse_qs(urlsplit(calls[3][1]).query) == {"source": ["zepp"], "include_samples": ["false"]}
         assert all(call[0] == "GET" for call in calls)
         assert all(call[2]["Authorization"] == "Bearer " + TOKEN for call in calls)
         assert all("X-User-Id" not in call[2] for call in calls)

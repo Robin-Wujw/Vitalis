@@ -375,6 +375,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     workouts.add_argument("--limit", type=lambda value: positive_int(value, 500))
     workouts.add_argument("--id")
     workouts.add_argument("--source")
+    workouts.add_argument("--strength-details", action="store_true", help="Read saved strength sets for at most 20 workouts")
+    workouts.add_argument("--samples", action="store_true", help="Include metric samples for a single workout")
     return parser.parse_args(argv)
 
 
@@ -437,14 +439,21 @@ def run(args: argparse.Namespace):
                        params={"source": args.source} if args.source else None)
     if args.command == "workouts":
         if args.id is not None:
-            if args.source is None or args.from_date or args.to or args.limit:
+            if args.source is None or args.from_date or args.to or args.limit or args.strength_details:
                 raise ClientError("invalid_arguments")
             return request("GET", "workouts/" + urllib.parse.quote(args.id, safe=""), token,
-                           params={"source": args.source})
-        if args.source is not None:
+                           params={"source": args.source, "include_samples": "true" if args.samples else "false"})
+        if args.source is not None or args.samples:
             raise ClientError("invalid_arguments")
+        limit = args.limit
+        if args.strength_details:
+            limit = 20 if limit is None else limit
+            if limit > 20:
+                raise ClientError("invalid_arguments")
         params = {name: value for name, value in (("from", args.from_date), ("to", args.to),
-                                                  ("limit", args.limit)) if value is not None}
+                                                  ("limit", limit)) if value is not None}
+        if args.strength_details:
+            params["include_strength_details"] = "true"
         return request("GET", "workouts", token, params=params)
     if args.command == "feedback":
         body = feedback_body()

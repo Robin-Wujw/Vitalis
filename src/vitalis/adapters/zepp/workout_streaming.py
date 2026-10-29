@@ -5,6 +5,7 @@ from __future__ import annotations
 import codecs
 import hashlib
 import json
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -18,6 +19,10 @@ STREAM_CHUNK_BYTES = 64 * 1024
 MAX_STRING_KEY_BYTES = 512
 MAX_STRUCTURED_VALUE_BYTES = 8 * 1024 * 1024
 MAX_DELIMITED_PART_BYTES = 1 * 1024 * 1024
+
+# Search ordinary string spans in C; Python only handles escapes and boundaries.
+_JSON_STRING_SPECIAL_BYTES = re.compile(rb'["\\\x00-\x1f]')
+_JSON_STRING_SPECIAL_TEXT = re.compile(r'[\\\x00-\x1f]')
 
 
 class WorkoutStreamError(ValueError):
@@ -348,6 +353,26 @@ class _ByteCursor:
                 return
             self.read()
 
+    def skip_string_span(self) -> None:
+        """Skip buffered bytes up to a quote, escape or control character.
+
+        The opening quote has already consumed any peeked byte. Keep absolute
+        offsets in sync without a Python read/allocation for every ASCII byte.
+        """
+        assert self.peeked is None
+        while True:
+            if self.index >= len(self.buffer):
+                self.buffer = self.handle.read(STREAM_CHUNK_BYTES)
+                self.index = 0
+                if not self.buffer:
+                    return
+            match = _JSON_STRING_SPECIAL_BYTES.search(self.buffer, self.index)
+            end = match.start() if match is not None else len(self.buffer)
+            self.position += end - self.index
+            self.index = end
+            if match is not None:
+                return
+
     def read_token(self, *, limit: int = MAX_STRING_KEY_BYTES) -> bytes:
         output = bytearray()
         while True:
@@ -425,19 +450,32 @@ class DelimitedText:
 
         def emit(value: str) -> Iterator[str]:
             nonlocal output_size
-            if not value:
-                return
-            output.append(value)
-            output_size += len(value)
-            if output_size >= chunk_size:
-                text = "".join(output)
-                output.clear()
-                output_size = 0
-                yield text
+            index = 0
+            while index < len(value):
+                end = min(len(value), index + max(1, chunk_size) - output_size)
+                output.append(value[index:end])
+                output_size += end - index
+                index = end
+                if output_size >= chunk_size:
+                    text = "".join(output)
+                    output.clear()
+                    output_size = 0
+                    yield text
 
         def consume_text(text: str) -> Iterator[str]:
             nonlocal escaped, unicode_digits
-            for char in text:
+            index = 0
+            while index < len(text):
+                if not escaped and unicode_digits is None:
+                    match = _JSON_STRING_SPECIAL_TEXT.search(text, index)
+                    end = match.start() if match is not None else len(text)
+                    if end > index:
+                        yield from emit(text[index:end])
+                        index = end
+                    if match is None:
+                        return
+                char = text[index]
+                index += 1
                 if unicode_digits is not None:
                     if char not in "0123456789abcdefABCDEF":
                         raise WorkoutStreamJSONError("运动明细字符串转义无效")
@@ -486,16 +524,22 @@ class DelimitedText:
         current: list[str] = []
         current_bytes = 0
         for chunk in self.iter_text_chunks():
-            for char in chunk:
-                if char == ";":
-                    yield "".join(current)
-                    current.clear()
-                    current_bytes = 0
-                else:
-                    current.append(char)
-                    current_bytes += len(char.encode("utf-8"))
-                    if current_bytes > MAX_DELIMITED_PART_BYTES:
-                        raise WorkoutStreamLimitError("运动明细分隔字段超过安全上限")
+            start = 0
+            while True:
+                separator = chunk.find(";", start)
+                end = len(chunk) if separator < 0 else separator
+                part = chunk[start:end]
+                current_bytes += len(part.encode("utf-8"))
+                if current_bytes > MAX_DELIMITED_PART_BYTES:
+                    raise WorkoutStreamLimitError("运动明细分隔字段超过安全上限")
+                if part:
+                    current.append(part)
+                if separator < 0:
+                    break
+                yield "".join(current)
+                current.clear()
+                current_bytes = 0
+                start = separator + 1
         yield "".join(current)
 
     def count_parts(self) -> int:
@@ -548,6 +592,8 @@ class _JsonScanner:
         escaped = False
         unicode_digits: str | None = None
         while True:
+            if not escaped and unicode_digits is None:
+                self.cursor.skip_string_span()
             value = self.cursor.read()
             if value is None:
                 raise WorkoutStreamJSONError("运动明细 JSON 字符串未结束")

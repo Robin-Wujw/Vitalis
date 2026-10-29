@@ -86,6 +86,21 @@ def test_examples_bind_questions_to_routes_and_limits(document, question, requir
         assert phrase in example
 
 
+def test_educational_skill_loading_and_source_fidelity(document):
+    assert "训练、动作、营养或恢复知识问题必须先" in document
+    assert "至少一份相关参考" in document
+    assert "不把合成来源说成设备实测" in document
+    assert "否认几项症状不等于排除所有风险" in document
+    assert "不能断言用户疲劳的具体生理原因" in document
+
+
+def test_strength_workout_detail_scope_is_not_generalized(document):
+    assert "--strength-details" in document
+    assert "detail.strength_sets" in document
+    assert "一次缺失不能推广为全部缺失" in document
+    assert "--samples" in document
+
+
 def test_persona_is_reusable_and_uses_hermes_python():
     soul = (ROOT / "deploy/hermes/SOUL.md").read_text(encoding="utf-8")
     assert 'python "$HERMES_HOME/skills/vitalis/scripts/vitalis_api.py"' in soul

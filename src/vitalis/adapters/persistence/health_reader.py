@@ -196,15 +196,17 @@ class SqlHealthReader(HealthReader):
             return tuple(_workout_read(row) for row in rows)
 
     def workout_detail(
-        self, user_id: str, workout_id: str, source: str
+        self, user_id: str, workout_id: str, source: str,
+        *, include_samples: bool = False,
     ) -> tuple[HealthWorkoutRead, tuple[HealthWorkoutSampleRead, ...]] | None:
         with self._session_factory() as db:
             repository = HealthRepository(db)
             row = repository.workout(user_id, workout_id, source=source)
             if row is None:
                 return None
-            samples = repository.workout_metric_samples(
-                user_id, workout_id, source=source
+            samples = (
+                repository.workout_metric_samples(user_id, workout_id, source=source)
+                if include_samples else ()
             )
             return (
                 _workout_read(row),

@@ -30,6 +30,12 @@ python /path/to/vitalis/scripts/vitalis_api.py report daily --day 2026-10-07
 
 只在会改变安全性或答案方向时问 1～2 个关键问题，不反复询问已经知道的内容，也不把简单问题变成长问卷。当前红旗症状先做安全分流，不等工具返回再提醒。回答可简短，也可按用户要求深入解释，不强迫每次套用固定结构。Hermes 只有在用户明确授权时才能写反馈、资料、推荐完成或事件确认；讨论、选择建议和分享感受不等于同意记录。正式报告生成仍使用确定性引擎和已保存事实，不自由生成健康百分比、诊断或推送版式。
 
+### 力量动作明细
+
+普通 `workouts` 列表只是摘要，摘要 `strength_sets=[]` 不能推出全库没有动作明细。问动作、组次、次数和负重时使用 `workouts --strength-details --limit 20 --from YYYY-MM-DD --to YYYY-MM-DD`：有界展开每次已保存详情，不额外加载逐秒采样。每条的 `strength_details.state` 区分 `available`、`missing`、`not_applicable`，`strength_sets` 原样保留动作、来源、次数、重量单位、计重方式和限制；某一次缺失不能推广为全部缺失，也不能把列表截断当完整历史。
+
+单次 `workouts --id ID --source SOURCE` 的动作组在 `detail.strength_sets`，默认不返回逐秒样本，需要轨迹时才加 `--samples`。`detail_available=true` 只说明明细已拉取，不保证动作组存在。报告与对应动作详情不一致时，先分别核实其已保存内容与日期，不声称没有读到的数据从未保存，也不擅自触发同步或将报告反写成训练事实。
+
 ### 教练知识 Skill
 
 [healthy-fitness-coach 适配包](../skills/healthy-fitness-coach/SKILL.md)来自用户指定的 [Surge-Dan/healthy-fitness-coach-skill](https://github.com/Surge-Dan/healthy-fitness-coach-skill)，固定上游提交 `d4471a86b2edc8dedd2d86ad115476f9edd43a5a`。这是经过取舍的知识型适配，不是完整原版：只带安全、证据、训练原则、动作、营养与恢复 Markdown，保留 MIT 许可和逐文件来源；不安装上游脚本、评分/准备度引擎、训记 MCP、图片或自动档案/训练 DNA 功能。来源作者的研究审核日期与观点不代表本项目已独立完成医学事实核查。

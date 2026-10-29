@@ -9,7 +9,7 @@ from typing import Callable, Literal
 from vitalis.time import local_day
 
 from .data_freshness import stream_freshness
-from .ports import HealthReader
+from .ports import HealthReader, HealthWorkoutRead
 
 
 MetricResolution = Literal["raw", "1h", "1d"]
@@ -340,8 +340,12 @@ class HealthQuery:
         }
 
     def list_workouts(
-        self, user_id: str, start: date, end: date, limit: int
+        self, user_id: str, start: date, end: date, limit: int,
+        *, include_strength_details: bool = False,
     ) -> dict:
+        """Optionally expose saved sets without loading per-workout sample streams."""
+        if include_strength_details and not 1 <= limit <= 20:
+            raise ValueError("strength detail limit must be between 1 and 20")
         return {
             "user_id": user_id,
             "workouts": [
@@ -350,20 +354,26 @@ class HealthQuery:
                     "source": row.source,
                     "workout_id": row.workout_id,
                     "detail_available": row.detail_synced,
+                    **({"strength_details": _strength_details(row)} if include_strength_details else {}),
                 }
                 for row in self._reader.workouts(user_id, start, end, limit)
             ],
         }
 
     def workout_detail(
-        self, user_id: str, workout_id: str, source: str
+        self, user_id: str, workout_id: str, source: str,
+        *, include_samples: bool = False,
     ) -> dict | None:
-        result = self._reader.workout_detail(user_id, workout_id, source)
+        result = self._reader.workout_detail(
+            user_id, workout_id, source, include_samples=include_samples,
+        )
         if result is None:
             return None
         row, samples = result
         detail = dict(row.detail or {})
-        if samples:
+        if not include_samples:
+            detail.pop("samples", None)
+        if include_samples and samples:
             detail["samples"] = [
                 {
                     "timestamp": _iso_utc(sample.timestamp),
@@ -434,6 +444,22 @@ class HealthQuery:
             ),
             "manual_sync": "POST /api/sync-jobs (JSON: {\"days\": 7}; Idempotency-Key required)",
         }
+
+
+def _strength_details(row: HealthWorkoutRead) -> dict:
+    """Project stored observations verbatim; missingness belongs to this workout."""
+    detail = row.detail or {}
+    sets = detail.get("strength_sets") or []
+    is_strength = row.data.get("training_family") == "strength" or row.data.get("type") == "strength"
+    state = "available" if sets else "missing" if is_strength else "not_applicable"
+    return {
+        "state": state,
+        "source": row.source,
+        "detail_source": "saved_workout_detail",
+        "strength_sets": sets,
+        "fetched_at": detail.get("fetched_at"),
+        "schema_version": detail.get("schema_version"),
+    }
 
 
 def _as_utc(value: datetime) -> datetime:

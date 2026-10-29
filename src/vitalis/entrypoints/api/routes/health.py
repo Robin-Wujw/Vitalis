@@ -178,7 +178,9 @@ def health_workout_detail(
     source: str = Query(..., min_length=1, max_length=32),
     user_id: str = Depends(require_user_id),
 ) -> dict:
-    result = get_health_query().workout_detail(user_id, workout_id, source)
+    result = get_health_query().workout_detail(
+        user_id, workout_id, source, include_samples=True,
+    )
     if result is None:
         raise HTTPException(status_code=404, detail="运动记录不存在")
     return result

@@ -336,7 +336,7 @@ def test_workout_list_and_detail(client):
     assert listing.json()["workouts"][0]["detail_available"] is True
 
     detail = client.get(
-        "/api/workouts/run-1?source=zepp",
+        "/api/workouts/run-1?source=zepp&include_samples=true",
         headers={"X-User-Id": user_id},
     )
     assert detail.status_code == 200
@@ -424,7 +424,7 @@ def test_normalized_workout_metric_samples_are_isolated_and_returned_in_order(cl
         )
 
     detail = client.get(
-        f"/api/workouts/{workout_id}?source=zepp",
+        f"/api/workouts/{workout_id}?source=zepp&include_samples=true",
         headers={"X-User-Id": "sample-user"},
     )
     assert detail.status_code == 200
@@ -436,7 +436,7 @@ def test_normalized_workout_metric_samples_are_isolated_and_returned_in_order(cl
     assert {sample["source_scope"] for sample in payload["samples"]} == {"workout_detail"}
 
     other = client.get(
-        f"/api/workouts/{workout_id}?source=zepp",
+        f"/api/workouts/{workout_id}?source=zepp&include_samples=true",
         headers={"X-User-Id": "other-sample-user"},
     )
     assert other.status_code == 200
@@ -952,11 +952,11 @@ def test_workout_detail_samples_are_isolated_by_source(client):
     assert samples == {("zepp", 100), ("garmin", 120)}
 
     zepp_response = client.get(
-        f"/api/workouts/{workout_id}?source=zepp",
+        f"/api/workouts/{workout_id}?source=zepp&include_samples=true",
         headers={"X-User-Id": user_id},
     )
     garmin_response = client.get(
-        f"/api/workouts/{workout_id}?source=garmin",
+        f"/api/workouts/{workout_id}?source=garmin&include_samples=true",
         headers={"X-User-Id": user_id},
     )
     assert zepp_response.json()["detail"]["samples"][0]["value"] == 100

@@ -184,7 +184,8 @@ class HealthReader(Protocol):
     ) -> tuple[HealthWorkoutRead, ...]: ...
 
     def workout_detail(
-        self, user_id: str, workout_id: str, source: str
+        self, user_id: str, workout_id: str, source: str,
+        *, include_samples: bool = False,
     ) -> tuple[HealthWorkoutRead, tuple[HealthWorkoutSampleRead, ...]] | None: ...
 
     def token_metadata(

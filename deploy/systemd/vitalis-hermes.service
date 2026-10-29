@@ -20,7 +20,7 @@ Environment=VIRTUAL_ENV=/opt/hermes/current/venv
 Environment=PATH=/opt/hermes/current/venv/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/opt/vitalis/current/.venv/bin/python /opt/vitalis/current/tools/run_hermes.py --home /var/lib/vitalis-hermes --token-file /etc/vitalis-hermes/access.token --model-key-file /etc/vitalis-hermes/model-api.key --api-base-url http://127.0.0.1:8000 --hermes-command /opt/hermes/current/venv/bin/hermes --exec -- gateway run --external-supervisor
+ExecStart=/opt/vitalis/current/.venv/bin/python /opt/vitalis/current/tools/run_hermes.py --home /var/lib/vitalis-hermes --token-file /var/lib/vitalis-hermes-credentials/access.token --model-key-file /etc/vitalis-hermes/model-api.key --api-base-url http://127.0.0.1:8000 --hermes-command /opt/hermes/current/venv/bin/hermes --exec -- gateway run --external-supervisor
 Restart=on-failure
 RestartSec=5
 RestartForceExitStatus=75

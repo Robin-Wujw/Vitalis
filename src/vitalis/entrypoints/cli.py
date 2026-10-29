@@ -440,6 +440,15 @@ def main(argv: list[str] | None = None) -> int:
     issue.add_argument("--scope", dest="scopes", choices=("read", "analyze", "sync", "feedback", "manage"), action="append")
     issue.add_argument("--expires-days", type=int, default=30)
     issue.add_argument("--output", type=Path, required=True)
+    rotate = token_commands.add_parser("rotate", help="Rotate a managed token using local DB authority")
+    rotate.add_argument("--token-file", type=Path, required=True)
+    rotate.add_argument("--user", required=True)
+    rotate.add_argument("--scope", dest="scopes", choices=("read", "analyze", "sync", "feedback", "manage"), action="append", required=True)
+    rotate.add_argument("--expires-days", type=int, default=90)
+    rotate.add_argument("--renew-before-days", type=int, default=14)
+    rotate.add_argument("--grace-seconds", type=int, default=300)
+    rotate.add_argument("--api-base-url", default="http://127.0.0.1:8000")
+    rotate.add_argument("--force", action="store_true")
     revoke = token_commands.add_parser("revoke", help="Revoke a token by its non-secret digest")
     revoke.add_argument("--digest", required=True)
     database = subcommands.add_parser("db", help="Initialize, back up, or restore a database")
@@ -565,6 +574,25 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "token":
             if args.token_command == "issue":
                 _issue_token(args.user, args.scopes or ["read"], args.expires_days, args.output)
+            elif args.token_command == "rotate":
+                from vitalis.adapters.persistence.database import check_schema
+                from vitalis.entrypoints.token_rotation import RotationError, rotate_token
+
+                try:
+                    check_schema()
+                    result = rotate_token(
+                        args.token_file, args.user, args.scopes,
+                        expires_days=args.expires_days, renew_before_days=args.renew_before_days,
+                        grace_seconds=args.grace_seconds, api_base_url=args.api_base_url, force=args.force,
+                    )
+                except Exception as exc:  # noqa: BLE001 - DB/config exceptions may contain secrets
+                    print(json.dumps({
+                        "state": "failed", "failure_code": "token_rotation_failed",
+                        "message": str(exc) if isinstance(exc, RotationError) else "rotation configuration or database check failed",
+                        "retryable": False, "next_action": "check_service",
+                    }), file=sys.stderr)
+                    return 1
+                print(json.dumps(result))
             else:
                 _revoke_token(args.digest)
         elif args.command == "db":

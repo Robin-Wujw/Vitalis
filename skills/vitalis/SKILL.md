@@ -9,7 +9,7 @@ description: Use Vitalis Health Intelligence APIs for deterministic Chinese heal
 
 ## 私密配置
 
-- 在私有运行环境设置 `VITALIS_API_BASE_URL`（无路径、用户名、查询或片段的服务源地址；非本机 HTTP 必须改用 HTTPS）和 `VITALIS_ACCESS_TOKEN`。令牌从环境读取，绝不放命令行、日志、对话或版本库；不通过 `X-User-Id` 选择身份。
+- 在私有运行环境设置 `VITALIS_API_BASE_URL`（无路径、用户名、查询或片段的服务源地址；非本机 HTTP 必须改用 HTTPS）。凭据使用 `VITALIS_ACCESS_TOKEN_FILE` 指向绝对路径的私密普通文件，每次请求重新读取，自动采用运维轮换后的令牌；POSIX 文件不得允许其他用户访问或组写入，不接受符号链接。未配置文件模式时可使用 `VITALIS_ACCESS_TOKEN` 环境变量；文件配置失败不回退到旧令牌。令牌绝不放命令行、日志、对话或版本库；不通过 `X-User-Id` 选择身份。Skill 不签发令牌，也不持有数据库权限。
 - 调用：`python <Skill目录>/scripts/vitalis_api.py <命令> ...`。工具输出 JSON；`status=error` 是失败，401/403 分别表示鉴权/权限问题，网络或协议错误不是无数据。不要把私人记录转发到不可信场所。
 
 ## 读取与写入

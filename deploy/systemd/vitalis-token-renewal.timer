@@ -1,0 +1,12 @@
+[Unit]
+Description=Check Vitalis managed credential renewal hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=300
+Unit=vitalis-token-renewal.service
+# Service failure is visible in journald; deliberately no external OnFailure hook.
+
+[Install]
+WantedBy=timers.target

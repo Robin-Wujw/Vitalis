@@ -112,7 +112,33 @@ def api_origin(value: str | None = None) -> str:
     return urllib.parse.urlunsplit((parts.scheme, parts.netloc, "", "", ""))
 
 
+def token_from_file(filename: str | Path) -> str:
+    """Read a protected credential afresh; publishers must protect its directory."""
+    try:
+        path = Path(filename)
+        if not path.is_absolute() or not stat.S_ISREG(path.lstat().st_mode):
+            raise ValueError
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        with os.fdopen(os.open(path, flags), "rb") as handle:
+            metadata = os.fstat(handle.fileno())
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ValueError
+            # A dedicated service group may read, but not alter, the credential.
+            # Windows deployments must restrict the file and parent using ACLs.
+            if os.name == "posix" and metadata.st_mode & 0o037:
+                raise ValueError
+            raw = handle.read(4097)
+        token = raw.decode("ascii").strip()
+        if len(raw) > 4096 or not token or any(ord(char) < 33 or ord(char) > 126 for char in token):
+            raise ValueError
+        return token
+    except (OSError, ValueError) as exc:
+        raise ClientError("invalid_access_token") from exc
+
+
 def access_token() -> str:
+    if "VITALIS_ACCESS_TOKEN_FILE" in os.environ:
+        return token_from_file(os.environ["VITALIS_ACCESS_TOKEN_FILE"])
     token = os.environ.get("VITALIS_ACCESS_TOKEN", "")
     if not token or any(ord(char) < 33 or ord(char) > 126 for char in token):
         raise ClientError("invalid_access_token")

@@ -28,6 +28,7 @@ def configured(tmp_path, monkeypatch):
     (home / "config.yaml").write_text("model: synthetic\n", encoding="utf-8")
     token_file = tmp_path / "private.token"
     token_file.write_text(TOKEN + "\n", encoding="utf-8")
+    token_file.chmod(0o640)
     monkeypatch.setattr(run_hermes, "ROOT", tmp_path / "checkout")
     return home, token_file
 
@@ -40,6 +41,8 @@ def arguments(configured, origin="http://127.0.0.1:8000"):
 
 def test_launch_injects_private_environment_and_preserves_failure(configured, monkeypatch, capsys):
     home, _ = configured
+    monkeypatch.setenv("VITALIS_ACCESS_TOKEN", "stale-inherited-token")
+    monkeypatch.setenv("VITALIS_ACCESS_TOKEN_FILE", "stale-relative-path")
     monkeypatch.setenv("VITALIS_API", "legacy")
     monkeypatch.setenv("VITALIS_USER", "legacy-user")
     monkeypatch.setenv("HERMES_LAUNCH_TEST", "inherited")
@@ -52,7 +55,8 @@ def test_launch_injects_private_environment_and_preserves_failure(configured, mo
         assert TOKEN not in repr(command)
         assert cwd == home.resolve()
         assert env["HERMES_HOME"] == str(home.resolve())
-        assert env["VITALIS_ACCESS_TOKEN"] == TOKEN
+        assert "VITALIS_ACCESS_TOKEN" not in env
+        assert env["VITALIS_ACCESS_TOKEN_FILE"] == str(configured[1].resolve())
         assert env["VITALIS_API_BASE_URL"] == "http://127.0.0.1:8000"
         assert env["HERMES_LAUNCH_TEST"] == "inherited"
         assert env["OPENAI_API_KEY"] == "inherited-model-key"
@@ -77,7 +81,7 @@ def test_real_child_receives_both_credentials_without_secrets_in_command(configu
     model_file.write_text(MODEL_KEY + "\n", encoding="utf-8")
     script = (
         "import hashlib,json,os,sys; "
-        "print(json.dumps({'digest':hashlib.sha256(os.environ['VITALIS_ACCESS_TOKEN'].encode()).hexdigest(),"
+        "print(json.dumps({'digest':hashlib.sha256(__import__('pathlib').Path(os.environ['VITALIS_ACCESS_TOKEN_FILE']).read_bytes().strip()).hexdigest(),"
         "'model_digest':hashlib.sha256(os.environ['OPENAI_API_KEY'].encode()).hexdigest(),"
         "'home':os.getcwd(),'args':sys.argv[1:]})); sys.exit(17)"
     )
@@ -105,7 +109,8 @@ def test_model_key_overrides_only_child_environment(configured, monkeypatch, cap
     def child(command, *, cwd, env, check):
         calls.append(command)
         assert env["OPENAI_API_KEY"] == MODEL_KEY
-        assert env["VITALIS_ACCESS_TOKEN"] == TOKEN
+        assert "VITALIS_ACCESS_TOKEN" not in env
+        assert env["VITALIS_ACCESS_TOKEN_FILE"] == str(configured[1].resolve())
         assert TOKEN not in repr(command) and MODEL_KEY not in repr(command)
         return subprocess.CompletedProcess(command, 0)
 
@@ -165,6 +170,27 @@ def test_invalid_configuration_never_launches(configured, invalid, monkeypatch, 
     assert not (run_hermes.ROOT / ".tmp" / "hermes-launcher").exists()
 
 
+def test_relative_token_path_is_absolute_in_child(configured, monkeypatch):
+    home, token_file = configured
+    monkeypatch.chdir(token_file.parent)
+
+    def child(command, *, cwd, env, check):
+        assert env["VITALIS_ACCESS_TOKEN_FILE"] == str(token_file)
+        assert "VITALIS_ACCESS_TOKEN" not in env
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(run_hermes.subprocess, "run", child)
+    assert run_hermes.main(arguments((home, Path(token_file.name)))) == 0
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX credential permissions")
+def test_unprotected_token_never_launches(configured, monkeypatch, capsys):
+    configured[1].chmod(0o644)
+    monkeypatch.setattr(run_hermes.subprocess, "run", lambda *a, **k: pytest.fail("child launched"))
+    assert run_hermes.main(arguments(configured)) == 2
+    assert json.loads(capsys.readouterr().err)["failure_code"] == "invalid_access_token"
+
+
 def test_missing_executable_is_scrubbed_failure(configured, monkeypatch, capsys):
     def unavailable(*args, **kwargs):
         raise FileNotFoundError(TOKEN)
@@ -202,7 +228,8 @@ def test_exec_replaces_process_with_private_environment(configured, monkeypatch,
         assert executable == sys.executable
         assert command == [sys.executable, "gateway", "run", "--external-supervisor"]
         assert TOKEN not in repr(command) and MODEL_KEY not in repr(command)
-        assert environment["VITALIS_ACCESS_TOKEN"] == TOKEN
+        assert "VITALIS_ACCESS_TOKEN" not in environment
+        assert environment["VITALIS_ACCESS_TOKEN_FILE"] == str(token_file.resolve())
         assert environment["OPENAI_API_KEY"] == MODEL_KEY
         assert environment["HERMES_HOME"] == str(home.resolve())
         raise Replaced
@@ -238,7 +265,7 @@ def test_real_exec_preserves_pid_credentials_and_exit_status(configured):
     )
     child = (
         "import hashlib,json,os,sys; print(json.dumps({'pid':os.getpid(),'home':os.getcwd(),"
-        "'token':hashlib.sha256(os.environ['VITALIS_ACCESS_TOKEN'].encode()).hexdigest(),"
+        "'token':hashlib.sha256(__import__('pathlib').Path(os.environ['VITALIS_ACCESS_TOKEN_FILE']).read_bytes().strip()).hexdigest(),"
         "'model':hashlib.sha256(os.environ['OPENAI_API_KEY'].encode()).hexdigest()})); sys.exit(23)"
     )
     command = [sys.executable, "-B", "-c", bootstrap, str(run_hermes.ROOT),

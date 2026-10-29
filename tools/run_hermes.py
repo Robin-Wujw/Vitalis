@@ -50,19 +50,20 @@ def main(argv: list[str] | None = None) -> int:
         if not (home / "config.yaml").is_file() or not (home / "skills" / "vitalis" / "SKILL.md").is_file():
             raise ValueError("invalid_hermes_home")
         origin = _SKILL["api_origin"](args.api_base_url)
-        token = private_token(args.token_file.expanduser())
+        token_file = args.token_file.expanduser().absolute()
+        _SKILL["token_from_file"](token_file)
         model_key = private_token(args.model_key_file.expanduser(), "invalid_model_key") if args.model_key_file else None
         if not args.hermes_command.strip():
             raise ValueError("invalid_arguments")
         scratch = ROOT / ".tmp" / "hermes-launcher"
         scratch.mkdir(parents=True, exist_ok=True)
         environment = os.environ.copy()
-        for legacy in ("VITALIS_API", "VITALIS_USER"):
+        for legacy in ("VITALIS_API", "VITALIS_USER", "VITALIS_ACCESS_TOKEN"):
             environment.pop(legacy, None)
         environment.update({
             "HERMES_HOME": str(home),
             "VITALIS_API_BASE_URL": origin,
-            "VITALIS_ACCESS_TOKEN": token,
+            "VITALIS_ACCESS_TOKEN_FILE": str(token_file),
             "TMP": str(scratch), "TEMP": str(scratch), "TMPDIR": str(scratch),
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8",

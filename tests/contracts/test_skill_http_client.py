@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import runpy
 import subprocess
 import sys
 from threading import Thread
@@ -95,10 +96,12 @@ def mock_api():
         thread.join(timeout=5)
 
 
-def invoke(script, base, *args, token=TOKEN, body=None):
+def invoke(script, base, *args, token=TOKEN, body=None, token_file=None):
     env = {key: value for key, value in os.environ.items() if not key.startswith("VITALIS_")}
     env.pop("PYTHONPATH", None)
     env.update(VITALIS_API_BASE_URL=base, VITALIS_ACCESS_TOKEN=token)
+    if token_file is not None:
+        env["VITALIS_ACCESS_TOKEN_FILE"] = str(token_file)
     process = subprocess.run(
         [sys.executable, str(script), *args], cwd=script.parents[2], env=env,
         input=body, capture_output=True, text=True, timeout=15,
@@ -107,6 +110,97 @@ def invoke(script, base, *args, token=TOKEN, body=None):
     if token:
         assert token not in process.stdout
     return process.returncode, json.loads(process.stdout)
+
+
+def test_access_token_hot_reloads_atomic_replacement(installed, tmp_path, monkeypatch):
+    client = runpy.run_path(str(installed))
+    token_file = tmp_path / "access.token"
+    token_file.write_text(TOKEN + "\n", encoding="ascii")
+    token_file.chmod(0o640)
+    monkeypatch.setenv("VITALIS_ACCESS_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("VITALIS_ACCESS_TOKEN", "stale-environment-token")
+    assert client["access_token"]() == TOKEN
+    replacement = tmp_path / "replacement.token"
+    replacement.write_text("synthetic-renewed-token\n", encoding="ascii")
+    replacement.chmod(0o640)
+    replacement.replace(token_file)
+    assert client["access_token"]() == "synthetic-renewed-token"
+    token_file.unlink()
+    with pytest.raises(client["ClientError"]) as error:
+        client["access_token"]()
+    assert error.value.code == "invalid_access_token"
+
+
+@pytest.mark.parametrize("invalid", ["empty-path", "relative", "missing", "directory", "blank",
+                                        "non-ascii", "oversize", "internal-space", "nul"])
+def test_token_file_fails_closed(installed, tmp_path, monkeypatch, invalid):
+    client = runpy.run_path(str(installed))
+    path = tmp_path / "access.token"
+    contents = {"blank": b"\n", "non-ascii": b"\xff", "oversize": b"a" * 4097,
+                "internal-space": b"first second", "nul": b"first\x00second"}
+    if invalid in contents:
+        path.write_bytes(contents[invalid])
+        path.chmod(0o600)
+    elif invalid == "directory":
+        path.mkdir()
+    value = "" if invalid == "empty-path" else "access.token" if invalid == "relative" else str(path)
+    monkeypatch.setenv("VITALIS_ACCESS_TOKEN_FILE", value)
+    monkeypatch.setenv("VITALIS_ACCESS_TOKEN", TOKEN)
+    with pytest.raises(client["ClientError"]) as error:
+        client["access_token"]()
+    assert error.value.as_json() == {"status": "error", "error": "invalid_access_token"}
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX credential file permissions")
+@pytest.mark.parametrize("mode", [0o644, 0o660, 0o650, 0o604])
+def test_token_file_rejects_unprotected_permissions(installed, tmp_path, monkeypatch, mode):
+    client = runpy.run_path(str(installed))
+    path = tmp_path / "access.token"
+    path.write_text(TOKEN, encoding="ascii")
+    path.chmod(mode)
+    monkeypatch.setenv("VITALIS_ACCESS_TOKEN_FILE", str(path))
+    with pytest.raises(client["ClientError"]):
+        client["access_token"]()
+
+
+def test_access_token_environment_mode_without_file(installed, monkeypatch):
+    client = runpy.run_path(str(installed))
+    monkeypatch.delenv("VITALIS_ACCESS_TOKEN_FILE", raising=False)
+    monkeypatch.setenv("VITALIS_ACCESS_TOKEN", TOKEN)
+    assert client["access_token"]() == TOKEN
+
+
+def test_detached_file_credentials_send_bearer_and_fail_before_http(installed, tmp_path):
+    path = tmp_path / "private.token"
+    path.write_text(TOKEN + "\n", encoding="ascii")
+    path.chmod(0o640)
+    with mock_api() as (base, calls, _):
+        assert invoke(installed, base, "status", token="stale-token", token_file=path) == (
+            0, {"status": "available"},
+        )
+        assert calls[0][2]["Authorization"] == "Bearer " + TOKEN
+        path.unlink()
+        assert invoke(installed, base, "status", token_file=path) == (
+            1, {"status": "error", "error": "invalid_access_token"},
+        )
+        assert len(calls) == 1
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX symlink and FIFO protection")
+@pytest.mark.parametrize("kind", ["symlink", "fifo"])
+def test_token_file_rejects_special_paths(installed, tmp_path, monkeypatch, kind):
+    client = runpy.run_path(str(installed))
+    path = tmp_path / "access.token"
+    if kind == "symlink":
+        target = tmp_path / "target.token"
+        target.write_text(TOKEN, encoding="ascii")
+        target.chmod(0o600)
+        path.symlink_to(target)
+    else:
+        os.mkfifo(path, 0o600)
+    monkeypatch.setenv("VITALIS_ACCESS_TOKEN_FILE", str(path))
+    with pytest.raises(client["ClientError"]):
+        client["access_token"]()
 
 
 def test_read_operations_and_bearer_only(installed):

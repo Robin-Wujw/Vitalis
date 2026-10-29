@@ -1,0 +1,28 @@
+[Unit]
+Description=Rotate Vitalis managed Hermes API credential
+After=vitalis-api.service
+
+[Service]
+Type=oneshot
+# DB authority stays with the API service user, never the Hermes consumer.
+User=vitalis
+Group=vitalis
+SupplementaryGroups=vitalis-hermes
+WorkingDirectory=/var/lib/vitalis
+EnvironmentFile=/etc/vitalis/vitalis.env
+# Root-managed file must set VITALIS_ROTATION_USER to the explicit known user.
+EnvironmentFile=/etc/vitalis/token-renewal.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+UMask=0077
+# Pre-create directory vitalis:vitalis-hermes 0750, token same owner/group 0640.
+# Bootstrap separately using token issue; match scopes exactly, never infer them.
+ExecStart=/opt/vitalis/current/.venv/bin/vitalis token rotate --token-file /var/lib/vitalis-hermes-credentials/access.token --user ${VITALIS_ROTATION_USER} --scope read --scope analyze --scope sync --scope feedback --expires-days 90 --renew-before-days 14 --grace-seconds 300 --api-base-url http://127.0.0.1:8000
+TimeoutStartSec=120
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/vitalis /var/lib/vitalis-hermes-credentials
+StandardOutput=journal
+StandardError=journal
+# No external notification hook: failures remain in local journald/unit status.

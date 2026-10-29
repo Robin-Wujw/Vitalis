@@ -8,7 +8,7 @@
 
 用户范围请求必须带与本地用户绑定的 `Authorization: Bearer <token>`。令牌由 `vitalis token issue` 签发，scope 包括 `read`、`analyze`、`sync`、`feedback` 和 `manage`；只授予完成当前动作所需的最小 scope。`X-User-Id` 只能做一致性检查，不能代替 Bearer 认证。浏览器配对码和 browser-link token 不是 API 读取令牌。
 
-非本机 Skill API 源必须使用 HTTPS；客户端拒绝含路径、凭据、查询或片段的 origin，并拒绝重定向。令牌从 `VITALIS_ACCESS_TOKEN` 私密环境读取，不放命令行、URL、日志或对话。服务端错误会清洗供应商响应和数据库内容。API 使用真实的 4xx/5xx 状态码，错误正文统一返回 `state=failed`、`failure_code`、`message`、`retryable`、`next_action` 和 `request_id`。`next_action` 区分重新认证、补齐权限、修正请求、刷新状态后重试、稍后重试和检查服务；不能把失败正文当作成功结果或健康观测。
+非本机 Skill API 源必须使用 HTTPS；客户端拒绝含路径、凭据、查询或片段的 origin，并拒绝重定向。令牌优先从 `VITALIS_ACCESS_TOKEN_FILE` 指定的绝对路径私密文件读取，每次请求重新读取，支持原子替换后的热加载；未配置文件模式时才使用 `VITALIS_ACCESS_TOKEN` 私密环境。文件配置无效时直接失败，不回退到旧环境令牌。令牌不放命令行、URL、日志或对话。服务端错误会清洗供应商响应和数据库内容。API 使用真实的 4xx/5xx 状态码，错误正文统一返回 `state=failed`、`failure_code`、`message`、`retryable`、`next_action` 和 `request_id`。`next_action` 区分重新认证、补齐权限、修正请求、刷新状态后重试、稍后重试和检查服务；不能把失败正文当作成功结果或健康观测。
 
 ## Skill 的读写合同
 
@@ -39,7 +39,7 @@ python /path/to/vitalis/scripts/vitalis_api.py report daily --day 2026-10-07
 3. 在该 home 的私密 `.env` 设置 `TELEGRAM_BOT_TOKEN`、`TELEGRAM_ALLOWED_USERS`（本人数字 ID）和 `TELEGRAM_HOME_CHANNEL`（本人私聊 ID），并设置 `TELEGRAM_ALLOW_ALL_USERS=false`。令牌不放命令行或聊天。`SOUL.md` 要求先读取 Vitalis Skill，再调用客户端；验收期间每次健康回答明确标注“合成演示数据”。不要把仓库开发规则当作健康助理的人设。
 4. 为合成用户签发 `read`、`analyze`、`sync`、`feedback` scope 的令牌；需要验证资料、偏好或目标修改时才增加 `manage`。令牌文件放在同级私密目录，使用 `token issue --output` 写入新路径。启动独立 API 和 worker，检查 `/live`、`/ready` 和 `doctor` 的 worker 心跳。
 
-使用[启动器](../tools/run_hermes.py)从文件读取 Vitalis 令牌，注入 Hermes 子进程环境。它校验 API origin 与安装目录，使用独立 home 作为工作目录，并把临时文件固定到仓库 `.tmp/hermes-launcher/`；令牌不进入进程参数。旧的 `VITALIS_API`、`VITALIS_USER` 不能替代当前 Bearer 配置。命令默认从仓库根目录执行：
+使用[启动器](../tools/run_hermes.py)验证 Vitalis 令牌文件，把绝对文件路径注入 Hermes 子进程的 `VITALIS_ACCESS_TOKEN_FILE`，清除继承的 `VITALIS_ACCESS_TOKEN`；Skill 每次请求读取文件中的最新令牌，轮换后无需重启网关。它校验 API origin 与安装目录，使用独立 home 作为工作目录，并把临时文件固定到仓库 `.tmp/hermes-launcher/`；令牌不进入进程参数。旧的 `VITALIS_API`、`VITALIS_USER` 不能替代当前 Bearer 配置。命令默认从仓库根目录执行：
 
 ```powershell
 uv run --locked --extra dev python tools/run_hermes.py --home .tmp/hermes-telegram-local/home --token-file .tmp/hermes-telegram-local/vitalis.token --api-base-url http://127.0.0.1:18000 -- -s vitalis -z "读取今天的日报，注明合成演示数据，不写反馈。"
@@ -65,6 +65,19 @@ Hermes 与 Vitalis API 位于同一主机时，仍使用 `http://127.0.0.1:<port
 Linux 的 systemd 模板见 [vitalis-hermes.service](../deploy/systemd/vitalis-hermes.service)。将模板的路径替换为实际固定的 Vitalis release/venv 和 Hermes release/venv；Hermes 使用与本地验收一致的 `0.21.3`、源码提交 `1ec61e4df2f08d2af0de059daf7ec16814daff28`，以自身 `uv.lock` 安装 `messaging` extra，依赖环境与 Vitalis 分开。服务以独立 `vitalis-hermes` 用户运行，只通过有范围的 Bearer API 访问健康数据，不授予真实数据库目录权限。
 
 模板使用启动器的 `--exec`，在 POSIX 上让 Hermes 替换启动器进程，使 systemd 的 `MAINPID`、停止标记和重启状态码对应实际网关；Windows 使用默认启动方式。预先建立服务可写的 `<Vitalis release>/.tmp/hermes-launcher`，并核对 `ProtectHome=true` 下两个虚拟环境的底层 Python 位于 `/opt` 或系统目录。服务使用服务器常驻网络代理；不能依赖电脑的 SSH 反向转发。切换前保留旧 unit 的私密回滚副本；验收后按部署 SOP 清理，既有 Hermes 私密 home 和历史会话不当作测试目录覆盖或删除。
+
+## Hermes 令牌自动轮换
+
+同机部署使用独立的 [renewal service](../deploy/systemd/vitalis-token-renewal.service) 和 [timer](../deploy/systemd/vitalis-token-renewal.timer)，不由模型或 Skill 签发。任务以 `vitalis` 账号访问数据库，Hermes 仍只有 scoped API 权限。将模板路径固定到验收 release/venv；root 管理的 `/etc/vitalis/token-renewal.env` 仅设置 `VITALIS_ROTATION_USER=<已核实的用户>`，scope 在 unit 中明确列出并须与现有令牌完全一致。
+
+- 预先建立 `/var/lib/vitalis-hermes-credentials`，属主 `vitalis:vitalis-hermes`、权限 `0750`；令牌文件同属主、权限 `0640`。Hermes 只能读取，不能替换文件或修改目录；不把 Hermes 加入数据库服务组。首次凭据由管理员用 `token issue --output` 签发，轮换不以缺失文件为由自动创建身份。
+- 模板保持新令牌有效期 90 天、剩余 14 天时轮换、旧令牌最长 300 秒交接期；未到期窗口不重复签发。固定到期不等于人工操作周期。启用 timer 后每小时自动检查（最多随机延迟 5 分钟，关机错过后补检查）；首次配置后手动启动 service，核对 `Result=success` 与安全输出 `state=not_due` 或 `state=rotated`。
+- 流程为锁定凭据 → 核对用户/scope/撤销状态 → 提交新令牌 → 通过本机 API 验证身份 → 原子替换凭据 → 缩短旧令牌到期时间。探测绕过代理、不跟随重定向；新旧令牌不进入命令参数或日志。可用同参数 `token rotate --force` 做受控轮换验收，但不在定时任务中使用 `--force`。
+- Skill 每次请求读最新文件；部署新客户端时网关需要重启一次，此后的令牌轮换不需要重启。已经发出的请求可在交接期内继续使用旧凭据，写请求不因换令牌自动重试。
+- 未知、已撤销或用户/scope 不匹配的凭据拒绝轮换；已到期但仍存在且授权匹配的凭据可由本机签发任务恢复。文件缺失、权限不安全、API 不通或数据库失败时保留原文件并报错，不能用永久令牌绕过。
+- 数据库提交与文件替换不是跨资源事务：发布前失败会尽力撤销候选；发布后缩短旧令牌失败则保留已可用的新文件，并明确返回失败要求运维检查。极端进程崩溃可能留下两枚凭据直到各自原始有效期结束，不声称旧令牌一定已经撤销。需要撤销集成时先停 timer/service，再撤销当前文件对应令牌，避免与正在执行的本机签发竞争。
+
+用 `systemctl status vitalis-token-renewal.timer vitalis-token-renewal.service` 和 `journalctl -u vitalis-token-renewal.service` 排查。失败输出只包含安全状态/原因，不输出凭据或健康响应；当前只记录本机日志和 failed unit 状态，不额外发送通知。每次发布时 renewal unit 与 API、worker、alerts、Hermes 一起更新到同一候选 SHA。
 
 ## 验收边界
 

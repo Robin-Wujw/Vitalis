@@ -440,6 +440,120 @@ def test_queued_writes_persist_keys_and_bind_request(installed, tmp_path):
             assert analysis_file.stat().st_mode & 0o077 == 0
 
 
+@pytest.mark.parametrize("missing", ["--day", "--authorized", "--key-file"])
+def test_refresh_workouts_requires_explicit_flags_before_side_effects(installed, tmp_path, missing):
+    key_file = tmp_path / "refresh-key.json"
+    options = {"--day": ["2026-09-20"], "--authorized": [], "--key-file": [str(key_file)]}
+    arguments = [part for flag, values in options.items() if flag != missing for part in [flag, *values]]
+    with mock_api() as (base, calls, _):
+        assert invoke(installed, base, "refresh-workouts", *arguments, token="") == (
+            1, {"status": "error", "error": "invalid_arguments"},
+        )
+        assert calls == []
+        assert not key_file.exists()
+
+
+@pytest.mark.parametrize("day", ["2026-02-30", "20260920", "2026-9-20", "today"])
+def test_refresh_workouts_rejects_invalid_day(installed, tmp_path, day):
+    key_file = tmp_path / "refresh-key.json"
+    with mock_api() as (base, calls, _):
+        assert invoke(installed, base, "refresh-workouts", "--day", day,
+                      "--authorized", "--key-file", str(key_file)) == (
+            1, {"status": "error", "error": "invalid_arguments"},
+        )
+        assert calls == []
+        assert not key_file.exists()
+
+
+@pytest.mark.parametrize("extra", [
+    ["--mode", "full"], ["--days", "7"], ["--range", "7"],
+    ["--from", "2026-09-01"], ["--to", "2026-09-21"],
+    ["--fallback"], ["--detail-limit", "4"], ["--detail-backfill"],
+    ["--detail-only"], ["--decode-dense-files"], ["--source", "zepp"],
+    ["--authorized=false"],
+])
+def test_refresh_workouts_rejects_scope_expansion(installed, tmp_path, extra):
+    key_file = tmp_path / "refresh-key.json"
+    with mock_api() as (base, calls, _):
+        assert invoke(installed, base, "refresh-workouts", "--day", "2026-09-20",
+                      "--authorized", "--key-file", str(key_file), *extra) == (
+            1, {"status": "error", "error": "invalid_arguments"},
+        )
+        assert calls == []
+        assert not key_file.exists()
+
+
+def test_refresh_workouts_exact_body_and_persistent_request_binding(installed, tmp_path):
+    key_file = tmp_path / "refresh-key.json"
+    args = ("refresh-workouts", "--authorized", "--key-file", str(key_file))
+    body = {"days": 1, "source": "zepp", "from": "2026-09-20",
+            "to": "2026-09-20", "workout_only": True}
+    with mock_api() as (base, calls, _):
+        for _attempt in range(2):
+            assert invoke(installed, base, *args, "--day", "2026-09-20") == (
+                0, {"job_id": "job-1", "status": "queued"},
+            )
+        assert len(calls) == 2
+        record = json.loads(key_file.read_text(encoding="utf-8"))
+        assert record["operation"] == "POST /api/sync-jobs"
+        assert record["request_sha256"] == __import__("hashlib").sha256(json.dumps(
+            {"method": "POST", "path": "/api/sync-jobs", "body": body},
+            sort_keys=True, separators=(",", ":"),
+        ).encode()).hexdigest()
+        for method, path, headers, raw in calls:
+            assert (method, path) == ("POST", "/api/sync-jobs")
+            assert json.loads(raw) == body
+            assert headers["Idempotency-Key"] == record["key"]
+            assert headers["Authorization"] == "Bearer " + TOKEN
+        assert invoke(installed, base, *args, "--day", "2026-09-21") == (
+            1, {"status": "error", "error": "idempotency_key_mismatch"},
+        )
+        assert invoke(installed, base, "analyze", "--day", "2026-09-20",
+                      "--key-file", str(key_file))[1]["error"] == "idempotency_key_mismatch"
+        assert len(calls) == 2
+
+
+@pytest.mark.parametrize("status, error", [
+    (401, "unauthorized"), (403, "forbidden"), (404, "http_error"),
+    (429, "http_error"), (503, "http_error"),
+])
+def test_refresh_workouts_request_errors_never_retry_or_fallback(installed, tmp_path, status, error):
+    key_file = tmp_path / "refresh-key.json"
+    with mock_api() as (base, calls, responses):
+        responses[("POST", "/api/sync-jobs")] = [
+            (status, {"detail": TOKEN}, {}), (202, {"job_id": "unexpected"}, {}),
+        ]
+        assert invoke(installed, base, "refresh-workouts", "--day", "2026-09-20",
+                      "--authorized", "--key-file", str(key_file)) == (
+            1, {"status": "error", "error": error, "http_status": status},
+        )
+        assert key_file.is_file()
+        assert len(calls) == 1
+        assert calls[0][:2] == ("POST", "/api/sync-jobs")
+        assert len(responses[("POST", "/api/sync-jobs")]) == 1
+
+
+def test_refresh_workouts_network_error_never_retries(installed, tmp_path, monkeypatch, capsys):
+    client = runpy.run_path(str(installed))
+    monkeypatch.setenv("VITALIS_API_BASE_URL", "http://127.0.0.1:8765")
+    monkeypatch.delenv("VITALIS_ACCESS_TOKEN_FILE", raising=False)
+    monkeypatch.setenv("VITALIS_ACCESS_TOKEN", TOKEN)
+    attempts = []
+
+    class Unavailable:
+        def open(self, request, timeout):
+            attempts.append(request)
+            raise TimeoutError("synthetic timeout")
+
+    monkeypatch.setattr(client["urllib"].request, "build_opener", lambda *args: Unavailable())
+    key_file = tmp_path / "refresh-key.json"
+    assert client["main"](["refresh-workouts", "--day", "2026-09-20", "--authorized",
+                           "--key-file", str(key_file)]) == 1
+    assert json.loads(capsys.readouterr().out) == {"status": "error", "error": "network_error"}
+    assert len(attempts) == 1
+    assert key_file.is_file()
+
+
 def test_feedback_stdin_and_writes_do_not_retry(installed, tmp_path):
     with mock_api() as (base, calls, responses):
         body = {"notes": "synthetic example", "workout_id": "w1", "workout_source": "zepp"}

@@ -359,6 +359,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     feedback = commands.add_parser("feedback")
     feedback.add_argument("--key-file")
 
+    refresh = commands.add_parser(
+        "refresh-workouts", allow_abbrev=False,
+        description="Refresh one workout day; background analysis and existing delivery side effects apply.",
+    )
+    refresh.add_argument("--day", type=iso_date, required=True)
+    refresh.add_argument(
+        "--authorized", action="store_true", required=True,
+        help="Confirm explicit user intent; not a security boundary or a change to backend scopes",
+    )
+    refresh.add_argument("--key-file", required=True)
+
     sync = commands.add_parser("sync")
     sync.add_argument("--key-file", required=True)
     sync.add_argument("--days", type=lambda value: positive_int(value, 730), default=7)
@@ -463,6 +474,11 @@ def run(args: argparse.Namespace):
         body = {"day": args.day}
         key = key_from_file(args.key_file, "POST /api/analysis-runs", body)
         return request("POST", "analysis-runs", token, body=body, key=key)
+    if args.command == "refresh-workouts":
+        body = {"days": 1, "source": "zepp", "from": args.day, "to": args.day,
+                "workout_only": True}
+        key = key_from_file(args.key_file, "POST /api/sync-jobs", body)
+        return request("POST", "sync-jobs", token, body=body, key=key)
     body = {"days": args.days, "source": "zepp"}
     for field in ("decode_dense_files", "detail_backfill", "workout_only", "detail_only",
                   "detail_limit", "detail_refresh_before"):

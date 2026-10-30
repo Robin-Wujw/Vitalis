@@ -32,6 +32,30 @@ def test_conversation_permissions_are_separate_from_server_reports():
     assert "不提供推断训练决策" not in text
 
 
+@pytest.mark.parametrize("relative", ["skills/vitalis/SKILL.md", "deploy/hermes/SOUL.md"])
+def test_completed_workout_review_is_actionable_not_an_internal_audit(relative):
+    text = (ROOT / relative).read_text(encoding="utf-8")
+    for phrase in (
+        "已完成训练评价", "默认采用记录中的动作名称和负重",
+        "不主动输出", "观察窗口", "组间", "训练目标",
+        "定性比较", "不把整场 RPE 当每组 RIR",
+        "不自动提升", "补取", "不默认追加", "下次", "结构", "免责声明",
+    ):
+        assert phrase in text
+
+
+@pytest.mark.parametrize("relative", ["skills/vitalis/SKILL.md", "deploy/hermes/SOUL.md"])
+def test_refresh_permission_is_scoped_and_side_effects_are_not_hidden(relative):
+    text = (ROOT / relative).read_text(encoding="utf-8")
+    for phrase in (
+        "refresh-workouts --day", "--authorized --key-file",
+        "最多", "4 条", "后台分析", "待投递报告",
+        "每", "一次", "长期授权", "用户控制",
+        "不是", "授权", "只读", "观察窗口",
+    ):
+        assert phrase in text
+
+
 def test_reading_routes_preserve_window_and_complete_plan_guidance():
     text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
     for phrase in (

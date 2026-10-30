@@ -73,6 +73,9 @@ def test_entrypoint_authority_safety_and_no_persistence():
     assert "name: healthy-fitness-coach" in text
     for phrase in (
         "knowledge-only",
+        "条件性训练草案",
+        "组数、次数、休息与余力",
+        "不新增工具及写入能力",
         "不是原版完整能力",
         "Vitalis API",
         "个人事实、趋势、评分",

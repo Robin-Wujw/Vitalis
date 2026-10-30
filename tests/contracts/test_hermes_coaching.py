@@ -19,9 +19,11 @@ def test_conversational_authority_and_personal_prescription(document):
     for rule in (
         "唯一的个人健康事实、指标和趋势引擎", "一般健康教育", "假设示例",
         "不得自行计算", "恢复分数", "不得覆盖", "已保存建议",
-        "实际个人训练处方", "不能新编个体化方案",
+        "可以提出训练草案", "不自动成为已接受计划",
     ):
         assert rule in document
+    assert "不能新编个体化方案" not in document
+    assert "不提供推断训练决策" not in document
     assert "只复述 API 返回" not in document
     assert "不在客户端重算或拼接" not in document
 

@@ -137,6 +137,7 @@ def clients_checks(ci: bool) -> list[Check]:
             "tests/contracts/test_skill_http_client.py",
             "tests/contracts/test_hermes_launcher.py",
             "tests/contracts/test_hermes_coaching.py",
+            "tests/contracts/test_hermes_conversation_policy.py",
             "tests/contracts/test_coach_bundle.py",
         ), timeout=180),
     ]

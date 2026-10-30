@@ -130,6 +130,14 @@ def test_insecure_file_modes_rejected(credential, mode):
         rotate(credential)
 
 
+def test_cli_rotation_help_accepts_coach_scope(capsys):
+    from vitalis.entrypoints.cli import main
+    with pytest.raises(SystemExit) as exc:
+        main(["token", "rotate", "--help"])
+    assert exc.value.code == 0
+    assert "coach" in capsys.readouterr().out
+
+
 def test_cli_rotation_requires_explicit_identity_and_scopes():
     from vitalis.entrypoints.cli import main
     with pytest.raises(SystemExit):

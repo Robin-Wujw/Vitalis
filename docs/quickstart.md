@@ -53,7 +53,9 @@ curl.exe "http://127.0.0.1:8000/api/reports/daily?day=2026-10-07" -H "Authorizat
 
 ## 真实 Zepp 连接
 
-不要把演示库改成真实库。为新的独立数据库设置 `ZEPP_MOCK=false`、有效的 `VITALIS_TOKEN_ENCRYPTION_KEY` 和必要的 Zepp 配置，运行 `vitalis db init`、`vitalis user create --id <用户>`，再用 `manage` scope 令牌调用 `POST /api/connect/zepp/pair`。打开返回的 `scan_url`，只在官方 Zepp 页面登录；密码和验证码不输入 Vitalis。浏览器端步骤见[扩展指南](../clients/browser_extension/README.md)。
+不要把演示库改成真实库。为新的独立数据库设置 `ZEPP_MOCK=false`、有效的 `VITALIS_TOKEN_ENCRYPTION_KEY` 和必要的 Zepp 配置，运行 `vitalis db init`、`vitalis user create --id <用户>`。
+
+当前主入口是不需要插件的网页登录：配置可访问的服务地址后，运行 `vitalis connect zepp --user <用户>`，在电脑浏览器打开生成的登录链接。密码会经过用户自己的 Vitalis 服务转交给 Zepp，不保存；不要把密码或令牌贴到聊天里。完整步骤和安全边界见 [Zepp 连接](zepp.md#网页登录主入口)。旧的浏览器插件配对暂留作备用，它使用官方页面输入密码，是另一条路径，不要混用两种说明。
 
 真实同步由独立 `vitalis worker` 处理。手动 `POST /api/sync-jobs` 必须带新的 `Idempotency-Key`，得到 `job_id` 后读取 `GET /api/jobs/{job_id}`；受理不等于同步完成。服务默认只绑定回环地址，公网部署还需要 TLS、鉴权、来源白名单和网关配置。
 

@@ -17,21 +17,40 @@ uv run --locked --extra dev vitalis demo --database .\demo.db --day 2026-10-07
 
 Mock 生成同构的睡眠、活动、训练和来源元信息，可离线执行分析和报告读取。它不需要 Zepp 凭据，也不应与真实用户库混用。同步、分析和报告仍通过各自的持久任务/快照边界运行。
 
-## 真实配对
+## 真实连接
 
-真实模式要求新的独立数据库、`ZEPP_MOCK=false`、有效 `VITALIS_TOKEN_ENCRYPTION_KEY` 和必要应用配置。先运行 `vitalis db init` 和 `vitalis user create --id <用户>`，用 `manage` scope 令牌创建 `POST /api/connect/zepp/pair` 会话，再打开返回的 `scan_url`。账号密码和验证码只在官方 `watchface.zepp.com` 或 `user.huami.com` 页面输入。
+不要把 mock 演示库改成真实库。首次建立真实环境时，使用新的独立数据库，设置 `ZEPP_MOCK=false`、有效的 `VITALIS_TOKEN_ENCRYPTION_KEY` 和必要应用配置，再运行 `vitalis db init`、`vitalis user create --id <用户>`。已有真实环境继续使用现库。
 
-浏览器扩展中输入服务源地址和一次性配对码；非 localhost 地址必须为浏览器信任的 HTTPS。服务端的 `VITALIS_PAIRING_ALLOWED_ORIGINS` 要包含实际的 `chrome-extension://<扩展 ID>`，重启 API 后再配对。详细浏览器操作见[扩展指南](../clients/browser_extension/README.md)。配对码、浏览器链接令牌和厂商令牌用途不同，不能互换。
+### 网页登录（主入口）
 
-网页登录完成后，当前适配器使用官方页面产生的 `apptoken`、源用户 ID 和允许的区域主机。区域主机必须是 HTTPS 的 `api-mifit*.zepp.com` 或 `api-mifit*.huami.com`，不接受凭据、路径、查询或任意端口。常见中国区域是 `api-mifitcn.zepp.com`；实际区域按账号返回值和配置决定，不要手工猜测其它用户区域。
+不用插件，在电脑浏览器里用 Zepp 手机号或邮箱和密码连接：
 
-### 网页登录
+1. 按[运维说明](operations.md#zepp-网页登录与重新登录)配置可访问的服务地址。当前私有部署经 ZeroTier 访问；公网入口必须使用 HTTPS。
+2. 运行 `vitalis connect zepp --user <用户>`，打开生成的 `login_url`；默认 60 分钟有效。需要额外通过 PushPlus 发送链接时才加 `--push`。
+3. 在用户自己的 Vitalis 登录页输入账号和密码。密码只经该服务转交 Zepp，不保存；成功后加密保存令牌，并启动历史回填。
+4. 查看连接进度，确认回填和首次分析完成。登录成功不等于历史数据已经齐全。
 
-不用插件、在电脑浏览器里用 Zepp 手机号（或邮箱）和密码连接：`vitalis connect zepp --user <用户>` 生成配对会话的 `login_url`（`/api/connect/zepp/login?code=…`，默认 60 分钟有效），在连着 ZeroTier 的电脑上打开即可；`--push` 另经 PushPlus 发一份。页面左侧说明数据去向和进度（登录 → 加密保存令牌 → 回填 180 天 → 每天同步），右侧是登录表单；密码错误、地区不对、要图形验证、尝试过多等情况各有一句提示（API 只经 `X-Login-Failure` 头给出固定分类码，不转发 Zepp 原文）。Zepp 官方网页的手机验证码只用于注册和重置密码，不能直接登录（2026-10-14 核对其当前脚本）；没有密码时页面引导到 Zepp 官方开放平台 `console.zepp.com`，它按账号地区转到官方登录页，在那里用“忘记密码”和手机验证码设置密码（`user.zepp.com` 不是在所有网络都能打开）。“密码只经过自己的 Vitalis 服务器一次、不保存”的方案已于 2026-10-13 经用户确认；生产 API 只在本机监听，经 ZeroTier 私有网络访问（2026-10-14 用户决定），入口配置见[运维](operations.md)；真实账号走通前保留浏览器插件，见[改动计划](plan/zepp-web-login.md)。
+页面说明“登录 → 加密保存令牌 → 回填 180 天 → 每天同步”的进度。密码错误、地区不对、需要图形验证或尝试过多时，显示固定分类提示，不转发 Zepp 原始响应。不要在聊天、命令参数或日志里传密码、配对码和令牌。
 
-登录页按 Zepp `user.zepp.com/universalLogin` 当前生产 JavaScript 使用的两步表单流程：先向 `api-user.huami.com/registrations/{account}/tokens` 换取 `access`，再向 `account.huami.com/v2/client/login` 换取 `app_token`、`login_token` 和 `user_id`。成功必须同时满足第二步 `result=ok` 和三项令牌字段存在；任何未知响应都不会被当作成功。这个 legacy 网页协议不是 Zepp 官方 OAuth API，实际部署仍需目标环境单独验收。
+按 2026-10-14 核对的官方网页流程，手机验证码用于注册或重置密码，不能直接登录。没有密码时，按页面指引到 `console.zepp.com`，由官方按地区跳转，再用“忘记密码”设置密码；不是把验证码交给 Vitalis。
 
-`app_token` 保存为加密 access token，`login_token` 保存为加密 `AuthToken.refresh_token`。同步返回需要重新认证时，worker 用 `GET account.huami.com/v1/client/app_tokens?login_token=…` 换新的 `app_token`（Zepp 应用使用的接口，不在公开文档里，尚待真实账号验证）；响应缺令牌或属于别的账号时视为失败，状态保持 `needs_reauth` 并发重新登录链接，不伪造刷新成功。验证码请求被拒绝，页面只引导到 Zepp 官方重置页。
+### 令牌保存与续期
+
+登录使用两步网页协议：先向 `api-user.huami.com/registrations/{account}/tokens` 换取 `access`，再向 `account.huami.com/v2/client/login` 换取 `app_token`、`login_token` 和 `user_id`。第二步必须同时满足 `result=ok` 和三个字段齐全；未知响应不算成功。这不是公开的 Zepp OAuth API，需要在目标环境单独验证。
+
+`app_token` 和 `login_token` 都加密保存，后者进入 `AuthToken.refresh_token`。同步要求重新认证时，worker 尝试用保存的 `login_token` 换新令牌；响应缺令牌或属于另一个账号时保持 `needs_reauth`，再发重新登录链接。这个续期接口尚待真实账号验证，不能因代码存在就宣称可用；剩余验证见[网页登录计划](plan/zepp-web-login.md)。
+
+### 浏览器插件配对（暂留备用）
+
+这条旧路径和上面的网页登录不同：用 `manage` scope 令牌创建 `POST /api/connect/zepp/pair` 会话，打开返回的 `scan_url`；账号密码和验证码只输入官方 `watchface.zepp.com` 或 `user.huami.com` 页面。
+
+在插件中填写服务源地址和一次性配对码；非 localhost 地址必须为浏览器信任的 HTTPS。`VITALIS_PAIRING_ALLOWED_ORIGINS` 要包含实际的 `chrome-extension://<扩展 ID>`，重启 API 后配对，详见[扩展指南](../clients/browser_extension/README.md)。配对码、浏览器链接令牌和厂商令牌用途不同，不能互换。
+
+旧插件仍在仓库中。完成约定的回填、日常报告和稳定性验收后再安排退役，不因已经成功登录一次或到了预定日期就自动删除，见[清理计划](plan/zepp-web-login.md)。
+
+### 区域主机
+
+连接后使用账号返回的厂商令牌、源用户 ID 和允许的区域主机。主机必须是 HTTPS 的 `api-mifit*.zepp.com` 或 `api-mifit*.huami.com`，不接受凭据、路径、查询或任意端口。常见中国区域是 `api-mifitcn.zepp.com`；以账号返回值和配置为准，不猜测其它用户的区域。
 
 ## 同步与任务
 

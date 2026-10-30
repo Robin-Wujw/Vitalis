@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 
 from vitalis.entrypoints.api.app import app
+from tools.check_docs import check_links
 
 
 ROOT = Path(__file__).parents[2]
@@ -82,3 +83,24 @@ def test_plan_folder_indexes_exactly_its_open_items():
     present = {path.name for path in (ROOT / "docs" / "plan").glob("*.md")} - {"README.md"}
     assert listed == present
     assert not (ROOT / "docs" / "plan.md").exists()
+
+
+def test_open_plan_links_are_valid_before_staging():
+    plans = sorted((ROOT / "docs" / "plan").glob("*.md"))
+    assert check_links(plans, ROOT) == []
+
+
+def test_plan_index_separates_implementation_validation_and_user_choices():
+    index = _read("docs/plan/README.md")
+    for heading in ("## 需要改代码", "## 功能已有，等实际验证", "## 等用户选择"):
+        assert heading in index
+
+
+def test_open_plans_explain_status_next_step_and_completion():
+    for path in sorted((ROOT / "docs" / "plan").glob("*.md")):
+        if path.name == "README.md":
+            continue
+        content = path.read_text(encoding="utf-8")
+        assert "状态：" in content, path.name
+        for heading in ("## 现在是什么情况", "## 接下来做什么", "## 怎样算完成"):
+            assert heading in content, f"{path.name}: missing {heading}"

@@ -54,7 +54,7 @@ def test_runtime_examples_track_api_worker_and_authentication():
     assert not any(path.startswith("/api/v1") for path in paths)
     assert "start_scheduler()" in _read("src/vitalis/entrypoints/worker.py")
     assert "start_scheduler()" not in _read("src/vitalis/entrypoints/api/app.py")
-    assert 'frozenset({"read", "analyze", "sync", "feedback", "manage"})' in _read(
+    assert 'frozenset({"read", "analyze", "sync", "feedback", "manage", "coach"})' in _read(
         "src/vitalis/adapters/persistence/access_tokens.py"
     )
     assert "/api/reports/daily" in _read("docs/quickstart.md")

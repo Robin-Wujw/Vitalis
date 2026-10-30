@@ -710,6 +710,7 @@ class AnalysisJob(Base):
     """Durable request to execute the existing intelligence pipeline."""
 
     __tablename__ = "analysis_jobs"
+    execution_context: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     __table_args__ = (
         UniqueConstraint("user_id", "idempotency_key", name="uq_analysis_job_request"),
         CheckConstraint(
@@ -824,6 +825,7 @@ class AnalysisRun(Base):
     """One auditable execution of the deterministic intelligence pipeline."""
 
     __tablename__ = "analysis_runs"
+    execution_context: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(64), index=True)
@@ -1043,6 +1045,10 @@ class ZeppPairingSession(Base):
     sync_attempt_id: Mapped[str | None] = mapped_column(
         ForeignKey("sync_attempts.id"), nullable=True, index=True
     )
+
+
+# Register the separately maintained conversation budget table in shared metadata.
+from .coach_requests import CoachRequest  # noqa: E402,F401
 
 
 class ZeppBrowserLink(Base):

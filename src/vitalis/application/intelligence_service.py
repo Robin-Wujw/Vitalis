@@ -162,6 +162,7 @@ class IntelligenceCommand:
         self, user_id: str, day: date | None = None, *,
         job_claim: JobClaim | None = None,
         job_repository: AnalysisJobRepository | None = None,
+        execution_context: dict | None = None,
     ) -> AnalysisResult:
         target = day or self._today_factory()
         if (job_claim is None) != (job_repository is None):
@@ -170,6 +171,7 @@ class IntelligenceCommand:
             job_claim.user_id != user_id or job_claim.target_date != target
         ):
             raise ValueError("job claim does not match analysis request")
+        execution_context = dict(job_claim.execution_context or {}) if job_claim is not None else dict(execution_context or {})
         run = AnalysisRun(
             id=uuid4().hex,
             user_id=user_id,
@@ -203,7 +205,7 @@ class IntelligenceCommand:
                     user_id, target, run.started_at, timezone_name=self._timezone,
                 )
                 run.input_manifest_hash = str(run.input_manifest.get("manifest_hash") or "")
-                repo.create_analysis_run(run)
+                repo.create_analysis_run(run, execution_context=execution_context)
                 if job_claim is not None and not job_repository.attach_run(
                     uow.transaction, job_claim, run.id
                 ):
@@ -395,34 +397,35 @@ class IntelligenceCommand:
                 if job_claim is None:
                     repo.resolve_analysis_jobs_for_run(
                         user_id, target, run.id,
-                        input_revision=run.input_revision_used,
+                        input_revision=run.input_revision_used, execution_context=execution_context,
                     )
                 row = repo.complete_analysis_run(
                     run.id, AnalysisRunStatus.SUCCEEDED.value,
                     cost=analysis_cost(perf_counter() - clock_start, peak_rss_mb(), start_rss),
                 )
-                for delivery_period in ("morning", "evening"):
-                    repo.rearm_unavailable_notification_deliveries(
-                        user_id,
-                        run.id,
-                        target,
-                        period=delivery_period,
+                if execution_context.get("notification_policy") != "suppress":
+                    for delivery_period in ("morning", "evening"):
+                        repo.rearm_unavailable_notification_deliveries(
+                            user_id,
+                            run.id,
+                            target,
+                            period=delivery_period,
+                        )
+                    repo.refresh_existing_calendar_notification_deliveries(
+                        user_id, run.id, target
                     )
-                repo.refresh_existing_calendar_notification_deliveries(
-                    user_id, run.id, target
-                )
-                if job_claim is not None and job_claim.delivery_period in {
-                    "morning", "evening", "weekly", "monthly",
-                }:
-                    _, report_end = delivery_period_dates(
-                        job_claim.delivery_period, target
-                    )
-                    repo.enqueue_notification_delivery(
-                        user_id,
-                        run.id,
-                        job_claim.delivery_period,
-                        report_end,
-                    )
+                    if job_claim is not None and job_claim.delivery_period in {
+                        "morning", "evening", "weekly", "monthly",
+                    }:
+                        _, report_end = delivery_period_dates(
+                            job_claim.delivery_period, target
+                        )
+                        repo.enqueue_notification_delivery(
+                            user_id,
+                            run.id,
+                            job_claim.delivery_period,
+                            report_end,
+                        )
                 completed_run = _run_from_row(row)
                 uow.commit()
             return AnalysisResult(
@@ -653,6 +656,35 @@ class IntelligenceQuery:
         if state["last_good_snapshot"] is None:
             return None
         return self._attach_report_state(MonthlyProfile.model_validate(state), state)
+
+    def running(
+        self, user_id: str, day: date | None = None, *, include_research: bool = False,
+    ) -> dict | None:
+        """Project saved running facts; never fit models or request new analysis."""
+        daily = self.daily(user_id, day)
+        if daily is None:
+            return None
+        result = daily.model_dump(mode="json", include={
+            "user_id", "date", "generated_at", "analysis_run_id",
+            "report_context", "data_quality",
+        })
+        running = daily.features.training.running
+        result["running"] = (
+            running.model_dump(mode="json", exclude={"performance"})
+            if running is not None else None
+        )
+        result["trends"] = [
+            trend.model_dump(mode="json") for trend in daily.trends
+            if trend.metric.startswith("running_")
+        ]
+        if include_research:
+            performance = running.performance if running is not None else None
+            result["research"] = {
+                "performance": (
+                    performance.model_dump(mode="json") if performance is not None else None
+                ),
+            }
+        return result
 
     def trends(self, user_id: str, day: date | None = None) -> TrendResponse | None:
         daily = self.daily(user_id, day)

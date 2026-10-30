@@ -223,8 +223,12 @@ class ZeppSyncCoordinator:
         self.attempt_lease_seconds = max(1, int(attempt_lease_seconds))
 
     @contextmanager
-    def _session(self) -> Iterator[Any]:
+    def _session(self, *, execution_context: dict | None = None) -> Iterator[Any]:
         db = self.session_factory()
+        previous_context = db.info.get("execution_context")
+        had_context = "execution_context" in db.info
+        if execution_context is not None:
+            db.info["execution_context"] = dict(execution_context)
         try:
             yield db
             db.commit()
@@ -232,6 +236,10 @@ class ZeppSyncCoordinator:
             db.rollback()
             raise
         finally:
+            if had_context:
+                db.info["execution_context"] = previous_context
+            else:
+                db.info.pop("execution_context", None)
             db.close()
 
     @staticmethod
@@ -1068,7 +1076,7 @@ class ZeppSyncCoordinator:
         dense_written = 0
         if result.decoded is not None:
             decoded = result.decoded
-            with self._session() as db:
+            with self._session(execution_context=attempt.get("options", {}).get("execution_context") or {}) as db:
                 repo = HealthRepository(db)
                 journal = stage_dense_archive(repo, attempt["id"], chunk, result.archive, fetched_at=fetched_at)
                 if journal is not None:
@@ -1081,7 +1089,7 @@ class ZeppSyncCoordinator:
             return True
         if result.record is not None and chunk["stream"] == "devices":
             devices = ZeppParser().parse_devices(result.record.raw.payload)
-            with self._session() as db:
+            with self._session(execution_context=attempt.get("options", {}).get("execution_context") or {}) as db:
                 repo = HealthRepository(db)
                 db.info["source_journal_context"] = sync_journal_context(repo, attempt["id"], fetched_at=fetched_at)
                 journal = stage_sync_record(repo, user, result.record, None, fetched_at=fetched_at)
@@ -1118,7 +1126,7 @@ class ZeppSyncCoordinator:
                 DataFetcher(connector, attempt.get("timezone") or "UTC"),
                 dense_archive_budget=0,
             )
-            with self._session() as db:
+            with self._session(execution_context=attempt.get("options", {}).get("execution_context") or {}) as db:
                 repo = HealthRepository(db)
                 db.info["source_journal_context"] = sync_journal_context(repo, attempt["id"], fetched_at=fetched_at)
                 report = manager._persist_record(result.record, repo, user, fetched_at=fetched_at)
@@ -1244,7 +1252,7 @@ class ZeppSyncCoordinator:
             "parse_status": "not_run",
             "write_status": "not_run",
         }
-        with self._session() as db:
+        with self._session(execution_context=attempt.get("options", {}).get("execution_context") or {}) as db:
             repo = HealthRepository(db)
             finalized = repo.finalize_chunk(
                 claim.lease.entity_id, claim.lease.token, claim.lease.epoch,
@@ -1285,7 +1293,7 @@ class ZeppSyncCoordinator:
                 if claim.chunk["stream"] == "dense_archive" and result.archive is not None:
                     # Fetching is outside a transaction; decoding is also completed before write commit.
                     params = claim.chunk["stages"].get("params") or {}
-                    with self._session() as db:
+                    with self._session(execution_context=attempt.get("options", {}).get("execution_context") or {}) as db:
                         indexed = HealthRepository(db).dense_data_file_group(attempt["user_id"], "second_heart_rate", params.get("file_id", ""), source="zepp")
                     files = [DenseDataFile(
                         user_id=attempt["user_id"], source="zepp", stream=row.stream, file_id=row.file_id,
@@ -1305,7 +1313,7 @@ class ZeppSyncCoordinator:
             if isinstance(exc, StaleSyncLease):
                 return "stale"
             if isinstance(exc, SyncCancelled):
-                with self._session() as db:
+                with self._session(execution_context=attempt.get("options", {}).get("execution_context") or {}) as db:
                     repo = HealthRepository(db)
                     repo.finalize_chunk(claim.lease.entity_id, claim.lease.token, claim.lease.epoch, "cancelled", now=self.wall_clock(), stages={**claim.chunk["stages"], "fetch_status": "cancelled", "parse_status": "not_run", "write_status": "not_run"}, error_kind="cancelled", error=str(exc))
                 return "cancelled"
@@ -1399,6 +1407,7 @@ class ZeppSyncCoordinator:
             target_date,
             delivery_period,
             reason=f"{trigger} sync reached {terminal_status}",
+            execution_context=attempt.get("options", {}).get("execution_context") or {},
         ) is not None:
             return
         repository.enqueue_analysis_job(
@@ -1411,11 +1420,12 @@ class ZeppSyncCoordinator:
             reason=f"{trigger} sync reached {terminal_status}",
             idempotency_key=key,
             delivery_period=delivery_period,
+            execution_context=attempt.get("options", {}).get("execution_context"),
         )
 
     def _finish_attempt(self, attempt: dict[str, Any], token: str, epoch: int, *, timeout: bool = False) -> str:
         now = self.wall_clock()
-        with self._session() as db:
+        with self._session(execution_context=attempt.get("options", {}).get("execution_context") or {}) as db:
             repo = HealthRepository(db)
             row = repo.sync_attempt(attempt["id"])
             if row is None:
@@ -1913,6 +1923,8 @@ class ZeppSyncJobAdapter:
             "detail_refresh_before": command.detail_refresh_before,
             "detail_limit": command.detail_limit,
         }
+        if command.execution_context is not None:
+            create_kwargs["execution_context"] = dict(command.execution_context)
         if window is not None:
             create_kwargs["window"] = window
         try:

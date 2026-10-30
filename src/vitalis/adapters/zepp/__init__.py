@@ -329,6 +329,7 @@ class ZeppConnector(HealthConnector):
         detail_refresh_before: str | None = None,
         detail_limit: int | None = None,
         sleep_only: bool = False,
+        execution_context: dict | None = None,
         repository=None,
     ):
         """Create/reuse a durable attempt without doing network work."""
@@ -364,6 +365,7 @@ class ZeppConnector(HealthConnector):
                 **({"detail_limit": detail_limit} if detail_limit is not None else {}),
                 **({"sleep_only": True} if sleep_only else {}),
                 "source_mode": self.source_mode,
+                **({"execution_context": dict(execution_context)} if execution_context is not None else {}),
             },
         )
 

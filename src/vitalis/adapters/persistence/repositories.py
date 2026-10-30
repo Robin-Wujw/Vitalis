@@ -238,11 +238,13 @@ class HealthRepository:
         reason: str | None = None, idempotency_key: str | None = None,
         delivery_period: str | None = None,
         payload_ref: str | None = None, occurred_at: datetime | None = None,
+        execution_context: dict | None = None,
     ) -> orm.AnalysisJob | None:
         if not self.user_exists(user_id):
             return None
         from .input_events import InputEventAuditRepository
 
+        execution_context = dict(execution_context if execution_context is not None else self.db.info.get("execution_context") or {})
         dates = set(affected_dates or {target_date})
         targets = self._analysis_targets(user_id, dates, {target_date}, event_type)
         input_event = InputEventAuditRepository(self.db).append(
@@ -254,6 +256,7 @@ class HealthRepository:
             request_context={
                 "target_date": target_date.isoformat(), "reason": reason or event_type,
                 "delivery_period": delivery_period,
+                "execution_context": execution_context,
             },
         )
         primary = None
@@ -266,7 +269,7 @@ class HealthRepository:
                 affected_dates=dates, affected_streams=affected_streams,
                 reason=reason, idempotency_key=key,
                 delivery_period=delivery_period if target == target_date else None,
-                input_event_id=input_event.id,
+                input_event_id=input_event.id, execution_context=execution_context,
             )
             if target == target_date:
                 primary = job
@@ -287,6 +290,7 @@ class HealthRepository:
         payload_ref: str | None = None,
         occurred_at: datetime | None = None,
         input_event_id: str | None = None,
+        execution_context: dict | None = None,
     ) -> orm.AnalysisJob | None:
         """Persist one scoped invalidation in the caller's transaction.
 
@@ -302,6 +306,7 @@ class HealthRepository:
             raise ValueError("分析任务 target_date 必须是日期")
         if delivery_period not in (None, "morning", "evening", "weekly", "monthly"):
             raise ValueError("分析任务 delivery_period 无效")
+        execution_context = dict(execution_context if execution_context is not None else self.db.info.get("execution_context") or {})
         dates = sorted({
             value.isoformat() if isinstance(value, date) else str(value)
             for value in (affected_dates or {target_date})
@@ -315,6 +320,7 @@ class HealthRepository:
             "target_date": target_date.isoformat(),
             "event_type": event_type,
             "source": source,
+            "execution_context": execution_context,
             "affected_dates": dates,
             "affected_streams": streams,
             "reason": reason or event_type,
@@ -343,6 +349,7 @@ class HealthRepository:
                 request_context={
                     "target_date": target_date.isoformat(), "reason": reason or event_type,
                     "delivery_period": delivery_period,
+                    "execution_context": execution_context,
                 },
             )
         )
@@ -361,7 +368,7 @@ class HealthRepository:
         # Coalesce an input write into the one active execution for this target.
         # The scope is merged onto that durable row instead of creating a job
         # that could run after the worker already fenced its input revision.
-        active = self.db.execute(select(orm.AnalysisJob).where(
+        candidates = self.db.execute(select(orm.AnalysisJob).where(
             orm.AnalysisJob.user_id == user_id,
             orm.AnalysisJob.target_date == target_date,
             orm.AnalysisJob.status.in_(("queued", "running")),
@@ -371,7 +378,8 @@ class HealthRepository:
             case((orm.AnalysisJob.status == "running", 0), else_=1),
             orm.AnalysisJob.created_at.desc(),
             orm.AnalysisJob.id.desc(),
-        ).limit(1).with_for_update()).scalar_one_or_none()
+        ).with_for_update()).scalars().all()
+        active = next((row for row in candidates if (row.execution_context or {}) == execution_context), None)
         if active is not None:
             merged_dates = sorted(set(active.affected_dates or []) | set(dates))
             merged_streams = sorted(set(active.affected_streams or []) | set(streams))
@@ -402,6 +410,7 @@ class HealthRepository:
             status="queued",
             idempotency_key=key,
             request_hash=request_hash,
+            execution_context=execution_context,
             priority=priority,
             delivery_period=delivery_period,
             event_type=event_type[:48],
@@ -429,9 +438,13 @@ class HealthRepository:
         delivery_period: str,
         *,
         reason: str,
+        execution_context: dict | None = None,
     ) -> orm.AnalysisJob | None:
         """Assign an unclaimed sync invalidation to one delivery period."""
-        row = self.db.execute(select(orm.AnalysisJob).where(
+        execution_context = dict(execution_context if execution_context is not None else self.db.info.get("execution_context") or {})
+        if execution_context.get("notification_policy") == "suppress":
+            return None
+        candidates = self.db.execute(select(orm.AnalysisJob).where(
             orm.AnalysisJob.user_id == user_id,
             orm.AnalysisJob.target_date == target_date,
             orm.AnalysisJob.status == "queued",
@@ -440,7 +453,8 @@ class HealthRepository:
         ).order_by(
             orm.AnalysisJob.created_at,
             orm.AnalysisJob.id,
-        ).limit(1).with_for_update()).scalar_one_or_none()
+        ).with_for_update()).scalars().all()
+        row = next((item for item in candidates if (item.execution_context or {}) == execution_context), None)
         if row is None:
             return None
         row.delivery_period = delivery_period
@@ -492,8 +506,18 @@ class HealthRepository:
         run_id: str,
         *,
         input_revision: int,
+        execution_context: dict | None = None,
     ) -> int:
         """Resolve non-delivery queued/failed requests captured by a direct run."""
+        candidates = self.db.execute(select(orm.AnalysisJob).where(
+            orm.AnalysisJob.user_id == user_id,
+            orm.AnalysisJob.target_date == target_date,
+            orm.AnalysisJob.status.in_(("queued", "failed")),
+            orm.AnalysisJob.delivery_period.is_(None),
+            orm.AnalysisJob.input_revision <= input_revision,
+        )).scalars()
+        matching_ids = [row.id for row in candidates
+                        if (row.execution_context or {}) == (execution_context or {})]
         now = _naive_utc(datetime.now(timezone.utc))
         result = self.db.execute(update(orm.AnalysisJob).where(
             orm.AnalysisJob.user_id == user_id,
@@ -501,6 +525,7 @@ class HealthRepository:
             orm.AnalysisJob.target_date == target_date,
             orm.AnalysisJob.delivery_period.is_(None),
             orm.AnalysisJob.input_revision <= input_revision,
+            orm.AnalysisJob.id.in_(matching_ids),
         ).values(
             status="succeeded",
             run_id=run_id,
@@ -3527,6 +3552,7 @@ class HealthRepository:
                 affected_dates=dates, affected_streams={"training_coverage"},
                 reason="workout coverage ledger changed",
                 idempotency_key=f"coverage:{attempt_id}",
+                execution_context=(attempt.options or {}).get("execution_context") or {},
             )
         self.db.flush()
         return finalized
@@ -4380,8 +4406,9 @@ class HealthRepository:
             source="zepp", source_mode=None, timezone_name=timezone_name,
         )
 
-    def create_analysis_run(self, run) -> orm.AnalysisRun:
+    def create_analysis_run(self, run, *, execution_context: dict | None = None) -> orm.AnalysisRun:
         row = orm.AnalysisRun(
+            execution_context=dict(execution_context or {}),
             id=run.id,
             user_id=run.user_id,
             target_date=run.target_date,
@@ -5727,9 +5754,16 @@ class HealthRepository:
     list_delivery_alerts = delivery_alerts
     upsert_delivery_alert = create_delivery_alert
 
+    def _notifications_suppressed(self, analysis_run_id: str) -> bool:
+        """Canonical guard shared by worker and scheduler notification paths."""
+        run = self.db.get(orm.AnalysisRun, analysis_run_id)
+        return run is not None and (run.execution_context or {}).get("notification_policy") == "suppress"
+
     def _repoint_notification_delivery(
         self, existing: orm.NotificationDelivery, analysis_run_id: str
     ) -> orm.NotificationDelivery:
+        if self._notifications_suppressed(analysis_run_id):
+            return existing
         if existing.analysis_run_id != analysis_run_id:
             result = self.db.execute(update(orm.NotificationDelivery).where(
                 orm.NotificationDelivery.id == existing.id,
@@ -5782,6 +5816,8 @@ class HealthRepository:
         )).scalar_one_or_none()
         if run is None:
             raise ValueError("notification delivery requires a succeeded analysis run")
+        if self._notifications_suppressed(analysis_run_id):
+            raise ValueError("notification delivery is suppressed for this analysis run")
         from vitalis.intelligence.report_periods import delivery_period_dates
 
         _, expected_end = delivery_period_dates(period, run.target_date)
@@ -5842,6 +5878,8 @@ class HealthRepository:
         )).scalar_one_or_none()
         if run is None:
             raise ValueError("calendar notification refresh requires a succeeded analysis run")
+        if self._notifications_suppressed(analysis_run_id):
+            return 0
         from vitalis.intelligence.report_periods import delivery_period_dates
 
         refreshed = 0
@@ -5876,6 +5914,8 @@ class HealthRepository:
         )).scalar_one_or_none()
         if run is None:
             raise ValueError("notification rearm requires a succeeded analysis run")
+        if self._notifications_suppressed(analysis_run_id):
+            return 0
         conditions = [
             orm.NotificationDelivery.user_id == user_id,
             orm.NotificationDelivery.target_date == target_date,
@@ -5966,6 +6006,8 @@ class HealthRepository:
         )).scalar_one_or_none()
         if run is None:
             raise ValueError("morning notification rearm requires a succeeded analysis run")
+        if self._notifications_suppressed(analysis_run_id):
+            return 0
         result = self.db.execute(update(orm.NotificationDelivery).where(
             orm.NotificationDelivery.user_id == user_id,
             orm.NotificationDelivery.target_date == target_date,
@@ -6079,9 +6121,21 @@ class HealthRepository:
         profile_type = (
             "daily" if delivery.period in {"morning", "evening"} else delivery.period
         )
-        snapshot = self.latest_analysis_snapshot(
-            user_id, profile_type, delivery.target_date
-        )
+        # A conversation run can be the newest readable report without being
+        # eligible to replace an already queued notification's report.
+        snapshot = self.db.execute(
+            self._current_snapshot_query(user_id).where(
+                *self._current_snapshot_conditions(user_id, profile_type),
+                orm.AnalysisSnapshot.period_end == delivery.target_date,
+                func.coalesce(
+                    orm.AnalysisRun.execution_context["notification_policy"].as_string(), ""
+                ) != "suppress",
+            ).order_by(
+                orm.AnalysisRun.completed_at.desc().nulls_last(),
+                orm.AnalysisRun.id.desc(),
+                orm.AnalysisSnapshot.id.desc(),
+            ).limit(1)
+        ).scalars().first()
         if snapshot is None:
             return None
         latest_run_id = snapshot.analysis_run_id

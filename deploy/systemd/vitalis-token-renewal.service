@@ -16,7 +16,7 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 UMask=0077
 # Pre-create directory vitalis:vitalis-hermes 0750, token same owner/group 0640.
 # Bootstrap separately using token issue; match scopes exactly, never infer them.
-ExecStart=/opt/vitalis/current/.venv/bin/vitalis token rotate --token-file /var/lib/vitalis-hermes-credentials/access.token --user ${VITALIS_ROTATION_USER} --scope read --scope analyze --scope sync --scope feedback --expires-days 90 --renew-before-days 14 --grace-seconds 300 --api-base-url http://127.0.0.1:8000
+ExecStart=/opt/vitalis/current/.venv/bin/vitalis token rotate --token-file /var/lib/vitalis-hermes-credentials/access.token --user ${VITALIS_ROTATION_USER} --scope read --scope coach --scope feedback --expires-days 90 --renew-before-days 14 --grace-seconds 300 --api-base-url http://127.0.0.1:8000
 TimeoutStartSec=120
 NoNewPrivileges=true
 PrivateTmp=true

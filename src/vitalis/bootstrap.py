@@ -265,6 +265,16 @@ def get_sync_job_service(*, adapter=None) -> SyncJobService:
     )
 
 
+def get_coach_operation_service():
+    """Compose scoped conversation requests; policy is reloaded on acceptance."""
+    from vitalis.application.coach_operations import CoachOperationService
+    from vitalis.adapters.persistence.coach_requests import CoachRequestRepository
+
+    return CoachOperationService(
+        CoachRequestRepository(session_scope, get_sync_job_service()), today=local_today,
+    )
+
+
 def get_demo_sync() -> SyncService:
     """Compose the synchronous synthetic demo with current SQL persistence."""
     return SyncService(

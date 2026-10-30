@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 from vitalis import __version__
 from vitalis.bootstrap import available_sources
@@ -16,6 +16,7 @@ from vitalis.adapters.persistence.database import SchemaMismatch, check_schema
 
 from .errors import ERROR_RESPONSES, error_response
 from .routes import (
+    coach_router,
     connect_router,
     current_router,
     feedback_router,
@@ -29,6 +30,7 @@ log = logging.getLogger("vitalis.entrypoints.api")
 
 api = APIRouter(prefix="/api", responses=ERROR_RESPONSES)
 api.include_router(current_router)
+api.include_router(coach_router)
 api.include_router(connect_router)
 api.include_router(zepp_pairing_router)
 api.include_router(health_router)
@@ -70,10 +72,17 @@ def create_app() -> FastAPI:
                     name: response.headers[name]
                     for name in ("Retry-After", "X-Login-Failure") if name in response.headers
                 }
-                response = error_response(
-                    response.status_code, request_id,
-                    www_authenticate=response.headers.get("WWW-Authenticate") == "Bearer",
-                )
+                coach_error = getattr(request.state, "coach_error", None)
+                if coach_error and coach_error.get("failure_code") in {
+                    "source_auth_required", "dispatch_conflict", "dispatch_invalid",
+                    "dispatch_rejected", "dispatch_pending", "operation_failed",
+                }:
+                    response = JSONResponse(status_code=response.status_code, content=coach_error)
+                else:
+                    response = error_response(
+                        response.status_code, request_id,
+                        www_authenticate=response.headers.get("WWW-Authenticate") == "Bearer",
+                    )
                 response.headers.update(kept)
         response.headers["X-Request-ID"] = request_id
         return response

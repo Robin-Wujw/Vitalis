@@ -70,7 +70,7 @@ def mock_api():
                 status, data, headers = 200, {"workout_id": "run-1"}, {}
             elif path == "/api/jobs/job-1":
                 status, data, headers = 200, {"job_id": "job-1", "status": "queued"}, {}
-            elif path in ("/api/analysis-runs", "/api/sync-jobs"):
+            elif path in ("/api/analysis-runs", "/api/sync-jobs", "/api/coach/operations"):
                 status, data, headers = 202, {"job_id": "job-1", "status": "queued"}, {}
             elif path == "/api/feedback":
                 status, data, headers = 201, {"id": "feedback-1"}, {}
@@ -440,13 +440,13 @@ def test_queued_writes_persist_keys_and_bind_request(installed, tmp_path):
             assert analysis_file.stat().st_mode & 0o077 == 0
 
 
-@pytest.mark.parametrize("missing", ["--day", "--authorized", "--key-file"])
-def test_refresh_workouts_requires_explicit_flags_before_side_effects(installed, tmp_path, missing):
+@pytest.mark.parametrize("missing", ["--day", "--key-file"])
+def test_coach_request_requires_explicit_flags_before_side_effects(installed, tmp_path, missing):
     key_file = tmp_path / "refresh-key.json"
-    options = {"--day": ["2026-09-20"], "--authorized": [], "--key-file": [str(key_file)]}
+    options = {"--day": ["2026-09-20"], "--key-file": [str(key_file)]}
     arguments = [part for flag, values in options.items() if flag != missing for part in [flag, *values]]
     with mock_api() as (base, calls, _):
-        assert invoke(installed, base, "refresh-workouts", *arguments, token="") == (
+        assert invoke(installed, base, "coach-request", "refresh-workouts", *arguments, token="") == (
             1, {"status": "error", "error": "invalid_arguments"},
         )
         assert calls == []
@@ -454,11 +454,11 @@ def test_refresh_workouts_requires_explicit_flags_before_side_effects(installed,
 
 
 @pytest.mark.parametrize("day", ["2026-02-30", "20260920", "2026-9-20", "today"])
-def test_refresh_workouts_rejects_invalid_day(installed, tmp_path, day):
+def test_coach_request_rejects_invalid_day(installed, tmp_path, day):
     key_file = tmp_path / "refresh-key.json"
     with mock_api() as (base, calls, _):
-        assert invoke(installed, base, "refresh-workouts", "--day", day,
-                      "--authorized", "--key-file", str(key_file)) == (
+        assert invoke(installed, base, "coach-request", "refresh-workouts", "--day", day,
+                      "--key-file", str(key_file)) == (
             1, {"status": "error", "error": "invalid_arguments"},
         )
         assert calls == []
@@ -470,24 +470,23 @@ def test_refresh_workouts_rejects_invalid_day(installed, tmp_path, day):
     ["--from", "2026-09-01"], ["--to", "2026-09-21"],
     ["--fallback"], ["--detail-limit", "4"], ["--detail-backfill"],
     ["--detail-only"], ["--decode-dense-files"], ["--source", "zepp"],
-    ["--authorized=false"],
+    ["--authorized=false"], ["--authorized"],
 ])
-def test_refresh_workouts_rejects_scope_expansion(installed, tmp_path, extra):
+def test_coach_request_rejects_scope_expansion(installed, tmp_path, extra):
     key_file = tmp_path / "refresh-key.json"
     with mock_api() as (base, calls, _):
-        assert invoke(installed, base, "refresh-workouts", "--day", "2026-09-20",
-                      "--authorized", "--key-file", str(key_file), *extra) == (
+        assert invoke(installed, base, "coach-request", "refresh-workouts", "--day", "2026-09-20",
+                      "--key-file", str(key_file), *extra) == (
             1, {"status": "error", "error": "invalid_arguments"},
         )
         assert calls == []
         assert not key_file.exists()
 
 
-def test_refresh_workouts_exact_body_and_persistent_request_binding(installed, tmp_path):
+def test_coach_request_exact_body_and_persistent_request_binding(installed, tmp_path):
     key_file = tmp_path / "refresh-key.json"
-    args = ("refresh-workouts", "--authorized", "--key-file", str(key_file))
-    body = {"days": 1, "source": "zepp", "from": "2026-09-20",
-            "to": "2026-09-20", "workout_only": True}
+    args = ("coach-request", "refresh-workouts", "--key-file", str(key_file))
+    body = {"operation": "refresh_workouts", "day": "2026-09-20"}
     with mock_api() as (base, calls, _):
         for _attempt in range(2):
             assert invoke(installed, base, *args, "--day", "2026-09-20") == (
@@ -495,13 +494,13 @@ def test_refresh_workouts_exact_body_and_persistent_request_binding(installed, t
             )
         assert len(calls) == 2
         record = json.loads(key_file.read_text(encoding="utf-8"))
-        assert record["operation"] == "POST /api/sync-jobs"
+        assert record["operation"] == "POST /api/coach/operations"
         assert record["request_sha256"] == __import__("hashlib").sha256(json.dumps(
-            {"method": "POST", "path": "/api/sync-jobs", "body": body},
+            {"method": "POST", "path": "/api/coach/operations", "body": body},
             sort_keys=True, separators=(",", ":"),
         ).encode()).hexdigest()
         for method, path, headers, raw in calls:
-            assert (method, path) == ("POST", "/api/sync-jobs")
+            assert (method, path) == ("POST", "/api/coach/operations")
             assert json.loads(raw) == body
             assert headers["Idempotency-Key"] == record["key"]
             assert headers["Authorization"] == "Bearer " + TOKEN
@@ -517,23 +516,23 @@ def test_refresh_workouts_exact_body_and_persistent_request_binding(installed, t
     (401, "unauthorized"), (403, "forbidden"), (404, "http_error"),
     (429, "http_error"), (503, "http_error"),
 ])
-def test_refresh_workouts_request_errors_never_retry_or_fallback(installed, tmp_path, status, error):
+def test_coach_request_request_errors_never_retry_or_fallback(installed, tmp_path, status, error):
     key_file = tmp_path / "refresh-key.json"
     with mock_api() as (base, calls, responses):
-        responses[("POST", "/api/sync-jobs")] = [
+        responses[("POST", "/api/coach/operations")] = [
             (status, {"detail": TOKEN}, {}), (202, {"job_id": "unexpected"}, {}),
         ]
-        assert invoke(installed, base, "refresh-workouts", "--day", "2026-09-20",
-                      "--authorized", "--key-file", str(key_file)) == (
+        assert invoke(installed, base, "coach-request", "refresh-workouts", "--day", "2026-09-20",
+                      "--key-file", str(key_file)) == (
             1, {"status": "error", "error": error, "http_status": status},
         )
         assert key_file.is_file()
         assert len(calls) == 1
-        assert calls[0][:2] == ("POST", "/api/sync-jobs")
-        assert len(responses[("POST", "/api/sync-jobs")]) == 1
+        assert calls[0][:2] == ("POST", "/api/coach/operations")
+        assert len(responses[("POST", "/api/coach/operations")]) == 1
 
 
-def test_refresh_workouts_network_error_never_retries(installed, tmp_path, monkeypatch, capsys):
+def test_coach_request_network_error_never_retries(installed, tmp_path, monkeypatch, capsys):
     client = runpy.run_path(str(installed))
     monkeypatch.setenv("VITALIS_API_BASE_URL", "http://127.0.0.1:8765")
     monkeypatch.delenv("VITALIS_ACCESS_TOKEN_FILE", raising=False)
@@ -547,7 +546,7 @@ def test_refresh_workouts_network_error_never_retries(installed, tmp_path, monke
 
     monkeypatch.setattr(client["urllib"].request, "build_opener", lambda *args: Unavailable())
     key_file = tmp_path / "refresh-key.json"
-    assert client["main"](["refresh-workouts", "--day", "2026-09-20", "--authorized",
+    assert client["main"](["coach-request", "refresh-workouts", "--day", "2026-09-20",
                            "--key-file", str(key_file)]) == 1
     assert json.loads(capsys.readouterr().out) == {"status": "error", "error": "network_error"}
     assert len(attempts) == 1
@@ -685,4 +684,91 @@ def test_invalid_arguments_and_missing_token_are_safe(installed):
         assert invoke(installed, base, "feedback", body='{"notes":NaN}')[1] == {
             "status": "error", "error": "invalid_feedback_json",
         }
+        assert calls == []
+
+
+
+def test_coach_policy_is_server_authority(installed):
+    policy = {"enabled": False, "timezone": "Asia/Shanghai", "expires_at": None,
+              "daily_budget": 3, "remaining_budget": 0, "notification_policy": "suppressed"}
+    with mock_api() as (base, calls, responses):
+        responses[("GET", "/api/coach/policy")] = [(200, policy, {})]
+        assert invoke(installed, base, "coach-policy") == (0, policy)
+        assert [call[:2] for call in calls] == [("GET", "/api/coach/policy")]
+
+
+def test_coach_analyze_exact_mapping_and_key_binding(installed, tmp_path):
+    key_file = tmp_path / "coach-key.json"
+    with mock_api() as (base, calls, _):
+        assert invoke(installed, base, "coach-request", "analyze", "--day", "2026-09-20",
+                      "--key-file", str(key_file))[0] == 0
+        assert calls[0][:2] == ("POST", "/api/coach/operations")
+        assert json.loads(calls[0][3]) == {"operation": "analyze", "day": "2026-09-20"}
+        assert invoke(installed, base, "coach-request", "refresh-workouts", "--day", "2026-09-20",
+                      "--key-file", str(key_file))[1]["error"] == "idempotency_key_mismatch"
+        assert len(calls) == 1
+
+
+@pytest.mark.parametrize("status", [403, 429, 503])
+def test_coach_errors_preserve_only_safe_contract_fields(installed, tmp_path, status):
+    fields = {"state": "failed", "failure_code": "coach_budget_exhausted",
+              "retryable": False, "next_action": "wait_for_budget_reset"}
+    with mock_api() as (base, calls, responses):
+        responses[("POST", "/api/coach/operations")] = [
+            (status, {**fields, "message": TOKEN, "detail": "private server internals",
+                      "request_id": TOKEN, "token": TOKEN}, {}),
+        ]
+        assert invoke(installed, base, "coach-request", "analyze", "--day", "2026-09-20",
+                      "--key-file", str(tmp_path / "key.json")) == (
+            1, {"status": "error", "error": "forbidden" if status == 403 else "http_error",
+                "http_status": status, **fields},
+        )
+        assert len(calls) == 1
+
+
+@pytest.mark.parametrize("fields", [
+    {"state": TOKEN, "failure_code": TOKEN, "retryable": "true", "next_action": TOKEN},
+    {"state": {"token": TOKEN}, "failure_code": [TOKEN], "retryable": 1,
+     "next_action": "run arbitrary command with private data"},
+])
+def test_coach_error_fields_reject_unsafe_values(installed, tmp_path, fields):
+    with mock_api() as (base, calls, responses):
+        responses[("POST", "/api/coach/operations")] = [(503, fields, {})]
+        assert invoke(installed, base, "coach-request", "analyze", "--day", "2026-09-20",
+                      "--key-file", str(tmp_path / "key.json")) == (
+            1, {"status": "error", "error": "http_error", "http_status": 503},
+        )
+        assert len(calls) == 1
+
+
+def test_removed_refresh_command_is_rejected(installed, tmp_path):
+    with mock_api() as (base, calls, _):
+        assert invoke(installed, base, "refresh-workouts", "--authorized", "--day", "2026-09-20",
+                      "--key-file", str(tmp_path / "key.json"))[1]["error"] == "invalid_arguments"
+        assert calls == []
+
+
+@pytest.mark.parametrize("research", [False, True])
+def test_running_query_research_is_explicit_opt_in(installed, research):
+    with mock_api() as (base, calls, responses):
+        payload = {"state": "available", "research": []}
+        responses[("GET", "/api/intelligence/running")] = [(200, payload, {})]
+        args = ["query", "running", "--day", "2026-09-20"]
+        if research:
+            args.append("--include-research")
+        assert invoke(installed, base, *args) == (0, payload)
+        assert parse_qs(urlsplit(calls[0][1]).query) == {
+            "day": ["2026-09-20"], "include_research": ["true" if research else "false"],
+        }
+        assert len(calls) == 1
+
+
+def test_other_queries_reject_research_flag(installed):
+    client = runpy.run_path(str(installed))
+    with mock_api() as (base, calls, _):
+        for operation in client["READ_OPERATIONS"]:
+            if operation != "running":
+                assert invoke(installed, base, "query", operation, "--include-research")[1] == {
+                    "status": "error", "error": "invalid_arguments",
+                }
         assert calls == []

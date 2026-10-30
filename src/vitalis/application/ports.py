@@ -293,6 +293,7 @@ class SyncJobCommand:
     detail_only: bool = False
     detail_limit: int | None = None
     detail_refresh_before: str | None = None
+    execution_context: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -497,6 +498,7 @@ class JobClaim:
     token: str
     epoch: int
     delivery_period: str | None = None
+    execution_context: dict | None = None
 
 
 class AnalysisJobRepository(Protocol):

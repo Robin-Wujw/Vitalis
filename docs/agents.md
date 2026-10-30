@@ -6,7 +6,7 @@
 
 ## 鉴权和身份
 
-用户范围请求必须带与本地用户绑定的 `Authorization: Bearer <token>`。令牌由 `vitalis token issue` 签发，scope 包括 `read`、`analyze`、`sync`、`feedback` 和 `manage`；只授予完成当前动作所需的最小 scope。`X-User-Id` 只能做一致性检查，不能代替 Bearer 认证。浏览器配对码和 browser-link token 不是 API 读取令牌。
+用户范围请求必须带与本地用户绑定的 `Authorization: Bearer <token>`。令牌由 `vitalis token issue` 签发，scope 包括 `read`、`coach`、`analyze`、`sync`、`feedback` 和 `manage`；只授予完成当前动作所需的最小 scope。`X-User-Id` 只能做一致性检查，不能代替 Bearer 认证。浏览器配对码和 browser-link token 不是 API 读取令牌。
 
 非本机 Skill API 源必须使用 HTTPS；客户端拒绝含路径、凭据、查询或片段的 origin，并拒绝重定向。令牌优先从 `VITALIS_ACCESS_TOKEN_FILE` 指定的绝对路径私密文件读取，每次请求重新读取，支持原子替换后的热加载；未配置文件模式时才使用 `VITALIS_ACCESS_TOKEN` 私密环境。文件配置无效时直接失败，不回退到旧环境令牌。令牌不放命令行、URL、日志或对话。服务端错误会清洗供应商响应和数据库内容。API 使用真实的 4xx/5xx 状态码，错误正文统一返回 `state=failed`、`failure_code`、`message`、`retryable`、`next_action` 和 `request_id`。`next_action` 区分重新认证、补齐权限、修正请求、刷新状态后重试、稍后重试和检查服务；不能把失败正文当作成功结果或健康观测。
 
@@ -18,9 +18,9 @@
 python /path/to/vitalis/scripts/vitalis_api.py report daily --day 2026-10-07
 ```
 
-固定读取命令包括 `status`、`report`、`workouts`、`job` 和白名单 `query`。`report daily --day YYYY-MM-DD --state` 读取报告新鲜度、`last_good_snapshot`、任务及下一步；更新期间可以呈现同日期上一份成功事实，并明确它正在更新。读取不会启动同步或分析；`report` 的 404 会转换为 `status=snapshot_missing`，不能改查其它日期或编造结果。完整操作表由 `tools/generate_api_reference.py` 从当前 OpenAPI 生成，见 [references/api.md](../skills/vitalis/references/api.md)。
+固定读取命令包括 `status`、`report`、`workouts`、`job` 和白名单 `query`。`report daily --day YYYY-MM-DD --state` 读取报告新鲜度、`last_good_snapshot`、任务及下一步；更新期间可以呈现同日期上一份成功事实，并明确它正在更新。读取不会启动同步或分析；`report` 的 404 会转换为 `status=snapshot_missing`，不能改查其它日期或编造结果。完整参数只用工具按需加载相关操作章节和 schema，不整份读取巨大参考文件。完整操作表由 `tools/generate_api_reference.py` 从当前 OpenAPI 生成，见 [references/api.md](../skills/vitalis/references/api.md)。
 
-`analyze`、`sync` 和 `feedback` 只有用户明确要求才调用。分析/同步写请求必须用持久 `--key-file`；同一个任务、参数和不确定响应复用同一键，客户端不会自动重试写请求。反馈 JSON 从标准输入传入，不能把备注放命令行；关联训练需要 `workout_id` 与 `workout_source`，RPE 还需要完成训练。资料 patch 使用 revision，冲突先重新读取。写入只改变明确的用户输入或反馈，不由发送、打开或沉默推断完成。
+Hermes 只授予 `read+coach+feedback`，不授予 `sync`、`analyze` 或 `manage`；主动操作通过下述服务器策略和 coach-request，反馈仍只有用户明确要求才调用。分析/同步写请求必须用持久 `--key-file`；同一个任务、参数和不确定响应复用同一键，客户端不会自动重试写请求。反馈 JSON 从标准输入传入，不能把备注放命令行；关联训练需要 `workout_id` 与 `workout_source`，RPE 还需要完成训练。资料 patch 使用 revision，冲突先重新读取。反馈写入只改变明确的用户输入，不由发送、打开或沉默推断完成；教练操作可保存来源事实及分析。
 
 ## 回答规则
 
@@ -30,7 +30,7 @@ python /path/to/vitalis/scripts/vitalis_api.py report daily --day 2026-10-07
 
 `stale`、`INSUFFICIENT_DATA`、未完成任务或事实版的限制只作用于依赖它们的结论。旧事实注明日期和截止时刻，不能称当前恢复判定；仍可回答一般知识、历史事实回顾与不依赖缺口的条件性建议，不把缺口当成已满足的安全条件。
 
-只在会改变安全性或答案方向时问 1～2 个关键问题，不反复询问已经知道的内容，也不把简单问题变成长问卷。当前红旗症状先做安全分流，不等工具返回再提醒。回答可简短，也可按用户要求深入解释，不强迫每次套用固定结构。Hermes 只有在用户明确授权时才能写反馈、资料、推荐完成或事件确认；讨论、选择建议和分享感受不等于同意记录。总结、比较、给建议或“分析一下”默认是只读讨论，不授权后台分析任务；明确要求重新生成报告/运行分析或同步才执行相应写入。草案不自动接受或保存，没有计划保存接口不能声称已保存。
+只在会改变安全性或答案方向时问 1～2 个关键问题，不反复询问已经知道的内容，也不把简单问题变成长问卷。当前红旗症状先做安全分流，不等工具返回再提醒。回答可简短，也可按用户要求深入解释，不强迫每次套用固定结构。反馈必须有用户明确意图；资料、推荐完成或事件确认还需对应权限，本 Hermes 部署不持有 manage，不能执行这些修改；讨论、选择建议和分享感受不等于同意记录。总结、比较、给建议或“分析一下”不自动授予权限；有效服务器策略允许时可主动补数据/分析，在 grant 内不反复询问。草案不自动接受或保存，没有计划保存接口不能声称已保存。
 
 服务器日常报告与 PushPlus 推送仍使用确定性引擎、已保存事实和固定渠道排版，不依赖 Hermes 或任何模型服务；模型不可用不能阻塞定时推送。对话草案不回流为报告事实或推送内容，不自由生成健康百分比、诊断或推送版式。
 
@@ -44,19 +44,32 @@ python /path/to/vitalis/scripts/vitalis_api.py report daily --day 2026-10-07
 
 ### 已完成训练评价与主动取数
 
-“昨天练得怎么样”优先读取当天完整动作组、已知目标和反馈，再按需读取此前同动作历史。默认采用已记录动作名和负重作定性讨论，给出整体判断、具体观察与下次调整；不因厂商映射、未标热身组或缺精确分数就拒绝分析。采用名称不提升后台数据资格，不擅自确认或更正档案。不主动朗读内部观察窗口、映射和数据资格术语；只有影响具体结论时用一句人话说明。训练评价不等于测得增肌收益，不把整场 RPE 当每组 RIR，不从时长推断休息过久，不在缺动作顺序时编造疲劳因果。用户未问恢复时不默认附加训练后观察审计。普通回顾和下次结构建议不加固定“不是课表/不代表训练许可”的尾段，也不为下次结构安排额外查当日日报并播报陈旧；具体安全限制仍直接说明如何调整。缺记录且未授权时优先提出可补取所问日期，不让用户重填可能在云端的数据。
+“昨天练得怎么样”优先读取当天完整动作组、已知目标和反馈，再按需读取此前同动作历史。默认采用已记录动作名和负重作定性讨论，给出整体判断、具体观察与下次调整；不因厂商映射、未标热身组或缺精确分数就拒绝分析。采用名称不提升后台数据资格，不擅自确认或更正档案。不主动朗读内部观察窗口、映射和数据资格术语；只有影响具体结论时用一句人话说明。训练评价不等于测得增肌收益，不把整场 RPE 当每组 RIR，不从时长推断休息过久，不在缺动作顺序时编造疲劳因果。用户未问恢复时不默认附加训练后观察审计。普通回顾和下次结构建议不加固定“不是课表/不代表训练许可”的尾段，也不为下次结构安排额外查当日日报并播报陈旧；具体安全限制仍直接说明如何调整。缺记录先查服务器策略，无有效授权或日期超出今天/昨天时说明范围限制，不让用户重填可能在云端的数据。
 
-只读数据未取全时主动继续查 API。用户明确授权缺训练数据时补取后，可在其授权的整日范围调用：
+### 缺数据先查，再按服务器策略操作
 
-```bash
-python /path/to/vitalis/scripts/vitalis_api.py refresh-workouts --day 2026-02-18 --authorized --key-file /private/keys/workout-refresh.json
+- 先读相关报告状态、训练详情和覆盖，已有结果足够就回答。`coach-policy` 是 `GET /coach/policy` 的纯读取（`read` scope），返回当前用户的 `enabled`、`expires_at`、`revision`、`max_requests_per_hour`、`max_inflight`、`allow_refresh`、`allow_analyze`、`today` 和 `timezone` 与有效授权。策略来自服务器拥有的文件，缺失或无效默认拒绝；模型不读取或修改该文件，不创建影子授权。普通问题本身不是授权，但有效服务器策略允许时可主动操作，在有效 grant 内不反复征求同意；用户口头要求也不能绕过服务端拒绝。
+- Hermes 仅持有 `read+coach+feedback`，没有 `sync`、`analyze`、`manage` scope。POST 只用 `coach-request refresh-workouts --day YYYY-MM-DD --key-file <私密持久路径>` 或 `coach-request analyze --day YYYY-MM-DD --key-file <私密持久路径>`，要求 `coach` scope。旧独立 refresh-workouts CLI 已删除，没有兼容入口。
+- 只有今天或昨天实际缺失的源数据（训练摘要或详情）才请求 refresh：一个服务配置时区的明确本地日历日、Zepp 训练，至多 4 条明细，不是指定单场 ID。用户仅允许单场且不允许整日范围时不能扩大。陈旧或缺失的已保存分析可按授权请求 analyze，范围为最近 28 天；不是把分析陈旧当源数据缺失。已有动作组、缺热身/计重标签、尚未发生的未来观察窗口或失败模型不能靠反复刷新/重算解决。
+- 服务器默认根请求预算 3 次/小时、最多 1 个 inflight、分析 lookback 28 天，以实际 policy 返回为准；这是根请求预算，不是 CPU 或子任务/后代数量预算。授权在新请求受理时检查，过期或撤销不取消已排队任务。每个用户问题最多 2 个根操作，总共最多 3 次 job 状态查询；同日期同目的不重复提交，refresh 已产生所需分析时不另补 analyze。
+- 遇到 403、429、网络错误或需重新登录就停止，不回退到宽权限 sync/analyze、全月或 180 天回填，不更换日期或 key 绕过限制。响应不确定时保留同一 key 文件与相同请求，恢复时复用同一 key，不自动重试写入；受理不是完成，成功后回读，未完成时解释已有部分。
+- 教练操作的静默执行上下文传给本次运行和子任务：禁止为本次链路 enqueue、rearm、repoint 待投递报告，不修改既有投递指向。仍会保存源数据和后台分析；独立定时的未来报告可以使用新事实，因此不是永远冻结报告或完全无写入。明确反馈的用户意图规则不变，feedback 可触发正常分析及其正常投递行为，不承诺所有写操作静默。
+
+### 管理员配置用户授权
+
+在 API 服务环境设置 `VITALIS_COACH_POLICY_FILE` 为绝对路径；文件必须是普通文件、不能是符号链接，POSIX 上属主 root 且组/其他用户不可写。API 每次受理重新读取，缺失、格式错误、未列出的用户或过期均默认拒绝。仅管理员能更新，Hermes 不可读写私密配置。合成配置示例（用户和日期不可原样用于生产）：
+
+```json
+{"users":{"synthetic-user":{"enabled":true,"revision":"synthetic-grant-1","expires_at":"2027-01-01T00:00:00+08:00","max_lookback_days":28,"max_requests_per_hour":3,"max_inflight":1,"allow_refresh":true,"allow_analyze":true}}}
 ```
 
-命令固定提交 `days=1`、同日 `from/to`、`source=zepp`、`workout_only=true`；不能添加多日、全量或任意刷新参数。后端按服务配置时区取整日训练摘要并最多补/刷新四条明细，并非单一 workout ID。`--authorized` 是调用意图守卫，不是身份认证或持久授权证明；Bearer scope 和服务端幂等校验不变。普通评价请求不是补取授权；同一会话已明确的补取授权可复用，长期授权需来自用户控制的范围明确的运行配置，不写影子授权文件。
+生产按已获授权的用户设置有限有效期，撤销时禁用对应条目；撤销阻止新执行，不取消已入队任务。根请求记录在 `coach_requests`，失败也占滚动小时预算；无法确认派发结果时保留预留，按原键恢复，不能用新键绕过。该策略不是一般管理员权限，也不赋予反馈内容推断权。通知抑制上下文写入同步 options、分析任务和运行记录，定时任务不能与其合并或将其升级成投递任务。
 
-先查再补，每问题/日期最多一次，持久 key 不换请求复用；任务最多查询三次，成功后回读，仍在执行就先分析已有部分。不把鉴权失败、缺热身/单位标签或未来观察窗口当同步理由，不因补取仍缺组就循环刷新。只授权单场或要求严格静默时，当前日级接口不满足范围，不能擅自扩大。
+### 跑步近期表现与研究模型
 
-补取会保存来源数据并沿用后台分析，分析可能恢复已有延迟投递或更新待投递报告，因此不是纯读取、也不能承诺完全无推送副作用；不额外调用分析、不写用户反馈或计划完成。本次只增加窄客户端入口，不改变服务器推送与同步算法。
+`query running --day YYYY-MM-DD [--include-research]` 是纯快照读取，包含 state、context、trends，不启动计算；先看新鲜度与覆盖。近期跑步默认近 28 天对比前 28 天，不必追问窗口；只有日期或运动确实歧义才澄清。结合训练结构、同类型训练、用力程度、心率、配速、耐力及覆盖解释已保存比较，不把原始中位配速直接等同于体能进步，不自行推导趋势或提升百分比。配速显示为 min:ss/km，允许有来源单位换算和格式化，这不是派生趋势计算。
+
+研究数据仅显式 `--include-research` 时读取；CS、fixedHR、durability 已有研究模型，但仍是 shadow_only / unvalidated，不是正式评分或已验证能力预测。回答“系统有没有模型”应说明已有模型及验证限制，不能说系统没有模型；也不能为了得到分数重跑失败模型或把研究候选当正式训练依据。
 
 ### 教练知识 Skill
 
@@ -75,7 +88,7 @@ python /path/to/vitalis/scripts/vitalis_api.py refresh-workouts --day 2026-02-18
 1. 按[快速开始](quickstart.md)生成新的合成库，显式设置 `ZEPP_MOCK=true`、`VITALIS_ENV=test` 和空的 PushPlus 配置。API、worker、签发令牌的进程使用同一个 `DATABASE_URL` 和 `VITALIS_TIMEZONE`。本地端口可使用 `18000`，只监听 `127.0.0.1`。
 2. 将整个 `skills/vitalis/` 复制到 `<HERMES_HOME>/skills/vitalis/`。在独立的 `config.yaml` 中设置 `terminal.backend: local`、`terminal.cwd` 为隔离工作目录，给 CLI 和 Telegram 启用 `terminal`、`skills` 工具。使用已安装 Hermes 支持的模型和有效认证，先验证模型调用成功。
 3. 在该 home 的私密 `.env` 设置 `TELEGRAM_BOT_TOKEN`、`TELEGRAM_ALLOWED_USERS`（本人数字 ID）和 `TELEGRAM_HOME_CHANNEL`（本人私聊 ID），并设置 `TELEGRAM_ALLOW_ALL_USERS=false`。令牌不放命令行或聊天。`SOUL.md` 要求先读取 Vitalis Skill，再调用客户端；验收期间每次健康回答明确标注“合成演示数据”。不要把仓库开发规则当作健康助理的人设。
-4. 为合成用户签发 `read`、`analyze`、`sync`、`feedback` scope 的令牌；需要验证资料、偏好或目标修改时才增加 `manage`。令牌文件放在同级私密目录，使用 `token issue --output` 写入新路径。启动独立 API 和 worker，检查 `/live`、`/ready` 和 `doctor` 的 worker 心跳。
+4. 为合成用户签发仅 `read`、`coach`、`feedback` scope 的令牌，不增加 `sync`、`analyze` 或 `manage`。服务器拥有的策略文件明确配置授权范围和到期；缺失默认拒绝。令牌文件放在同级私密目录，使用 `token issue --output` 写入新路径。启动独立 API 和 worker，检查 `/live`、`/ready` 和 `doctor` 的 worker 心跳。
 
 使用[启动器](../tools/run_hermes.py)验证 Vitalis 令牌文件，把绝对文件路径注入 Hermes 子进程的 `VITALIS_ACCESS_TOKEN_FILE`，清除继承的 `VITALIS_ACCESS_TOKEN`；Skill 每次请求读取文件中的最新令牌，轮换后无需重启网关。它校验 API origin 与安装目录，使用独立 home 作为工作目录，并把临时文件固定到仓库 `.tmp/hermes-launcher/`；令牌不进入进程参数。旧的 `VITALIS_API`、`VITALIS_USER` 不能替代当前 Bearer 配置。命令默认从仓库根目录执行：
 
@@ -126,12 +139,12 @@ Linux 的 systemd 模板见 [vitalis-hermes.service](../deploy/systemd/vitalis-h
 最小验收场景：
 
 - 已完成训练问效果：有完整组数但映射/热身资格未齐时，仍给出基于动作和组间表现的评价与改进，不主动朗读内部术语，不把整场 RPE 换算为 RIR；读取此前同动作，不重复问已知目标。
-- 缺明细先只读查单次详情；无补取授权时不写。明确整日补取授权后仅一次指定日 `refresh-workouts`，查 job 后回读，不额外分析/反馈，不跨日、不许诺严格静默。
+- 缺明细先只读查单次详情和 coach-policy；策略拒绝时不写，有效授权内只走 coach-request，验证根预算、静默上下文和回读，不新增反馈，不扩大日期。
 
 - 先说明器械、时间和近期训练，再追问“今天怎么练”：沿用会话信息，先取日报完整步骤，按需 explain；不能只复述 context 标题。补充草案给出组次、休息、RIR 和调整条件，不编公斤数或已恢复结论。
 - “本月至今训练如何”：读取本地月初到截止日，而非默认上一完整月或短窗口；只对已返回训练作有覆盖限定的阶段回顾，不冒充完整月度统计。
 - 恢复快照 stale 或局部指标缺失，再询问一般训练知识：限制相关恢复结论，不全局拒答；已知疼痛仍约束草案。
-- 先说酸痛、偏好并讨论草案，再明确“帮我记录”：前几轮没有写入、同步或分析；授权后按请求写入一次，成功回读后才称已记录，不额外补发分析。
+- 先说酸痛、偏好并讨论草案，再明确“帮我记录”：前几轮没有反馈写入，策略允许的数据操作单独核对；明确记录意图后按请求写入一次，成功回读后才称已记录，不额外补发分析。
 - 模型服务不可用：对话明确失败，服务器确定性日常报告与推送链路不依赖模型继续运行；仅用合成数据和假发送器验证，不发送真实通知。
 
 2026-10-28 本地已用独立合成库完成实际验收：第三方兼容模型 `gpt-6.1-sol` 的工具调用、Hermes 通过离仓 Skill 读取报告、只读请求不产生反馈或分析任务、明确授权的反馈仅提交一次且对应分析成功；本人从 Telegram 私聊发起测试，后台核对了入站消息、Skill 调用成功和带测试标记的合成回复，用户确认收到。旧网关已正常停止，旧 Windows 自启动任务已核对为禁用。当前本地实例绑定 `demo`；服务器切换真实用户时须重新签发令牌并完成同一收发验收。

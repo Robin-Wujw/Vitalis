@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from .models import AccessToken, User
 
-ACCESS_SCOPES = frozenset({"read", "analyze", "sync", "feedback", "manage"})
+ACCESS_SCOPES = frozenset({"read", "analyze", "sync", "feedback", "manage", "coach"})
 
 
 def _utc_naive(value: datetime) -> datetime:

@@ -103,6 +103,17 @@ def test_strength_workout_detail_scope_is_not_generalized(document):
     assert "--samples" in document
 
 
+def test_running_snapshot_and_research_are_qualified(document):
+    for rule in (
+        "query running --day", "--include-research", "纯快照", "state", "context", "trends",
+        "近 28 天", "前 28 天", "不必追问窗口", "训练结构", "同类型", "用力",
+        "心率", "配速", "耐力", "原始中位配速", "min:ss/km", "单位换算",
+        "CS", "fixedHR", "durability", "shadow_only", "unvalidated",
+        "不是正式评分", "不能说系统没有模型",
+    ):
+        assert rule in document
+
+
 def test_persona_is_reusable_and_uses_hermes_python():
     soul = (ROOT / "deploy/hermes/SOUL.md").read_text(encoding="utf-8")
     assert 'python "$HERMES_HOME/skills/vitalis/scripts/vitalis_api.py"' in soul

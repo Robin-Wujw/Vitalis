@@ -63,6 +63,15 @@ def trends(
     return _snapshot_or_404(get_intelligence_query().trends(user_id, day))
 
 
+@router.get("/running", operation_id="get_running_analysis", summary="Read saved running facts and qualified comparisons")
+def running(
+    day: date | None = None,
+    include_research: bool = Query(False, description="Include unvalidated shadow-only capability estimates, never a formal score"),
+    user_id: str = Depends(require_user_id),
+) -> dict:
+    return _snapshot_or_404(get_intelligence_query().running(user_id, day, include_research=include_research))
+
+
 @router.get("/events", response_model=HealthEventResponse, summary="Get persistent health events")
 def events(
     start: date | None = None,

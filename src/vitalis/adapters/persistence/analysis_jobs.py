@@ -221,7 +221,7 @@ class SqlAnalysisJobRepository:
                     row = db.get(AnalysisJob, job_id)
                     return JobClaim(
                         row.id, row.user_id, row.target_date, token, row.lease_epoch,
-                        row.delivery_period,
+                        row.delivery_period, dict(row.execution_context or {}),
                     )
         return None
 

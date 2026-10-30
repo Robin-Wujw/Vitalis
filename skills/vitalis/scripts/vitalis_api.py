@@ -31,6 +31,7 @@ REPORT_KINDS = (
 )
 READ_OPERATIONS = {
     "profile": "intelligence/profile",
+    "running": "intelligence/running",
     "trends": "intelligence/trends",
     "events": "intelligence/events",
     "explain": "intelligence/explain",
@@ -63,14 +64,16 @@ KEY_PATTERN = re.compile(r"[A-Za-z0-9._:-]{16,128}\Z")
 
 
 class ClientError(Exception):
-    def __init__(self, code: str, http_status: int | None = None):
+    def __init__(self, code: str, http_status: int | None = None, fields: dict | None = None):
         self.code = code
         self.http_status = http_status
+        self.fields = fields or {}
 
     def as_json(self) -> dict:
         result = {"status": "error", "error": self.code}
         if self.http_status is not None:
             result["http_status"] = self.http_status
+        result.update(self.fields)
         return result
 
 
@@ -276,6 +279,28 @@ def redact(value, token: str):
     return value
 
 
+def coach_error_fields(response, token: str) -> dict:
+    """Read only bounded machine-readable error metadata, never server prose."""
+    try:
+        raw = response.read(MAX_RESPONSE_BYTES + 1)
+        if len(raw) > MAX_RESPONSE_BYTES:
+            return {}
+        payload = strict_json(raw)
+    except (OSError, ValueError, UnicodeError, RecursionError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    fields = {}
+    for name in ("state", "failure_code", "next_action"):
+        value = payload.get(name)
+        if (isinstance(value, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", value)
+                and token not in value):
+            fields[name] = value
+    if type(payload.get("retryable")) is bool:
+        fields["retryable"] = payload["retryable"]
+    return fields
+
+
 def request(method: str, path: str, token: str, body: dict | None = None,
             params: dict | None = None, key: str | None = None):
     origin = api_origin()
@@ -306,7 +331,10 @@ def request(method: str, path: str, token: str, body: dict | None = None,
                 except (ValueError, UnicodeError, RecursionError) as exc:
                     raise ClientError("invalid_response_json") from exc
         except urllib.error.HTTPError as exc:
-            exc.close()
+            try:
+                fields = coach_error_fields(exc, token) if path in ("coach/policy", "coach/operations") else {}
+            finally:
+                exc.close()
             if 300 <= exc.code < 400:
                 raise ClientError("redirect_blocked", exc.code) from None
             if method == "GET" and attempt == 0 and exc.code in TRANSIENT_STATUSES:
@@ -315,7 +343,7 @@ def request(method: str, path: str, token: str, body: dict | None = None,
             if path.startswith("reports/") and exc.code == 404:
                 return {"status": "snapshot_missing", "http_status": 404}
             code = {401: "unauthorized", 403: "forbidden"}.get(exc.code, "http_error")
-            raise ClientError(code, exc.code) from None
+            raise ClientError(code, exc.code, fields) from None
         except (urllib.error.URLError, socket.timeout, TimeoutError, OSError) as exc:
             if method == "GET" and attempt == 0:
                 time.sleep(0.2)
@@ -345,6 +373,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     query = commands.add_parser("query")
     query.add_argument("operation", choices=tuple(READ_OPERATIONS))
     query.add_argument("--day", type=iso_date)
+    query.add_argument("--include-research", action="store_true")
     query.add_argument("--start", type=iso_date)
     query.add_argument("--end", type=iso_date)
     query.add_argument("--event-type")
@@ -359,16 +388,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     feedback = commands.add_parser("feedback")
     feedback.add_argument("--key-file")
 
-    refresh = commands.add_parser(
-        "refresh-workouts", allow_abbrev=False,
-        description="Refresh one workout day; background analysis and existing delivery side effects apply.",
+    commands.add_parser("coach-policy")
+    coach = commands.add_parser(
+        "coach-request", allow_abbrev=False,
+        description="Request a server-policy-authorized operation with notifications suppressed.",
     )
-    refresh.add_argument("--day", type=iso_date, required=True)
-    refresh.add_argument(
-        "--authorized", action="store_true", required=True,
-        help="Confirm explicit user intent; not a security boundary or a change to backend scopes",
-    )
-    refresh.add_argument("--key-file", required=True)
+    coach.add_argument("operation", choices=("refresh-workouts", "analyze"))
+    coach.add_argument("--day", type=iso_date, required=True)
+    coach.add_argument("--key-file", required=True)
 
     sync = commands.add_parser("sync")
     sync.add_argument("--key-file", required=True)
@@ -397,6 +424,8 @@ def run(args: argparse.Namespace):
     token = access_token()
     if args.command == "status":
         return request("GET", "data-status", token)
+    if args.command == "coach-policy":
+        return request("GET", "coach/policy", token)
     if args.command == "report":
         suffix = "/state" if args.state else "/view" if args.view else ""
         path = "reports/" + args.kind + suffix
@@ -407,6 +436,7 @@ def run(args: argparse.Namespace):
     if args.command == "query":
         allowed = {
             "profile": set(), "training-preferences": set(),
+            "running": {"day", "include_research"},
             "trends": {"day"}, "explain": {"day"}, "context": {"day"},
             "training-responses": {"day"}, "personal-model": {"day"},
             "personal-associations": {"day"},
@@ -424,6 +454,10 @@ def run(args: argparse.Namespace):
             "day": args.day, "start": args.start, "end": args.end,
             "event_type": args.event_type, "limit": args.limit,
         }
+        if args.include_research and args.operation != "running":
+            raise ClientError("invalid_arguments")
+        if args.operation == "running":
+            supplied["include_research"] = "true" if args.include_research else "false"
         if any(value is not None and name not in allowed for name, value in supplied.items()):
             raise ClientError("invalid_arguments")
         if args.event_type is not None and len(args.event_type) > 64:
@@ -474,11 +508,11 @@ def run(args: argparse.Namespace):
         body = {"day": args.day}
         key = key_from_file(args.key_file, "POST /api/analysis-runs", body)
         return request("POST", "analysis-runs", token, body=body, key=key)
-    if args.command == "refresh-workouts":
-        body = {"days": 1, "source": "zepp", "from": args.day, "to": args.day,
-                "workout_only": True}
-        key = key_from_file(args.key_file, "POST /api/sync-jobs", body)
-        return request("POST", "sync-jobs", token, body=body, key=key)
+    if args.command == "coach-request":
+        operation = {"refresh-workouts": "refresh_workouts", "analyze": "analyze"}[args.operation]
+        body = {"operation": operation, "day": args.day}
+        key = key_from_file(args.key_file, "POST /api/coach/operations", body)
+        return request("POST", "coach/operations", token, body=body, key=key)
     body = {"days": args.days, "source": "zepp"}
     for field in ("decode_dense_files", "detail_backfill", "workout_only", "detail_only",
                   "detail_limit", "detail_refresh_before"):

@@ -20,9 +20,11 @@ def test_single_runtime_skill_is_bearer_scoped_and_does_not_compute_health_facts
     assert "Idempotency-Key" in document
     assert "status=snapshot_missing" in document
     assert "INSUFFICIENT_DATA" in document
-    assert "不要自行计算趋势" in document
-    assert "不得诊断疾病" in document
+    assert "确定性工具" in document and "strength-review" in document and "race-equivalence" in document
+    assert "不虚构恢复分数、趋势、因果" in document
     assert "不同用户、设备、来源或单位" in document
+    persona = (SKILL.parents[1] / "deploy" / "hermes" / "SOUL.md").read_text(encoding="utf-8")
+    assert "不得诊断疾病" in persona
     assert "tools/analyze.py" not in document
     assert "../../" not in document
 

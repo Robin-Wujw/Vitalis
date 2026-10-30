@@ -2388,7 +2388,9 @@ class HealthRepository:
                 orm.Workout.user_id == user_id,
                 orm.Workout.started_at >= _naive_utc(start_at),
                 orm.Workout.started_at < _naive_utc(end_at),
-            ).order_by(orm.Workout.started_at.desc()).limit(limit)
+            ).order_by(
+                orm.Workout.started_at.desc(), orm.Workout.source, orm.Workout.workout_id,
+            ).limit(limit)
         ).scalars().all())
 
     def open_health_load_inputs(

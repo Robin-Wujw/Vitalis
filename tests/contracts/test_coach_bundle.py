@@ -66,6 +66,26 @@ def test_provenance_pins_reviewed_paths_and_ranges():
         for source in entry["sources"]:
             assert source["url"] == f"{REPO}/blob/{SHA}/{source['path']}"
     assert data["excluded_capabilities"]
+    # Local task-completion additions must not be attributed to pinned upstream.
+    for name in ("training-principles", "technique-and-session-education"):
+        entry = data["references"][name]
+        assert "Vitalis-local" in entry["adaptation_notes"]
+        assert entry["local_additions"]
+        assert "recorded loads" in entry["adaptation_notes"]
+
+
+def test_adapted_references_support_grounded_plans_without_adding_tools():
+    training = (BUNDLE / "references/training-principles.md").read_text(encoding="utf-8")
+    technique = (BUNDLE / "references/technique-and-session-education.md").read_text(encoding="utf-8")
+    for text in (training, technique):
+        assert "Vitalis 本地补充" in text
+        assert "记录负重" in text
+        assert "起点" in text
+        assert "不新增" in text
+    for rule in ("已完成训练量", "最大耐受量", "腿部", "长跑", "逐日检查"):
+        assert rule in training
+    for rule in ("组数、次数", "休息", "RIR", "一次", "安全问题"):
+        assert rule in technique
 
 
 def test_entrypoint_authority_safety_and_no_persistence():
@@ -74,12 +94,12 @@ def test_entrypoint_authority_safety_and_no_persistence():
     for phrase in (
         "knowledge-only",
         "条件性训练草案",
-        "组数、次数、休息与余力",
+        "组数、次数", "休息", "记录负重", "可调整起点", "确定性工具",
         "不新增工具及写入能力",
         "不是原版完整能力",
         "Vitalis API",
         "个人事实、趋势、评分",
-        "不得自行推导",
+        "不虚构", "生理", "完成",
         "readiness",
         "热量",
         "PR",

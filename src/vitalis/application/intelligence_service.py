@@ -673,6 +673,15 @@ class IntelligenceQuery:
             running.model_dump(mode="json", exclude={"performance"})
             if running is not None else None
         )
+        result["recorded_effort"] = [
+            workout.model_dump(mode="json", include={"workout_id", "source", "date", "session_rpe"})
+            for workout in daily.features.training.recent_workouts if workout.type == "running"
+        ]
+        result["classification_basis"] = "inferred_not_user_goal"
+        result["classification_use"] = (
+            "Heart-rate/speed classification is not a measured effort or race qualification; "
+            "compare saved session RPE and zone source before judging intensity."
+        )
         result["trends"] = [
             trend.model_dump(mode="json") for trend in daily.trends
             if trend.metric.startswith("running_")

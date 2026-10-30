@@ -115,6 +115,22 @@ def test_running_projects_saved_facts_and_freshness_only(query_factory, saved, s
     assert all(call[0] == USER and call[2] == DAY for call in repo.calls)
 
 
+def test_running_projection_exposes_saved_effort_alongside_inferred_classification(query_factory, saved):
+    from vitalis.intelligence.contracts import WorkoutFeature
+    saved.features.training.recent_workouts = [WorkoutFeature(
+        workout_id="synthetic-run", source="mock", date=DAY, type="running", type_label="跑步",
+        sport_mode="outdoor_running", sport_mode_label="户外跑", training_family="running",
+        training_family_label="跑步", recognition_confidence="high", recognition_confidence_label="高",
+        recognition_source="vendor", recognition_source_label="来源", duration_minutes=30,
+        session_rpe={"value": 4, "source": "zepp", "source_scope": "workout_summary", "source_field": "rpe"},
+    )]
+    query, _ = query_factory()
+    result = query.running(USER)
+    assert result["recorded_effort"][0]["session_rpe"]["value"] == 4
+    assert result["classification_basis"] == "inferred_not_user_goal"
+    assert "not" in result["classification_use"]
+
+
 def test_running_research_is_opt_in_labeled_and_separate(query_factory, saved):
     query, _ = query_factory()
     result = query.running(USER, DAY, include_research=True)

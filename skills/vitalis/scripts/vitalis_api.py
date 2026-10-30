@@ -177,6 +177,22 @@ def positive_int(value: str, maximum: int) -> int:
     return number
 
 
+def bounded_text(value: str, maximum: int) -> str:
+    if not value.strip() or len(value) > maximum:
+        raise ClientError("invalid_arguments")
+    return value
+
+
+def race_target_km(value: str) -> float:
+    try:
+        number = float(value)
+    except ValueError as exc:
+        raise ClientError("invalid_arguments") from exc
+    if not math.isfinite(number) or not 3 <= number <= 42.195:
+        raise ClientError("invalid_arguments")
+    return number
+
+
 def strict_json(value):
     def reject_constant(_value):
         raise ValueError("non-standard JSON constant")
@@ -388,6 +404,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     feedback = commands.add_parser("feedback")
     feedback.add_argument("--key-file")
 
+    strength_review = commands.add_parser("strength-review", allow_abbrev=False)
+    strength_review.add_argument("--from", dest="from_date", type=iso_date)
+    strength_review.add_argument("--to", type=iso_date)
+    strength_review.add_argument("--limit", type=lambda value: positive_int(value, 100), default=100)
+
+    race_equivalence = commands.add_parser(
+        "race-equivalence", allow_abbrev=False,
+        description="Read a server-calculated Riegel what-if, not a validated personal forecast.",
+    )
+    race_equivalence.add_argument("--id", type=lambda value: bounded_text(value, 128), required=True)
+    race_equivalence.add_argument("--source", type=lambda value: bounded_text(value, 32), required=True)
+    race_equivalence.add_argument("--target-km", type=race_target_km, default=21.0975)
+    race_equivalence.add_argument("--effort-basis", choices=("scenario", "user_reported_maximal"), default="scenario")
+
     commands.add_parser("coach-policy")
     coach = commands.add_parser(
         "coach-request", allow_abbrev=False,
@@ -415,7 +445,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     workouts.add_argument("--source")
     workouts.add_argument("--strength-details", action="store_true", help="Read saved strength sets for at most 20 workouts")
     workouts.add_argument("--samples", action="store_true", help="Include metric samples for a single workout")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.command == "strength-review":
+        if (args.from_date is None) != (args.to is None):
+            raise ClientError("invalid_arguments")
+        if args.from_date is not None:
+            window_days = (date.fromisoformat(args.to) - date.fromisoformat(args.from_date)).days + 1
+            if not 1 <= window_days <= 90:
+                raise ClientError("invalid_arguments")
+    return args
 
 
 def run(args: argparse.Namespace):
@@ -426,6 +464,16 @@ def run(args: argparse.Namespace):
         return request("GET", "data-status", token)
     if args.command == "coach-policy":
         return request("GET", "coach/policy", token)
+    if args.command == "strength-review":
+        params = {"limit": args.limit}
+        if args.from_date is not None:
+            params.update({"from": args.from_date, "to": args.to})
+        return request("GET", "coach/strength-review", token, params=params)
+    if args.command == "race-equivalence":
+        return request("GET", "coach/race-equivalence", token, params={
+            "workout_id": args.id, "source": args.source,
+            "target_km": args.target_km, "effort_basis": args.effort_basis,
+        })
     if args.command == "report":
         suffix = "/state" if args.state else "/view" if args.view else ""
         path = "reports/" + args.kind + suffix

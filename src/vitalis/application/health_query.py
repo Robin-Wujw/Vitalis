@@ -339,6 +339,41 @@ class HealthQuery:
             "payload_decoded": any(row.parse_status == "decoded" for row in visible_rows),
         }
 
+    def strength_review(
+        self, user_id: str, start: date, end: date, limit: int = 100,
+    ) -> dict:
+        """Calculate completed-work arithmetic from bounded, saved records only."""
+        from vitalis.intelligence.strength_review import review_strength_workouts
+
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("strength review limit must be between 1 and 100")
+        if start > end:
+            raise ValueError("start must not be after end")
+        if (end - start).days >= 90:
+            raise ValueError("strength review window must not exceed 90 inclusive days")
+        try:
+            rows = self._reader.strength_review_workouts(
+                user_id, start, end, limit + 1, timezone_name=self._timezone_name,
+            )
+        except OverflowError as exc:
+            raise ValueError("strength review date boundary is out of range") from exc
+        workouts = [
+            {
+                "source": row.source, "workout_id": row.workout_id,
+                "data": row.data, "detail": row.detail,
+                "detail_available": row.detail_synced,
+                "confirmed_exercises": list(row.confirmed_exercises),
+            }
+            for row in rows[:limit]
+        ]
+        return {
+            "user_id": user_id, "limit": limit,
+            **review_strength_workouts(
+                workouts, start=start, end=end, timezone_name=self._timezone_name,
+                truncated=len(rows) > limit,
+            ),
+        }
+
     def list_workouts(
         self, user_id: str, start: date, end: date, limit: int,
         *, include_strength_details: bool = False,
@@ -396,6 +431,34 @@ class HealthQuery:
             "detail_available": row.detail_synced,
             "detail": detail or None,
         }
+
+    def race_equivalence(
+        self, user_id: str, workout_id: str, source: str, *,
+        target_km: float = 21.0975, effort_basis: str = "scenario",
+    ) -> dict | None:
+        """Pure conditional arithmetic over one user-scoped saved run; no tasks."""
+        from vitalis.intelligence.race_equivalence import race_equivalence
+
+        result = self._reader.workout_detail(user_id, workout_id, source, include_samples=False)
+        if result is None:
+            return None
+        row, _ = result
+        facts = {**row.data, "source": row.source, "workout_id": row.workout_id}
+        calculated = race_equivalence(facts, row.detail, target_km=target_km, effort_basis=effort_basis)
+        now = _as_utc(self._now_factory())
+        for field in ("started_at", "ended_at"):
+            value = facts.get(field)
+            if isinstance(value, str):
+                value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if isinstance(value, datetime) and _as_utc(value) > now:
+                raise ValueError("future_workout")
+        if facts.get("ended_at") is None and facts.get("started_at") is not None:
+            started = facts["started_at"]
+            if isinstance(started, str):
+                started = datetime.fromisoformat(started.replace("Z", "+00:00"))
+            if calculated["source_facts"]["time_seconds"] > (now - _as_utc(started)).total_seconds():
+                raise ValueError("future_workout")
+        return {"user_id": user_id, **calculated}
 
     def token_status(self, user_id: str, source: str = "zepp") -> dict:
         metadata = self._reader.token_metadata(user_id, source)

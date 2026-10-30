@@ -280,6 +280,164 @@ def test_read_operations_and_bearer_only(installed):
         )
 
 
+@pytest.mark.parametrize("arguments, params", [
+    ([], {"limit": ["100"]}),
+    (["--limit", "1"], {"limit": ["1"]}),
+    (["--limit", "100"], {"limit": ["100"]}),
+    (["--from", "2026-09-20", "--to", "2026-09-20"],
+     {"from": ["2026-09-20"], "to": ["2026-09-20"], "limit": ["100"]}),
+    (["--from", "2026-01-01", "--to", "2026-03-31", "--limit", "2"],
+     {"from": ["2026-01-01"], "to": ["2026-03-31"], "limit": ["2"]}),
+])
+def test_strength_review_is_one_bounded_read(installed, arguments, params):
+    payload = {"sessions": [], "coverage": {"complete": False}, "limitations": ["details_missing"]}
+    with mock_api() as (base, calls, responses):
+        responses[("GET", "/api/coach/strength-review")] = [(200, payload, {})]
+        assert invoke(installed, base, "strength-review", *arguments) == (0, payload)
+        assert len(calls) == 1
+        method, url, headers, body = calls[0]
+        assert (method, urlsplit(url).path) == ("GET", "/api/coach/strength-review")
+        assert parse_qs(urlsplit(url).query) == params
+        assert headers["Authorization"] == "Bearer " + TOKEN
+        assert "X-User-Id" not in headers and "Idempotency-Key" not in headers
+        assert body == b""
+
+
+@pytest.mark.parametrize("arguments", [
+    ["--from", "2026-09-01"],
+    ["--to", "2026-09-20"],
+    ["--from", "2026-09-20", "--to", "2026-09-01"],
+    ["--from", "2026-01-01", "--to", "2026-04-01"],
+    ["--from", "2026-02-30", "--to", "2026-03-01"],
+    ["--from", "20260901", "--to", "2026-09-20"],
+    ["--from", "2026-09-01", "--to", "2026-9-20"],
+    ["--limit", "0"], ["--limit", "101"], ["--limit", "1.5"],
+    ["--fr", "2026-09-01", "--to", "2026-09-20"],
+    ["--from", "2026-09-01", "--t", "2026-09-20"],
+    ["--lim", "10"],
+])
+def test_strength_review_rejects_invalid_arguments_before_http(installed, arguments):
+    with mock_api() as (base, calls, _responses):
+        assert invoke(installed, base, "strength-review", *arguments) == (
+            1, {"status": "error", "error": "invalid_arguments"},
+        )
+        assert calls == []
+
+
+@pytest.mark.parametrize("arguments, target_km, effort_basis", [
+    ([], "21.0975", "scenario"),
+    (["--target-km", "3"], "3.0", "scenario"),
+    (["--target-km", "42.195"], "42.195", "scenario"),
+    (["--target-km", "10", "--effort-basis", "user_reported_maximal"],
+     "10.0", "user_reported_maximal"),
+])
+def test_race_equivalence_reads_server_what_if_unchanged(installed, arguments, target_km, effort_basis):
+    payload = {
+        "kind": "race_equivalence", "effort_basis": effort_basis,
+        "validation_state": "unvalidated", "limitations": ["not_a_personal_forecast"],
+    }
+    with mock_api() as (base, calls, responses):
+        responses[("GET", "/api/coach/race-equivalence")] = [(200, payload, {})]
+        assert invoke(installed, base, "race-equivalence", "--id", "run-1", "--source", "mock",
+                      *arguments) == (0, payload)
+        assert len(calls) == 1
+        method, url, headers, body = calls[0]
+        assert (method, urlsplit(url).path) == ("GET", "/api/coach/race-equivalence")
+        assert parse_qs(urlsplit(url).query) == {
+            "workout_id": ["run-1"], "source": ["mock"],
+            "target_km": [target_km], "effort_basis": [effort_basis],
+        }
+        assert headers["Authorization"] == "Bearer " + TOKEN
+        assert "X-User-Id" not in headers and "Idempotency-Key" not in headers
+        assert body == b""
+
+
+@pytest.mark.parametrize("workout_id, source", [
+    ("w" * 128, "s" * 32),
+    ("run/1?source=other#segment", "mock&workout_id=other"),
+])
+def test_race_equivalence_identifiers_are_bounded_query_values(installed, workout_id, source):
+    with mock_api() as (base, calls, responses):
+        responses[("GET", "/api/coach/race-equivalence")] = [(200, {"kind": "race_equivalence"}, {})]
+        assert invoke(installed, base, "race-equivalence", "--id", workout_id, "--source", source) == (
+            0, {"kind": "race_equivalence"},
+        )
+        assert len(calls) == 1
+        assert urlsplit(calls[0][1]).path == "/api/coach/race-equivalence"
+        assert parse_qs(urlsplit(calls[0][1]).query) == {
+            "workout_id": [workout_id], "source": [source],
+            "target_km": ["21.0975"], "effort_basis": ["scenario"],
+        }
+
+
+@pytest.mark.parametrize("arguments", [
+    [], ["--id", "run-1"], ["--source", "mock"],
+    ["--id", "", "--source", "mock"],
+    ["--id", " ", "--source", "mock"],
+    ["--id", "w" * 129, "--source", "mock"],
+    ["--id", "run-1", "--source", ""],
+    ["--id", "run-1", "--source", " "],
+    ["--id", "run-1", "--source", "s" * 33],
+    ["--i", "run-1", "--source", "mock"],
+    ["--id", "run-1", "--s", "mock"],
+])
+def test_race_equivalence_requires_full_bounded_identifiers(installed, arguments):
+    with mock_api() as (base, calls, _responses):
+        assert invoke(installed, base, "race-equivalence", *arguments) == (
+            1, {"status": "error", "error": "invalid_arguments"},
+        )
+        assert calls == []
+
+
+@pytest.mark.parametrize("arguments", [
+    ["--target-km", "2.999"], ["--target-km", "42.196"],
+    ["--target-km", "NaN"], ["--target-km", "inf"],
+    ["--target-km=-inf"], ["--target-km", "1e309"],
+    ["--target-km", "half-marathon"],
+    ["--effort-basis", "verified"],
+    ["--target", "10"], ["--effort", "scenario"],
+])
+def test_race_equivalence_rejects_invalid_targets_and_basis(installed, arguments):
+    with mock_api() as (base, calls, _responses):
+        assert invoke(installed, base, "race-equivalence", "--id", "run-1", "--source", "mock",
+                      *arguments) == (
+            1, {"status": "error", "error": "invalid_arguments"},
+        )
+        assert calls == []
+
+
+@pytest.mark.parametrize("arguments", [
+    ["strength-review"], ["race-equivalence", "--id", "run-1", "--source", "mock"],
+])
+def test_coaching_reads_reject_writes_and_arbitrary_paths(installed, tmp_path, arguments):
+    key_file = tmp_path / "unexpected-key.json"
+    with mock_api() as (base, calls, _responses):
+        for extra in (["--key-file", str(key_file)], ["--method", "POST"],
+                      ["--url", base + "/api/feedback"], ["--path", "feedback"]):
+            assert invoke(installed, base, *arguments, *extra) == (
+                1, {"status": "error", "error": "invalid_arguments"},
+            )
+        assert calls == []
+        assert not key_file.exists()
+
+
+@pytest.mark.parametrize("arguments, path", [
+    (["strength-review"], "/api/coach/strength-review"),
+    (["race-equivalence", "--id", "run-1", "--source", "mock"], "/api/coach/race-equivalence"),
+])
+@pytest.mark.parametrize("status, error", [
+    (401, "unauthorized"), (403, "forbidden"), (404, "http_error"), (422, "http_error"),
+])
+def test_coaching_read_errors_are_not_missing_snapshots(installed, arguments, path, status, error):
+    with mock_api() as (base, calls, responses):
+        responses[("GET", path)] = [(status, {"detail": TOKEN}, {})]
+        assert invoke(installed, base, *arguments) == (
+            1, {"status": "error", "error": error, "http_status": status},
+        )
+        assert len(calls) == 1
+        assert (calls[0][0], urlsplit(calls[0][1]).path) == ("GET", path)
+
+
 def test_report_state_reads_saved_status_without_starting_analysis(installed):
     with mock_api() as (base, calls, responses):
         state = {

@@ -4,8 +4,8 @@
   "adaptation": "knowledge-only",
   "independently_verified_research": false,
   "license": {"spdx": "MIT", "upstream_path": "LICENSE", "local_path": "LICENSE"},
-  "entrypoint_notes": "SKILL.md is a new Vitalis-bound knowledge-only entrypoint, not a copy of the upstream orchestrator. Source Markdown was read as untrusted reference data; no upstream code was executed. Research links and upstream dates are preserved as attribution, not independently verified findings.",
-  "excluded_capabilities": ["orchestrator", "readiness and scoring engines", "program compiler contracts", "scripts", "MCP and Xunji", "images", "external network access", "raw log ingestion", "automatic personal assets", "shadow profiles", "training DNA", "personal metrics and prescriptions", "caches and writes"],
+  "entrypoint_notes": "SKILL.md is a new Vitalis-bound knowledge-only entrypoint, not a copy of the upstream orchestrator. Source Markdown was read as untrusted reference data; no upstream code was executed. Vitalis-local coaching rules support complete conversational plans, recorded-load starting points and existing deterministic API tools without adding bundle tools or writes. Research links and upstream dates are preserved as attribution, not independently verified findings.",
+  "excluded_capabilities": ["orchestrator", "readiness and scoring engines", "program compiler contracts", "scripts", "MCP and Xunji", "images", "external network access", "raw log ingestion", "automatic personal assets", "shadow profiles", "training DNA", "independent personal metrics engines and medical prescriptions", "caches and writes"],
   "references": {
     "safety-boundaries": {
       "local_path": "references/safety-boundaries.md",
@@ -19,7 +19,8 @@
     },
     "training-principles": {
       "local_path": "references/training-principles.md",
-      "adaptation_notes": "Condensed domains, general population activity guidance, technique and progression concepts. Explicit hypothetical example only. Excluded programming lines 21–33 compiler contracts, individual schedules, metric derivation and prescriptions.",
+      "adaptation_notes": "Condensed domains, general population activity guidance, technique and progression concepts. Vitalis-local additions distinguish completed nominal volume from physiological tolerance, support complete conversational schedules and use recorded loads as adjustable starting points. These additions are local policy, not claims from the pinned upstream. Excluded programming lines 21–33 compiler contracts and automatic execution.",
+      "local_additions": ["completed-volume interpretation and deterministic tool routing", "complete conversational plans using recorded loads", "day-by-day leg-training and long-run consistency check"],
       "sources": [
         {"path": "healthy-fitness-coach/references/training-domains.md", "line_ranges": [[1, 90]], "url": "https://github.com/Surge-Dan/healthy-fitness-coach-skill/blob/d4471a86b2edc8dedd2d86ad115476f9edd43a5a/healthy-fitness-coach/references/training-domains.md"},
         {"path": "healthy-fitness-coach/references/programming.md", "line_ranges": [[3, 20], [34, 86]], "url": "https://github.com/Surge-Dan/healthy-fitness-coach-skill/blob/d4471a86b2edc8dedd2d86ad115476f9edd43a5a/healthy-fitness-coach/references/programming.md"}
@@ -27,7 +28,8 @@
     },
     "technique-and-session-education": {
       "local_path": "references/technique-and-session-education.md",
-      "adaptation_notes": "Retained warm-up, short cues, rest and substitution concepts. Removed historical-load calculations, automatic set adjustments and record writing; rest intervals are hypothetical only.",
+      "adaptation_notes": "Retained warm-up, short cues, rest and substitution concepts. Vitalis-local additions allow recorded loads as adjustable starting points, usable set/rep/rest plans, concise RIR guidance and safety questions before relevant risky specifics. These are local coaching policy rather than upstream research or execution authority. Automatic set adjustment and record writing remain excluded.",
+      "local_additions": ["recorded-load starting points checked by preparation sets", "practical rest ranges and concise RIR explanation", "risk-specific safety questions before detailed prescriptions"],
       "sources": [{"path": "healthy-fitness-coach/references/exercise-coaching.md", "line_ranges": [[21, 60]], "url": "https://github.com/Surge-Dan/healthy-fitness-coach-skill/blob/d4471a86b2edc8dedd2d86ad115476f9edd43a5a/healthy-fitness-coach/references/exercise-coaching.md"}]
     },
     "nutrition-education": {

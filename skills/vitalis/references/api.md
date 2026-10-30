@@ -38,9 +38,11 @@ The complete service contract remains available from `GET /openapi.json`.
 | `get_product_metrics` | GET | `/api/product/metrics` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_product_summary` | GET | `/api/product/summary` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_public_report_view` | GET | `/api/reports/{kind}/view` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_race_equivalence` | GET | `/api/coach/race-equivalence` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_report` | GET | `/api/reports/{kind}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_report_state` | GET | `/api/reports/{kind}/state` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_running_analysis` | GET | `/api/intelligence/running` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_strength_review` | GET | `/api/coach/strength-review` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_workout` | GET | `/api/workouts/{workout_id}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `list_feedback` | GET | `/api/feedback` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `list_workouts` | GET | `/api/workouts` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
@@ -1433,6 +1435,74 @@ None.
 }
 ```
 
+### get_race_equivalence
+
+`GET /api/coach/race-equivalence`
+
+Compute a conditional distance equivalence from one saved run; not a personal forecast
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| effort_basis | query | no | {"default": "scenario", "description": "Scenario assumes maximal source effort; user_reported_maximal requires the user's explicit statement and is not saved", "enum": ["scenario", "user_reported_maximal"], "title": "Effort Basis", "type": "string"} | Scenario assumes maximal source effort; user_reported_maximal requires the user's explicit statement and is not saved |
+| source | query | yes | {"maxLength": 32, "minLength": 1, "title": "Source", "type": "string"} |  |
+| target_km | query | no | {"default": 21.0975, "maximum": 42.195, "minimum": 3, "title": "Target Km", "type": "number"} |  |
+| workout_id | query | yes | {"maxLength": 128, "minLength": 1, "title": "Workout Id", "type": "string"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Get Race Equivalence",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
 ### get_report
 
 `GET /api/reports/{kind}`
@@ -1612,6 +1682,73 @@ None.
       "schema": {
         "additionalProperties": true,
         "title": "Response Get Running Analysis",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_strength_review
+
+`GET /api/coach/strength-review`
+
+Calculate recorded strength workload and comparable previous sessions without writes
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| from | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "From"} |  |
+| limit | query | no | {"default": 100, "description": "Maximum workouts read; result reports truncation; at most 2000 expanded sets, reduce range or limit on 422", "maximum": 100, "minimum": 1, "title": "Limit", "type": "integer"} | Maximum workouts read; result reports truncation; at most 2000 expanded sets, reduce range or limit on 422 |
+| to | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "To"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Get Strength Review",
         "type": "object"
       }
     }

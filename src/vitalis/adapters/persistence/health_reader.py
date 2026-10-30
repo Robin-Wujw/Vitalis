@@ -195,6 +195,33 @@ class SqlHealthReader(HealthReader):
             rows = HealthRepository(db).workouts(user_id, start, end, limit)
             return tuple(_workout_read(row) for row in rows)
 
+    def strength_review_workouts(
+        self, user_id: str, start: date, end: date, limit: int,
+        *, timezone_name: str,
+    ) -> tuple[HealthWorkoutRead, ...]:
+        """Read bounded saved workouts and their confirmations, never samples."""
+        with self._session_factory() as db:
+            repository = HealthRepository(db)
+            rows = repository.workouts(
+                user_id, start, end, limit, timezone_name=timezone_name,
+            )
+            confirmations = repository.strength_exercises_for_workout_keys(
+                user_id, [(row.source, row.workout_id) for row in rows],
+            )
+            return tuple(
+                HealthWorkoutRead(
+                    source=row.source, workout_id=row.workout_id,
+                    data=deepcopy(row.data) if isinstance(row.data, dict) else {},
+                    detail=deepcopy(row.detail) if isinstance(row.detail, dict) else None,
+                    detail_synced=bool(row.detail_synced),
+                    confirmed_exercises=tuple(
+                        item.model_dump(mode="json")
+                        for item in confirmations.get((row.source, row.workout_id), [])
+                    ),
+                )
+                for row in rows
+            )
+
     def workout_detail(
         self, user_id: str, workout_id: str, source: str,
         *, include_samples: bool = False,

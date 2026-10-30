@@ -111,6 +111,7 @@ class HealthWorkoutRead:
     data: dict[str, Any]
     detail: dict[str, Any] | None
     detail_synced: bool
+    confirmed_exercises: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -181,6 +182,11 @@ class HealthReader(Protocol):
 
     def workouts(
         self, user_id: str, start: date, end: date, limit: int
+    ) -> tuple[HealthWorkoutRead, ...]: ...
+
+    def strength_review_workouts(
+        self, user_id: str, start: date, end: date, limit: int,
+        *, timezone_name: str,
     ) -> tuple[HealthWorkoutRead, ...]: ...
 
     def workout_detail(

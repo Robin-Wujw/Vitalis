@@ -31,6 +31,30 @@ def test_persona_prioritizes_task_completion_and_concise_answers():
     assert "## 缺数据先查，再按服务器策略操作" not in soul
 
 
+def test_review_ends_after_answer_without_automatic_advice_or_repeated_caveats():
+    soul = _read("deploy/hermes/SOUL.md")
+    assert "回答完成就结束" in soul
+    assert "不为凑字数" in soul
+    assert "用户问怎么做" in soul
+    assert "明确风险" in soul
+    assert "同一限制只解释一次" in soul
+    coach = _read("skills/healthy-fitness-coach/SKILL.md")
+    assert "用户问怎么做" in coach
+    assert "明确风险" in coach
+    assert "再给判断和实际建议" not in coach
+
+
+def test_running_review_selects_relevant_evidence_without_a_generic_tail():
+    skill = _read("skills/vitalis/SKILL.md")
+    section = skill.split("## 跑步近期表现与情景等效", 1)[1].split("\n## ", 1)[0]
+    for rule in ("最能支持判断", "每项限制放在对应证据旁", "不重复总结",
+                 "不把已跑距离概括成能力上限", "漂移缺失", "通用训练或记录建议"):
+        assert rule in section
+    docs = _read("docs/agents.md")
+    assert "固定尾段" in docs
+    assert "用户问怎么做" in docs
+
+
 def test_persona_safety_is_conditional_and_preserves_privacy():
     soul = _read("deploy/hermes/SOUL.md")
     for rule in (

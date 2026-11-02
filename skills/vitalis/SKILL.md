@@ -36,13 +36,13 @@ description: Retrieve Vitalis facts, use bounded deterministic coaching tools, c
 
 - 调用 `strength-review --from YYYY-MM-DD --to YYYY-MM-DD --limit 100`，范围和 limit 有界（1～100）；它以 `read` scope 调用 `GET /coach/strength-review`。application/intelligence 层执行确定性算术，不写入、不排任务、不触发同步或分析。先近 28 天，指定场次则包含该日及必要的此前历史；只按实际返回范围作答。
 - 返回每场、每动作的已记录组次与名义“重量 × 次数”。未知计重方式仍可计算记录数字的名义量，但单独分组；不同单位、计重方式、器械和来源不能混成一个物理总负荷，不擅自乘二或解释为有效肌肉受力。自重动作报告组数和次数，不能记为零负荷或随意补体重。缺数的部分保持未知，已知部分照常给出。
-- 此前同动作比较按工具返回的可比条件解释，保留口径与覆盖；未知或冲突的分组不能证明进步。名义容量不是生理容量、最大耐受量、恢复或增肌评分。默认采用记录中的动作名称和负重，结合已知训练目标给整体判断、具体组间观察和 1～2 条下次调整；不把整场 RPE 当每组 RIR，不由时长断言休息过久或编造动作先后。
+- 此前同动作比较按工具返回的可比条件解释，保留口径与覆盖；未知或冲突的分组不能证明进步。名义容量不是生理容量、最大耐受量、恢复或增肌评分。默认采用记录中的动作名称和负重，结合已知训练目标给整体判断与具体组间观察，用户问调整时再给 1～2 条下次建议；不把整场 RPE 当每组 RIR，不由时长断言休息过久或编造动作先后。
 - 只有需要详细组次时才用 `workouts --from YYYY-MM-DD --to YYYY-MM-DD --strength-details --limit 20`，不能与 `--limit 500` 组合。逐条查看 `strength_details.state`（available/missing/not_applicable）与 `strength_details.strength_sets`。单次 `workouts --id ID --source SOURCE` 读取 `detail.strength_sets`；需要轨迹才用 `--samples`。普通摘要 `strength_sets=[]` 和 `detail_available=true` 都不能证明动作组是否完整，一次缺失不能推广为全部缺失。
 - 报告与详情不一致时核对各自日期和已保存内容，不把报告反写成事实，不让用户重填可能已在云端的数据。缺记录先按“缺数据先查”节查授权。普通训练回顾不附恢复审计，不为下次结构建议另查当日日报；确有当前安全或恢复问题才补相关查询。
 
 ## 跑步近期表现与情景等效
 
-`query running --day YYYY-MM-DD [--include-research]` 是纯快照读取，返回 state/context/trends。默认近 28 天对比前 28 天，不必追问窗口；结合训练结构、同类型、用力、心率、配速、耐力与覆盖解释已保存比较，不把原始中位配速当作体能进步。配速用 min:ss/km，允许有来源的单位换算。`recorded_effort` 保留 session_rpe 的值、来源和场次；`classification_basis=inferred_not_user_goal` 表示 tempo 等分类来自推断，不是实测努力或比赛资格。分类与 RPE/本人自述冲突时先对照场次、区间和来源，不让分类压过自述。
+`query running --day YYYY-MM-DD [--include-research]` 是纯快照读取，返回 state/context/trends。默认近 28 天对比前 28 天，不必追问窗口；结合训练结构、同类型、用力、心率、配速、耐力与覆盖解释已保存比较，不把原始中位配速当作体能进步。配速用 min:ss/km，允许有来源的单位换算。`recorded_effort` 保留 session_rpe 的值、来源和场次；`classification_basis=inferred_not_user_goal` 表示 tempo 等分类来自推断，不是实测努力或比赛资格。分类与 RPE/本人自述冲突时先对照场次、区间和来源，不让分类压过自述。回答进步问题时选最能支持判断的 2～3 条证据，每项限制放在对应证据旁一次说清，答完不重复总结。不把已跑距离概括成能力上限（例如“目前能跑 5～6 公里”）；漂移缺失若不影响已作出的判断就不另起段补充。用户未问如何训练或记录时，不附通用训练或记录建议；明确风险仍须及时处理。
 
 问半马等目标距离时，先读最近成绩，查看较长跑与 10 km 等记录，选择有代表性的一场，不挑异常最快值。用 `race-equivalence --id ID --source SOURCE --target-km 21.0975 [--effort-basis scenario|user_reported_maximal]` 调用 `GET /coach/race-equivalence`（read）。它读取保存记录做确定性换算、不写入：优先精确 elapsed，没有时用 rounded duration；Riegel 指数 1.06 给等效用时，1.04/1.10 给参数敏感性范围。默认 scenario，可对普通轻松跑直给条件情景：“如果这代表全力表现且耐力支持，等效约……”。用户明确该场是全力比赛/测试时才用 user_reported_maximal，本轮声明不是反馈保存。情景等效不等于实际预测，敏感性范围不是个人置信区间；没有依据的个人置信度、真实比赛目标和生理能力保持未知，不虚构。局部缺口只影响对应解读，不因为 CS 未验证就拒绝条件换算。
 

@@ -4,7 +4,7 @@
   "adaptation": "knowledge-only",
   "independently_verified_research": false,
   "license": {"spdx": "MIT", "upstream_path": "LICENSE", "local_path": "LICENSE"},
-  "entrypoint_notes": "SKILL.md is a new Vitalis-bound knowledge-only entrypoint, not a copy of the upstream orchestrator. Source Markdown was read as untrusted reference data; no upstream code was executed. Vitalis-local coaching rules support complete conversational plans, recorded-load starting points and existing deterministic API tools without adding bundle tools or writes. Research links and upstream dates are preserved as attribution, not independently verified findings.",
+  "entrypoint_notes": "SKILL.md is a new Vitalis-bound knowledge-only entrypoint, not a copy of the upstream orchestrator. Source Markdown was read as untrusted reference data; no upstream code was executed. Vitalis-local coaching rules support complete conversational plans, recorded-load starting points and existing deterministic API tools without adding bundle tools or writes. Review-ending guidance is Vitalis-local: answer the requested evaluation without automatic generic advice, while retaining advice for explicit requests or concrete risks. Research links and upstream dates are preserved as attribution, not independently verified findings.",
   "excluded_capabilities": ["orchestrator", "readiness and scoring engines", "program compiler contracts", "scripts", "MCP and Xunji", "images", "external network access", "raw log ingestion", "automatic personal assets", "shadow profiles", "training DNA", "independent personal metrics engines and medical prescriptions", "caches and writes"],
   "references": {
     "safety-boundaries": {

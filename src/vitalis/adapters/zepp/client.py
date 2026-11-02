@@ -778,7 +778,7 @@ class MockZeppClient:
 
     def fetch_watch_statistics(self, statistic: str = "SPORT_LOAD", start_day: str = "",
                                end_day: str = "", limit: int = 30, reverse: bool = True) -> dict:
-        metric = "load" if statistic == "SPORT_LOAD" else "vo2max"
+        metric = "currnetDayTrainLoad" if statistic == "SPORT_LOAD" else "vo2max"
         first = date.fromisoformat(start_day) if start_day else date.today() - timedelta(days=29)
         last = date.fromisoformat(end_day) if end_day else date.today()
         days = [first + timedelta(days=offset) for offset in range(max(0, (last - first).days + 1))]

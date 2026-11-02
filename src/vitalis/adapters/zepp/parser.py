@@ -19,7 +19,10 @@ from vitalis.domain import (
     DenseDataFile,
     Device,
     MetricSample,
+    NapRecord,
     SleepRecord,
+    SleepStageSlice,
+    WorkoutHeartRateZone,
     TrainingRecord,
     Workout,
     WorkoutRpe,
@@ -90,7 +93,9 @@ class ZeppParser:
 
     # ================= 真实 band_data（睡眠 + 活动） =================
 
-    def parse_band(self, raw: dict) -> tuple[dict[date, SleepRecord], dict[date, ActivityRecord]]:
+    def parse_band(
+        self, raw: dict, timezone_name: str | None = None,
+    ) -> tuple[dict[date, SleepRecord], dict[date, ActivityRecord]]:
         """解析手环原始数据 -> {日期: SleepRecord}, {日期: ActivityRecord}。
 
         band_data.items[].summary 是 base64 编码的 JSON：
@@ -101,21 +106,14 @@ class ZeppParser:
 
         sleeps: dict[date, SleepRecord] = {}
         activities: dict[date, ActivityRecord] = {}
-        # 防御性：data 可能是 dict{"items": [...]} 或直接的 list
-        data = raw.get("data") if isinstance(raw, dict) else {}
-        if isinstance(data, list):
-            items = data
-        elif isinstance(data, dict):
-            items = data.get("items") or []
-        else:
-            items = []
-        for item in items:
+        naps_by_day = self.parse_band_naps(raw, timezone_name)
+        for item in self._band_items(raw):
             day = self._item_date(item)
             summary = self._base64_summary(item)
             if not day or not summary:
                 continue
 
-            sleep = summary.get("slp") or {}
+            sleep = summary.get("slp") if isinstance(summary.get("slp"), dict) else {}
             if sleep.get("ed") and sleep.get("st"):
                 st_val, ed_val = sleep.get("st"), sleep.get("ed")
                 # 真实数据 st/ed 可能是时间戳（int）或 HH:MM 字符串
@@ -124,10 +122,9 @@ class ZeppParser:
                     ed_dt = datetime.fromtimestamp(ed_val, tz=timezone.utc)
                     span = int((ed_dt - st_dt).total_seconds() // 60)
                     duration = max(span - int(sleep.get("wk", 0) or 0), 0)
-                    offset = self._first_number(summary, ("tz",)) or 0
-                    offset = max(min(int(offset), 18 * 60 * 60), -18 * 60 * 60)
-                    bedtime = (st_dt + timedelta(seconds=offset)).time().replace(tzinfo=None)
-                    wake_time = (ed_dt + timedelta(seconds=offset)).time().replace(tzinfo=None)
+                    zone = self._band_timezone(summary, timezone_name)
+                    bedtime = st_dt.astimezone(zone).time().replace(tzinfo=None)
+                    wake_time = ed_dt.astimezone(zone).time().replace(tzinfo=None)
                 else:
                     start_min, end_min = self._parse_hhmm(st_val), self._parse_hhmm(ed_val)
                     if start_min is not None and end_min is not None:
@@ -163,9 +160,11 @@ class ZeppParser:
                         bedtime=bedtime,
                         wake_time=wake_time,
                         stages=self._sleep_stage_slices(
-                            day, summary, sleep, st_val, ed_val
+                            day, summary, sleep, st_val, ed_val, timezone_name
                         ),
                         wake_count=self._bounded_int(sleep, ("wc",), 0, 100),
+                        naps=naps_by_day.get(day, []),
+                        naps_known=day in naps_by_day,
                     )
 
             steps = summary.get("stp") or {}
@@ -205,6 +204,62 @@ class ZeppParser:
                         observed_fields=observed_fields,
                     )
         return sleeps, activities
+
+    def parse_band_naps(
+        self, raw: dict, timezone_name: str | None = None,
+    ) -> dict[date, list[NapRecord]]:
+        """Read explicit nap coverage without manufacturing a main sleep.
+
+        A missing key (or malformed list) is unknown; an empty list is known
+        absence. The same verified stage anchor is used for main sleep and naps.
+        Adjacent stages, including awake stages, form one nap. Any gap splits it.
+        Protocol evidence: J-solan/zepp-dashboard docs/zepp-api.md, Sleep section:
+        https://github.com/J-solan/zepp-dashboard/blob/main/docs/zepp-api.md
+        """
+        output: dict[date, list[NapRecord]] = {}
+        for item in self._band_items(raw):
+            day = self._item_date(item)
+            summary = self._base64_summary(item)
+            sleep = summary.get("slp") if summary else None
+            if day is None or not isinstance(sleep, dict):
+                continue
+            encoded = sleep.get("odd_stage")
+            if not isinstance(encoded, list):
+                continue
+            anchor = self._sleep_stage_anchor(
+                day, summary, sleep, sleep.get("st"), sleep.get("ed"), timezone_name
+            )
+            stages = self._stage_slices(encoded, anchor)
+            if len(stages) != len(encoded):
+                continue  # Malformed coverage is not a known zero-minute day.
+            stages.sort(key=lambda stage: (stage.start_time, stage.end_time))
+            if any(right.start_time < left.end_time for left, right in zip(stages, stages[1:])):
+                continue  # Conflicting intervals cannot be summed or guessed apart.
+            groups: list[list[SleepStageSlice]] = []
+            for stage in stages:
+                if groups and stage.start_time == groups[-1][-1].end_time:
+                    groups[-1].append(stage)
+                else:
+                    groups.append([stage])
+            naps = []
+            for group in groups:
+                known = all(stage.stage != "unknown" for stage in group)
+                asleep = sum(
+                    int((stage.end_time - stage.start_time).total_seconds() // 60)
+                    for stage in group if stage.stage in {"deep", "light", "rem"}
+                )
+                awake = sum(
+                    int((stage.end_time - stage.start_time).total_seconds() // 60)
+                    for stage in group if stage.stage == "awake"
+                )
+                naps.append(NapRecord(
+                    started_at=group[0].start_time, ended_at=group[-1].end_time,
+                    sleep_minutes=asleep if known else None,
+                    awake_minutes=awake if known else None,
+                    stages=group, source=self.source,
+                ))
+            output[day] = naps
+        return output
 
     @staticmethod
     def parse_band_heart_rate(raw: dict) -> list[MetricSample]:
@@ -299,6 +354,23 @@ class ZeppParser:
                     ("load", load),
                 ) if value is not None
             ]
+            auto_recognized = it.get("auto_recognition")
+            if not isinstance(auto_recognized, bool):
+                auto_recognized = None
+            title_value = it.get("sport_title")
+            title = (title_value.strip() or None) if isinstance(title_value, str) else None
+            # Protocol evidence: J-solan/zepp-dashboard documents the observed
+            # te encoding as tenths on a 0–5 scale, separately from exercise_load.
+            # https://github.com/J-solan/zepp-dashboard/blob/main/ingest/parsers.py
+            raw_effect = self._bounded_float(it, ("te",), 0, 50)
+            training_effect = raw_effect / 10 if raw_effect is not None else None
+            vendor_zones = self._vendor_heart_rate_zones(it)
+            observed_fields.extend(name for name, value in (
+                ("auto_recognized", auto_recognized), ("title", title),
+                ("training_effect", training_effect),
+            ) if value is not None)
+            if vendor_zones:
+                observed_fields.append("vendor_heart_rate_zones")
             if reported_sets is not None:
                 observed_fields.append("vendor_reported_sets")
             if session_rpe is not None:
@@ -335,6 +407,10 @@ class ZeppParser:
                 observed_fields=observed_fields,
                 vendor_reported_sets=reported_sets,
                 session_rpe=session_rpe,
+                auto_recognized=auto_recognized,
+                title=title,
+                training_effect=training_effect,
+                vendor_heart_rate_zones=vendor_zones,
                 vendor_source=str(it.get("source")) if it.get("source") else None,
                 vendor_type_id=numeric_type,
                 vendor_type_namespace=mode.namespace,
@@ -643,6 +719,32 @@ class ZeppParser:
                         unit=unit,
                     ))
         return samples
+
+    @staticmethod
+    def _vendor_heart_rate_zones(data: dict) -> list[WorkoutHeartRateZone]:
+        """Keep verified ``seconds,ceiling`` pairs and their original ordering.
+
+        https://github.com/J-solan/zepp-dashboard/blob/main/docs/zepp-api.md#workouts--datasummary
+        These are vendor zone observations, not personalized model thresholds.
+        """
+        encoded = data.get("heart_range")
+        if not isinstance(encoded, str):
+            return []
+        zones = []
+        for pair in encoded.split(";"):
+            fields = pair.split(",")
+            if len(fields) != 2:
+                continue
+            seconds = ZeppParser._first_number({"value": fields[0]}, ("value",))
+            upper = ZeppParser._first_number({"value": fields[1]}, ("value",))
+            if (
+                seconds is None or upper is None
+                or not seconds.is_integer() or not upper.is_integer()
+                or seconds < 0 or not 0 < upper <= 300
+            ):
+                continue
+            zones.append(WorkoutHeartRateZone(seconds=int(seconds), upper_bpm=int(upper)))
+        return zones
 
     @staticmethod
     def _heart_rate_zone_boundaries(data: dict) -> list[int]:
@@ -1007,8 +1109,11 @@ class ZeppParser:
         return samples
 
     @staticmethod
-    def parse_daily_metrics(raw: dict) -> list[DailyMetric]:
-        """Parse verified DailyHealth/Charge/readiness/watch-stat fields."""
+    def parse_daily_metrics(
+        raw: dict, timezone_name: str | None = None,
+    ) -> list[DailyMetric]:
+        """Parse daily facts using the operation's frozen local timezone."""
+        from vitalis.time import local_day
         fields: tuple[tuple[str, tuple[str, ...], str], ...] = (
             ("steps", ("steps", "step", "stepCount", "totalSteps"), "steps"),
             ("calories", ("calories", "calorie", "totalCalories"), "kcal"),
@@ -1024,7 +1129,11 @@ class ZeppParser:
             ("ahi_readiness", ("ahiScore",), "score"),
             ("bio_charge", ("bio_charge", "bioCharge", "bodyBattery", "chargeScore"), "score"),
             ("hybrid_charge", ("hybrid_charge", "hybridCharge", "hybridChargeScore"), "score"),
-            ("training_load", ("training_load", "trainingLoad", "wtlSum", "currnetDayTrainLoad", "load"), "load"),
+            ("training_load", ("currnetDayTrainLoad",), "load"),
+            ("vendor_load_7d", ("wtlSum",), "load"),
+            ("vendor_load_optimal_min", ("wtlSumOptimalMin",), "load"),
+            ("vendor_load_optimal_max", ("wtlSumOptimalMax",), "load"),
+            ("vendor_load_overreaching", ("wtlSumOverreaching",), "load"),
             ("vo2max", ("vo2max", "vo2Max", "VO2_MAX", "VO2_max", "vo2_max_run", "vo2_max_walking"), "ml/kg/min"),
             ("stress", ("stress", "stressScore", "avgStress", "averageStress"), "score"),
             ("spo2", ("spo2", "bloodOxygen", "blood_oxygen"), "%"),
@@ -1041,38 +1150,36 @@ class ZeppParser:
                 item.device_id or "",
             )] = item
 
+        # Reuse one revision selector for daily and timestamped readiness facts.
+        for sample in ZeppParser.parse_readiness_samples(raw, timezone_name):
+            store(DailyMetric(
+                date=local_day(sample.timestamp, timezone_name),
+                metric=sample.metric, value=sample.value, unit=sample.unit,
+                source_scope=sample.source_scope, device_id=sample.device_id,
+                source_field=sample.source_field, observed_at=sample.timestamp,
+                qualification=sample.qualification, revision_at=sample.revision_at,
+            ))
+        # Each Charge component has its own valid timeline; a total=255 must
+        # neither drop other components nor roll them back to an older sample.
+        charge_latest: dict[tuple[date, str, str, str], MetricSample] = {}
+        for sample in ZeppParser.parse_charge_samples(raw):
+            day = local_day(sample.timestamp, timezone_name)
+            key = (day, sample.metric, sample.source_scope, sample.device_id or "")
+            previous = charge_latest.get(key)
+            if previous is None or sample.timestamp > previous.timestamp:
+                charge_latest[key] = sample
+        for (day, _, _, _), sample in charge_latest.items():
+            store(DailyMetric(
+                date=day, metric=sample.metric, value=sample.value, unit=sample.unit,
+                source_scope=sample.source_scope, device_id=sample.device_id,
+                source_field=sample.source_field, observed_at=sample.timestamp,
+                qualification=sample.qualification,
+            ))
+
         for item in ZeppParser._items(raw):
-            if not isinstance(item, dict):
+            if not isinstance(item, dict) or item.get("eventType") in {"Charge", "readiness"}:
                 continue
             event_value = item.get("value") if isinstance(item.get("value"), dict) else None
-            if item.get("eventType") == "Charge" and event_value:
-                raw_samples = event_value.get("samples") or []
-                valid = []
-                for sample in raw_samples:
-                    if not isinstance(sample, dict):
-                        continue
-                    total = ZeppParser._first_number(sample, ("total",))
-                    if total is not None and 0 <= total <= 100:
-                        valid.append(sample)
-                latest = max(
-                    valid,
-                    key=lambda sample: ZeppParser._first_number(sample, ("s", "offset")) or 0,
-                    default=None,
-                )
-                day = ZeppParser._metric_date(item, event_value)
-                if latest and day:
-                    for metric, key in (
-                        ("hybrid_charge", "total"),
-                        ("physical_charge", "physical"),
-                        ("mental_charge", "mental"),
-                    ):
-                        reading = ZeppParser._first_number(latest, (key,))
-                        if reading is not None and 0 <= reading <= 100:
-                            store(DailyMetric(
-                                date=day, metric=metric, value=reading, unit="score",
-                                source_scope="user_fused",
-                            ))
-                continue
             objects: list[tuple[dict, dict | None]] = []
             nested_samples = event_value.get("samples") if event_value else None
             if isinstance(nested_samples, list):
@@ -1088,7 +1195,7 @@ class ZeppParser:
                     value = ZeppParser._first_number(obj, keys)
                     if value is None and nested:
                         value = ZeppParser._first_number(nested, keys)
-                    if value is None:
+                    if value is None or (unit == "load" and value < 0):
                         continue
                     if metric == "distance_km":
                         value = value / 1000
@@ -1100,30 +1207,9 @@ class ZeppParser:
                     store(DailyMetric(
                         date=day, metric=metric, value=value, unit=unit,
                         source_scope="device" if device else "user_fused", device_id=device,
+                        source_field=keys[0] if unit == "load" else None,
+                        qualification="vendor_reference" if unit == "load" else None,
                     ))
-                if nested and item.get("eventType") == "readiness":
-                    supplemental = (
-                        ("skin_temp_delta", "skinTempCalibrated", "C", 0.01, -2.0, 2.0),
-                        ("skin_temp_baseline_delta", "skinTempBaseLine", "C", 0.01, -2.0, 2.0),
-                        ("sleep_hrv", "sleepHRV", "ms", 1.0, 1.0, 400.0),
-                        ("sleep_rhr", "sleepRHR", "bpm", 1.0, 20.0, 250.0),
-                        ("hrv_baseline", "hrvBaseline", "ms", 1.0, 1.0, 400.0),
-                        ("rhr_baseline", "rhrBaseline", "bpm", 1.0, 20.0, 250.0),
-                    )
-                    for metric, key, unit, scale, minimum, maximum in supplemental:
-                        reading = ZeppParser._first_number(nested, (key,))
-                        if reading is None:
-                            continue
-                        reading *= scale
-                        if (
-                            minimum <= reading <= maximum
-                            and not (metric == "hrv_baseline" and reading == 255)
-                        ):
-                            store(DailyMetric(
-                                date=day, metric=metric, value=reading, unit=unit,
-                                source_scope="device" if device else "user_fused",
-                                device_id=device,
-                            ))
         return list(output.values())
 
     @staticmethod
@@ -1158,13 +1244,69 @@ class ZeppParser:
                     output.append(MetricSample(
                         metric=metric, timestamp=timestamp, value=reading, unit="score",
                         source_scope="device" if device_id else "user_fused",
-                        device_id=device_id,
+                        device_id=device_id, source_field=key,
+                        qualification="vendor_reference",
                     ))
         return output
 
     @staticmethod
-    def parse_readiness_samples(raw: dict) -> list[MetricSample]:
-        """Preserve each device-scoped readiness event as a timestamped series."""
+    def _latest_readiness_events(raw: dict, timezone_name: str | None = None) -> list[dict]:
+        """Select one whole revision per scored local day and device stream.
+
+        value.timestamp is the day scored; item.timestamp is its revision time.
+        Evidence: https://github.com/J-solan/zepp-dashboard/blob/main/docs/zepp-api.md#readiness
+        """
+        from vitalis.time import local_day
+
+        selected: dict[tuple[date, str], tuple[datetime, str, dict]] = {}
+        for item in ZeppParser._items(raw):
+            if not isinstance(item, dict) or item.get("eventType") != "readiness":
+                continue
+            value = item.get("value")
+            if not isinstance(value, dict):
+                continue
+            anchor = ZeppParser._parse_datetime_value(value.get("timestamp"))
+            if anchor is None:
+                continue
+            device = ZeppParser._device_id(value) or ZeppParser._device_id(item)
+            key = (local_day(anchor, timezone_name), device or "")
+            revision = ZeppParser._parse_datetime_value(item.get("timestamp"))
+            rank = ZeppParser._utc(revision) if revision is not None else datetime.min.replace(tzinfo=timezone.utc)
+            # Stable tie handling makes permutations of the same response equal;
+            # it does not claim that an absent revision is newer than a known one.
+            tie = json.dumps(item, sort_keys=True, ensure_ascii=False, default=str)
+            previous = selected.get(key)
+            if previous is None or (rank, tie) > previous[:2]:
+                selected[key] = (rank, tie, item)
+        return [selected[key][2] for key in sorted(selected)]
+
+    @staticmethod
+    def parse_readiness_revisions(
+        raw: dict, timezone_name: str | None = None,
+    ) -> list[dict]:
+        """Keep latest revision metadata even when every component was withdrawn."""
+        from vitalis.time import local_day
+
+        output = []
+        for item in ZeppParser._latest_readiness_events(raw, timezone_name):
+            value = item["value"]
+            observed_at = ZeppParser._utc(ZeppParser._parse_datetime_value(value["timestamp"]))
+            revision = ZeppParser._parse_datetime_value(item.get("timestamp"))
+            device_id = ZeppParser._device_id(value) or ZeppParser._device_id(item)
+            output.append({
+                "day": local_day(observed_at, timezone_name),
+                "device_id": device_id,
+                "source_scope": "device" if device_id else "user_fused",
+                "observed_at": observed_at,
+                "revision_at": ZeppParser._utc(revision) if revision else None,
+            })
+        return output
+
+    @staticmethod
+    def parse_readiness_samples(
+        raw: dict, timezone_name: str | None = None,
+    ) -> list[MetricSample]:
+        """Emit only the latest whole revision of each day's device-scoped facts."""
         fields = (
             ("readiness", "rdnsScore", "score", 1.0, 0.0, 100.0),
             ("physical_readiness", "phyScore", "score", 1.0, 0.0, 100.0),
@@ -1182,31 +1324,25 @@ class ZeppParser:
             ("rhr_baseline", "rhrBaseline", "bpm", 1.0, 20.0, 250.0),
         )
         output: list[MetricSample] = []
-        for item in ZeppParser._items(raw):
-            if not isinstance(item, dict) or item.get("eventType") != "readiness":
-                continue
-            value = item.get("value") if isinstance(item.get("value"), dict) else None
-            if not value:
-                continue
-            timestamp = ZeppParser._parse_datetime_value(
-                value.get("timestamp") or item.get("timestamp")
-            )
-            if timestamp is None:
-                continue
+        for item in ZeppParser._latest_readiness_events(raw, timezone_name):
+            value = item["value"]
+            timestamp = ZeppParser._utc(ZeppParser._parse_datetime_value(value["timestamp"]))
+            revision = ZeppParser._parse_datetime_value(item.get("timestamp"))
             device_id = ZeppParser._device_id(value) or ZeppParser._device_id(item)
             for metric, key, unit, scale, minimum, maximum in fields:
-                reading = ZeppParser._first_number(value, (key,))
-                if reading is None:
+                keys = (key,) if metric != "readiness" else ("rdnsScore", "watchScore", "readinessScore", "readiness")
+                source_field = next((field for field in keys if field in value), key)
+                reading = ZeppParser._first_number(value, (source_field,))
+                if reading is None or reading == 255:
                     continue
                 reading *= scale
-                if (
-                    minimum <= reading <= maximum
-                    and not (metric == "hrv_baseline" and reading == 255)
-                ):
+                if minimum <= reading <= maximum:
                     output.append(MetricSample(
                         metric=metric, timestamp=timestamp, value=reading, unit=unit,
                         source_scope="device" if device_id else "user_fused",
-                        device_id=device_id,
+                        device_id=device_id, source_field=source_field,
+                        qualification="vendor_reference",
+                        revision_at=ZeppParser._utc(revision) if revision else None,
                     ))
         return output
 
@@ -1838,8 +1974,11 @@ class ZeppParser:
         v = item.get("date_time") or item.get("date") or item.get("dayId")
         if not v:
             return None
+        text = str(v)
         try:
-            return date.fromisoformat(str(v)[:10])
+            if len(text) == 8 and text.isdigit():
+                return datetime.strptime(text, "%Y%m%d").date()
+            return date.fromisoformat(text[:10])
         except ValueError:
             return None
 
@@ -1883,7 +2022,7 @@ class ZeppParser:
 
     @staticmethod
     def _parse_datetime_value(value) -> datetime | None:
-        if value is None:
+        if value is None or isinstance(value, bool):
             return None
         if isinstance(value, str) and not value.strip().replace(".", "", 1).isdigit():
             try:
@@ -1922,13 +2061,14 @@ class ZeppParser:
     def _first_number(obj: dict, keys: tuple[str, ...]) -> float | None:
         for key in keys:
             value = obj.get(key)
-            if isinstance(value, (int, float)):
-                return float(value)
-            if isinstance(value, str):
-                try:
-                    return float(value.strip())
-                except ValueError:
-                    pass
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                continue
+            try:
+                number = float(value)
+            except (ValueError, OverflowError):
+                continue
+            if isfinite(number):
+                return number
         return None
 
     @staticmethod
@@ -1968,63 +2108,84 @@ class ZeppParser:
         return None
 
     @staticmethod
-    def _sleep_stage_slices(
-        day: date,
-        summary: dict,
-        sleep: dict,
-        session_start: object,
-        session_end: object,
-    ) -> list:
-        from vitalis.domain import SleepStageSlice
+    def _band_timezone(summary: dict, timezone_name: str | None = None):
+        from vitalis.time import local_timezone
 
-        stages = sleep.get("stage")
+        if timezone_name:
+            return local_timezone(timezone_name)
+        offset = ZeppParser._first_number(summary, ("tz",))
+        if offset is not None and -18 * 3600 <= offset <= 18 * 3600:
+            return timezone(timedelta(seconds=offset))
+        return local_timezone()
+
+    @staticmethod
+    def _stage_slices(stages: object, anchor: datetime) -> list[SleepStageSlice]:
+        """Vendor stop is inclusive; preserve unknown modes, never label awake."""
         if not isinstance(stages, list):
             return []
-        offset = ZeppParser._first_number(summary, ("tz",)) or 0
-        offset = max(min(int(offset), 18 * 60 * 60), -18 * 60 * 60)
-        utc_midnight = (
-            datetime.combine(day, time.min, tzinfo=timezone.utc)
-            - timedelta(seconds=offset)
-        )
         names = {5: "deep", 4: "light", 8: "rem", 11: "rem", 7: "awake"}
+        output = []
+        for item in stages:
+            if not isinstance(item, dict):
+                continue
+            mode = ZeppParser._first_number(item, ("mode",))
+            start = ZeppParser._first_number(item, ("start",))
+            stop = ZeppParser._first_number(item, ("stop",))
+            if (
+                any(value is None or not value.is_integer() for value in (mode, start, stop))
+                or start < 0 or stop < start
+            ):
+                continue
+            try:
+                start_time = (anchor + timedelta(minutes=int(start))).astimezone(timezone.utc)
+                end_time = (anchor + timedelta(minutes=int(stop) + 1)).astimezone(timezone.utc)
+            except (OverflowError, ValueError):
+                continue
+            if end_time <= start_time:
+                continue
+            output.append(SleepStageSlice(
+                stage=names.get(int(mode), "unknown"), vendor_mode=int(mode),
+                start_time=start_time, end_time=end_time,
+            ))
+        return output
 
-        def build(anchor: datetime) -> list[SleepStageSlice]:
-            output = []
-            for item in stages:
-                if not isinstance(item, dict):
-                    continue
-                mode = ZeppParser._first_number(item, ("mode",))
-                start = ZeppParser._first_number(item, ("start",))
-                stop = ZeppParser._first_number(item, ("stop",))
-                if mode is None or start is None or stop is None or stop < start:
-                    continue
-                start_time = anchor + timedelta(minutes=int(start))
-                end_time = anchor + timedelta(minutes=int(stop) + 1)
-                output.append(SleepStageSlice(
-                    stage=names.get(int(mode), "awake"),
-                    start_time=start_time,
-                    end_time=end_time,
-                ))
-            return output
-
-        previous_day = build(utc_midnight - timedelta(days=1))
+    @staticmethod
+    def _sleep_stage_anchor(
+        day: date, summary: dict, sleep: dict,
+        session_start: object, session_end: object,
+        timezone_name: str | None = None,
+    ) -> datetime:
+        zone = ZeppParser._band_timezone(summary, timezone_name)
+        midnight = datetime.combine(day, time.min, tzinfo=zone)
+        previous = midnight - timedelta(days=1)
         start_at = ZeppParser._parse_datetime_value(session_start)
         end_at = ZeppParser._parse_datetime_value(session_end)
         if start_at is None or end_at is None:
-            return previous_day
+            return previous
         start_at, end_at = ZeppParser._utc(start_at), ZeppParser._utc(end_at)
-        same_day = build(utc_midnight)
+        if end_at <= start_at:
+            return previous
 
-        def overlap(items: list[SleepStageSlice]) -> float:
+        def overlap(anchor: datetime) -> float:
             return sum(
-                max(
-                    0.0,
-                    (min(item.end_time, end_at) - max(item.start_time, start_at)).total_seconds(),
-                )
-                for item in items
+                max(0.0, (min(stage.end_time, end_at) - max(stage.start_time, start_at)).total_seconds())
+                for stage in ZeppParser._stage_slices(sleep.get("stage"), anchor)
             )
 
-        return same_day if overlap(same_day) > overlap(previous_day) else previous_day
+        # Retain the existing st/ed-verified same-day variant; no main sleep
+        # evidence means the documented previous-day anchor, not a guessed nap.
+        return midnight if overlap(midnight) > overlap(previous) else previous
+
+    @staticmethod
+    def _sleep_stage_slices(
+        day: date, summary: dict, sleep: dict,
+        session_start: object, session_end: object,
+        timezone_name: str | None = None,
+    ) -> list[SleepStageSlice]:
+        anchor = ZeppParser._sleep_stage_anchor(
+            day, summary, sleep, session_start, session_end, timezone_name
+        )
+        return ZeppParser._stage_slices(sleep.get("stage"), anchor)
 
     @staticmethod
     def _normalize_device_identifier(value: object) -> str | None:

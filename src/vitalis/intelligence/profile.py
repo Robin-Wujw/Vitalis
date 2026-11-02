@@ -89,6 +89,9 @@ class SeriesPoint:
     last_value: float | None = None
     first_observed_at: datetime | None = None
     maximum: float | None = None
+    fetched_at: datetime | None = None
+    qualification: str | None = None
+    is_daily_summary: bool = False
 
     @property
     def is_daily_feature(self) -> bool:
@@ -105,6 +108,10 @@ class RawDailyProfile:
     report_context: dict = field(default_factory=dict)
     series: dict[str, list[SeriesPoint]] = field(default_factory=dict)
     heart_rate_samples: list[SeriesPoint] = field(default_factory=list)
+    chart_samples: dict[str, list[SeriesPoint]] = field(default_factory=dict)
+    chart_naps: dict[date, list[dict]] = field(default_factory=dict)
+    chart_inputs: dict = field(default_factory=dict)
+    chart_baselines: dict = field(default_factory=dict)
     # Device-data watermark from the same response that last wrote this sleep;
     # later independent heart-rate uploads cannot confirm an older sleep read.
     heart_rate_seen_until: datetime | None = None
@@ -197,6 +204,7 @@ class ProfileLoader:
         self._add_sample_metrics(raw, start)
         self._add_heart_rate_samples(raw, start)
         self._add_sample_window_summaries(raw)
+        self._add_chart_inputs(raw, start)
         if self.shadow_inputs:
             try:
                 self._add_open_health_inputs(raw)
@@ -393,7 +401,7 @@ class ProfileLoader:
                 "bedtime": sleep.get("bedtime"),
                 "wake_time": sleep.get("wake_time"),
                 "nap_minutes": _numeric(sleep.get("nap_minutes")),
-                "naps_known": "nap_minutes" in sleep or "has_nap" in sleep,
+                "naps_known": bool(sleep.get("naps_known")) or _numeric(sleep.get("nap_minutes")) is not None or sleep.get("has_nap") is not None,
                 "source": source_key[0] if source_key else str(sleep.get("source", "zepp")),
                 "source_scope": source_key[1] if source_key else "nightly_observation",
                 "device_id": source_key[2] if source_key else None,
@@ -652,7 +660,11 @@ class ProfileLoader:
                 source_scope,
                 row.device_id or None,
                 positive=False,
-                source_field=f"daily.{metric}",
+                source_field=row.source_field or f"daily.{metric}",
+                observed_at=row.observed_at,
+                fetched_at=row.fetched_at,
+                qualification=row.qualification,
+                is_daily_summary=True,
             )
 
     def _add_sample_metrics(self, raw: RawDailyProfile, start: date) -> None:
@@ -683,7 +695,7 @@ class ProfileLoader:
                 if covered and metric in raw.series:
                     raw.series[metric] = [
                         point for point in raw.series[metric]
-                        if isinstance(point.observed_at, datetime)
+                        if not point.is_daily_summary
                         or (point.day, point.source, point.source_scope, point.device_id, point.unit) not in covered
                     ]
                 for row in features:
@@ -719,7 +731,9 @@ class ProfileLoader:
                     row.device_id or None,
                     observed_at=row.timestamp,
                     positive=False,
-                    source_field=f"sample.{row.metric}",
+                    source_field=row.source_field or f"sample.{row.metric}",
+                    fetched_at=row.fetched_at,
+                    qualification=row.qualification,
                 )
 
     def _add_energy_observations(self, raw: RawDailyProfile) -> None:
@@ -850,6 +864,29 @@ class ProfileLoader:
             )
             for metric, row in selected.items()
         }
+
+    def _add_chart_inputs(self, raw: RawDailyProfile, start: date) -> None:
+        """Load bounded recent detail for charts, without widening analysis reads."""
+        start_at, _ = local_day_utc_bounds(raw.day, raw.timezone_name)
+        _, end_at = local_day_utc_bounds(raw.day, raw.timezone_name)
+        cutoff = min(end_at - timedelta(microseconds=1), raw.as_of)
+        if cutoff >= start_at:
+            raw.chart_samples["heart_rate"] = [
+                SeriesPoint("heart_rate", float(value), unit, local_day(stamp, raw.timezone_name),
+                            stamp, source, scope, device)
+                for stamp, value, source, scope, device, unit in self.repo.heart_rate_minute_medians(
+                    raw.user_id, start_at, cutoff
+                )
+            ]
+            for metric in ("stress", "hrv_rmssd", "hybrid_charge", "physical_charge", "mental_charge", "respiratory_rate"):
+                raw.chart_samples[metric] = [p for p in raw.series.get(metric, [])
+                    if p.day == raw.day and isinstance(p.observed_at, datetime) and not p.is_daily_feature]
+        naps = getattr(self.repo, "nap_range", None)
+        if callable(naps):
+            raw.chart_naps = naps(raw.user_id, start, raw.day, raw.as_of)
+        inputs = getattr(self.repo, "chart_input_snapshot", None)
+        if callable(inputs):
+            raw.chart_inputs = inputs(raw.user_id, start, raw.day, as_of=raw.as_of, timezone_name=raw.timezone_name)
 
     def _add_heart_rate_samples(self, raw: RawDailyProfile, start: date) -> None:
         heart_rate_start = max(start, raw.day - timedelta(days=27))
@@ -1204,6 +1241,9 @@ def _append(
     observed_at: datetime | date | None = None,
     positive: bool = False,
     source_field: str | None = None,
+    fetched_at: datetime | None = None,
+    qualification: str | None = None,
+    is_daily_summary: bool = False,
 ) -> None:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return
@@ -1220,6 +1260,9 @@ def _append(
         source_scope=_intern(source_scope),
         device_id=_intern(device_id),
         source_field=_intern(source_field),
+        fetched_at=fetched_at,
+        qualification=qualification,
+        is_daily_summary=is_daily_summary,
     ))
 
 

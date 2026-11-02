@@ -30,7 +30,7 @@ def analysis_policy_digest(
 _PRESENTATION_FILES = frozenset({
     "report_rendering.py", "report_formatting.py", "report_presentation.py",
     "morning_briefing.py", "evening_briefing.py", "weekly_briefing.py",
-    "monthly_briefing.py",
+    "monthly_briefing.py", "chart_rendering.py",
 })
 
 

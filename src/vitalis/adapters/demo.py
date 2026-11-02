@@ -63,6 +63,7 @@ def seed_demo_workouts(start: date, end: date, as_of: datetime, timezone_name: s
         repository.rebuild_training_days("demo", {
             start + timedelta(days=offset) for offset in range((end - start).days + 1)
         })
+        _seed_chart_observations(repository, start, end, as_of, timezone_name)
         # This is explicitly a synthetic coverage proof, matching the existing
         # mock source contract. It is confined to the fresh demo database.
         window = FetchWindow.local_dates(start, end)
@@ -86,3 +87,68 @@ def seed_demo_workouts(start: date, end: date, as_of: datetime, timezone_name: s
             chunk.parse_status = "success"
             chunk.write_status = "success"
             chunk.finished_at = finished
+
+
+def _seed_chart_observations(repository, start: date, end: date, as_of: datetime, timezone_name: str) -> None:
+    """Invented curves with deliberate gaps; used only in the isolated demo DB."""
+    from math import sin
+    from vitalis.domain import DailyMetric, MetricSample
+    from vitalis.adapters.persistence import models as orm
+    from sqlalchemy import select
+
+    metrics = []
+    current = start
+    while current <= end:
+        offset = (current-start).days
+        for metric, value, unit in (
+            ("vendor_load_7d", 245+offset%12*12, "load"),
+            ("vendor_load_optimal_min", 230, "load"),
+            ("vendor_load_optimal_max", 380, "load"),
+            ("vendor_load_overreaching", 470, "load"),
+            ("sleep_hrv", 52+8*sin(offset/4), "ms"),
+            ("sleep_rhr", 58+3*sin(offset/5), "bpm"),
+            ("skin_temp_delta", 0.2*sin(offset/6), "C"),
+            ("respiratory_rate", 15+sin(offset/5), "brpm"),
+        ):
+            metrics.append(DailyMetric(user_id="demo",date=current,metric=metric,value=round(value,2),unit=unit,
+                source_scope="synthetic_chart",qualification="synthetic",fetched_at=as_of-timedelta(minutes=5)))
+        current += timedelta(days=1)
+    repository.save_daily_metrics(metrics)
+    midnight, _ = local_day_utc_bounds(end, timezone_name)
+    samples = []
+    last_minute = int((as_of-midnight).total_seconds()/60)
+    for minute in range(last_minute):
+        if 10*60 <= minute < 10*60+40:
+            continue
+        stamp = midnight+timedelta(minutes=minute)
+        base = 57 if minute<7*60 else 73
+        value = base+6*sin(minute/18)+(38 if 18*60<=minute<18*60+45 else 0)
+        samples.append(MetricSample(user_id="demo",metric="heart_rate",timestamp=stamp,value=round(value),unit="bpm",
+            source_scope="device",device_id="synthetic-chart-device",fetched_at=as_of-timedelta(minutes=2),qualification="synthetic"))
+        if minute%6==0:
+            samples.append(MetricSample(user_id="demo",metric="stress",timestamp=stamp,
+                value=round(25+10*sin(minute/40)+(30 if 14*60<=minute<16*60 else 0)),unit="score",
+                source_scope="all_day_stress",qualification="synthetic",fetched_at=as_of-timedelta(minutes=2)))
+        if minute%5==0:
+            for metric, charge in (("hybrid_charge",75-minute/24), ("physical_charge",82-minute/20), ("mental_charge",72-minute/35)):
+                if metric=="hybrid_charge" and 12*60<=minute<12*60+20:
+                    continue
+                samples.append(MetricSample(user_id="demo",metric=metric,timestamp=stamp,value=round(max(0,charge),1),unit="score",
+                    source_scope="device",device_id="synthetic-chart-device",qualification="vendor_reference",fetched_at=as_of-timedelta(minutes=2)))
+    repository.save_metric_samples(samples)
+    sleep = repository.db.execute(select(orm.SleepRecord).where(orm.SleepRecord.user_id=="demo",orm.SleepRecord.date==end)).scalar_one_or_none()
+    if sleep is not None:
+        payload = dict(sleep.data)
+        stage_start = midnight-timedelta(minutes=50)
+        stages = []
+        elapsed = 0
+        for stage,minutes in (("light",35),("deep",80),("light",90),("rem",45),("awake",15),("light",100),("rem",70),("light",35)):
+            stages.append({"stage":stage,"start_time":(stage_start+timedelta(minutes=elapsed)).isoformat(),
+                "end_time":(stage_start+timedelta(minutes=elapsed+minutes)).isoformat()})
+            elapsed += minutes
+        payload["stages"] = stages
+        sleep.data = payload
+    nap_start = midnight+timedelta(hours=13)
+    repository.save_naps("demo",end,[{"started_at":nap_start.isoformat(),"ended_at":(nap_start+timedelta(minutes=25)).isoformat(),
+        "sleep_minutes":25,"awake_minutes":0,"source":"zepp","stages":[{"stage":"light","start_time":nap_start.isoformat(),
+            "end_time":(nap_start+timedelta(minutes=25)).isoformat()}]}],fetched_at=as_of-timedelta(minutes=5))

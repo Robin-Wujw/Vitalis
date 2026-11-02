@@ -26,9 +26,14 @@ from .routes import (
     zepp_pairing_router,
 )
 
+from .routes.charts import router as charts_router
+from .routes.chart_inputs import router as chart_inputs_router
+
 log = logging.getLogger("vitalis.entrypoints.api")
 
 api = APIRouter(prefix="/api", responses=ERROR_RESPONSES)
+api.include_router(charts_router)
+api.include_router(chart_inputs_router)
 api.include_router(current_router)
 api.include_router(coach_router)
 api.include_router(connect_router)

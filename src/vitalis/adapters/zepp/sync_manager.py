@@ -762,7 +762,12 @@ class SyncManager:
         heart_rate_seen_until = {} if heart_rate_seen_until is None else heart_rate_seen_until
 
         if stream == "sleep":
-            sleeps, activities = parser.parse_band(payload)
+            sleeps, activities = parser.parse_band(payload, timezone_name=getattr(self.fetcher, "timezone_name", None))
+            nap_days = parser.parse_band_naps(payload, timezone_name=getattr(self.fetcher, "timezone_name", None))
+            for day, naps in nap_days.items():
+                save_naps = getattr(repo, "save_naps", None)
+                if callable(save_naps):
+                    written += save_naps(user.id, day, naps)
             for day, sleep in sleeps.items():
                 sleep.user_id = user.id
                 daily = NormalizedDaily(user_id=user.id, date=day, sleep=sleep)
@@ -775,7 +780,7 @@ class SyncManager:
                 repo.save_daily(NormalizedDaily(user_id=user.id, date=day, activity=act))
                 written += 1
             heart_rate = parser.parse_band_heart_rate(payload)
-            parsed = len(sleeps) + len(activities) + len(heart_rate)
+            parsed = len(sleeps) + len(activities) + len(heart_rate) + len(nap_days)
             for sample in heart_rate:
                 sample.user_id = user.id
             written += repo.save_metric_samples(heart_rate)
@@ -851,19 +856,31 @@ class SyncManager:
 
         elif stream == "daily_summary":
             # Store vendor daily metrics independently from computed Vitalis scores.
-            metrics = parser.parse_daily_metrics(payload)
+            metrics = parser.parse_daily_metrics(payload, timezone_name=getattr(self.fetcher, "timezone_name", None))
             for metric in metrics:
                 metric.user_id = user.id
-            written += repo.save_daily_metrics(metrics)
+            readiness_revisions = parser.parse_readiness_revisions(payload, timezone_name=getattr(self.fetcher, "timezone_name", None))
+            readiness_metrics = [m for m in metrics if m.revision_at is not None or (m.source_field in {
+                "rdnsScore", "watchScore", "readinessScore", "readiness", "phyScore", "mentScore", "hrvScore", "rhrScore", "skinTempScore", "ahiScore", "afibScore",
+                "skinTempCalibrated", "skinTempBaseLine", "sleepHRV", "sleepRHR", "hrvBaseline", "rhrBaseline",
+            } and readiness_revisions)]
+            written += repo.save_daily_metrics([m for m in metrics if m not in readiness_metrics])
             charge_samples = parser.parse_charge_samples(payload)
             for sample in charge_samples:
                 sample.user_id = user.id
             written += repo.save_metric_samples(charge_samples)
-            readiness_samples = parser.parse_readiness_samples(payload)
+            readiness_samples = parser.parse_readiness_samples(payload, timezone_name=getattr(self.fetcher, "timezone_name", None))
             parsed = len(metrics) + len(charge_samples) + len(readiness_samples)
             for sample in readiness_samples:
                 sample.user_id = user.id
-            written += repo.save_metric_samples(readiness_samples)
+            replace_readiness = getattr(repo, "replace_readiness", None)
+            if callable(replace_readiness) and readiness_revisions:
+                written += replace_readiness(user.id, readiness_revisions, readiness_metrics, readiness_samples,
+                    timezone_name=getattr(self.fetcher, "timezone_name", None) or "UTC")
+                parsed += len(readiness_revisions)
+            else:
+                written += repo.save_daily_metrics(readiness_metrics)
+                written += repo.save_metric_samples(readiness_samples)
 
         elif stream == "hrv":
             hrv_samples = parser.parse_hrv_samples(payload, "hrv_sdnn")

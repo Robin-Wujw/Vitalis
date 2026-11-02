@@ -376,7 +376,12 @@ def _registry() -> dict[str, SignalDefinition]:
         _definition("calories", "kcal", "activity_day", ("activity.calories", "daily.calories", "stp.cal", "calories", "calorie", "totalCalories"), aggregation="mean_per_effective_day"),
         _definition("running_distance", "m", "activity_day", ("daily.running_distance", "totalRunningDistance"), aggregation="mean_per_effective_day"),
         _definition("cycling_distance", "m", "activity_day", ("daily.cycling_distance", "totalCyclingDistance"), aggregation="mean_per_effective_day"),
-        _definition("training_load", "load", "activity_day", ("training.total_load", "daily.training_load", "trainingLoad", "wtlSum", "currnetDayTrainLoad", "load"), "yes", aggregation="mean_per_effective_day"),
+        _definition("training_load", "load", "activity_day", ("training.total_load", "daily.training_load", "trainingLoad", "currnetDayTrainLoad"), "yes", aggregation="mean_per_effective_day"),
+        _definition("vendor_load_7d", "load", "activity_day", ("daily.vendor_load_7d", "wtlSum"), "no"),
+        _definition("vendor_load_optimal_min", "load", "activity_day", ("daily.vendor_load_optimal_min", "wtlSumOptimalMin"), "no"),
+        _definition("vendor_load_optimal_max", "load", "activity_day", ("daily.vendor_load_optimal_max", "wtlSumOptimalMax"), "no"),
+        _definition("vendor_load_overreaching", "load", "activity_day", ("daily.vendor_load_overreaching", "wtlSumOverreaching"), "no"),
+        _definition("nap_minutes", "min", "calendar_day", ("sleep.nap_minutes", "slp.odd_stage"), "no"),
         _definition("training_duration", "min", "activity_day", ("training.total_duration",), aggregation="mean_per_effective_day"),
         _definition("session_rpe", "score_1_10", "activity_day", ("workout.session_rpe.value", "sport_history.rpe", "feedback.session_rpe"), "yes"),
         _definition("vo2max", "ml/kg/min", "calendar_day", ("daily.vo2max", "vo2max", "vo2Max", "VO2_MAX", "VO2_max", "vo2_max_run", "vo2_max_walking"), "shadow"),
@@ -827,7 +832,7 @@ def _rejection(raw: RawDailyProfile, definition: SignalDefinition, point: Series
         # Explicit vendor daily metrics can report a real zero. Normalized
         # training records and unidentified legacy zero summaries require the
         # persisted ledger before they can represent a confirmed rest day.
-        if not (point.source_field or "").startswith("daily.") and not _training_day_verified(raw, point.day):
+        if not (point.is_daily_summary or (point.source_field or "").startswith("daily.")) and not _training_day_verified(raw, point.day):
             return "training_zero_day_unverified"
     return None
 

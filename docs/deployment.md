@@ -67,6 +67,12 @@ UV_PROJECT_ENVIRONMENT=<candidate-venv> uv run --locked --extra dev python -m py
 
 测试进程使用隔离配置，不载入生产凭据或生产数据库；生产开关的组合以显式合成参数重现。
 
+### 图表候选的 schema 差异
+
+图表候选使用 `2026-11-chart-inputs` schema：增加 `sleep_supplements`、`readiness_revisions` 和 `chart_*` 显式输入表；`metric_samples` 与 `daily_metrics` 只新增可空的来源字段、资格、观测/修订/获取时间及 journal 引用。现有记录和表不删除。以候选 ORM metadata 和部署库实际结构核对 DDL，先在隔离合成库验证，再按加表加字段路径应用；反向 DDL 只撤销本次新增结构，操作前确认尚无需保留的新输入。
+
+日报/周报/月报合同分别升为 17.0/9.0/6.0，旧版本报告不自动冒充已含图表的新快照。只在来源修正和输入范围核对后排分析；尤其不要把旧 `wtlSum` 混口径值直接当正确日负荷重算。实际验收与剩余边界见[图表验证计划](plan/report-chart-validation.md)。本次本地开发不执行生产 DDL、回放、发送或服务切换。
+
 ## 3. 停止服务；破坏性迁移才备份
 
 候选验证完成后保存当前 unit/drop-in、release 路径和环境配置的私密回滚副本。确认所有 Vitalis 服务的实际状态，然后停止 API 和 worker，等待进程退出：

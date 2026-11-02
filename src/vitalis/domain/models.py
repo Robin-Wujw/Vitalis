@@ -4,7 +4,7 @@ import uuid
 from datetime import date as DateType, datetime, timedelta, time, timezone
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from .enums import SleepQuality, TrainingReadiness, WorkoutType
 
@@ -54,6 +54,18 @@ class SleepRecord(BaseModel):
     wake_time: time | None = None
     stages: list["SleepStageSlice"] = Field(default_factory=list)
     wake_count: int | None = Field(default=None, ge=0)
+    naps: list["NapRecord"] = Field(default_factory=list)
+    naps_known: bool = Field(
+        default=False, description="The source explicitly supplied a supported nap-stage list",
+    )
+
+    @computed_field
+    @property
+    def nap_minutes(self) -> int | None:
+        """Unknown coverage/stages are not a zero-minute nap observation."""
+        if not self.naps_known or any(nap.sleep_minutes is None for nap in self.naps):
+            return None
+        return sum(nap.sleep_minutes for nap in self.naps if nap.sleep_minutes is not None)
 
     @property
     def quality(self) -> SleepQuality:
@@ -76,9 +88,35 @@ class SleepRecord(BaseModel):
 class SleepStageSlice(BaseModel):
     """One vendor-observed sleep-stage interval in UTC."""
 
-    stage: Literal["deep", "light", "rem", "awake"]
+    stage: Literal["deep", "light", "rem", "awake", "unknown"]
     start_time: datetime
     end_time: datetime
+    vendor_mode: int | None = None
+
+
+class NapRecord(BaseModel):
+    """A separate nap session; unknown stage duration remains unknown."""
+
+    started_at: datetime
+    ended_at: datetime
+    sleep_minutes: int | None = Field(default=None, ge=0)
+    awake_minutes: int | None = Field(default=None, ge=0)
+    stages: list[SleepStageSlice] = Field(default_factory=list)
+    source: str = "zepp"
+
+    @field_validator("started_at", "ended_at")
+    @classmethod
+    def utc_timestamp(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Nap timestamps must include a timezone")
+        return value.astimezone(timezone.utc)
+
+
+class WorkoutHeartRateZone(BaseModel):
+    """Vendor time in a zone and its original ceiling, not personal thresholds."""
+
+    seconds: int = Field(ge=0, strict=True)
+    upper_bpm: int = Field(gt=0, strict=True)
 
 
 class WorkoutRpe(BaseModel):
@@ -126,6 +164,13 @@ class Workout(BaseModel):
     vendor_reported_sets: int | None = Field(default=None, ge=1, description="Positive group count explicitly reported in the vendor strength summary")
     distance_km: float | None = Field(default=None, ge=0)
     session_rpe: WorkoutRpe | None = None
+    auto_recognized: bool | None = Field(default=None, strict=True)
+    title: str | None = None
+    training_effect: float | None = Field(
+        default=None, ge=0, le=5, allow_inf_nan=False,
+        description="Vendor training effect on its 0–5 scale",
+    )
+    vendor_heart_rate_zones: list[WorkoutHeartRateZone] = Field(default_factory=list)
     observed_fields: list[str] = Field(
         default_factory=list,
         description="Normalized fields whose vendor payload explicitly contained an observation",
@@ -246,6 +291,11 @@ class MetricSample(BaseModel):
     device_id: str | None = None
     source_record_id: str | None = None
     sample_ordinal: int | None = Field(default=None, ge=0)
+    source_field: str | None = None
+    qualification: str | None = None
+    revision_at: datetime | None = None
+    fetched_at: datetime | None = None
+    journal_record_id: str | None = None
 
 
 class DenseDataFile(BaseModel):
@@ -276,6 +326,12 @@ class DailyMetric(BaseModel):
     unit: str = ""
     source_scope: str = "unknown"
     device_id: str | None = None
+    source_field: str | None = None
+    observed_at: datetime | None = None
+    fetched_at: datetime | None = None
+    source_record_id: str | None = None
+    qualification: str | None = None
+    revision_at: datetime | None = None
 
 
 class TrainingRecord(BaseModel):

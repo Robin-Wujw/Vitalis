@@ -54,6 +54,43 @@ Markdown 和保守的 inline HTML 从同一展示模型直接排版，不查数�
 
 以上是周报已经采用的规则。月报摘要仍有多来源与正文统计方法不一致的已知问题，见[月报整理计划](plan/monthly-comparison-consistency.md)；不能把周报的验收结论直接套到月报。
 
+## 曲线图与图表 API
+
+图表由分析层生成，和日报、周报、月报一起保存；晨报、晚报及 briefing 只选择其中的图，不查询数据库或临时计算健康结论。HTML 推送使用保守 inline CSS 微图（真实时间位置、预聚合桶、缺测留白），Markdown保留图表摘要；完整曲线是独立 SVG/HTML，支持图表筛选和点位提示，不加载外部脚本或图床。
+
+| 周期 | 默认优先展示 | 完整图表 API 中的补充内容 |
+| --- | --- | --- |
+| 晨报 | 昨夜睡眠分期、可用 HRV | 主睡眠与午睡分开，未知分期保留未知。 |
+| 日报 | 分钟心率、睡眠分期、稀疏压力 | Charge 总分/身体/心理、逐场训练心率与设备区间、肌群图。 |
+| 晚报 | Charge、压力、心率 | 当日训练曲线、显式关联的 Hevy 组次、午睡与注释。 |
+| 周报 | 每日睡眠、Zepp 7 日负荷、肌群图 | 每日静息心率、皮温、呼吸、VO2max、步数、肌群主要/辅助组数及一周分期。 |
+| 月报 | 静息心率、Zepp 7 日负荷、肌群图 | 全部每日指标、肌群接触图；不把每天的 7 日累计再次相加。 |
+
+推送最多选择三张有数据的图，完整 API 不受这项阅读取舍影响。图表全量序列和微图序列分别保存，微图不是把缺失插值成连续；不同来源、设备、单位分别成线。压力使用 `all_day_stress` 实际稀疏观测，图上不连接远隔采样。所有厂商评分和最佳/超负荷区间标为参考，不替代 Vitalis 决策或表示伤病安全线。肌群颜色表示有依据的训练接触组数，主要/辅助分开；没有映射的组不染色，重量容量不摊到人体部位。
+
+所有接口要求用户绑定的 `read` Bearer 令牌，GET 不同步、不排分析、不发送通知：
+
+- `GET /api/charts?from=YYYY-MM-DD&to=YYYY-MM-DD&mode=intraday`：已保存观测的分钟/时段图，最多 7 个本地日。
+- `GET /api/charts?from=YYYY-MM-DD&to=YYYY-MM-DD&mode=daily`：每日趋势和肌群图，最多 366 个本地日。
+- `GET /api/reports/{kind}/charts?day=YYYY-MM-DD`：严格读取该报告所保存的图，缺报告返回 404，不现场补算。
+- `GET /api/reports/{kind}/charts.html?day=YYYY-MM-DD`：完整图表页；浏览器请求仍需 Bearer，不把令牌拼进 URL。
+- `GET /api/reports/{kind}/charts/{chart_key}.svg?day=YYYY-MM-DD`：同快照单图，返回私有、不可缓存的 SVG。
+
+可直接打开程序生成的[日报曲线](examples/reports/daily.charts.html)、[晚报曲线](examples/reports/evening.charts.html)、[周报曲线](examples/reports/weekly.charts.html)、[月报曲线](examples/reports/monthly.charts.html)。它们仅使用合成数据，不代表真实设备、PushPlus 或手机视觉验收通过。
+
+### 注释、自动活动核对与 Hevy
+
+这些是显式输入，不由图表自动推断。`/api/chart-inputs` 下的 GET 使用 `read`，所有写操作使用 `feedback`、`Idempotency-Key` 和 `confirmed=true`；更新需当前 revision，冲突返回 409。创建、更正、删除和关联在同事务保存历史并排受影响日期分析，本链路抑制通知，不改变普通反馈既有投递规则。
+
+- `annotations`：查询、创建、修改、显式删除时间线注释，支持跨日区间；“会议/咖啡”等只是用户描述，不能解释为压力的已证实原因。
+- `activity-reviews`：自动识别或类型未知的运动核对队列，支持 classify/ignore/restore。核对只改变图表展示覆盖层，原 Zepp 记录和确定性训练决策不改写。
+- `activity-rules`：最多 50 条精确标题/运动模式/时长/星期规则，只提供建议；与同日未关联 Hevy 提示冲突时保留歧义，不能自动应用。
+- `hevy-imports`：用户提交 CSV 文本，限 1 MiB、2,000 行、100 场；没有 Hevy 账户连接、凭据获取或自动上传。
+- `external-workouts/{id}/candidates` 与 `/link`：同用户、重叠时间或同日候选由用户显式关联；多场候选不猜，同一 Zepp 场次不能关联两场外部记录。
+- `external-workouts/{id}/sets`：显式标记逐组主要/辅助肌群与侧别；Hevy 来源仍保留，不根据动作名称子串补肌群。图表合并已关联训练，未关联场次保留独立来源；导入并不伪造 Vitalis 用户确认动作或改变训练强度安排。
+
+完整请求体见[生成 API 参考](../skills/vitalis/references/api.md)。当前 Hevy 相同外部标识内容变更会拒绝而不是静默覆盖；尚未提供解除/修改关联接口。需要纠正关联时先停止操作，不用再次导入制造重复。
+
 ## 训练教练建议
 
 日报和晚报的单次训练卡显示已记录的主观用力程度，例如“RPE 7/10（Zepp 记录；越高越吃力）”。周报在训练汇总中列出已记录训练数、其中填写 RPE 的场次、来源、平均分及 8 分以上场次；没填的不按零分算，也不重复列反馈提交日的 RPE 均值。同一场训练在 Vitalis 补填或更正 RPE 后，按最新有效反馈更新。周内已评分训练平均达到 8 分时，建议下周把高强度训练隔开，其间安排轻松训练或休息；单次高 RPE 也作为力量训练调整的依据。评分只说明主观上吃不吃力，不当作运动成绩或身体恢复分。

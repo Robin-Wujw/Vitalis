@@ -234,6 +234,8 @@ def test_stress_timeline_is_exposed_and_drives_stream_freshness(client):
         "source": "zepp",
         "source_scope": "device",
         "device_id": "stress-device",
+        "source_field": None, "qualification": None,
+        "fetched_at": None, "revision_at": None,
     }]
     stream = next(
         item for item in health.json()["streams"]

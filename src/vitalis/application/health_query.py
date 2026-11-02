@@ -233,6 +233,9 @@ class HealthQuery:
                         "source": row.source,
                         "source_scope": row.source_scope,
                         "device_id": row.device_id,
+                        "source_field": row.source_field, "qualification": row.qualification,
+                        "fetched_at": _iso_utc(row.fetched_at) if row.fetched_at else None,
+                        "revision_at": _iso_utc(row.revision_at) if row.revision_at else None,
                         **(
                             {
                                 "sample_id": row.source_record_id,
@@ -307,6 +310,10 @@ class HealthQuery:
                 "source": row.source,
                 "source_scope": row.source_scope,
                 "device_id": row.device_id,
+                "source_field": row.source_field, "qualification": row.qualification,
+                "observed_at": _iso_utc(row.observed_at) if row.observed_at else None,
+                "fetched_at": _iso_utc(row.fetched_at) if row.fetched_at else None,
+                "revision_at": _iso_utc(row.revision_at) if row.revision_at else None,
             }
             for row in self._reader.daily_metrics(user_id, start, end, metric)
         ]

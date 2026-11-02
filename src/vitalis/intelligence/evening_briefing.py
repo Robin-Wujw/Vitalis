@@ -47,6 +47,7 @@ class EveningBriefingEngine:
         summary = []
         return ReportBriefing(
             period="evening",
+            charts=payload.get("charts") or [],
             analysis_run_id=payload.get("analysis_run_id", ""),
             user_id=payload.get("user_id", ""),
             date=report_date,

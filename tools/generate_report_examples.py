@@ -122,6 +122,8 @@ def main(argv: list[str] | None = None) -> int:
             # or credentials leave this process.
             get_engine().dispose()
         files: dict[str, str] = {}
+        from vitalis.application.charts import report_chart_bundle
+        from vitalis.intelligence.chart_rendering import render_chart_page
         manifest = {
             "dataset": "synthetic_demo", "generator": "tools/generate_report_examples.py",
             "day": args.day.isoformat(), "real_notifications_sent": 0,
@@ -131,6 +133,8 @@ def main(argv: list[str] | None = None) -> int:
             files[f"{name}.md"] = markdown.content
             files[f"{name}.fragment.html"] = html_report.content
             files[f"{name}.html"] = _preview(html_report.content, name)
+            if name != "insufficient-data":
+                files[f"{name}.charts.html"] = render_chart_page(report_chart_bundle(document, name)) + "\n"
             files[f"{name}.markdown-preview.html"] = _preview(markdown.content, name, markdown_source=True)
             files[f"{name}.markdown.payload.json"] = json.dumps(markdown.as_dict(), ensure_ascii=False, indent=2) + "\n"
             files[f"{name}.html.payload.json"] = json.dumps(html_report.as_dict(), ensure_ascii=False, indent=2) + "\n"

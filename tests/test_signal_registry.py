@@ -327,7 +327,8 @@ def test_profile_loader_preserves_existing_timestamped_readiness_and_charge_inpu
         queried.append(metric)
         if metric in {"readiness", "hybrid_charge", "skin_temp_delta", "stress"}:
             return [SimpleNamespace(metric=metric, value=0, unit="C" if metric == "skin_temp_delta" else "score",
-                                    timestamp=timestamp, source="zepp", source_scope="device", device_id="watch-a")]
+                                    timestamp=timestamp, source="zepp", source_scope="device", device_id="watch-a",
+                                    source_field=None, fetched_at=None, qualification=None)]
         return []
 
     raw = _raw()

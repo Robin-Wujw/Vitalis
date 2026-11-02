@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from .public_reports import PublicReportView, report_presentation, to_public_report_view
 from .report_formatting import minutes_text, number, payload_of, timestamp_text
 
-RENDERER_VERSION = "4.6"
+RENDERER_VERSION = "5.0"
 ReportTarget = Literal["markdown", "html"]
 _MEDIA_TYPES = {"markdown": "text/markdown", "html": "text/html"}
 _LABELS = {"morning": "晨报", "daily": "日报", "evening": "晚报", "weekly": "周报", "monthly": "月报"}
@@ -358,6 +358,15 @@ def _report_sections(view: dict[str, Any], presentation: dict[str, Any]) -> tupl
             sections.append(_block(str(section.get("title") or "记录"), units))
     if kind != "morning" and suggestions:
         sections.append(_block(_NEXT_HEADINGS[kind], [], suggestions, variant="plan"))
+    from .chart_contracts import Chart
+    from .charts import select_report_charts
+    charts = [Chart.model_validate(item) for item in presentation.get("charts") or []]
+    if facts_only:
+        charts = [chart for chart in charts if chart.kind != "body_map"]
+    selected_charts = select_report_charts(charts, kind)
+    if selected_charts:
+        sections.append(_block("记录曲线", [(_UNIT_RANKS["fact"], [("chart", chart.model_dump(mode="json"))])
+                                           for chart in selected_charts]))
     return [], sections
 
 
@@ -513,6 +522,10 @@ def _markdown_line(kind: str, payload: Any) -> str | None:
         return "\n\n".join([f"**{_markdown(payload['heading'])}**", *(_markdown(note) for note in payload["notes"])])
     if kind == "zones":
         return "\n\n".join(_markdown(text) for _, _, text in payload)
+    if kind == "chart":
+        summary = payload.get("summary") or payload.get("notes") or []
+        return "\n\n".join([f"**{_markdown(payload['title'])}**", *[_markdown(line) for line in summary[:2]],
+                             "曲线保留缺测空白；完整图表可通过报告图表 API 查看。"])
     shown = _markdown(payload)
     if kind in {"h2", "h3"}:
         return f"{'##' if kind == 'h2' else '###'} {shown}"
@@ -636,6 +649,9 @@ def _html_line(kind: str, payload: Any) -> str:
         return _html_row(payload)
     if kind == "zones":
         return _html_zones(payload)
+    if kind == "chart":
+        from .chart_rendering import render_chart_html
+        return render_chart_html(payload)
     if kind == "h2":
         return f'<h2 style="margin:0 0 8px;font-size:16px;line-height:1.4;color:{_INK}">{escape(payload)}</h2>'
     if kind == "h3":

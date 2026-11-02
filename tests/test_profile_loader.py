@@ -673,6 +673,7 @@ def test_feature_day_drops_the_same_stream_vendor_daily_value():
         repo.save_daily_metrics([DailyMetric(
             user_id=user_id, date=history, metric="stress", value=90.0, unit="score",
             source="zepp", source_scope="device", device_id="DEV-1",
+            observed_at=start + timedelta(minutes=59), source_field="avgStress",
         )])
         raw = ProfileLoader(repo).load(
             user_id, day, as_of=datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=20),

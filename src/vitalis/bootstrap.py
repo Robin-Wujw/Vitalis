@@ -81,6 +81,21 @@ def get_feedback_link_service():
     )
 
 
+def get_chart_input_service():
+    from vitalis.application.chart_inputs import ChartInputService
+    from vitalis.adapters.persistence.chart_inputs import SqlChartInputStore
+    return ChartInputService(
+        SqlChartInputStore(database.SessionLocal, timezone_name=settings.timezone),
+        today_factory=local_today, timezone_name=settings.timezone,
+    )
+
+
+def get_chart_query():
+    from vitalis.application.charts import ChartQuery
+    from vitalis.adapters.persistence.chart_reader import SqlChartReader
+    return ChartQuery(SqlChartReader(database.SessionLocal), timezone_name=settings.timezone)
+
+
 def get_intelligence_query() -> IntelligenceQuery:
     return IntelligenceQuery(_intelligence_uow, today_factory=local_today)
 

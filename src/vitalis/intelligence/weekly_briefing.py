@@ -63,6 +63,7 @@ class WeeklyBriefingEngine:
         presentation = period_presentation(presentation_payload, "weekly")
         return ReportBriefing(
             period="weekly",
+            charts=payload.get("charts") or [],
             analysis_run_id=payload.get("analysis_run_id", ""),
             user_id=payload.get("user_id", ""),
             date=payload.get("period_end"),

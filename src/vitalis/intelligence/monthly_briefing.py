@@ -80,6 +80,7 @@ class MonthlyBriefingEngine:
         presentation = period_presentation(payload, "monthly")
         return ReportBriefing(
             period="monthly",
+            charts=payload.get("charts") or [],
             analysis_run_id=payload.get("analysis_run_id", ""),
             user_id=payload.get("user_id", ""),
             date=payload.get("period_end"),

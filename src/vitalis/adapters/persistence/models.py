@@ -173,6 +173,11 @@ class MetricSample(Base):
     device_id: Mapped[str] = mapped_column(String(128), default="", nullable=False)
     source_record_id: Mapped[str] = mapped_column(String(128), default="", nullable=False)
     sample_ordinal: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    source_field: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    qualification: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    revision_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    journal_record_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class DailySignalFeature(Base):
@@ -234,6 +239,12 @@ class DailyMetric(Base):
     unit: Mapped[str] = mapped_column(String(24), default="")
     source_scope: Mapped[str] = mapped_column(String(24), default="unknown")
     device_id: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    source_field: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    qualification: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revision_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    source_record_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class DenseDataFile(Base):

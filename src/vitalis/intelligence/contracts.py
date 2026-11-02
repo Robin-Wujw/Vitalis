@@ -8,14 +8,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from vitalis.domain import StrengthSetObservation
 from vitalis.domain.models import WorkoutRpe
+from vitalis.intelligence.chart_contracts import Chart
 
 
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "16.0"
-WEEKLY_SCHEMA_VERSION = "8.0"
-MONTHLY_SCHEMA_VERSION = "5.0"
+DAILY_SCHEMA_VERSION = "17.0"
+WEEKLY_SCHEMA_VERSION = "9.0"
+MONTHLY_SCHEMA_VERSION = "6.0"
 INTELLIGENCE_VERSION = "19.0"
 DECISION_POLICY_VERSION = "12.0"
 EVIDENCE_VERSION = "2026-09a"
@@ -1605,6 +1606,7 @@ class WeeklyProfile(BaseModel):
     inferences: WeeklyInferences
     actions: WeeklyActions
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+    charts: list[Chart] = Field(default_factory=list)
     open_health_period_summary: "OpenHealthPeriodSummary | None" = None
     open_health_coverage: dict[str, "OpenHealthCoverage"] = Field(default_factory=dict)
 
@@ -1815,6 +1817,7 @@ class MonthlyProfile(BaseModel):
     inferences: MonthlyInferences
     actions: MonthlyActions
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+    charts: list[Chart] = Field(default_factory=list)
     open_health_period_summary: "OpenHealthPeriodSummary | None" = None
     open_health_coverage: dict[str, "OpenHealthCoverage"] = Field(default_factory=dict)
 
@@ -1891,7 +1894,7 @@ class SubjectiveFeedback(BaseModel):
 
 
 class DailyProfile(BaseModel):
-    schema_version: Literal["16.0"] = DAILY_SCHEMA_VERSION
+    schema_version: Literal["17.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
     intelligence_version: Literal["19.0"] = INTELLIGENCE_VERSION
     decision_policy_version: Literal["12.0"] = DECISION_POLICY_VERSION
@@ -1910,6 +1913,7 @@ class DailyProfile(BaseModel):
     decision: TrainingDecision
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    charts: list[Chart] = Field(default_factory=list)
     open_health_insights: "OpenHealthBundle | None" = None
 
 
@@ -1989,6 +1993,7 @@ class ReportBriefing(BaseModel):
     alerts: list[str] = Field(default_factory=list)
     summary: list[str] = Field(default_factory=list)
     sections: list[ReportSection] = Field(default_factory=list)
+    charts: list[Chart] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_period(self):
@@ -2030,6 +2035,7 @@ class MorningBriefing(BaseModel):
     alerts: list[str] = Field(default_factory=list)
     summary: list[str] = Field(default_factory=list)
     sections: list[ReportSection] = Field(default_factory=list)
+    charts: list[Chart] = Field(default_factory=list)
     observations: list[MorningBriefingReason] = Field(default_factory=list)
     key_reasons: list[MorningBriefingReason] = Field(default_factory=list)
     cautions: list[str] = Field(default_factory=list)

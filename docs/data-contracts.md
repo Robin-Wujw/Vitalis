@@ -115,6 +115,16 @@ Zepp 训练摘要中的 `rpe` 保存为 `Workout.session_rpe`，保留 `source=z
 
 RPE 按 `(workout_source, workout_id)` 每场最多计一次：截止 `as_of` 最新一条含有效 RPE 的 Vitalis 反馈优先于 Zepp，后来只写备注不会抹掉已有评分。未来训练、未来获取的评分及周期外训练不进入当前周期汇总。`session_rpe_summary` 保存活动日期窗口、已记录训练数、有评分训练数、评分均值、8 分及以上场次、来源计数及逐场依据；均值只除以有评分场次，不补零，不混入按反馈提交日期统计的均值。信号注册表将其标记为按训练汇总，不生成每日值或日级基线。RPE 只为训练吃力程度和力量训练安排提供参考，不进入准备度评分，也不补足动作到肌群的识别资格。
 
+## 图表事实合同
+
+`ChartBundle 1.0` 使用绝对时间点和服务时区，记录用户、分析运行、起止日期和截止时刻。每条系列保留 source/scope/device/unit、源字段、观测范围、样本数、聚合方式和资格；新抓取的指标保留 journal 获取时间，旧记录不知道获取时间就保持空值。完整点位与推送预聚合点位分别保存；渲染层只计算坐标，不重算分桶、基线、训练量或生理事实。日级趋势按本地日填显式 null，分钟曲线以 null 标记缺口，压力用散点；不同单位分面，不共用暗示可比的纵轴。
+
+Zepp `currnetDayTrainLoad` 才是日负荷，`wtlSum` 为厂商七日累计，另外三项 `wtlSumOptimalMin/Max/Overreaching` 是该累计的厂商区间，分别存 `vendor_load_7d/vendor_load_optimal_min/vendor_load_optimal_max/vendor_load_overreaching`。零负荷有效，-1/非法值未知，不跨字段回退。readiness 的 `value.timestamp` 是观测日锚点，`item.timestamp` 是修订时间；同日同设备选择最新完整修订，跨请求旧修订不能覆盖新值，撤回为255的分量会清除旧规范值并保留修订标记。
+
+午睡存入独立 `sleep_supplements`，即使没有主睡眠也不制造零分钟主睡。只有 payload 明确有效 `odd_stage` 时才知道午睡是否存在；空数组可以证明无记录，缺字段保持未知。连续分段合并为一场，中间清醒不拆分；未知阶段保留 `unknown/vendor_mode`，无法确认的睡眠分钟数不补零。睡眠、午睡的图表日期与活动日期分别保留。
+
+人体图沿用已核验动作和部位映射，展示直接/辅助接触组数，不把重量乘次数分配成肌肉受力。Hevy 只有显式逐组部位映射才进入人体图，已关联 Zepp 场次不重复计数；热身组排除，未知用途不改称有效工作组。用户注释、活动展示核对、Hevy 上传与映射单独版本化，不覆盖厂商事实，读取按分析截止选择可见版本。
+
 ## API 与写入
 
 所有用户范围 API 使用 Bearer 令牌；`X-User-Id` 只做一致性检查。GET 报告和查询只读已保存结果，不启动同步或分析。`POST /api/analysis-runs` 与 `POST /api/sync-jobs` 返回任务受理信息，写请求使用 `Idempotency-Key`；需查询 `GET /api/jobs/{job_id}`，直到 worker 保存结果。

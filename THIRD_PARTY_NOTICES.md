@@ -20,6 +20,10 @@
 
 本条目记录来源，并不声称 Vitalis 与 ZeppBridge 或 Zepp Health 存在从属、获得其背书或在功能上等同。
 
+## zepp-dashboard 行为参考
+
+2026-11-02 对照 [J-solan/zepp-dashboard](https://github.com/J-solan/zepp-dashboard) 的公开 `main` 文档与源码，独立实现午睡连续分段、readiness 修订时间、日负荷与七日累计分离、自动活动标记与厂商训练效果/心率区间字段，并参考其真实时间轴、缺测留白、日级趋势和分项 Charge 展示。没有复制上游代码、人体图片、前端资源或个人数据；人体图为本项目自行编写的简化 SVG。上游为 MIT；其单设备/欧区验证不构成 Vitalis 实测证据。Hevy CSV 仅由用户主动上传，不接入上游账户或服务。
+
 ## Zepp 厂商目录
 
 `src/vitalis/adapters/zepp/data/` 的规范化映射来自用户提供的 Zepp 10.8.7-play APK 三份运动目录及官方 `/sport/config/muscle` 中文动作目录。只保留互操作所需的编号、名称、交叉关系和来源摘要；不分发 APK、图片、反编译实现或个人响应。208 个运动模式与 1,133 个动作名称的来源、占位排除及更新方法见 [Zepp](docs/zepp.md)。这些厂商标签不表示用户确认或 Vitalis 对训练动作的处方资格。

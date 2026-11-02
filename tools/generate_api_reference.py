@@ -16,6 +16,11 @@ BASE_OPERATIONS = frozenset({
     "get_data_status", "get_report", "get_public_report_view", "get_report_state", "create_analysis_run", "get_job",
     "create_sync_job", "list_workouts", "get_workout", "create_feedback",
     "get_coach_policy", "create_coach_operation", "get_strength_review", "get_race_equivalence",
+    "get_charts", "get_report_charts", "get_report_chart_page", "get_report_chart_svg",
+    "get_chart_annotations", "create_chart_annotation", "patch_chart_annotation", "delete_chart_annotation",
+    "get_activity_review_queue", "review_activity", "import_hevy_csv", "get_external_strength_workouts",
+    "get_external_strength_workout", "get_hevy_link_candidates", "link_hevy_workout", "get_chart_input_snapshot",
+    "get_activity_rules", "save_activity_rule", "map_hevy_strength_sets",
 })
 SKILL_SCRIPT = ROOT / "skills" / "vitalis" / "scripts" / "vitalis_api.py"
 _PATH_PARAM = re.compile(r"\{[^{}]+\}")

@@ -974,6 +974,22 @@ class HealthRepository:
         return [r.data for r in rows]
 
 
+    def replace_readiness(self, user_id: str, revisions: list, metrics: list, samples: list, *, timezone_name: str) -> int:
+        from .readiness_revisions import replace_readiness
+        return replace_readiness(self, user_id, revisions, metrics, samples, timezone_name=timezone_name)
+
+    def chart_input_snapshot(self, user_id: str, start: date, end: date, *, as_of: datetime, timezone_name: str = "UTC") -> dict:
+        from .chart_inputs import read_chart_input_snapshot
+        return read_chart_input_snapshot(self.db, user_id, start, end, as_of=as_of, timezone_name=timezone_name)
+
+    def save_naps(self, user_id: str, day: date, naps: list, *, fetched_at=None) -> int:
+        from .sleep_supplements import save_naps
+        return save_naps(self, user_id, day, naps, fetched_at=fetched_at)
+
+    def nap_range(self, user_id: str, start: date, end: date, as_of: datetime) -> dict:
+        from .sleep_supplements import read_naps
+        return read_naps(self.db, user_id, start, end, as_of)
+
     def activity_range(self, user_id: str, start: date, end: date) -> list[dict]:
         rows = self.db.execute(
             select(orm.ActivityRecord).where(
@@ -1101,7 +1117,37 @@ class HealthRepository:
             days.add(local_day(timestamp, timezone_name))
         return days
 
+    def _active_chart_journal(self):
+        journal_id = self.db.info.get("active_source_record_id")
+        if not journal_id:
+            return None
+        from .source_journal import SourceJournalRecord
+        return self.db.get(SourceJournalRecord, journal_id)
+
+    def _chart_observation_metadata(self, item, *, sample: bool = False, journal=None) -> dict:
+        """Attach only observed provenance; never invent a fetched timestamp."""
+        journal_id = self.db.info.get("active_source_record_id")
+        fetched_at = getattr(item, "fetched_at", None)
+        if journal_id:
+            if journal is None or journal.user_id != item.user_id or journal.source != item.source:
+                journal_id = None
+            elif fetched_at is None:
+                fetched_at = journal.fetched_at
+        values = {
+            "source_field": getattr(item, "source_field", None),
+            "qualification": getattr(item, "qualification", None),
+            "revision_at": _naive_utc(item.revision_at) if getattr(item, "revision_at", None) else None,
+            "fetched_at": _naive_utc(fetched_at) if fetched_at else None,
+        }
+        if sample:
+            values["journal_record_id"] = journal_id or getattr(item, "journal_record_id", None)
+        else:
+            values["source_record_id"] = journal_id or getattr(item, "source_record_id", None)
+            values["observed_at"] = _naive_utc(item.observed_at) if getattr(item, "observed_at", None) else None
+        return values
+
     def _write_metric_samples(self, samples: list[MetricSample]) -> tuple[int, set[str]]:
+        journal = self._active_chart_journal()
         deduplicated: dict[
             tuple[str, str, str, datetime, str, str, str, int], MetricSample
         ] = {}
@@ -1116,6 +1162,11 @@ class HealthRepository:
                 sample.source_record_id or "",
                 sample.sample_ordinal if sample.sample_ordinal is not None else 0,
             )
+            previous = deduplicated.get(key)
+            previous_revision = getattr(previous, "revision_at", None)
+            incoming_revision = getattr(sample, "revision_at", None)
+            if previous_revision and (incoming_revision is None or _naive_utc(incoming_revision) < _naive_utc(previous_revision)):
+                continue
             deduplicated[key] = sample
 
         if not deduplicated:
@@ -1141,6 +1192,7 @@ class HealthRepository:
                     "sample_ordinal": sample_ordinal,
                     "value": sample.value,
                     "unit": sample.unit,
+                    **self._chart_observation_metadata(sample, sample=True, journal=journal),
                 }
                 for (
                     user_id, source, metric, timestamp, source_scope, device_id,
@@ -1158,10 +1210,18 @@ class HealthRepository:
                         set_={
                             "value": statement.excluded.value,
                             "unit": statement.excluded.unit,
+                            **{name: getattr(statement.excluded, name) for name in (
+                                "source_field", "qualification", "revision_at", "fetched_at", "journal_record_id",
+                            )},
                         },
-                        where=(
-                            orm.MetricSample.value.is_distinct_from(statement.excluded.value)
-                            | orm.MetricSample.unit.is_distinct_from(statement.excluded.unit)
+                        where=and_(
+                            or_(orm.MetricSample.revision_at.is_(None),
+                                statement.excluded.revision_at >= orm.MetricSample.revision_at),
+                            or_(orm.MetricSample.value.is_distinct_from(statement.excluded.value),
+                                orm.MetricSample.unit.is_distinct_from(statement.excluded.unit),
+                                orm.MetricSample.source_field.is_distinct_from(statement.excluded.source_field),
+                                orm.MetricSample.qualification.is_distinct_from(statement.excluded.qualification),
+                                orm.MetricSample.revision_at.is_distinct_from(statement.excluded.revision_at)),
                         ),
                     ).returning(orm.MetricSample.user_id)
                 )
@@ -1186,6 +1246,9 @@ class HealthRepository:
                     orm.MetricSample.sample_ordinal == sample_ordinal,
                 )
             ).scalar_one_or_none()
+            metadata = self._chart_observation_metadata(sample, sample=True, journal=journal)
+            if row is not None and row.revision_at is not None and (metadata["revision_at"] is None or metadata["revision_at"] < row.revision_at):
+                continue
             changed = row is None or row.value != sample.value or row.unit != sample.unit
             if row is None:
                 row = orm.MetricSample(
@@ -1201,6 +1264,9 @@ class HealthRepository:
                 self.db.add(row)
             row.value = sample.value
             row.unit = sample.unit
+            if changed:
+                for name, value in metadata.items():
+                    setattr(row, name, value)
             if changed:
                 changed_users.add(user_id)
             written += 1
@@ -1235,10 +1301,12 @@ class HealthRepository:
         self, user_id: str, start: datetime, end: datetime
     ) -> list[tuple[datetime, float, str, str, str | None, str]]:
         """Aggregate a dense heart-rate window before rows leave the database."""
+        # SQL text has no SQLAlchemy DateTime binder. Normalize subclasses
+        # (including injected clocks) to plain datetime before sqlite binding.
         params = {
             "user_id": user_id,
-            "start": _naive_utc(start),
-            "end": _naive_utc(end),
+            "start": datetime.fromisoformat(_naive_utc(start).isoformat()),
+            "end": datetime.fromisoformat(_naive_utc(end).isoformat()),
         }
         if self.db.get_bind().dialect.name == "postgresql":
             statement = text("""
@@ -1399,6 +1467,7 @@ class HealthRepository:
 
     def save_daily_metrics(self, metrics: list[DailyMetric]) -> int:
         """Idempotently upsert sparse daily vendor metrics by source stream."""
+        journal = self._active_chart_journal()
         deduplicated: dict[
             tuple[str, str, date, str, str, str], DailyMetric
         ] = {}
@@ -1411,6 +1480,11 @@ class HealthRepository:
                 metric.source_scope or "unknown",
                 metric.device_id or "",
             )
+            previous = deduplicated.get(key)
+            previous_revision = getattr(previous, "revision_at", None)
+            incoming_revision = getattr(metric, "revision_at", None)
+            if previous_revision and (incoming_revision is None or _naive_utc(incoming_revision) < _naive_utc(previous_revision)):
+                continue
             deduplicated[key] = metric
 
         if not deduplicated:
@@ -1426,6 +1500,7 @@ class HealthRepository:
                 "device_id": device_id,
                 "value": metric.value,
                 "unit": metric.unit,
+                **self._chart_observation_metadata(metric, journal=journal),
             }
             for (
                 user_id, source, day, metric_name, source_scope, device_id
@@ -1451,10 +1526,18 @@ class HealthRepository:
                         set_={
                             "value": statement.excluded.value,
                             "unit": statement.excluded.unit,
+                            **{name: getattr(statement.excluded, name) for name in (
+                                "source_field", "qualification", "observed_at", "revision_at", "fetched_at", "source_record_id",
+                            )},
                         },
-                        where=(
-                            orm.DailyMetric.value.is_distinct_from(statement.excluded.value)
-                            | orm.DailyMetric.unit.is_distinct_from(statement.excluded.unit)
+                        where=and_(
+                            or_(orm.DailyMetric.revision_at.is_(None),
+                                statement.excluded.revision_at >= orm.DailyMetric.revision_at),
+                            or_(orm.DailyMetric.value.is_distinct_from(statement.excluded.value),
+                                orm.DailyMetric.unit.is_distinct_from(statement.excluded.unit),
+                                orm.DailyMetric.source_field.is_distinct_from(statement.excluded.source_field),
+                                orm.DailyMetric.qualification.is_distinct_from(statement.excluded.qualification),
+                                orm.DailyMetric.revision_at.is_distinct_from(statement.excluded.revision_at)),
                         ),
                     ).returning(orm.DailyMetric.user_id)
                 )
@@ -1486,12 +1569,14 @@ class HealthRepository:
                 orm.DailyMetric.source_scope == values["source_scope"],
                 orm.DailyMetric.device_id == values["device_id"],
             )).scalar_one_or_none()
-            changed = row is None or row.value != values["value"] or row.unit != values["unit"]
+            if row is not None and row.revision_at is not None and (values["revision_at"] is None or values["revision_at"] < row.revision_at):
+                continue
+            changed = row is None or row.value != values["value"] or row.unit != values["unit"] or row.revision_at != values["revision_at"]
             if row is None:
                 self.db.add(orm.DailyMetric(**values))
-            else:
-                row.value = values["value"]
-                row.unit = values["unit"]
+            elif changed:
+                for name, value in values.items():
+                    setattr(row, name, value)
             if changed:
                 changed_users.add(values["user_id"])
         self.db.flush()

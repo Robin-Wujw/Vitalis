@@ -323,6 +323,13 @@ def build_report_projections(
         associations=period_associations["monthly"],
         product_context=products.get("monthly", products.get("daily", {})),
     )
+    from vitalis.intelligence.charts import build_chart_bundle
+    weekly = weekly.model_copy(update={"charts": build_chart_bundle(
+        raw, weekly.period_start, weekly.period_end, period="weekly", analysis_run_id=analysis_run_id,
+    ).charts})
+    monthly = monthly.model_copy(update={"charts": build_chart_bundle(
+        raw, monthly.period_start, monthly.period_end, period="monthly", analysis_run_id=analysis_run_id,
+    ).charts})
     return weekly, monthly, MorningBriefingEngine().build(daily)
 
 
@@ -381,7 +388,11 @@ def build_daily_profile(
     events = HealthEventEngine().detect(raw, baselines, trends, hrv, recovery, training)
     if body_warning is not None:
         events.append(body_warning)
+    from vitalis.intelligence.charts import build_chart_bundle
+    raw.chart_baselines = baselines
+    charts = build_chart_bundle(raw, target, target, period="daily", analysis_run_id=analysis_run_id).charts
     return DailyProfile(
+        charts=charts,
         analysis_run_id=analysis_run_id,
         user_id=raw.user_id,
         date=target,

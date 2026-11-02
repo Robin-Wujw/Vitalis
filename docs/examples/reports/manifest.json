@@ -7,18 +7,18 @@
   "reports": {
     "morning": {
       "markdown": {
-        "title": "Vitalis 晨报 · 今天安排：正常训练",
+        "title": "Vitalis 晨报 · 今天安排：轻量训练",
         "media_type": "text/markdown",
         "template": "markdown",
-        "renderer_version": "4.6",
-        "content_sha256": "b2adf74cb00629a4f6447adca6b0b766bed21fb9f8cac0a306526ad0d8fee42c"
+        "renderer_version": "5.0",
+        "content_sha256": "9e6a600ffe6a930d65e0dc053f29ebe6eae7f26aa9e6329f414cb155bb6ab6cd"
       },
       "html": {
-        "title": "Vitalis 晨报 · 今天安排：正常训练",
+        "title": "Vitalis 晨报 · 今天安排：轻量训练",
         "media_type": "text/html",
         "template": "html",
-        "renderer_version": "4.6",
-        "content_sha256": "d2130928fde5710d1d0bf81818f744730e15311c94295e04ca0705a2b1b1da85"
+        "renderer_version": "5.0",
+        "content_sha256": "d201e4c628f913a5313cdf60fd9ec711470426cc22ec11751d01df31951dd8e3"
       }
     },
     "daily": {
@@ -26,15 +26,15 @@
         "title": "Vitalis 日报 · 本地日完整事实快照",
         "media_type": "text/markdown",
         "template": "markdown",
-        "renderer_version": "4.6",
-        "content_sha256": "0fff775252a40ddc5f9274fab1825aeed84f5da56f280c5afd9285e717c1a6a5"
+        "renderer_version": "5.0",
+        "content_sha256": "f8e8f6e50c3fe9645ec2fb0d8c061d3b7445f67426c01865d909d94e9b57da6f"
       },
       "html": {
         "title": "Vitalis 日报 · 本地日完整事实快照",
         "media_type": "text/html",
         "template": "html",
-        "renderer_version": "4.6",
-        "content_sha256": "ba661b5e2a5b52c79d486491a657220c9f573d0c2f26406f6d440f905ea35109"
+        "renderer_version": "5.0",
+        "content_sha256": "00090fcd254bd030868619fd0058feff54bffdf0d9200fba111bf71f987b6154"
       }
     },
     "evening": {
@@ -42,15 +42,15 @@
         "title": "Vitalis 晚报 · 二头肌弯举总次数增加",
         "media_type": "text/markdown",
         "template": "markdown",
-        "renderer_version": "4.6",
-        "content_sha256": "2ac7290cbdbb97a0ecf06abe623e7270db5b82449b064aa027399d7f57dbd7ff"
+        "renderer_version": "5.0",
+        "content_sha256": "a545b182d3b5761604da28f51c010682b69ed07eaf8a016fb57e128d5e75c912"
       },
       "html": {
         "title": "Vitalis 晚报 · 二头肌弯举总次数增加",
         "media_type": "text/html",
         "template": "html",
-        "renderer_version": "4.6",
-        "content_sha256": "3d168f588ef8f9b5689aaabb4a2dda950d6a89eeb83f688a1aabb138f7a57467"
+        "renderer_version": "5.0",
+        "content_sha256": "1764cc0e42679b3816c120c2605d55fb79f8b99d3965134795c86f3cd73e9f30"
       }
     },
     "weekly": {
@@ -58,15 +58,15 @@
         "title": "Vitalis 周报 · 本周睡眠与训练结构",
         "media_type": "text/markdown",
         "template": "markdown",
-        "renderer_version": "4.6",
-        "content_sha256": "9b6a07d1f148e8c49bf5776388967956c4ae16ceaa975c3189d99d059d9fb0df"
+        "renderer_version": "5.0",
+        "content_sha256": "722edcae5869cc17d1713d739d158aaca9888bfda44051b054255b1fe2449130"
       },
       "html": {
         "title": "Vitalis 周报 · 本周睡眠与训练结构",
         "media_type": "text/html",
         "template": "html",
-        "renderer_version": "4.6",
-        "content_sha256": "5ab753182d48b8d189a44cd01c5465ff0bcfa1c696e98ef8a2bdb412854e4217"
+        "renderer_version": "5.0",
+        "content_sha256": "c156523cdc4a00a7d7b5e622a579e4629db80850f7653f0a97a6a39568f8daf7"
       }
     },
     "monthly": {
@@ -74,15 +74,15 @@
         "title": "Vitalis 月报 · 本月睡眠与训练结构",
         "media_type": "text/markdown",
         "template": "markdown",
-        "renderer_version": "4.6",
-        "content_sha256": "6bb5242b977cb3e335e05fcab9785e52fe5671498ff6e6d9dba4ea30d7167f1a"
+        "renderer_version": "5.0",
+        "content_sha256": "c210121e41ffa2df0e710b6fdcb5ef620da1586717288f66ec7ef47b6d5a790d"
       },
       "html": {
         "title": "Vitalis 月报 · 本月睡眠与训练结构",
         "media_type": "text/html",
         "template": "html",
-        "renderer_version": "4.6",
-        "content_sha256": "3a865c4f8769788bb07a77890447a3eba957ae3f5a8d0d3fdff60e01102e5d5d"
+        "renderer_version": "5.0",
+        "content_sha256": "e9f4e4d05580e0fb1ab0d2810e20f274a5ffa2f7029efc23f15231b71069b834"
       }
     },
     "insufficient-data": {
@@ -90,15 +90,15 @@
         "title": "Vitalis 周报 · 本周睡眠与训练结构",
         "media_type": "text/markdown",
         "template": "markdown",
-        "renderer_version": "4.6",
-        "content_sha256": "891b41bba9b914c8a385c3f7a7b01223d3c747ba9d57258fa95af0ac69110a00"
+        "renderer_version": "5.0",
+        "content_sha256": "29e0fa25bbe1da981b65445a997d58b39d0e4651bf34fc17900b37451f2e8669"
       },
       "html": {
         "title": "Vitalis 周报 · 本周睡眠与训练结构",
         "media_type": "text/html",
         "template": "html",
-        "renderer_version": "4.6",
-        "content_sha256": "4db8727673f30755597cd83f9e6424e18265f0dfe7a9f0228c7bfd2f9bd8b334"
+        "renderer_version": "5.0",
+        "content_sha256": "bc09504614f1b6099e1924060c5946b0c83f63645e7cf430b4b20106ae707d9b"
       }
     }
   }

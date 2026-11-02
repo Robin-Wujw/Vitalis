@@ -73,6 +73,10 @@ class HealthMetricRead:
     device_id: str | None
     source_record_id: str | None
     sample_ordinal: int | None
+    source_field: str | None = None
+    qualification: str | None = None
+    fetched_at: datetime | None = None
+    revision_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +90,11 @@ class HealthDailyMetricRead:
     source: str
     source_scope: str
     device_id: str | None
+    source_field: str | None = None
+    qualification: str | None = None
+    observed_at: datetime | None = None
+    fetched_at: datetime | None = None
+    revision_at: datetime | None = None
 
 
 @dataclass(frozen=True)

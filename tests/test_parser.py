@@ -447,7 +447,7 @@ def test_parse_daily_metrics():
         "items": [{
             "eventType": "readiness",
             "timestamp": 1_777_334_400_000,
-            "value": {"date": "2026-04-30", "watchScore": 83, "phyScore": 79},
+            "value": {"timestamp": 1_777_334_400_000, "watchScore": 83, "phyScore": 79},
         }]
     })
     values = {row.metric: row.value for row in rows}
@@ -815,6 +815,7 @@ def test_parse_sdnn_samples_and_readiness_extensions():
         "eventType": "readiness",
         "timestamp": 1_777_334_400_000,
         "value": {
+            "timestamp": 1_777_334_400_000,
             "deviceId": "A1B2C3D4E5F60708",
             "rdnsScore": 88,
             "skinTempScore": 93,
@@ -846,6 +847,7 @@ def test_readiness_without_device_is_preserved_as_vendor_fused():
         "eventType": "readiness",
         "timestamp": 1_777_334_400_000,
         "value": {
+            "timestamp": 1_777_334_400_000,
             "sleepHRV": 65,
             "sleepRHR": 48,
         },
@@ -1032,6 +1034,7 @@ def test_readiness_scores_are_bounded_and_hrv_baseline_255_is_absent():
         "eventType": "readiness",
         "timestamp": 1_777_334_400_000,
         "value": {
+            "timestamp": 1_777_334_400_000,
             "rdnsScore": 101,
             "phyScore": -1,
             "mentScore": 100,

@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from vitalis.config import settings
 
-SCHEMA_REVISION = "2026-10-coach-operations"
+SCHEMA_REVISION = "2026-11-chart-inputs"
 
 
 class SchemaMismatch(RuntimeError):
@@ -202,8 +202,12 @@ def check_schema(engine: Engine | None = None) -> None:
     from . import models as _  # noqa: F401
     from . import source_journal as _source_journal  # noqa: F401
     from . import input_events as _input_events  # noqa: F401
+    from . import sleep_supplements as _sleep_supplements  # noqa: F401
+    from . import readiness_revisions as _readiness_revisions  # noqa: F401
     from .product_tracking import register_product_tracking_models
+    from .chart_inputs import register_chart_input_models
     register_product_tracking_models(Base.metadata)
+    register_chart_input_models(Base.metadata)
 
     target = engine or _engine
     database = target.url.database
@@ -279,8 +283,12 @@ def init_db(engine: Engine | None = None) -> None:
     from . import models as _  # noqa: F401
     from . import source_journal as _source_journal  # noqa: F401
     from . import input_events as _input_events  # noqa: F401
+    from . import sleep_supplements as _sleep_supplements  # noqa: F401
+    from . import readiness_revisions as _readiness_revisions  # noqa: F401
     from .product_tracking import register_product_tracking_models
+    from .chart_inputs import register_chart_input_models
     register_product_tracking_models(Base.metadata)
+    register_chart_input_models(Base.metadata)
 
     target = engine or _engine
     if inspect(target).get_table_names():

@@ -104,6 +104,18 @@ uv run --locked --extra dev python tools/extract_zepp_strength_catalog.py --cata
 
 HRV 请求使用包含首尾两天的本地日期窗口，再转换成 UTC 毫秒范围；同步 attempt 保存的时区会在 worker 恢复时继续使用，不从当前进程环境重新推断。持久同步保留原始事件和逐样本观测时间，mock/demo 路径只生成按本地日聚合的合成样本；两者都按报告时区归属 `calendar_day`。未知设备范围保持未知，不能把 mock 或厂商融合值描述成设备级观测。
 
+## 曲线与新增字段
+
+按 [zepp-dashboard 的公开协议记录](https://github.com/J-solan/zepp-dashboard/blob/main/docs/zepp-api.md)补充午睡、厂商七日负荷区间、自动识别标记、训练标题、训练效果和区间秒数；实现为 Vitalis 的独立类型化解析，没有复制其前端或 Hevy 配对规则。该参考只在单一 Helio Strap/欧区账号验证，不能据此声称本项目全部设备区域已实际验收。
+
+- `slp.odd_stage` 单独解析午睡；正常主睡仍走已有来源和完成资格。
+- `Charge.samples.total/physical/mental` 分别验证；总分255不影响其余有效分项。
+- `readiness.value.timestamp` 按同步任务冻结时区归日，`item.timestamp` 选择最新修订，并向存储传递撤回标记。
+- SPORT_LOAD 日负荷与厂商七日累计/区间拆开；旧已保存混口径值需私有回放验证后刷新，不能仅更新排版就宣称历史已经修正。
+- 运动摘要的 `auto_recognition` 只接受明确布尔，`sport_title` 保存用户厂商标题；`te` 的0–50编码按公开协议除以10，保留为设备估计，不是Vitalis训练评分。`heart_range` 保存秒数和区间上界，不自动提升为个人阈值模型。
+
+新图表只从已保存规范数据生成，范围与使用渠道见[报告与渠道](reports.md#曲线图与图表-api)。新数据入口仍需真实设备与 App 对照，未接触真实账号的合成测试不代表云端可用性已验证。
+
 ## 协议和安全边界
 
 当前代码按 ZeppBridge 公开行为适配区域端点、认证头和部分 payload，但 Vitalis 的来源/设备隔离、同步租约、覆盖状态和确定性分析是本项目边界。未知字段不自动变成已知指标，协议事实需要测试和第三方来源记录；相关第三方原文见 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)。

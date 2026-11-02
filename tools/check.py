@@ -221,6 +221,7 @@ def sdist_sources() -> set[str]:
     for kind in ("morning", "daily", "evening", "weekly", "monthly", "insufficient-data"):
         for suffix in (".md", ".fragment.html", ".html", ".markdown-preview.html", ".markdown.payload.json", ".html.payload.json"):
             sources.add(f"docs/examples/reports/{kind}{suffix}")
+    sources.update(f"docs/examples/reports/{kind}.charts.html" for kind in ("morning", "daily", "evening", "weekly", "monthly"))
     sources.add("docs/examples/reports/manifest.json")
     sources.update(path.relative_to(ROOT).as_posix() for path in (ROOT / "docs" / "plan").glob("*.md"))
     package_dir = ROOT / "src" / "vitalis"

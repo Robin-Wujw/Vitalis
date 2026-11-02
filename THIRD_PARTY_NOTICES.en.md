@@ -30,6 +30,10 @@ Some Zepp cloud endpoint, payload-normalization, and region-probing conventions 
 This entry records provenance and does not claim that Vitalis is affiliated with,
 endorsed by, or functionally equivalent to ZeppBridge or Zepp Health.
 
+## zepp-dashboard behavioral reference
+
+On 2026-11-02, public `main` documentation and code from [J-solan/zepp-dashboard](https://github.com/J-solan/zepp-dashboard) informed independently implemented nap grouping, readiness revision semantics, daily versus seven-day load separation, auto-activity flags, vendor training-effect and heart-rate-zone fields, and source-qualified time charts. No upstream implementation, anatomical image, frontend asset, or personal data was copied. The simplified anatomical SVG is authored in this project. The upstream is MIT-licensed; its single-device/EU observations are not Vitalis live validation. Hevy CSV data is explicitly uploaded by the user; no upstream account or service is connected.
+
 ## Zepp vendor catalogs
 
 The normalized mappings in `src/vitalis/adapters/zepp/data/` come from three sport assets in the user-supplied Zepp 10.8.7-play APK and the official Chinese `/sport/config/muscle` catalog. They retain only identifiers, labels, crosswalks, and source digests needed for interoperability; APKs, images, decompiled implementations, and personal responses are not distributed. See [Zepp](docs/zepp.md) for the provenance, excluded placeholders, and update procedure for 208 sport modes and 1,133 action labels. Vendor labels do not establish user confirmation or eligibility for exercise prescriptions.

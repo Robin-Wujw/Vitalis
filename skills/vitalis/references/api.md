@@ -23,14 +23,24 @@ The complete service contract remains available from `GET /openapi.json`.
 | `confirm_strength_workout_api_intelligence_workouts__workout_id__strength_exercises_post` | POST | `/api/intelligence/workouts/{workout_id}/strength-exercises` | - | 201, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `context_api_intelligence_context_get` | GET | `/api/intelligence/context` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `create_analysis_run` | POST | `/api/analysis-runs` | Idempotency-Key | 202, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `create_chart_annotation` | POST | `/api/chart-inputs/annotations` | Idempotency-Key | 201, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `create_coach_operation` | POST | `/api/coach/operations` | Idempotency-Key | 202, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `create_feedback` | POST | `/api/feedback` | - | 201, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `create_product_goal` | POST | `/api/product/goals` | Idempotency-Key | 201, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `create_sync_job` | POST | `/api/sync-jobs` | Idempotency-Key | 202, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `delete_chart_annotation` | DELETE | `/api/chart-inputs/annotations/{annotation_id}` | Idempotency-Key | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `events_api_intelligence_events_get` | GET | `/api/intelligence/events` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `explain_api_intelligence_explain_get` | GET | `/api/intelligence/explain` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_activity_review_queue` | GET | `/api/chart-inputs/activity-reviews` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_activity_rules` | GET | `/api/chart-inputs/activity-rules` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_chart_annotations` | GET | `/api/chart-inputs/annotations` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_chart_input_snapshot` | GET | `/api/chart-inputs/snapshot` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_charts` | GET | `/api/charts` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_coach_policy` | GET | `/api/coach/policy` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_data_status` | GET | `/api/data-status` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_external_strength_workout` | GET | `/api/chart-inputs/external-workouts/{external_id}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_external_strength_workouts` | GET | `/api/chart-inputs/external-workouts` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_hevy_link_candidates` | GET | `/api/chart-inputs/external-workouts/{external_id}/candidates` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_job` | GET | `/api/jobs/{job_id}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_product_context` | GET | `/api/product/context` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_product_feedback` | GET | `/api/product/feedback` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
@@ -40,12 +50,19 @@ The complete service contract remains available from `GET /openapi.json`.
 | `get_public_report_view` | GET | `/api/reports/{kind}/view` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_race_equivalence` | GET | `/api/coach/race-equivalence` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_report` | GET | `/api/reports/{kind}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_report_chart_page` | GET | `/api/reports/{kind}/charts.html` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_report_chart_svg` | GET | `/api/reports/{kind}/charts/{chart_key}.svg` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_report_charts` | GET | `/api/reports/{kind}/charts` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_report_state` | GET | `/api/reports/{kind}/state` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_running_analysis` | GET | `/api/intelligence/running` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_strength_review` | GET | `/api/coach/strength-review` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_workout` | GET | `/api/workouts/{workout_id}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `import_hevy_csv` | POST | `/api/chart-inputs/hevy-imports` | Idempotency-Key | 201, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `link_hevy_workout` | POST | `/api/chart-inputs/external-workouts/{external_id}/link` | Idempotency-Key | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `list_feedback` | GET | `/api/feedback` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `list_workouts` | GET | `/api/workouts` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `map_hevy_strength_sets` | PATCH | `/api/chart-inputs/external-workouts/{external_id}/sets` | Idempotency-Key | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `patch_chart_annotation` | PATCH | `/api/chart-inputs/annotations/{annotation_id}` | Idempotency-Key | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `patch_product_goal` | PATCH | `/api/product/goals/{goal_id}` | Idempotency-Key | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `patch_profile_api_intelligence_profile_patch` | PATCH | `/api/intelligence/profile` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `patch_training_preferences_api_intelligence_training_preferences_patch` | PATCH | `/api/intelligence/training-preferences` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
@@ -53,6 +70,8 @@ The complete service contract remains available from `GET /openapi.json`.
 | `personal_model_api_intelligence_personal_model_get` | GET | `/api/intelligence/personal-model` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `profile_api_intelligence_profile_get` | GET | `/api/intelligence/profile` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `record_product_feedback` | POST | `/api/product/feedback` | Idempotency-Key | 201, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `review_activity` | POST | `/api/chart-inputs/activity-reviews` | Idempotency-Key | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `save_activity_rule` | POST | `/api/chart-inputs/activity-rules` | Idempotency-Key | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `set_training_preferences_api_intelligence_training_preferences_put` | PUT | `/api/intelligence/training-preferences` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `timeline_api_intelligence_timeline_get` | GET | `/api/intelligence/timeline` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `training_preferences_api_intelligence_training_preferences_get` | GET | `/api/intelligence/training-preferences` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
@@ -419,6 +438,84 @@ Create Analysis Run
 }
 ```
 
+### create_chart_annotation
+
+`POST /api/chart-inputs/annotations`
+
+Create Annotation
+
+Record explicitly requested timeline context; text is not a causal fact.
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| Idempotency-Key | header | yes | {"maxLength": 128, "minLength": 16, "title": "Idempotency-Key", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+
+#### Request body (required: yes)
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/AnnotationInput"
+      }
+    }
+  },
+  "required": true
+}
+```
+
+#### Response 201
+
+- 201: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Create Chart Annotation",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
 ### create_coach_operation
 
 `POST /api/coach/operations`
@@ -717,6 +814,85 @@ Create Sync Job
 }
 ```
 
+### delete_chart_annotation
+
+`DELETE /api/chart-inputs/annotations/{annotation_id}`
+
+Delete Annotation
+
+Delete only on explicit user request; retain historical analysis revisions.
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| Idempotency-Key | header | yes | {"maxLength": 128, "minLength": 16, "title": "Idempotency-Key", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| annotation_id | path | yes | {"title": "Annotation Id", "type": "string"} |  |
+
+#### Request body (required: yes)
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/DeleteAnnotationInput"
+      }
+    }
+  },
+  "required": true
+}
+```
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Delete Chart Annotation",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
 ### events_api_intelligence_events_get
 
 `GET /api/intelligence/events`
@@ -845,6 +1021,345 @@ None.
 }
 ```
 
+### get_activity_review_queue
+
+`GET /api/chart-inputs/activity-reviews`
+
+Activity Reviews
+
+Read auto-recognized or unclassified activities and their display overlays.
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| end | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "End"} |  |
+| limit | query | no | {"default": 100, "maximum": 100, "minimum": 1, "title": "Limit", "type": "integer"} |  |
+| start | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "Start"} |  |
+| status | query | no | {"default": "pending", "enum": ["pending", "classified", "ignored", "all"], "title": "Status", "type": "string"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Get Activity Review Queue",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_activity_rules
+
+`GET /api/chart-inputs/activity-rules`
+
+Activity Rules
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Get Activity Rules",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_chart_annotations
+
+`GET /api/chart-inputs/annotations`
+
+Annotations
+
+Read user annotations overlapping an inclusive local calendar-day range.
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| end | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "End"} |  |
+| limit | query | no | {"default": 100, "maximum": 100, "minimum": 1, "title": "Limit", "type": "integer"} |  |
+| start | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "Start"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Get Chart Annotations",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_chart_input_snapshot
+
+`GET /api/chart-inputs/snapshot`
+
+Snapshot
+
+Read immutable input revisions visible at an explicit analysis cutoff.
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| as_of | query | no | {"anyOf": [{"format": "date-time", "type": "string"}, {"type": "null"}], "title": "As Of"} |  |
+| end | query | yes | {"format": "date", "title": "End", "type": "string"} |  |
+| start | query | yes | {"format": "date", "title": "Start", "type": "string"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Get Chart Input Snapshot",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_charts
+
+`GET /api/charts`
+
+Charts
+
+Read stored observations as qualified charts; no synchronization or jobs.
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| from | query | yes | {"format": "date", "title": "From", "type": "string"} |  |
+| mode | query | no | {"default": "daily", "enum": ["intraday", "daily"], "title": "Mode", "type": "string"} |  |
+| to | query | yes | {"format": "date", "title": "To", "type": "string"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/ChartBundle"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
 ### get_coach_policy
 
 `GET /api/coach/policy`
@@ -937,6 +1452,207 @@ None.
       "schema": {
         "additionalProperties": true,
         "title": "Response Get Data Status",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_external_strength_workout
+
+`GET /api/chart-inputs/external-workouts/{external_id}`
+
+External Workout
+
+Read preserved uploaded sets and explicit link provenance.
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| external_id | path | yes | {"title": "External Id", "type": "string"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Get External Strength Workout",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_external_strength_workouts
+
+`GET /api/chart-inputs/external-workouts`
+
+External Workouts
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| end | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "End"} |  |
+| limit | query | no | {"default": 100, "maximum": 100, "minimum": 1, "title": "Limit", "type": "integer"} |  |
+| start | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "Start"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Get External Strength Workouts",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_hevy_link_candidates
+
+`GET /api/chart-inputs/external-workouts/{external_id}/candidates`
+
+Hevy Candidates
+
+Return overlap/same-day candidates; multiple matches remain ambiguous.
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| external_id | path | yes | {"title": "External Id", "type": "string"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Get Hevy Link Candidates",
         "type": "object"
       }
     }
@@ -1584,6 +2300,197 @@ None.
 }
 ```
 
+### get_report_chart_page
+
+`GET /api/reports/{kind}/charts.html`
+
+Report Chart Page
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| kind | path | yes | {"enum": ["daily", "morning", "evening", "weekly", "monthly"], "title": "Kind", "type": "string"} |  |
+| day | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "Day"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "text/html": {
+      "schema": {
+        "type": "string"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "text/html": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_report_chart_svg
+
+`GET /api/reports/{kind}/charts/{chart_key}.svg`
+
+Report Chart Svg
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| chart_key | path | yes | {"title": "Chart Key", "type": "string"} |  |
+| kind | path | yes | {"enum": ["daily", "morning", "evening", "weekly", "monthly"], "title": "Kind", "type": "string"} |  |
+| day | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "Day"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {}
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_report_charts
+
+`GET /api/reports/{kind}/charts`
+
+Report Charts
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| kind | path | yes | {"enum": ["daily", "morning", "evening", "weekly", "monthly"], "title": "Kind", "type": "string"} |  |
+| day | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "Day"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/ChartBundle"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
 ### get_report_state
 
 `GET /api/reports/{kind}/state`
@@ -1852,6 +2759,163 @@ None.
 }
 ```
 
+### import_hevy_csv
+
+`POST /api/chart-inputs/hevy-imports`
+
+Import Hevy
+
+Import user-uploaded CSV text (1 MiB, 2000 rows, 100 sessions); no credentials.
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| Idempotency-Key | header | yes | {"maxLength": 128, "minLength": 16, "title": "Idempotency-Key", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+
+#### Request body (required: yes)
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/HevyImportInput"
+      }
+    }
+  },
+  "required": true
+}
+```
+
+#### Response 201
+
+- 201: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Import Hevy Csv",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### link_hevy_workout
+
+`POST /api/chart-inputs/external-workouts/{external_id}/link`
+
+Link Hevy
+
+Explicitly identify one same-user Zepp workout; do not create another workout.
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| Idempotency-Key | header | yes | {"maxLength": 128, "minLength": 16, "title": "Idempotency-Key", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| external_id | path | yes | {"title": "External Id", "type": "string"} |  |
+
+#### Request body (required: yes)
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/HevyLinkInput"
+      }
+    }
+  },
+  "required": true
+}
+```
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Link Hevy Workout",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
 ### list_feedback
 
 `GET /api/feedback`
@@ -1952,6 +3016,162 @@ None.
       "schema": {
         "additionalProperties": true,
         "title": "Response List Workouts",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### map_hevy_strength_sets
+
+`PATCH /api/chart-inputs/external-workouts/{external_id}/sets`
+
+Map Hevy Sets
+
+Explicitly map set identity, muscle roles and side, preserving Hevy source.
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| Idempotency-Key | header | yes | {"maxLength": 128, "minLength": 16, "title": "Idempotency-Key", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| external_id | path | yes | {"title": "External Id", "type": "string"} |  |
+
+#### Request body (required: yes)
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/HevySetMappingInput"
+      }
+    }
+  },
+  "required": true
+}
+```
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Map Hevy Strength Sets",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### patch_chart_annotation
+
+`PATCH /api/chart-inputs/annotations/{annotation_id}`
+
+Patch Annotation
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| Idempotency-Key | header | yes | {"maxLength": 128, "minLength": 16, "title": "Idempotency-Key", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| annotation_id | path | yes | {"title": "Annotation Id", "type": "string"} |  |
+
+#### Request body (required: yes)
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/AnnotationPatch"
+      }
+    }
+  },
+  "required": true
+}
+```
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Patch Chart Annotation",
         "type": "object"
       }
     }
@@ -2441,6 +3661,162 @@ Record or revise one confirmed feedback kind without accepting a goal.
       "schema": {
         "additionalProperties": true,
         "title": "Response Record Product Feedback",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### review_activity
+
+`POST /api/chart-inputs/activity-reviews`
+
+Review Activity
+
+Classify, ignore, or restore an overlay while retaining vendor records.
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| Idempotency-Key | header | yes | {"maxLength": 128, "minLength": 16, "title": "Idempotency-Key", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+
+#### Request body (required: yes)
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/ActivityReviewInput"
+      }
+    }
+  },
+  "required": true
+}
+```
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Review Activity",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### save_activity_rule
+
+`POST /api/chart-inputs/activity-rules`
+
+Save Activity Rule
+
+Create/revise/disable a bounded suggest-only rule; never apply a review.
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| Idempotency-Key | header | yes | {"maxLength": 128, "minLength": 16, "title": "Idempotency-Key", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+
+#### Request body (required: yes)
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/ActivityRuleInput"
+      }
+    }
+  },
+  "required": true
+}
+```
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Save Activity Rule",
         "type": "object"
       }
     }
@@ -3206,6 +4582,239 @@ Each reachable component is rendered once; `$ref` values name the headings below
 }
 ```
 
+### #/components/schemas/ActivityReviewInput
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "action": {
+      "enum": [
+        "classify",
+        "ignore",
+        "restore"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "classification": {
+      "anyOf": [
+        {
+          "enum": [
+            "strength",
+            "running",
+            "cycling",
+            "swimming",
+            "walking",
+            "hiit",
+            "yoga",
+            "other"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Classification"
+    },
+    "confirmed": {
+      "const": true,
+      "title": "Confirmed",
+      "type": "boolean"
+    },
+    "expected_revision": {
+      "default": 0,
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "notes": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Notes"
+    },
+    "workout_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Workout Id",
+      "type": "string"
+    },
+    "workout_source": {
+      "const": "zepp",
+      "default": "zepp",
+      "title": "Workout Source",
+      "type": "string"
+    }
+  },
+  "required": [
+    "confirmed",
+    "workout_id",
+    "action"
+  ],
+  "title": "ActivityReviewInput",
+  "type": "object"
+}
+```
+
+### #/components/schemas/ActivityRuleConditions
+
+```json
+{
+  "additionalProperties": false,
+  "description": "Conjunctive exact/bounded conditions; never a free-form expression.",
+  "properties": {
+    "max_duration_minutes": {
+      "anyOf": [
+        {
+          "maximum": 1440.0,
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Max Duration Minutes"
+    },
+    "min_duration_minutes": {
+      "anyOf": [
+        {
+          "maximum": 1440.0,
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Min Duration Minutes"
+    },
+    "sport_mode_equals": {
+      "anyOf": [
+        {
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Sport Mode Equals"
+    },
+    "title_equals": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Title Equals"
+    },
+    "weekdays": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "integer"
+          },
+          "maxItems": 7,
+          "minItems": 1,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Weekdays"
+    }
+  },
+  "title": "ActivityRuleConditions",
+  "type": "object"
+}
+```
+
+### #/components/schemas/ActivityRuleInput
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "classification": {
+      "enum": [
+        "strength",
+        "running",
+        "cycling",
+        "swimming",
+        "walking",
+        "hiit",
+        "yoga",
+        "other"
+      ],
+      "title": "Classification",
+      "type": "string"
+    },
+    "conditions": {
+      "$ref": "#/components/schemas/ActivityRuleConditions"
+    },
+    "confirmed": {
+      "const": true,
+      "title": "Confirmed",
+      "type": "boolean"
+    },
+    "enabled": {
+      "default": true,
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "expected_revision": {
+      "default": 0,
+      "minimum": 0.0,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "name": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "rule_id": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Rule Id"
+    }
+  },
+  "required": [
+    "confirmed",
+    "name",
+    "classification",
+    "conditions"
+  ],
+  "title": "ActivityRuleInput",
+  "type": "object"
+}
+```
+
 ### #/components/schemas/AgentContext
 
 ```json
@@ -3302,6 +4911,134 @@ Each reachable component is rendered once; `$ref` values name the headings below
     }
   },
   "title": "AnalysisJobRequest",
+  "type": "object"
+}
+```
+
+### #/components/schemas/AnnotationInput
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "confirmed": {
+      "const": true,
+      "title": "Confirmed",
+      "type": "boolean"
+    },
+    "ended_at": {
+      "format": "date-time",
+      "title": "Ended At",
+      "type": "string"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "tag": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Tag"
+    },
+    "text": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Text",
+      "type": "string"
+    }
+  },
+  "required": [
+    "confirmed",
+    "started_at",
+    "ended_at",
+    "text"
+  ],
+  "title": "AnnotationInput",
+  "type": "object"
+}
+```
+
+### #/components/schemas/AnnotationPatch
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "confirmed": {
+      "const": true,
+      "title": "Confirmed",
+      "type": "boolean"
+    },
+    "ended_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ended At"
+    },
+    "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
+    },
+    "tag": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Tag"
+    },
+    "text": {
+      "anyOf": [
+        {
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Text"
+    }
+  },
+  "required": [
+    "confirmed",
+    "expected_revision"
+  ],
+  "title": "AnnotationPatch",
   "type": "object"
 }
 ```
@@ -3563,6 +5300,690 @@ Each reachable component is rendered once; `$ref` values name the headings below
     "coverage_ratio"
   ],
   "title": "BaselineStats",
+  "type": "object"
+}
+```
+
+### #/components/schemas/Chart
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "bands": {
+      "items": {
+        "$ref": "#/components/schemas/ChartBand"
+      },
+      "maxItems": 8,
+      "title": "Bands",
+      "type": "array"
+    },
+    "intervals": {
+      "items": {
+        "$ref": "#/components/schemas/ChartInterval"
+      },
+      "maxItems": 3000,
+      "title": "Intervals",
+      "type": "array"
+    },
+    "key": {
+      "title": "Key",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "line",
+        "scatter",
+        "bars",
+        "stages",
+        "body_map"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "notes": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Notes",
+      "type": "array"
+    },
+    "period_end": {
+      "format": "date-time",
+      "title": "Period End",
+      "type": "string"
+    },
+    "period_start": {
+      "format": "date-time",
+      "title": "Period Start",
+      "type": "string"
+    },
+    "preview_series": {
+      "items": {
+        "$ref": "#/components/schemas/ChartSeries"
+      },
+      "maxItems": 48,
+      "title": "Preview Series",
+      "type": "array"
+    },
+    "reference": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/ChartReference"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "regions": {
+      "items": {
+        "$ref": "#/components/schemas/ChartRegion"
+      },
+      "maxItems": 128,
+      "title": "Regions",
+      "type": "array"
+    },
+    "resolution_seconds": {
+      "anyOf": [
+        {
+          "minimum": 1.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Resolution Seconds"
+    },
+    "series": {
+      "items": {
+        "$ref": "#/components/schemas/ChartSeries"
+      },
+      "maxItems": 48,
+      "title": "Series",
+      "type": "array"
+    },
+    "state": {
+      "default": "unavailable",
+      "enum": [
+        "available",
+        "partial",
+        "unavailable"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "summary": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Summary",
+      "type": "array"
+    },
+    "timezone": {
+      "title": "Timezone",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    },
+    "unit": {
+      "default": "",
+      "title": "Unit",
+      "type": "string"
+    }
+  },
+  "required": [
+    "key",
+    "title",
+    "kind",
+    "timezone",
+    "period_start",
+    "period_end"
+  ],
+  "title": "Chart",
+  "type": "object"
+}
+```
+
+### #/components/schemas/ChartBand
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "key": {
+      "title": "Key",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "points": {
+      "items": {
+        "$ref": "#/components/schemas/ChartBandPoint"
+      },
+      "maxItems": 366,
+      "title": "Points",
+      "type": "array"
+    },
+    "qualification": {
+      "default": "vendor_reference",
+      "title": "Qualification",
+      "type": "string"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    }
+  },
+  "required": [
+    "key",
+    "label",
+    "source"
+  ],
+  "title": "ChartBand",
+  "type": "object"
+}
+```
+
+### #/components/schemas/ChartBandPoint
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "lower": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Lower"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "upper": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Upper"
+    }
+  },
+  "required": [
+    "timestamp"
+  ],
+  "title": "ChartBandPoint",
+  "type": "object"
+}
+```
+
+### #/components/schemas/ChartBundle
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "analysis_run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Analysis Run Id"
+    },
+    "as_of": {
+      "format": "date-time",
+      "title": "As Of",
+      "type": "string"
+    },
+    "charts": {
+      "items": {
+        "$ref": "#/components/schemas/Chart"
+      },
+      "maxItems": 128,
+      "title": "Charts",
+      "type": "array"
+    },
+    "notes": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Notes",
+      "type": "array"
+    },
+    "period_end": {
+      "format": "date",
+      "title": "Period End",
+      "type": "string"
+    },
+    "period_start": {
+      "format": "date",
+      "title": "Period Start",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "timezone": {
+      "title": "Timezone",
+      "type": "string"
+    },
+    "user_id": {
+      "title": "User Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "user_id",
+    "as_of",
+    "timezone",
+    "period_start",
+    "period_end"
+  ],
+  "title": "ChartBundle",
+  "type": "object"
+}
+```
+
+### #/components/schemas/ChartInterval
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "category": {
+      "title": "Category",
+      "type": "string"
+    },
+    "end": {
+      "format": "date-time",
+      "title": "End",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "qualification": {
+      "default": "observed",
+      "title": "Qualification",
+      "type": "string"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "source_scope": {
+      "default": "unknown",
+      "title": "Source Scope",
+      "type": "string"
+    },
+    "start": {
+      "format": "date-time",
+      "title": "Start",
+      "type": "string"
+    }
+  },
+  "required": [
+    "start",
+    "end",
+    "category",
+    "label",
+    "source"
+  ],
+  "title": "ChartInterval",
+  "type": "object"
+}
+```
+
+### #/components/schemas/ChartPoint
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "maximum": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Maximum"
+    },
+    "minimum": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Minimum"
+    },
+    "sample_count": {
+      "default": 0,
+      "minimum": 0.0,
+      "title": "Sample Count",
+      "type": "integer"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "value": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Value"
+    }
+  },
+  "required": [
+    "timestamp"
+  ],
+  "title": "ChartPoint",
+  "type": "object"
+}
+```
+
+### #/components/schemas/ChartReference
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "lower": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Lower"
+    },
+    "median": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Median"
+    },
+    "upper": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Upper"
+    }
+  },
+  "required": [
+    "label"
+  ],
+  "title": "ChartReference",
+  "type": "object"
+}
+```
+
+### #/components/schemas/ChartRegion
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "direct_sets": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Direct Sets"
+    },
+    "indirect_sets": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Indirect Sets"
+    },
+    "key": {
+      "title": "Key",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "observed_sets": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Observed Sets"
+    },
+    "qualification": {
+      "title": "Qualification",
+      "type": "string"
+    },
+    "side": {
+      "default": "unknown",
+      "title": "Side",
+      "type": "string"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    }
+  },
+  "required": [
+    "key",
+    "label",
+    "qualification",
+    "source"
+  ],
+  "title": "ChartRegion",
+  "type": "object"
+}
+```
+
+### #/components/schemas/ChartSeries
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "aggregation": {
+      "default": "observed",
+      "enum": [
+        "observed",
+        "median",
+        "mean",
+        "last",
+        "sum"
+      ],
+      "title": "Aggregation",
+      "type": "string"
+    },
+    "device_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Device Id"
+    },
+    "fetched_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Fetched At"
+    },
+    "first_observed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "First Observed At"
+    },
+    "key": {
+      "title": "Key",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "last_observed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Last Observed At"
+    },
+    "observed_minutes": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Observed Minutes"
+    },
+    "points": {
+      "items": {
+        "$ref": "#/components/schemas/ChartPoint"
+      },
+      "maxItems": 3000,
+      "title": "Points",
+      "type": "array"
+    },
+    "qualification": {
+      "default": "observed",
+      "title": "Qualification",
+      "type": "string"
+    },
+    "sample_count": {
+      "default": 0,
+      "minimum": 0.0,
+      "title": "Sample Count",
+      "type": "integer"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "source_field": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Source Field"
+    },
+    "source_scope": {
+      "title": "Source Scope",
+      "type": "string"
+    },
+    "unit": {
+      "title": "Unit",
+      "type": "string"
+    }
+  },
+  "required": [
+    "key",
+    "label",
+    "unit",
+    "source",
+    "source_scope"
+  ],
+  "title": "ChartSeries",
   "type": "object"
 }
 ```
@@ -4909,6 +7330,13 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "title": "Baselines",
       "type": "object"
     },
+    "charts": {
+      "items": {
+        "$ref": "#/components/schemas/Chart"
+      },
+      "title": "Charts",
+      "type": "array"
+    },
     "data_quality": {
       "$ref": "#/components/schemas/DataQuality"
     },
@@ -4991,8 +7419,8 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "object"
     },
     "schema_version": {
-      "const": "16.0",
-      "default": "16.0",
+      "const": "17.0",
+      "default": "17.0",
       "title": "Schema Version",
       "type": "string"
     },
@@ -5537,6 +7965,32 @@ Each reachable component is rendered once; `$ref` values name the headings below
     "expected_condition"
   ],
   "title": "DecisionGateEvidence",
+  "type": "object"
+}
+```
+
+### #/components/schemas/DeleteAnnotationInput
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "confirmed": {
+      "const": true,
+      "title": "Confirmed",
+      "type": "boolean"
+    },
+    "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "confirmed",
+    "expected_revision"
+  ],
+  "title": "DeleteAnnotationInput",
   "type": "object"
 }
 ```
@@ -6893,6 +9347,206 @@ Each reachable component is rendered once; `$ref` values name the headings below
 }
 ```
 
+### #/components/schemas/HevyImportInput
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "confirmed": {
+      "const": true,
+      "title": "Confirmed",
+      "type": "boolean"
+    },
+    "csv": {
+      "maxLength": 1048576,
+      "minLength": 1,
+      "title": "Csv",
+      "type": "string"
+    },
+    "timezone": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Timezone"
+    }
+  },
+  "required": [
+    "confirmed",
+    "csv"
+  ],
+  "title": "HevyImportInput",
+  "type": "object"
+}
+```
+
+### #/components/schemas/HevyLinkInput
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "confirmed": {
+      "const": true,
+      "title": "Confirmed",
+      "type": "boolean"
+    },
+    "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "workout_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Workout Id",
+      "type": "string"
+    },
+    "workout_source": {
+      "const": "zepp",
+      "default": "zepp",
+      "title": "Workout Source",
+      "type": "string"
+    }
+  },
+  "required": [
+    "confirmed",
+    "expected_revision",
+    "workout_id"
+  ],
+  "title": "HevyLinkInput",
+  "type": "object"
+}
+```
+
+### #/components/schemas/HevySetMapping
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "exercise_id": {
+      "anyOf": [
+        {
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Exercise Id"
+    },
+    "primary_muscles": {
+      "items": {
+        "enum": [
+          "chest",
+          "back",
+          "shoulders",
+          "biceps",
+          "triceps",
+          "quadriceps",
+          "hamstrings",
+          "glutes",
+          "calves",
+          "core"
+        ],
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Primary Muscles",
+      "type": "array"
+    },
+    "secondary_muscles": {
+      "items": {
+        "enum": [
+          "chest",
+          "back",
+          "shoulders",
+          "biceps",
+          "triceps",
+          "quadriceps",
+          "hamstrings",
+          "glutes",
+          "calves",
+          "core"
+        ],
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Secondary Muscles",
+      "type": "array"
+    },
+    "set_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Set Id",
+      "type": "string"
+    },
+    "side": {
+      "default": "unknown",
+      "enum": [
+        "left",
+        "right",
+        "bilateral",
+        "unknown"
+      ],
+      "title": "Side",
+      "type": "string"
+    }
+  },
+  "required": [
+    "set_id"
+  ],
+  "title": "HevySetMapping",
+  "type": "object"
+}
+```
+
+### #/components/schemas/HevySetMappingInput
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "confirmed": {
+      "const": true,
+      "title": "Confirmed",
+      "type": "boolean"
+    },
+    "expected_revision": {
+      "minimum": 1.0,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "mappings": {
+      "items": {
+        "$ref": "#/components/schemas/HevySetMapping"
+      },
+      "maxItems": 2000,
+      "minItems": 1,
+      "title": "Mappings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "confirmed",
+    "expected_revision",
+    "mappings"
+  ],
+  "title": "HevySetMappingInput",
+  "type": "object"
+}
+```
+
 ### #/components/schemas/HrvCurvePoint
 
 ```json
@@ -7849,6 +10503,13 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "title": "Analysis Run Id",
       "type": "string"
     },
+    "charts": {
+      "items": {
+        "$ref": "#/components/schemas/Chart"
+      },
+      "title": "Charts",
+      "type": "array"
+    },
     "data_quality": {
       "$ref": "#/components/schemas/MonthlyDataQuality"
     },
@@ -7918,7 +10579,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "object"
     },
     "schema_version": {
-      "default": "5.0",
+      "default": "6.0",
       "title": "Schema Version",
       "type": "string"
     },
@@ -8482,6 +11143,13 @@ Each reachable component is rendered once; `$ref` values name the headings below
         "type": "string"
       },
       "title": "Cautions",
+      "type": "array"
+    },
+    "charts": {
+      "items": {
+        "$ref": "#/components/schemas/Chart"
+      },
+      "title": "Charts",
       "type": "array"
     },
     "data_quality": {
@@ -12908,6 +15576,13 @@ Each reachable component is rendered once; `$ref` values name the headings below
         }
       ],
       "title": "As Of"
+    },
+    "charts": {
+      "items": {
+        "$ref": "#/components/schemas/Chart"
+      },
+      "title": "Charts",
+      "type": "array"
     },
     "data_quality": {
       "additionalProperties": true,
@@ -20872,6 +23547,13 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "title": "Analysis Run Id",
       "type": "string"
     },
+    "charts": {
+      "items": {
+        "$ref": "#/components/schemas/Chart"
+      },
+      "title": "Charts",
+      "type": "array"
+    },
     "data_quality": {
       "$ref": "#/components/schemas/WeeklyDataQuality"
     },
@@ -20941,7 +23623,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "object"
     },
     "schema_version": {
-      "default": "8.0",
+      "default": "9.0",
       "title": "Schema Version",
       "type": "string"
     },

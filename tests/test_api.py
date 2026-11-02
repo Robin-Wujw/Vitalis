@@ -117,11 +117,12 @@ def test_daily_profile_after_sync(client):
     resp = client.get("/api/reports/daily", headers={"X-User-Id": "001"})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["schema_version"] == "18.0"
-    assert body["intelligence_version"] == "19.0"
+    assert body["schema_version"] == "19.0"
+    assert body["intelligence_version"] == "20.0"
     assert body["decision_policy_version"] == "12.0"
     assert body["evidence_version"] == "2026-09a"
-    assert body["features"]["overnight_vitals"]["status"] == "AVAILABLE"
+    assert body["features"]["overnight_vitals"]["status"] == "INSUFFICIENT_DATA"
+    assert body["report_context"]["source_policy"]["device_fallback"] is False
     assert body["analysis_run_id"]
     assert body["decision"]["action"] in {
         "TRAIN_HARD", "TRAIN_NORMAL", "TRAIN_LIGHT", "RECOVERY", "REST", "INSUFFICIENT_DATA"
@@ -260,7 +261,7 @@ def test_get_intelligence_without_snapshot_is_read_only(client):
         assert db.query(AnalysisRun).filter_by(user_id="no-analysis-snapshot").count() == 0
 
 
-def test_daily_profile_api_runs_device_baseline_to_decision(client):
+def test_daily_profile_api_uses_account_baseline_without_device_fallback(client):
     user_id = "intelligence-api"
     target = date(2026, 8, 27)
     with session_scope() as db:
@@ -277,11 +278,13 @@ def test_daily_profile_api_runs_device_baseline_to_decision(client):
                     user_id=user_id,
                     date=day,
                     sleep_duration=360 if current else 450 + offset % 3,
+                    source_scope="user_fused",
                 ),
                 activity=ActivityRecord(
                     user_id=user_id,
                     date=day,
                     resting_hr=64 if current else 56 + offset % 2,
+                    source_scope="user_summary",
                 ),
                 training=TrainingRecord(
                     user_id=user_id,
@@ -297,8 +300,8 @@ def test_daily_profile_api_runs_device_baseline_to_decision(client):
                 timestamp=datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc),
                 value=40 if current else 50 + offset % 3,
                 unit="ms",
-                source_scope="device",
-                device_id="helio-test",
+                source_scope="user_summary",
+                device_id=None,
             )])
 
     job, _ = _run_analysis_job(client, user_id, target)
@@ -310,7 +313,8 @@ def test_daily_profile_api_runs_device_baseline_to_decision(client):
     assert response.status_code == 200
     payload = response.json()
     assert payload["data_quality"]["status"] == "SUFFICIENT"
-    assert payload["features"]["hrv"]["preferred_device_id"] == "helio-test"
+    assert payload["features"]["hrv"]["preferred_device_id"] is None
+    assert payload["features"]["hrv"]["preferred_source_scope"] == "user_summary"
     assert payload["features"]["hrv"]["deviation"]["direction"] == "below"
     assert payload["decision"]["action"] == "REST"
     assert payload["decision"]["action_label"] == "休息"

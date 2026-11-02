@@ -121,7 +121,24 @@ HRV 请求使用包含首尾两天的本地日期窗口，再转换成 UTC 毫�
 
 对照 ZeppBridge `1012a00abbb41865e8abcfb8f59b3d264fbafe1b` 的设备normalizer与identity存储，按明确ID、同一目录别名、账户端点语义分别处理，不从无ID或最长逗号片段猜设备。`device_type` 是既有band请求参数，不是已验证的任意deviceId过滤入口；上游常规抓取同样使用固定 detail/8/0，不能据此承诺每项都能单独请求两台设备。
 
-2026-11-02 只读核对当前生产目录及近期已存流：目录中同一设备明确包含 MAC、设备ID与序列号，可将心率/压力归到 Balance 2、两条HRV分别归到 Balance 2 和 Helio Strap；Charge为账户级App计数来源。核对只输出脱敏身份摘要，不更改生产事实。新解析器与图表可展示这些来源，但旧数据标签和别名需候选发布后按原始journal定向刷新，不能以本地预览宣称服务器已经切换。三路显示及缺路规则见[报告与渠道](reports.md#设备与账户汇总分开查看)。
+2026-11-03 的只读响应与 Zepp 10.8.7-play APK 核对，**撤回此前“带 Balance 2 标识的心率与压力整条流都属于该设备”的判断**。设备目录中的 MAC、设备 ID、序列号关联仍有效，但响应头的贡献设备不等于每个样本的测量设备；两台设备的 HRV 原始流仍独立保留，Charge 的已核实 App 记账来源仍归账户。
+
+### App 最终结果与贡献设备
+
+本轮 APK 证据对应 base APK SHA-256 `322c37d71a525db026975a60af7852c063218804a5b3258e91299499122acbcf`：
+
+- `MergeStrategy.r` 调用 `p/J` 后写顶层 `summary.isMerged`，该标志说明 `data_hr` 心率与活动汇总已走 App 融合路径。睡眠必须独立检查 `summary.slp.isMerged`；`ss71/ut61/e471` 的睡眠写入与展示链支持这一独立标志，不能用顶层标志替代睡眠标志。
+- 已核实的 merged 结果保存为 `source_scope=user_fused`、`device_id=null`；原响应仍带设备标识时另存 `contributing_device_id`，不把账户结果重新分配给这台设备。不自行复刻未披露的融合算法。
+- readiness 的 App 记录须精确匹配 `eventType=readiness`、`subType=watch_score`、`deviceId=app` 与整数 `deviceSource=2`；若有 `deviceType`，也必须为整数 `2`，此时归 `user_summary`。APK 的 `qnx0` App 分支构造该身份，经 `bey0.h` 的 `ReadinessGroup`、`wqx0.b` 写出；写出字段不含 `deviceType`，`bey0.d` 明确检查 App 身份。这是特定记录形状的证据，不是“无设备 ID”或任意 `app` 字符串均可提升为账户结果。
+- `all_day_stress` 来自 App 的 `PressureRecord` 本地处理：按时槽、主设备优先级择取后，按 UTC 日上传；逐点只保留 `value/time`，日头取首条记录的来源。它是 `user_summary`、`qualification=vendor_selected`，原日头设备保存在 `contributing_device_id`，不能用该日头恢复整日逐点设备归属。被择除的单设备压力不能从此响应重建；尚未证实其它原始压力接口，不据此宣称设备不支持压力。
+
+### 原始设备数据的采集缺口
+
+已确认旧 `SEC_HR` 链路存在“索引已保存、下载任务未创建”的缺口，不是云端没有设备数据。本地候选修正完整同步的默认解码策略，并为窗口内全部相关归档建立持久分片，不再只排一个文件；显式仅取元数据时保持部分覆盖，不能以索引成功代表样本已取得。`fileInfo` 单次返回达到 2,000 项时仍标记部分覆盖；完整分页尚待补齐。
+
+本轮还通过已存在的 `/users/me/fileInfo/events`、`active_origin_data/real_data` 路径核对 `ACTIVE_ORIGIN_DATA` 归档。PB 内容包含设备 SN、设备来源码、日期及每分钟八字节记录；候选解码只保留已证实的心率与原始活动/睡眠模式字段，不将它们直接解释成最终睡眠分期或分数。最终单设备睡眠仍依赖厂商 `nativeAppDataProcessor`，当前不能冒充其输出。空 SN、`deviceSource=-1` 的虚拟条目保持 `unknown`，不因“第三条记录”提升为 App 融合结果。
+
+已完成私密本地心率预览核对：Balance 2、Helio Strap 原始心率及 band 明确 merged 的 App 心率可独立展示；未知虚拟来源另列。这仅证明本轮心率三路可取得与区分，不代表全部指标齐全或用户已完成 App 对照验收。当前是本地候选，真实取证仅做读取，未改写生产事实、未部署、未推送。旧标签需候选发布与定向原始记录刷新验收后才会改变；剩余工作见[图表验证计划](plan/report-chart-validation.md)，三路显示规则见[报告与渠道](reports.md#设备与账户汇总分开查看)。
 
 ## 协议和安全边界
 

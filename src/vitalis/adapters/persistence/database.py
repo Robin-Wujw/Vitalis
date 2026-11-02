@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from vitalis.config import settings
 
-SCHEMA_REVISION = "2026-11-device-provenance"
+SCHEMA_REVISION = "2026-11-vendor-report-sources"
 
 
 class SchemaMismatch(RuntimeError):

@@ -2,7 +2,7 @@
 
 [文档中心](README.md) | [当前架构](architecture.md) | [Zepp](zepp.md) | [报告与渠道](reports.md)
 
-本页说明进入分析和对外报告的事实资格。字段的完整类型和版本以 `src/vitalis/domain/models.py`、`src/vitalis/intelligence/contracts.py` 和运行服务 `/openapi.json` 为准。
+本页说明进入分析和对外报告的事实资格。字段的完整类型和版本以[领域模型](../src/vitalis/domain/models.py)、[分析合同](../src/vitalis/intelligence/contracts.py)和运行服务 `/openapi.json` 为准。当前本地来源策略候选为日报 schema `19.0`、周报 `11.0`、月报 `8.0`、intelligence `20.0`、decision policy `12.0`、parser `zepp-parser-v3`、数据库 revision `2026-11-vendor-report-sources`；这些版本不表示生产服务已切换，最终回归与候选验收仍待完成。
 
 ## 事实与来源
 
@@ -34,15 +34,23 @@
 
 HRV、血氧、压力和 Charge 等密集样本流在入库事务里同时写日级特征 `daily_signal_features`：每个本地日、每个流（来源、范围、设备、单位）一行，记录落在合格范围内的样本的中位数、最小/最大值、最新值、样本数、覆盖分钟数和首末观测时刻，以及被范围拒绝的样本数。分析对目标日和前一天读原始样本，更早的日子读特征；特征点的样本数、覆盖分钟数和最新值参与计数、日覆盖和“取最新值”的信号，因此基线、覆盖和取值与逐样本读取一致。特征带写入时的时区，时区不同不复用。
 
-Zepp 的 `hrv` 端点只返回手动单次 HRV 测量（SDNN），平时为空；夜间 RMSSD 来自 `wellness/hrv_rmssd`。分钟心率端点（`heart_rate/minute_endpoint`）对上传密集心率文件的手表一直为空，分钟心率来自 `heart_rate/dense_file`。这两个端点为空是正常结果，不做停更告警。
+Zepp 的 `hrv` 端点只返回手动单次 HRV 测量（SDNN），平时为空；夜间 RMSSD 来自 `wellness/hrv_rmssd`。分钟心率端点（`heart_rate/minute_endpoint`）在已核对设备上为空，不能据此判断设备心率缺失；已证实的心率来源还包括 `SEC_HR` 密集归档、`ACTIVE_ORIGIN_DATA` 原始归档与 band 的 `data_hr`，三者分别保留来源资格。手动 HRV 与分钟端点的正常空结果不做停更告警；归档仅有索引、尚未下载或解码属于另一种覆盖缺口，必须单独显示。
 
 ## 设备归属与账户汇总
 
-`device` 只表示有明确设备标识的记录；`user_summary` 表示已知账户端点或有依据的 App 记账来源；`user_fused` 只保留厂商明确标记，历史同名scope也仅按账户结果展示；`unknown` 不能因为无device_id提升为融合。DailyHealth/Charge 的已核对占位，以及与样本数完全相符的 `N,app` 编码可以归账户；畸形、多设备歧义及覆盖不完整的设备编码保持未知。设备样本的 `count,device;count,device` 必须在过滤无效测量前按原顺序展开，总长度不符不补齐。
+`device` 只表示有可靠逐记录设备归属的观测；`user_summary` 表示已核实的账户摘要、App 记账或 App 选值结果；`user_fused` 表示厂商明确标记的融合结果，历史同名 scope 仍仅按账户结果展示，不反推算法。`unknown` 不能因为无 `device_id` 提升为融合。DailyHealth/Charge 的已核对占位，以及与样本数完全相符的 `N,app` 编码可以归账户；畸形、多设备歧义及覆盖不完整的编码保持未知。设备样本的 `count,device;count,device` 必须在过滤无效测量前按原顺序展开，总长度不符不补齐；其它事件的同名占位不能套用这项证明。readiness 的另项已核实规则仅接受 `readiness/watch_score` 中 `deviceId=app`、整数 `deviceSource=2` 的 App 记录；存在 `deviceType` 时还要求整数 `2`，满足后归 `user_summary`，缺少 ID 或其它占位仍不能据此提升资格。
 
-设备目录 `aliases` 只保存同一条目录明确给出的ID/MAC/序列号；不同长度或相似前后缀不证明同一设备。图表按物理设备分组导航，但每条原始来源流仍独立保留，不合并样本。`band_source_records` 保存按日期、kind、source/scope/device区分的睡眠、活动和午睡，避免日级主记录覆盖另一台设备的可回看事实；旧无分来源记录不反推设备。
+band 的顶层 `summary.isMerged=1` 证明 App 心率与活动融合路径，睡眠与午睡独立使用 `summary.slp.isMerged=1`，两项不互相替代。上述 band 融合结果规范化后的 `device_id` 为空，原响应的贡献设备另存 `contributing_device_id`；该字段供来源核对，不是逐样本归属，也不把同一账户基线按贡献设备拆开。旧账户记录仍带 `device_id` 时不降级成设备流，需通过定向重解析纠正元信息。
 
-准备度各分项、Recovery厂商摘要及晨起Charge先选择整窗单一来源，才计算中位数/日最大值和基线；不按每天最高设备拼接、不从别台借历史。来源选择依据目标日可用性、显式账户/设备资格和整窗覆盖，公共选择器完全同资格时保留歧义并不给分项值；公式、权重与阈值不变。`vendor_provenance`、`wake_charge_provenance`、`readiness_component_provenance` 保存选择理由、候选、窗口和覆盖。HRV主值与同指标设备互证仍独立于准备度选择器，原HRV主值平局策略尚未开放用户固定主设备配置；`fusion_method` 的账户路径命名为 `vendor_account_summary_with_device_audit`，不表示Vitalis重新融合生理数值。
+`all_day_stress` 是厂商按时槽择取的账户结果，保存 `source_scope=user_summary`、`qualification=vendor_selected`；明确厂商融合标记仍保留。日头设备只记为 `contributing_device_id`，不能据此将整日压力标为同一台设备。该上传结果缺少逐点设备来源，被择除的单设备压力保持未取得，不补造设备曲线。band merged 与压力选值的协议依据集中在[Zepp 来源核对](zepp.md#多设备来源核对)。
+
+设备目录 `aliases` 只保存同一条目录明确给出的 ID/MAC/序列号；不同长度或相似前后缀不证明同一设备。原始记录与图表查询完整保留设备、账户和未知来源，不合并样本。`band_source_records` 保存按日期、kind、source/scope/device 区分的睡眠、活动和午睡，避免日级主记录覆盖另一台设备的可回看事实；旧无分来源记录不反推设备。原始活动归档里的睡眠模式、姿态和概率字段是厂商算法输入，不能当成最终睡眠分期、睡眠分数或压力；空 SN 的虚拟条目保持未知。
+
+日报、晨晚报、周报与月报先用纯函数 `report_source_view` 构造独立报告数据视图，再计算特征、基线、准备度、趋势、训练反应、关联及公开 signals。生理指标只使用 Zepp 明确的 `user_summary/user_fused` 结果，含已核实的 merged band 与账户压力；缺少目标日或历史账户结果时保持局部缺失，**不能用单设备补值或借设备历史补基线**。图表与一般原始查询仍使用完整数据，报告策略不删除三路可查询记录，也不把 unknown 当作第三路融合。
+
+Zepp 账户运动列表与详情按独立记录族保留，包括训练时长、距离、负荷、心率、动作组次和来源 RPE；日训练汇总只从准入的 Zepp 运动记录计算，不混入其它来源，也不把算术汇总改称厂商融合。显式用户反馈继续保留。训练与睡眠只限制缺失的指标，不因某项账户流缺失取消整份报告。
+
+准备度各分项、Recovery 厂商摘要及晨起 Charge 在上述准入范围内先选择整窗可比来源，再计算中位数、日最大值和基线；不逐日拼接来源，不平均不同设备。晨起 Charge 仍要求时间样本或其日级特征，厂商日摘要不能替代晨起观测。`vendor_provenance`、`wake_charge_provenance`、`readiness_component_provenance` 保存选择理由、窗口和覆盖；`report_context.source_policy` 记录策略版本 `zepp-account-report-1` 与 `device_fallback=false`。Vitalis 评分、权重与阈值不因本次选源改动而改变，派生结论仍标为 Vitalis 分析，不冒充 Zepp 的融合算法。
 
 ## 缺失、零和不可比
 
@@ -66,7 +74,7 @@ Daily、Morning、Weekly、Monthly 和 briefing 投影共享同一分析快照�
 
 力量重量的 `weight_value/weight_unit` 是解码后的原单位数值，`weight_kg` 仅由明确的 kg/lb 生成；厂商编码原值另存 `vendor_weight_value/vendor_weight_unit`，不混入物理重量。自重须有厂商明确标记或用户确认，零值本身不足以判定。`weight_basis=bodyweight` 的零值或缺失值显示“自重”，正值显示“自重 + 负重”；未取得有效身体负荷时不计算该组的 kg 容量或 1RM，也不把附加负重当作身体总负荷。Zepp lap 的名称与重量参考映射不提升为明确动作或处方资格，组次和次数仍按原始顺序展示。
 
-每周负荷目标取最近 4 个完整周的周均设备训练负荷 × 1.05（目标是综合健康，温和递增）；参照窗口里有未核实的日子就不给目标。近 7 天对近 28 天周均的比值大于 1.3 为“过量”、1.05–1.3 为“提升”、其余为“维持”。本周已完成超过目标 110% 时当天安排改为恢复；已完成至少一半目标且超过按天进度 1.5 倍时为“已超前”；落后于按天进度的 75% 时，今天的份额最多比平均分配多 25%；跑步时长由今天的份额除以近 28 天每分钟负荷的中位数得到。这些既有调度阈值不是伤病风险或生理安全区间，相关回放审核见[跑步计划](plan/running-performance-model.md)。力量容量和肌群训练接触采用下述独立口径。
+每周负荷目标取报告视图中准入的 Zepp 账户运动记录，计算最近 4 个完整周的周均厂商训练负荷 × 1.05（目标是综合健康，温和递增）；参照窗口里有未核实的日子就不给目标。近 7 天对近 28 天周均的比值大于 1.3 为“过量”、1.05–1.3 为“提升”、其余为“维持”。本周已完成超过目标 110% 时当天安排改为恢复；已完成至少一半目标且超过按天进度 1.5 倍时为“已超前”；落后于按天进度的 75% 时，今天的份额最多比平均分配多 25%；跑步时长由今天的份额除以近 28 天每分钟负荷的中位数得到。这些既有调度阈值不是伤病风险或生理安全区间，相关回放审核见[跑步计划](plan/running-performance-model.md)。力量容量和肌群训练接触采用下述独立口径。
 
 ### 力量容量、肌群和单次回顾
 

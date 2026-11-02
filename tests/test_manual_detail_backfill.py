@@ -57,7 +57,7 @@ def test_manual_detail_backfill_api_passes_explicit_flags_to_queued_attempt(clie
 
     assert submit({"days": 8, "detail_backfill": True}) == {
         "days": 8, "trigger": "manual", "trigger_ref": _api_ref("manual-backfill-request-1"),
-        "decode_dense_files": False, "detail_backfill": True,
+        "decode_dense_files": None, "detail_backfill": True,
         "workout_only": False, "detail_only": False,
         "detail_refresh_before": None, "detail_limit": None,
     }
@@ -183,7 +183,7 @@ def test_connector_persists_workout_only_as_manual_attempt_option(monkeypatch):
     )
     assert captured[0]["trigger"] == "manual"
     assert captured[0]["options"] == {
-        "decode_dense_files": False, "detail_backfill": True, "workout_only": True,
+        "decode_dense_files": None, "detail_backfill": True, "workout_only": True,
         "source_mode": "real",
     }
     assert connector.create_attempt(
@@ -191,7 +191,7 @@ def test_connector_persists_workout_only_as_manual_attempt_option(monkeypatch):
         detail_refresh_before="2026-09-24T14:00:00Z",
     ) is None
     assert captured[1]["options"] == {
-        "decode_dense_files": False,
+        "decode_dense_files": None,
         "detail_only": True,
         "detail_refresh_before": "2026-09-24T14:00:00Z",
         "detail_limit": 1,

@@ -38,10 +38,10 @@ def synthetic_pipeline_example(*, morning=False, explicit_strength=True, history
             include_activity = not morning or offset != 0
             repo.save_daily(NormalizedDaily(
                 user_id=user, date=day,
-                sleep=SleepRecord(user_id=user, date=day, sleep_duration=450,
+                sleep=SleepRecord(user_id=user, date=day, source_scope="user_fused", sleep_duration=450,
                                   bedtime=time(23), wake_time=time(7), awake=30),
                 activity=ActivityRecord(
-                    user_id=user, date=day, steps=5000, calories=400,
+                    user_id=user, date=day, source_scope="device", device_id="synthetic-watch", steps=5000, calories=400,
                     distance_km=3.5, active_minutes=0, resting_hr=57,
                     observed_fields=["steps", "calories", "distance_km", "resting_hr"],
                 ) if include_activity else None,

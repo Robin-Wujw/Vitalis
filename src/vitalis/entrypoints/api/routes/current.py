@@ -40,7 +40,7 @@ class SyncJobRequest(BaseModel):
     source: Literal["zepp"] = "zepp"
     from_date: date | None = Field(default=None, alias="from")
     to_date: date | None = Field(default=None, alias="to")
-    decode_dense_files: bool = False
+    decode_dense_files: bool | None = None
     detail_backfill: bool = False
     workout_only: bool = False
     detail_only: bool = False

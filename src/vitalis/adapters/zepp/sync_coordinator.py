@@ -22,7 +22,7 @@ from sqlalchemy import or_, select, update
 from vitalis.adapters.zepp.client import (
     SPORTS, WORKOUT_AGGREGATE_PLAN_VERSION, ZeppAPIClient, ZeppAuthError,
 )
-from vitalis.adapters.zepp.dense_hr import decode_sec_hr_archive
+from vitalis.adapters.zepp.dense_hr import DenseHeartRateDecodeError
 from vitalis.adapters.zepp.fetcher import (
     CHUNK_DAYS,
     DAY_MILLISECONDS,
@@ -67,7 +67,6 @@ CHUNK_LEASE_SECONDS = 120
 ATTEMPT_LEASE_SECONDS = 300
 MAX_DETAIL_CHUNKS = 4
 DETAIL_REFRESH_DAYS = 28
-MAX_DENSE_ARCHIVE_CHUNKS = 1
 
 log = logging.getLogger("vitalis.sync")
 
@@ -391,11 +390,15 @@ class ZeppSyncCoordinator:
                 allow_unavailable=True, operation="fetch_hrv",
                 params={"start_date": item.start_day(timezone_name), "end_date": item.end_day(timezone_name)},
             )); ordinal += 1
-            manifest.append(self._spec(
-                "dense_files", "dense_index", item, health_stream="heart_rate/dense_file", ordinal=ordinal,
-                allow_unavailable=True, operation="fetch_file_info_events",
-                params={"event_type": "second_heart_rate", "sub_type": "real_data", "from_ms": start_ms, "to_ms": end_ms, "limit": 2000},
-            )); ordinal += 1
+            for partition, event_type, health_stream in (
+                ("dense_index", "second_heart_rate", "heart_rate/dense_file"),
+                ("activity_origin_index", "active_origin_data", "activity/raw_file"),
+            ):
+                manifest.append(self._spec(
+                    "dense_files", partition, item, health_stream=health_stream, ordinal=ordinal,
+                    allow_unavailable=True, operation="fetch_file_info_events",
+                    params={"event_type": event_type, "sub_type": "real_data", "from_ms": start_ms, "to_ms": end_ms, "limit": 2000},
+                )); ordinal += 1
 
             daily_specs = (
                 ("DailyHealth/summary", "DailyHealth", "summary", "daily_summary"),
@@ -512,6 +515,15 @@ class ZeppSyncCoordinator:
         workout_only = options.get("workout_only") is True
         detail_only = options.get("detail_only") is True
         sleep_only = options.get("sleep_only") is True
+        decode_dense = options.get("decode_dense_files")
+        if decode_dense is not None and not isinstance(decode_dense, bool):
+            raise ZeppAuthError("decode_dense_files 必须是布尔值或 null", kind="invalid_request")
+        # Freeze auto mode before computing request identity. Explicit False is
+        # metadata-only; specialized probes never acquire dense archive work.
+        options["decode_dense_files"] = (
+            not (sleep_only or workout_only or detail_only)
+            if decode_dense is None else decode_dense
+        )
         if sleep_only != (trigger == "morning_probe"):
             raise ZeppAuthError("仅睡眠同步只用于晨报醒来探测", kind="invalid_request")
         if sleep_only and any(
@@ -752,8 +764,15 @@ class ZeppSyncCoordinator:
                     )
                 return _ChunkResult(FetchedRecord(RawRecord("hrv", f"events:hrv_sdnn:{params['start_date']}:{params['end_date']}", start, end, payload)), 1)
             if operation == "fetch_file_info_events":
-                payload = call("fetch_file_info_events", "second_heart_rate", "real_data", params["from_ms"], params["to_ms"], 2000)
-                return _ChunkResult(FetchedRecord(RawRecord("dense_files", f"file_info:second_heart_rate:{start.date()}:{(end - timedelta(microseconds=1)).date()}", start, end, payload, "indexed")), 1)
+                event_type = params["event_type"]
+                payload = call("fetch_file_info_events", event_type, params["sub_type"], params["from_ms"], params["to_ms"], 2000)
+                incomplete = len(_payload_items(payload)) >= 2000
+                reason = "dense_files: response reached the 2000-item limit" if incomplete else None
+                return _ChunkResult(FetchedRecord(RawRecord(
+                    "dense_files", f"file_info:{event_type}:{start.date()}:{(end - timedelta(microseconds=1)).date()}",
+                    start, end, payload, "indexed",
+                ), incomplete=incomplete, incomplete_reason=reason), 1,
+                    incomplete=incomplete, incomplete_reason=reason)
             if operation == "fetch_events":
                 payload = call("fetch_events", params["event_type"], params["sub_type"], params["from_ms"], params["to_ms"], params.get("limit", 2000), params.get("reverse", True))
                 key = f"events:{params['event_type']}:{params['sub_type']}:{params['from_ms']}:{params['to_ms']}"
@@ -961,6 +980,8 @@ class ZeppSyncCoordinator:
 
     @staticmethod
     def _failure_kind(exc: Exception) -> str:
+        if isinstance(exc, DenseHeartRateDecodeError):
+            return "unrecognized_payload"
         if isinstance(exc, ZeppAuthError):
             return exc.kind
         if exc.__class__.__name__ == "AuthRequired":
@@ -1026,46 +1047,67 @@ class ZeppSyncCoordinator:
             known.add(part)
         return specs
 
+    def _dense_archive_groups(
+        self, attempt: dict[str, Any], result: _ChunkResult,
+    ) -> dict[tuple[str, str], list[DenseDataFile]]:
+        """Keep every row of a file when any indexed interval overlaps the request."""
+        if result.record is None:
+            return {}
+        grouped: dict[tuple[str, str], list[DenseDataFile]] = {}
+        index_stream = SyncManager._dense_index_stream(result.record)
+        for item in ZeppParser().parse_dense_file_index(result.record.raw.payload, index_stream):
+            if item.file_id:
+                grouped.setdefault((item.file_type, item.file_id), []).append(item)
+        start, end = self._naive(attempt["window_start"]), self._naive(attempt["window_end"])
+        return {
+            key: files for key, files in grouped.items()
+            if any(
+                (item.start_utc is None or self._naive(item.start_utc) < end)
+                and (item.end_utc is None or self._naive(item.end_utc) >= start)
+                for item in files
+            )
+        }
+
+    @staticmethod
+    def _dense_group_handled(indexed_files: list[DenseDataFile], existing: list[Any]) -> bool:
+        return bool(indexed_files) and all(
+            any(
+                row.parse_status in {"decoded", "no_data"}
+                and SyncManager._dense_index_covered(item, row)
+                for row in existing
+            )
+            for item in indexed_files
+        )
+
     def _archive_spec(self, repo: HealthRepository, attempt: dict[str, Any], chunk: dict[str, Any], result: _ChunkResult) -> list[dict[str, Any]]:
         if chunk["stream"] != "dense_files" or not result.record or not attempt["options"].get("decode_dense_files", False):
             return []
-        if sum(1 for row in repo.sync_chunks(attempt["id"]) if row.stream == "dense_archive") >= MAX_DENSE_ARCHIVE_CHUNKS:
-            return []
-        files = ZeppParser().parse_dense_file_index(result.record.raw.payload, "second_heart_rate")
-        grouped: dict[tuple[str, str], list[DenseDataFile]] = {}
-        for item in files:
-            if item.file_id and item.file_type:
-                grouped.setdefault((item.file_type, item.file_id), []).append(item)
-        ordered = sorted(
-            grouped.items(),
-            key=lambda entry: max(
-                (item.start_utc or datetime.min.replace(tzinfo=timezone.utc))
-                for item in entry[1]
-            ),
-            reverse=True,
-        )
-        for (file_type, file_id), indexed_files in ordered:
-            existing = repo.dense_data_file_group(
-                attempt["user_id"], "second_heart_rate", file_id, source="zepp"
-            )
-            handled = {
-                (row.start_utc, row.device_id or "")
-                for row in existing if row.parse_status in {"decoded", "no_data"}
-            }
-            indexed = {
-                (self._naive(item.start_utc), item.device_id or "")
-                for item in indexed_files
-            }
-            if indexed and indexed <= handled:
+        index_stream = SyncManager._dense_index_stream(result.record)
+        existing_chunks = repo.sync_chunks(attempt["id"])
+        known = {
+            ((row.stages or {}).get("params", {}).get("file_type"),
+             (row.stages or {}).get("params", {}).get("file_id"))
+            for row in existing_chunks if row.stream == "dense_archive"
+        }
+        specs = []
+        # Queue the complete manifest; the existing dispatcher consumes one
+        # independently fenced archive per turn. No downloads happen here.
+        for (file_type, file_id), indexed_files in sorted(self._dense_archive_groups(attempt, result).items()):
+            if not file_type or (file_type, file_id) in known:
                 continue
-            params = {"file_type": file_type, "file_id": file_id}
-            return [self._spec(
+            existing = repo.dense_data_file_group(
+                attempt["user_id"], index_stream, file_id, source="zepp"
+            )
+            if self._dense_group_handled(indexed_files, existing):
+                continue
+            specs.append(self._spec(
                 "dense_archive", f"{file_type}:{file_id}",
                 FetchWindow(attempt["window_start"], attempt["window_end"]), cursor=file_id,
-                health_stream="heart_rate/dense_archive", ordinal=200000,
-                operation="fetch_dense_archive", params=params,
-            )]
-        return []
+                health_stream="activity/raw_archive" if index_stream == "activity_origin" else "heart_rate/dense_archive",
+                ordinal=200000 + len(known) + len(specs),
+                operation="fetch_dense_archive", params={"file_type": file_type, "file_id": file_id, "index_stream": index_stream},
+            ))
+        return specs
 
     def _finalize_success(self, attempt: dict[str, Any], claim: _ClaimedChunk, result: _ChunkResult, connector: Any) -> bool:
         chunk = claim.chunk
@@ -1146,6 +1188,21 @@ class ZeppSyncCoordinator:
                     or result.record.incomplete_reason
                     or "响应不完整，需要重试"
                 )
+                if chunk["stream"] == "dense_files" and report.status == "success":
+                    groups = self._dense_archive_groups(attempt, result)
+                    index_stream = SyncManager._dense_index_stream(result.record)
+                    pending = [
+                        key for key, files in groups.items()
+                        if not self._dense_group_handled(files, repo.dense_data_file_group(
+                            attempt["user_id"], index_stream, key[1], source="zepp"
+                        ))
+                    ]
+                    if pending and (
+                        not attempt["options"].get("decode_dense_files", False)
+                        or any(not file_type for file_type, _file_id in pending)
+                    ):
+                        incomplete = True
+                        incomplete_reason = "云端文件仅完成索引，仍有归档未解码"
                 if incomplete and report.status == "success":
                     report.status = "unverified"
                     report.error_kind = "partial_coverage"
@@ -1246,10 +1303,11 @@ class ZeppSyncCoordinator:
             status, retry_at = "unavailable", None
         else:
             status, retry_at = "failed", None
+        decode_failed = isinstance(exc, DenseHeartRateDecodeError)
         stages = {
             **chunk["stages"],
-            "fetch_status": "unavailable" if status == "unavailable" else "failed",
-            "parse_status": "not_run",
+            "fetch_status": "success" if decode_failed else "unavailable" if status == "unavailable" else "failed",
+            "parse_status": "failed" if decode_failed else "not_run",
             "write_status": "not_run",
         }
         with self._session(execution_context=attempt.get("options", {}).get("execution_context") or {}) as db:
@@ -1263,9 +1321,9 @@ class ZeppSyncCoordinator:
             if finalized:
                 repo.save_sync_stream_state(
                     attempt["user_id"], chunk["health_stream"] or chunk["stream"],
-                    fetch_status="unavailable" if status == "unavailable" else "failed",
-                    parse_status="not_run", write_status="not_run", fetched_at=now,
-                    parsed_at=None, written_at=None, raw_records=0, records_written=0,
+                    fetch_status=stages["fetch_status"],
+                    parse_status=stages["parse_status"], write_status="not_run", fetched_at=now,
+                    parsed_at=now if decode_failed else None, written_at=None, raw_records=0, records_written=0,
                     error_kind=kind, message=str(exc), attempt_id=attempt["id"],
                 )
         return "needs_reauth" if status == "failed" and kind == "auth" else status
@@ -1293,15 +1351,24 @@ class ZeppSyncCoordinator:
                 if claim.chunk["stream"] == "dense_archive" and result.archive is not None:
                     # Fetching is outside a transaction; decoding is also completed before write commit.
                     params = claim.chunk["stages"].get("params") or {}
+                    file_type = params.get("file_type", "")
+                    index_stream = "activity_origin" if file_type == "ACTIVE_ORIGIN_DATA" else "second_heart_rate"
                     with self._session(execution_context=attempt.get("options", {}).get("execution_context") or {}) as db:
-                        indexed = HealthRepository(db).dense_data_file_group(attempt["user_id"], "second_heart_rate", params.get("file_id", ""), source="zepp")
+                        repo = HealthRepository(db)
+                        indexed = repo.dense_data_file_group(attempt["user_id"], index_stream, params.get("file_id", ""), source="zepp")
+                        device_aliases = (
+                            SyncManager._dense_device_aliases(repo, attempt["user_id"])
+                            if file_type == "ACTIVE_ORIGIN_DATA" else None
+                        )
                     files = [DenseDataFile(
                         user_id=attempt["user_id"], source="zepp", stream=row.stream, file_id=row.file_id,
                         file_type=row.file_type, date=row.date, start_utc=row.start_utc.replace(tzinfo=timezone.utc) if row.start_utc else None,
                         end_utc=row.end_utc.replace(tzinfo=timezone.utc) if row.end_utc else None,
                         source_scope=row.source_scope, device_id=row.device_id, parse_status=row.parse_status, sample_count=row.sample_count,
-                    ) for row in indexed]
-                    result.decoded = decode_sec_hr_archive(result.archive, files)
+                    ) for row in indexed if row.file_type == params.get("file_type")]
+                    result.decoded = SyncManager._decode_dense_archive(
+                        result.archive, files, file_type, attempt.get("timezone") or "UTC", device_aliases,
+                    )
                     for sample in result.decoded.samples:
                         sample.user_id = attempt["user_id"]
                     for item in result.decoded.files:
@@ -1827,6 +1894,7 @@ class ZeppSyncCoordinator:
                 capability=(
                     "unavailable" if status == "unavailable"
                     else "unverified" if "unverified" in capabilities
+                    else "indexed" if "indexed" in capabilities
                     else "verified"
                 ),
                 needs_reauth=bool(failed and failed["error_kind"] == "auth"),

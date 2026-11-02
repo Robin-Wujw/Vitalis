@@ -73,8 +73,9 @@ class SyncJobService:
             span = abs((command.to_date - command.from_date).days) + 1
             if span > 730:
                 raise SyncJobInvalid("sync window must be between 1 and 730 days")
+        if command.decode_dense_files is not None and type(command.decode_dense_files) is not bool:
+            raise SyncJobInvalid("decode_dense_files must be boolean or null for automatic selection")
         for name in (
-            "decode_dense_files",
             "detail_backfill",
             "workout_only",
             "detail_only",

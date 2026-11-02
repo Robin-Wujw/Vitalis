@@ -1152,6 +1152,7 @@ class HealthRepository:
             "qualification": getattr(item, "qualification", None),
             "revision_at": _naive_utc(item.revision_at) if getattr(item, "revision_at", None) else None,
             "fetched_at": _naive_utc(fetched_at) if fetched_at else None,
+            "contributing_device_id": getattr(item, "contributing_device_id", None),
         }
         if sample:
             values["journal_record_id"] = journal_id or getattr(item, "journal_record_id", None)
@@ -1225,7 +1226,7 @@ class HealthRepository:
                             "value": statement.excluded.value,
                             "unit": statement.excluded.unit,
                             **{name: getattr(statement.excluded, name) for name in (
-                                "source_field", "qualification", "revision_at", "fetched_at", "journal_record_id",
+                                "source_field", "qualification", "revision_at", "fetched_at", "journal_record_id", "contributing_device_id",
                             )},
                         },
                         where=and_(
@@ -1235,6 +1236,7 @@ class HealthRepository:
                                 orm.MetricSample.unit.is_distinct_from(statement.excluded.unit),
                                 orm.MetricSample.source_field.is_distinct_from(statement.excluded.source_field),
                                 orm.MetricSample.qualification.is_distinct_from(statement.excluded.qualification),
+                                 orm.MetricSample.contributing_device_id.is_distinct_from(statement.excluded.contributing_device_id),
                                 orm.MetricSample.revision_at.is_distinct_from(statement.excluded.revision_at)),
                         ),
                     ).returning(orm.MetricSample.user_id)
@@ -1541,7 +1543,7 @@ class HealthRepository:
                             "value": statement.excluded.value,
                             "unit": statement.excluded.unit,
                             **{name: getattr(statement.excluded, name) for name in (
-                                "source_field", "qualification", "observed_at", "revision_at", "fetched_at", "source_record_id",
+                                "source_field", "qualification", "observed_at", "revision_at", "fetched_at", "source_record_id", "contributing_device_id",
                             )},
                         },
                         where=and_(
@@ -1551,6 +1553,7 @@ class HealthRepository:
                                 orm.DailyMetric.unit.is_distinct_from(statement.excluded.unit),
                                 orm.DailyMetric.source_field.is_distinct_from(statement.excluded.source_field),
                                 orm.DailyMetric.qualification.is_distinct_from(statement.excluded.qualification),
+                                 orm.DailyMetric.contributing_device_id.is_distinct_from(statement.excluded.contributing_device_id),
                                 orm.DailyMetric.revision_at.is_distinct_from(statement.excluded.revision_at)),
                         ),
                     ).returning(orm.DailyMetric.user_id)

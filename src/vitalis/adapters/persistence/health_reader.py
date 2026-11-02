@@ -165,6 +165,7 @@ class SqlHealthReader(HealthReader):
                     device_id=row.device_id or None,
                     source_field=row.source_field, qualification=row.qualification,
                     observed_at=row.observed_at, fetched_at=row.fetched_at, revision_at=row.revision_at,
+                    contributing_device_id=row.contributing_device_id,
                 )
                 for row in rows
             )
@@ -307,6 +308,7 @@ def _metric_read(row: orm.MetricSample) -> HealthMetricRead:
         sample_ordinal=row.sample_ordinal if row.source_record_id else None,
         source_field=row.source_field, qualification=row.qualification,
         fetched_at=row.fetched_at, revision_at=row.revision_at,
+        contributing_device_id=row.contributing_device_id,
     )
 
 

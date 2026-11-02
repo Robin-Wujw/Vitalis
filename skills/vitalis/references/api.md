@@ -7754,8 +7754,8 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "string"
     },
     "intelligence_version": {
-      "const": "19.0",
-      "default": "19.0",
+      "const": "20.0",
+      "default": "20.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -7780,8 +7780,8 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "object"
     },
     "schema_version": {
-      "const": "18.0",
-      "default": "18.0",
+      "const": "19.0",
+      "default": "19.0",
       "title": "Schema Version",
       "type": "string"
     },
@@ -10940,7 +10940,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "$ref": "#/components/schemas/MonthlyInferences"
     },
     "intelligence_version": {
-      "default": "19.0",
+      "default": "20.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -10977,7 +10977,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "object"
     },
     "schema_version": {
-      "default": "7.0",
+      "default": "8.0",
       "title": "Schema Version",
       "type": "string"
     },
@@ -13724,7 +13724,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "string"
     },
     "intelligence_version": {
-      "default": "19.0",
+      "default": "20.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -14064,7 +14064,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "string"
     },
     "intelligence_version": {
-      "default": "19.0",
+      "default": "20.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -20510,9 +20510,15 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "integer"
     },
     "decode_dense_files": {
-      "default": false,
-      "title": "Decode Dense Files",
-      "type": "boolean"
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Decode Dense Files"
     },
     "detail_backfill": {
       "default": false,
@@ -22538,7 +22544,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "string"
     },
     "intelligence_version": {
-      "default": "19.0",
+      "default": "20.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -24005,7 +24011,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "$ref": "#/components/schemas/WeeklyInferences"
     },
     "intelligence_version": {
-      "default": "19.0",
+      "default": "20.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -24042,7 +24048,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "object"
     },
     "schema_version": {
-      "default": "10.0",
+      "default": "11.0",
       "title": "Schema Version",
       "type": "string"
     },

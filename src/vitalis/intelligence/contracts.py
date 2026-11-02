@@ -14,10 +14,10 @@ from vitalis.intelligence.chart_contracts import Chart
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "18.0"
-WEEKLY_SCHEMA_VERSION = "10.0"
-MONTHLY_SCHEMA_VERSION = "7.0"
-INTELLIGENCE_VERSION = "19.0"
+DAILY_SCHEMA_VERSION = "19.0"
+WEEKLY_SCHEMA_VERSION = "11.0"
+MONTHLY_SCHEMA_VERSION = "8.0"
+INTELLIGENCE_VERSION = "20.0"
 DECISION_POLICY_VERSION = "12.0"
 EVIDENCE_VERSION = "2026-09a"
 TRAINING_RESPONSE_SCHEMA_VERSION = "2.0"
@@ -1902,9 +1902,9 @@ class SubjectiveFeedback(BaseModel):
 
 
 class DailyProfile(BaseModel):
-    schema_version: Literal["18.0"] = DAILY_SCHEMA_VERSION
+    schema_version: Literal["19.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
-    intelligence_version: Literal["19.0"] = INTELLIGENCE_VERSION
+    intelligence_version: Literal["20.0"] = INTELLIGENCE_VERSION
     decision_policy_version: Literal["12.0"] = DECISION_POLICY_VERSION
     evidence_version: Literal["2026-09a"] = EVIDENCE_VERSION
     user_id: str

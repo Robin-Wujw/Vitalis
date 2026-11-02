@@ -126,8 +126,10 @@ class ZeppParser:
             if not day or not summary:
                 continue
             source_scope, device_id = self._band_provenance(item, summary)
+            _, contributing_device_id = self._provenance(item, summary, {"deviceId": summary.get("sn")})
 
             sleep = summary.get("slp") if isinstance(summary.get("slp"), dict) else {}
+            sleep_scope, sleep_device = self._band_provenance(item, summary, sleep=True)
             if sleep.get("ed") and sleep.get("st"):
                 st_val, ed_val = sleep.get("st"), sleep.get("ed")
                 # 真实数据 st/ed 可能是时间戳（int）或 HH:MM 字符串
@@ -157,7 +159,9 @@ class ZeppParser:
                         rem = self._sleep_stage_minutes(sleep, {8, 11})
                     sleeps[day] = SleepRecord(
                         user_id="", source=self.source, date=day,
-                        source_scope=source_scope, device_id=device_id,
+                        source_scope=sleep_scope, device_id=sleep_device,
+                        contributing_device_id=contributing_device_id if sleep_scope == "user_fused" else None,
+                        is_merged=self._merge_flag(sleep.get("isMerged")),
                         sleep_duration=duration,
                         deep_sleep=self._nonnegative_number(sleep, ("dp",)),
                         rem_sleep=int(rem) if rem is not None else None,
@@ -207,6 +211,8 @@ class ZeppParser:
                     activities[day] = ActivityRecord(
                         user_id="", source=self.source, date=day,
                         source_scope=source_scope, device_id=device_id,
+                        contributing_device_id=contributing_device_id if source_scope == "user_fused" else None,
+                        is_merged=self._merge_flag(summary.get("isMerged")),
                         steps=int(steps_value) if steps_value is not None else None,
                         active_minutes=(
                             int(active_minutes) if active_minutes is not None else None
@@ -239,7 +245,8 @@ class ZeppParser:
             sleep = summary.get("slp") if summary else None
             if day is None or not isinstance(sleep, dict):
                 continue
-            source_scope, device_id = self._band_provenance(item, summary)
+            source_scope, device_id = self._band_provenance(item, summary, sleep=True)
+            _, contributing_device_id = self._provenance(item, summary, {"deviceId": summary.get("sn")})
             encoded = sleep.get("odd_stage")
             if not isinstance(encoded, list):
                 continue
@@ -275,6 +282,8 @@ class ZeppParser:
                     awake_minutes=awake if known else None,
                     stages=group, source=self.source,
                     source_scope=source_scope, device_id=device_id,
+                    contributing_device_id=contributing_device_id if source_scope == "user_fused" else None,
+                    is_merged=self._merge_flag(sleep.get("isMerged")),
                 ))
             output[day] = naps
         return output
@@ -311,12 +320,17 @@ class ZeppParser:
                 if not 20 <= reading <= 240:
                     continue
                 source_scope, device_id = provenance[minute]
+                contributing_device_id = device_id if ZeppParser._merge_flag(summary.get("isMerged")) else None
+                if contributing_device_id is not None or ZeppParser._merge_flag(summary.get("isMerged")):
+                    source_scope, device_id = "user_fused", None
                 samples.append(MetricSample(
                     metric="heart_rate",
                     timestamp=(midnight + timedelta(minutes=minute)).astimezone(timezone.utc),
                     value=float(reading),
                     unit="bpm",
                     source_scope=source_scope, device_id=device_id,
+                    contributing_device_id=contributing_device_id,
+                    source_field="band_data.data_hr",
                 ))
         return samples
 
@@ -1686,7 +1700,12 @@ class ZeppParser:
                 day = ZeppParser._metric_date(item, value)
                 if day is None:
                     continue
-                source_scope, device_id = ZeppParser._provenance(value or {}, item)
+                original_scope, contributing_device_id = ZeppParser._provenance(value or {}, item)
+                # Zepp 10.8.7 z42/HealthMatrix selects slots, then the daily
+                # uploader stores only value/time and the first record's source.
+                # That header is not each sample's independent device identity.
+                source_scope = "user_fused" if original_scope == "user_fused" else "user_summary"
+                device_id = None
                 for metric, keys, unit in _ALL_DAY_STRESS_FIELDS:
                     reading = ZeppParser._first_number(item, keys)
                     if reading is None and value:
@@ -1695,6 +1714,8 @@ class ZeppParser:
                         daily.append(DailyMetric(
                             date=day, metric=metric, value=reading, unit=unit,
                             source_scope=source_scope, device_id=device_id,
+                            contributing_device_id=contributing_device_id,
+                            qualification="vendor_selected", source_field=keys[0],
                         ))
 
                 timeline = item.get("data")
@@ -1726,6 +1747,8 @@ class ZeppParser:
                         unit="score",
                         source_scope=source_scope,
                         device_id=device_id,
+                        contributing_device_id=contributing_device_id,
+                        qualification="vendor_selected", source_field="all_day_stress.data",
                     ))
         else:
             daily.extend(ZeppParser.parse_daily_metrics(raw))
@@ -2291,6 +2314,14 @@ class ZeppParser:
             for obj in objects
         ):
             return "user_fused"
+        # Zepp 10.8.7 qnx0/bey0 creates App readiness with (type=2,
+        # source=2,id='app'); wqx0 serializes id/source to watch_score.
+        # This explicit App algorithm result is not a missing-device inference.
+        readiness_event = any(obj.get("eventType") == "readiness" and obj.get("subType") == "watch_score" for obj in objects)
+        if readiness_event and any(obj.get("deviceId") == "app" and type(obj.get("deviceSource")) is int
+                                   and obj["deviceSource"] == 2 and type(obj.get("deviceType", 2)) is int
+                                   and obj.get("deviceType", 2) == 2 for obj in objects):
+            return "user_summary"
         if device_id is not None:
             return "device"
         if identity_present:
@@ -2345,9 +2376,20 @@ class ZeppParser:
         return output
 
     @staticmethod
-    def _band_provenance(item: dict, summary: dict) -> tuple[str, str | None]:
-        # Same-item summary.sn is explicit evidence, not an inventory guess.
-        # ZeppBridge normalizer/band_items.rs:37-39 at the revision cited above.
+    def _merge_flag(value: object) -> bool | None:
+        if value is True or (type(value) is int and value == 1):
+            return True
+        if value is False or (type(value) is int and value == 0):
+            return False
+        return None
+
+    @staticmethod
+    def _band_provenance(item: dict, summary: dict, *, sleep: bool = False) -> tuple[str, str | None]:
+        # Zepp 10.8.7: MergeStrategy merges data_hr + steps and writes summary
+        # isMerged; ut61 writes/reads a separate slp.isMerged for sleep.
+        selected = summary.get("slp", {}) if sleep else summary
+        if isinstance(selected, dict) and ZeppParser._merge_flag(selected.get("isMerged")):
+            return "user_fused", None
         return ZeppParser._provenance(item, summary, {"deviceId": summary.get("sn")})
 
     @staticmethod

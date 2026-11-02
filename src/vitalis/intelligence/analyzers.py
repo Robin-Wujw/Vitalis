@@ -135,7 +135,7 @@ class SleepAnalyzer:
             )
         duration = int(record["sleep_duration"])
         baseline = _baseline_for(
-            baselines, "sleep_duration", "zepp", "normalized_daily_record", None
+            baselines, "sleep_duration", record.get("source", "zepp"), record.get("source_scope", "normalized_daily_record"), record.get("device_id")
         )
         deviation = BaselineEngine.deviation(duration, baseline) if baseline else None
         if duration < 420 or (deviation and deviation.direction == "below"):
@@ -160,7 +160,7 @@ class SleepAnalyzer:
         rem_sleep = record.get("rem_sleep")
         wake_count = record.get("wake_count")
         wake_baseline = _baseline_for(
-            baselines, "sleep_wake_count", "zepp", "normalized_daily_record", None
+            baselines, "sleep_wake_count", record.get("source", "zepp"), record.get("source_scope", "normalized_daily_record"), record.get("device_id")
         )
         wake_deviation = (
             BaselineEngine.deviation(float(wake_count), wake_baseline)

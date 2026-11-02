@@ -730,7 +730,9 @@ class MockZeppClient:
             steps = self._rng.randint(6000, 14000) + (2500 if weekend else 0)
             summary = {
                 "tz": 28800,  # UTC+8
+                "isMerged": 1,
                 "slp": {
+                    "isMerged": 1,
                     "ss": score, "st": "23:10", "ed": "07:00",
                     "dp": deep, "lt": light, "rm": rem, "wk": self._rng.randint(10, 30),
                     "rhr": self._rng.randint(52, 66),

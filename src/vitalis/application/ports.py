@@ -77,6 +77,7 @@ class HealthMetricRead:
     qualification: str | None = None
     fetched_at: datetime | None = None
     revision_at: datetime | None = None
+    contributing_device_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -95,6 +96,7 @@ class HealthDailyMetricRead:
     observed_at: datetime | None = None
     fetched_at: datetime | None = None
     revision_at: datetime | None = None
+    contributing_device_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -302,7 +304,7 @@ class SyncJobCommand:
     days: int = 7
     from_date: date | None = None
     to_date: date | None = None
-    decode_dense_files: bool = False
+    decode_dense_files: bool | None = None
     detail_backfill: bool = False
     workout_only: bool = False
     detail_only: bool = False

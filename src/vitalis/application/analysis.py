@@ -140,7 +140,10 @@ def analyze_with_trace(
     """
 
     _validate_inputs(dataset, request, policy)
-    raw = _raw_for_request(dataset.raw, request)
+    raw_all = _raw_for_request(dataset.raw, request)
+    from vitalis.application.report_sources import report_source_view
+    raw = report_source_view(raw_all)
+    raw.report_chart_raw = raw_all
     identity = dict(dataset.identity)
     build_daily = daily_builder or build_daily_profile
 
@@ -325,10 +328,10 @@ def build_report_projections(
     )
     from vitalis.intelligence.charts import build_chart_bundle
     weekly = weekly.model_copy(update={"charts": build_chart_bundle(
-        raw, weekly.period_start, weekly.period_end, period="weekly", analysis_run_id=analysis_run_id,
+        raw.report_chart_raw or raw, weekly.period_start, weekly.period_end, period="weekly", analysis_run_id=analysis_run_id,
     ).charts})
     monthly = monthly.model_copy(update={"charts": build_chart_bundle(
-        raw, monthly.period_start, monthly.period_end, period="monthly", analysis_run_id=analysis_run_id,
+        raw.report_chart_raw or raw, monthly.period_start, monthly.period_end, period="monthly", analysis_run_id=analysis_run_id,
     ).charts})
     return weekly, monthly, MorningBriefingEngine().build(daily)
 
@@ -390,7 +393,7 @@ def build_daily_profile(
         events.append(body_warning)
     from vitalis.intelligence.charts import build_chart_bundle
     raw.chart_baselines = baselines
-    charts = build_chart_bundle(raw, target, target, period="daily", analysis_run_id=analysis_run_id).charts
+    charts = build_chart_bundle(raw.report_chart_raw or raw, target, target, period="daily", analysis_run_id=analysis_run_id).charts
     return DailyProfile(
         charts=charts,
         analysis_run_id=analysis_run_id,

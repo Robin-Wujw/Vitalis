@@ -933,8 +933,9 @@ def test_parse_all_day_stress_timeline_preserves_timestamp_and_device():
     ]
     assert {sample.metric for sample in samples} == {"stress"}
     assert {sample.unit for sample in samples} == {"score"}
-    assert {sample.source_scope for sample in samples} == {"device"}
-    assert {sample.device_id for sample in samples} == {"A1B2C3D4E5F60708"}
+    assert {sample.source_scope for sample in samples} == {"user_summary"}
+    assert {sample.device_id for sample in samples} == {None}
+    assert {sample.contributing_device_id for sample in samples} == {"A1B2C3D4E5F60708"}
 
 
 def test_parse_all_day_stress_ignores_malformed_timeline():

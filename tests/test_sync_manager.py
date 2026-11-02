@@ -474,7 +474,9 @@ class TestSyncManager:
             "stress_normal_pct", "stress_medium_pct", "stress_high_pct",
         }
         assert [row.value for row in samples] == [5, 29, 65]
-        assert {row.device_id for row in samples} == {"A1B2C3D4E5F60708"}
+        assert {row.device_id for row in samples} == {""}
+        assert {row.contributing_device_id for row in [*samples, *daily]} == {"A1B2C3D4E5F60708"}
+        assert {row.source_scope for row in [*samples, *daily]} == {"user_summary"}
 
     @pytest.mark.parametrize("kind", ["service", "network", "auth"])
     def test_optional_stream_failure_blocks_complete_sync(

@@ -179,6 +179,7 @@ class MetricSample(Base):
     revision_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     journal_record_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    contributing_device_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
 class DailySignalFeature(Base):
@@ -246,6 +247,7 @@ class DailyMetric(Base):
     revision_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     source_record_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    contributing_device_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
 class DenseDataFile(Base):

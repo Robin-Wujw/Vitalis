@@ -83,7 +83,7 @@ def test_manifest_is_stable_and_request_is_reused():
     first = coordinator.create_attempt("coord-manifest", window=WINDOW, options={"decode_dense_files": False})
     second = coordinator.create_attempt("coord-manifest", window=WINDOW, options={"decode_dense_files": False})
     assert first.id == second.id
-    assert first.chunk_count == 19
+    assert first.chunk_count == 20
     assert first.plan_version == "zepp-sync-v6"
     rows = coordinator.status(first.id)["chunks"]
     assert rows[0]["stable_key"] == stable_chunk_key(
@@ -118,7 +118,7 @@ def test_manual_workout_only_manifest_skips_all_health_streams():
 
     normal = coordinator.create_attempt(user_id, window=WINDOW, trigger="manual")
     assert normal.id != attempt.id
-    assert normal.chunk_count == 19
+    assert normal.chunk_count == 20
 
 
 def test_workout_only_rejects_scheduled_or_non_boolean_options():
@@ -508,8 +508,8 @@ def test_page_success_creates_atomic_successor():
     coordinator, attempt = _one_chunk_attempt("coord-page", connector)
     report = coordinator.run_attempt(attempt.id, max_chunks=1)
     state = coordinator.status(attempt.id)
-    assert report.progress["succeeded_chunks"] == 19
-    assert len(state["chunks"]) == 20
+    assert report.progress["succeeded_chunks"] == 20
+    assert len(state["chunks"]) == 21
     successors = [row for row in state["chunks"] if row["status"] == "queued"]
     assert len(successors) == 1
     assert successors[0]["stream"] == "heart_rate"
@@ -709,8 +709,9 @@ def test_large_manifest_keeps_global_statistics_and_sports_singleton():
     assert operations.count("fetch_devices") == 1
 
 
-def test_dense_archive_selection_skips_handled_old_file_and_uses_newest():
+def test_dense_archive_selection_skips_unchanged_handled_file():
     old_start = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    window = FetchWindow.local_dates(date(2026, 8, 1), date(2026, 8, 2), "UTC")
     payload = {"items": [{"value": {
         "startTime": int(old_start.timestamp() * 1000),
         "samples": [
@@ -727,13 +728,14 @@ def test_dense_archive_selection_skips_handled_old_file_and_uses_newest():
             if file_id == "old":
                 return [SimpleNamespace(
                     start_utc=old_start.replace(tzinfo=None), device_id="",
-                    parse_status="decoded",
+                    end_utc=(old_start + timedelta(minutes=1)).replace(tzinfo=None),
+                    file_type="SEC_HR", source_scope="unknown", parse_status="decoded",
                 )]
             return []
 
     attempt = {
         "id": "dense-attempt", "user_id": "dense-user",
-        "window_start": WINDOW.start, "window_end": WINDOW.end,
+        "window_start": window.start, "window_end": window.end,
         "options": {"decode_dense_files": True},
     }
     chunk = {
@@ -745,7 +747,7 @@ def test_dense_archive_selection_skips_handled_old_file_and_uses_newest():
     )))
 
     specs = ZeppSyncCoordinator()._archive_spec(Repo(), attempt, chunk, result)
-    assert specs[0]["stages"]["params"]["file_id"] == "new"
+    assert [spec["stages"]["params"]["file_id"] for spec in specs] == ["new"]
 
 
 def test_expired_running_cancel_is_finalized_without_reclaim_loop():

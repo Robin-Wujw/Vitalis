@@ -234,6 +234,7 @@ class HealthQuery:
                         "source_scope": row.source_scope,
                         "device_id": row.device_id,
                         "source_field": row.source_field, "qualification": row.qualification,
+                        "contributing_device_id": getattr(row, "contributing_device_id", None),
                         "fetched_at": _iso_utc(row.fetched_at) if row.fetched_at else None,
                         "revision_at": _iso_utc(row.revision_at) if row.revision_at else None,
                         **(

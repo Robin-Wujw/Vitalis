@@ -230,7 +230,7 @@ def test_band_does_not_attach_another_devices_naps_to_main_sleep():
 ])
 def test_wellness_unattributed_is_unknown_and_explicit_fusion_is_preserved(label, payload):
     rows, _ = ZeppParser.parse_wellness({"items": [payload]}, f"wellness:{label}:v2:1:2")
-    assert {row.source_scope for row in rows} == {"unknown"}
+    assert {row.source_scope for row in rows} == {"user_summary" if label == "all_day_stress" else "unknown"}
     payload["is_fused"] = True
     rows, _ = ZeppParser.parse_wellness({"items": [payload]}, f"wellness:{label}:v2:1:2")
     assert {row.source_scope for row in rows} == {"user_fused"}

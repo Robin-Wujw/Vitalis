@@ -32,7 +32,7 @@ RAW_SCHEMA_VERSION = "zepp-json-v1"
 DENSE_RAW_SCHEMA_VERSION = "zepp-sec-hr-v1"
 STREAM_JOURNAL_PREFIX = "fernet:stream:v1:"
 STREAM_JOURNAL_CHUNK_BYTES = 64 * 1024
-CURRENT_PARSER_VERSION = "zepp-parser-v2"
+CURRENT_PARSER_VERSION = "zepp-parser-v3"
 MANIFEST_VERSION = "source-input-manifest-v1"
 MAX_MANIFEST_DAYS = 730
 MAX_MANIFEST_RECORDS = 5_000
@@ -917,7 +917,7 @@ def sync_journal_context(repo, attempt_id: str, *, fetched_at: datetime) -> dict
 
 def stage_dense_archive(repo, attempt_id: str, chunk: dict[str, Any], archive: bytes | None,
                         *, fetched_at: datetime) -> SourceJournalRecord | None:
-    """Stage the downloaded SEC_HR bytes inside the fenced decode transaction."""
+    """Stage downloaded measurement archive bytes in the fenced transaction."""
     if archive is None:
         return None
     context = sync_journal_context(repo, attempt_id, fetched_at=fetched_at)
@@ -931,7 +931,7 @@ def stage_dense_archive(repo, attempt_id: str, chunk: dict[str, Any], archive: b
         stream="dense_archive", record_id=f"dense_archive:{file_type}:{file_id}",
         observed_start=chunk.get("window_start") or attempt.window_start.replace(tzinfo=timezone.utc),
         observed_end=chunk.get("window_end") or attempt.window_end.replace(tzinfo=timezone.utc),
-        fetched_at=fetched_at, payload=archive, raw_schema_version=DENSE_RAW_SCHEMA_VERSION,
+        fetched_at=fetched_at, payload=archive, raw_schema_version=("zepp-active-origin-v1" if file_type == "ACTIVE_ORIGIN_DATA" else DENSE_RAW_SCHEMA_VERSION),
         source_account_id=context["source_account_id"], source_account_epoch=context["source_account_epoch"],
     ))
 

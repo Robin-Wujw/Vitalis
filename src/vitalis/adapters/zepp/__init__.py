@@ -324,7 +324,7 @@ class ZeppConnector(HealthConnector):
     def create_attempt(
         self, user_id: str, *, days: int = 730, window: FetchWindow | None = None,
         trigger: str = "manual", trigger_ref: str | None = None,
-        decode_dense_files: bool = False, detail_backfill: bool = False,
+        decode_dense_files: bool | None = None, detail_backfill: bool = False,
         workout_only: bool = False, detail_only: bool = False,
         detail_refresh_before: str | None = None,
         detail_limit: int | None = None,
@@ -371,7 +371,7 @@ class ZeppConnector(HealthConnector):
 
     def sync_with_report(
         self, user: User, days: int = 730, repo=None,
-        decode_dense_files: bool = False, max_chunks: int | None = None,
+        decode_dense_files: bool | None = None, max_chunks: int | None = None,
         window: FetchWindow | None = None, trigger: str = "manual",
         trigger_ref: str | None = None, attempt_id: str | None = None,
         detail_backfill: bool = False, workout_only: bool = False,

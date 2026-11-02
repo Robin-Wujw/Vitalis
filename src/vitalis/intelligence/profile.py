@@ -107,6 +107,7 @@ class RawDailyProfile:
     chart_band_records: list[dict] = field(default_factory=list)
     chart_inputs: dict = field(default_factory=dict)
     chart_baselines: dict = field(default_factory=dict)
+    report_chart_raw: RawDailyProfile | None = field(default=None, repr=False)
     # Device-data watermark from the same response that last wrote this sleep;
     # later independent heart-rate uploads cannot confirm an older sleep read.
     heart_rate_seen_until: datetime | None = None

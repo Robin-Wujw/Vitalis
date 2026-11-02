@@ -43,6 +43,8 @@ class SleepRecord(BaseModel):
     source: str = "zepp"
     source_scope: str = "unknown"
     device_id: str | None = None
+    contributing_device_id: str | None = None
+    is_merged: bool | None = None
 
     sleep_duration: int = Field(ge=0, description="总睡眠时长（分钟）")
     deep_sleep: int | None = Field(default=None, ge=0, description="深睡时长（分钟）")
@@ -108,6 +110,8 @@ class NapRecord(BaseModel):
     source: str = "zepp"
     source_scope: str = "unknown"
     device_id: str | None = None
+    contributing_device_id: str | None = None
+    is_merged: bool | None = None
 
     @field_validator("started_at", "ended_at")
     @classmethod
@@ -301,6 +305,7 @@ class MetricSample(BaseModel):
     revision_at: datetime | None = None
     fetched_at: datetime | None = None
     journal_record_id: str | None = None
+    contributing_device_id: str | None = None
 
 
 class DenseDataFile(BaseModel):
@@ -337,6 +342,7 @@ class DailyMetric(BaseModel):
     source_record_id: str | None = None
     qualification: str | None = None
     revision_at: datetime | None = None
+    contributing_device_id: str | None = None
 
 
 class TrainingRecord(BaseModel):
@@ -363,6 +369,8 @@ class ActivityRecord(BaseModel):
     source: str = "zepp"
     source_scope: str = "unknown"
     device_id: str | None = None
+    contributing_device_id: str | None = None
+    is_merged: bool | None = None
     steps: int | None = Field(default=None, ge=0)
     active_minutes: int | None = Field(default=None, ge=0)
     calories: int | None = Field(default=None, ge=0)

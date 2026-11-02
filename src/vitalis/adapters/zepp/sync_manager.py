@@ -740,6 +740,65 @@ class SyncManager:
             training_family=data.get("training_family"),
         )
 
+    @staticmethod
+    def _dense_index_stream(record: FetchedRecord) -> str:
+        return (
+            "activity_origin" if record.raw.source_key.startswith("file_info:active_origin_data:")
+            else "second_heart_rate"
+        )
+
+    @staticmethod
+    def _dense_device_aliases(repo: HealthRepository, user_id: str) -> dict[str, str]:
+        candidates: dict[str, set[str]] = {}
+        for row in repo.devices(user_id):
+            if row.source != "zepp" or not row.device_id:
+                continue
+            canonical = row.device_id.upper()
+            for alias in [row.device_id, *(row.aliases or [])]:
+                if alias:
+                    candidates.setdefault(str(alias).upper(), set()).add(canonical)
+        return {alias: next(iter(ids)) for alias, ids in candidates.items() if len(ids) == 1}
+
+    @staticmethod
+    def _decode_dense_archive(
+        archive: bytes, files: list[DenseDataFile], file_type: str,
+        timezone_name: str | None = None, device_aliases: dict[str, str] | None = None,
+    ):
+        if file_type == "ACTIVE_ORIGIN_DATA":
+            from vitalis.adapters.zepp.raw_activity import decode_activity_archive
+
+            return decode_activity_archive(
+                archive, files, timezone_name=timezone_name or "UTC",
+                device_aliases=device_aliases,
+            )
+        if file_type == "SEC_HR":
+            return decode_sec_hr_archive(archive, files)
+        raise ZeppAuthError("云端文件类型不受支持", kind="unrecognized_payload")
+
+    @staticmethod
+    def _dense_utc(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+    @classmethod
+    def _dense_start_identity(cls, item) -> tuple:
+        start = cls._dense_utc(item.start_utc)
+        return (start, None if start is not None else item.date)
+
+    @classmethod
+    def _dense_index_covered(cls, item, stored) -> bool:
+        """A handled start alone cannot prove that a later end was decoded."""
+        if (cls._dense_start_identity(item) != cls._dense_start_identity(stored)
+            or (item.device_id or "") != (stored.device_id or "")
+            or item.file_type != stored.file_type
+            or item.source_scope != stored.source_scope):
+            return False
+        incoming_end, stored_end = cls._dense_utc(item.end_utc), cls._dense_utc(stored.end_utc)
+        if incoming_end is None or stored_end is None:
+            return incoming_end == stored_end
+        return incoming_end <= stored_end
+
     def _write_stream(self, record: FetchedRecord, repo: HealthRepository, user: User) -> int:
         """将单条记录写入存储，返回写入条数。"""
         return self._write_stream_result(record, repo, user).written
@@ -774,7 +833,7 @@ class SyncManager:
                             value.user_id = user.id
                             written += save_source(user.id, day, kind, value.model_dump(mode="json"))
                     for day, naps in parser.parse_band_naps(single, timezone_name=getattr(self.fetcher, "timezone_name", None)).items():
-                        scope, device_id = parser._band_provenance(item, parser._base64_summary(item) or {})
+                        scope, device_id = parser._band_provenance(item, parser._base64_summary(item) or {}, sleep=True)
                         written += save_source(user.id, day, "naps", {"source": "zepp", "source_scope": scope,
                             "device_id": device_id, "naps": [n.model_dump(mode="json") for n in naps]})
             sleeps, activities = parser.parse_band(payload, timezone_name=getattr(self.fetcher, "timezone_name", None))
@@ -929,7 +988,8 @@ class SyncManager:
             written = repo.save_daily_metrics(metrics) + repo.save_metric_samples(samples)
 
         elif stream == "dense_files":
-            files = parser.parse_dense_file_index(payload, "second_heart_rate")
+            index_stream = self._dense_index_stream(record)
+            files = parser.parse_dense_file_index(payload, index_stream)
             parsed = len(files)
             for item in files:
                 item.user_id = user.id
@@ -947,37 +1007,34 @@ class SyncManager:
             )
             for (file_type, file_id), indexed_files in ordered_groups:
                 existing = repo.dense_data_file_group(
-                    user.id, "second_heart_rate", file_id, source="zepp"
+                    user.id, index_stream, file_id, source="zepp"
                 )
-                handled_keys = {
-                    (row.start_utc, row.device_id)
-                    for row in existing
-                    if row.parse_status in {"decoded", "no_data"}
-                }
-                indexed_keys = {
-                    (
-                        item.start_utc.astimezone(timezone.utc).replace(tzinfo=None)
-                        if item.start_utc and item.start_utc.tzinfo
-                        else item.start_utc,
-                        item.device_id or "",
-                    )
+                if indexed_files and all(
+                    any(row.parse_status in {"decoded", "no_data"}
+                        and self._dense_index_covered(item, row) for row in existing)
                     for item in indexed_files
-                }
-                if indexed_keys and indexed_keys <= handled_keys:
+                ):
                     continue
+                # An index can grow under the same file ID and start/device key.
+                # Persist that new range as pending, without erasing decoded
+                # status for an identical (or narrower) response on another day.
+                updates = []
+                for item in indexed_files:
+                    previous = next((row for row in existing if
+                        self._dense_start_identity(item) == self._dense_start_identity(row)
+                        and (item.device_id or "") == (row.device_id or "")), None)
+                    if previous is not None and self._dense_index_covered(item, previous):
+                        continue
+                    if (previous is not None and previous.end_utc is not None
+                        and item.end_utc is not None
+                        and previous.file_type == item.file_type
+                        and previous.source_scope == item.source_scope):
+                        item = item.model_copy(update={"end_utc": max(
+                            self._dense_utc(item.end_utc), self._dense_utc(previous.end_utc)
+                        )})
+                    updates.append(item)
                 if self._dense_archives_remaining <= 0:
-                    existing_keys = {
-                        (row.start_utc, row.device_id) for row in existing
-                    }
-                    new_indexes = [
-                        item for item in indexed_files
-                        if (
-                            item.start_utc.astimezone(timezone.utc).replace(tzinfo=None)
-                            if item.start_utc and item.start_utc.tzinfo else item.start_utc,
-                            item.device_id or "",
-                        ) not in existing_keys
-                    ]
-                    written += repo.save_dense_data_files(new_indexes)
+                    written += repo.save_dense_data_files(updates)
                     continue
                 mapping_files = {
                     (row.start_utc, row.device_id): DenseDataFile(
@@ -1016,7 +1073,11 @@ class SyncManager:
                         str(exc), kind=exc.kind, needs_reauth=exc.needs_reauth
                     ) from exc
                 self._dense_archives_remaining -= 1
-                decoded = decode_sec_hr_archive(archive, list(mapping_files.values()))
+                decoded = self._decode_dense_archive(
+                    archive, list(mapping_files.values()), file_type,
+                    getattr(self.fetcher, "timezone_name", None),
+                    self._dense_device_aliases(repo, user.id) if file_type == "ACTIVE_ORIGIN_DATA" else None,
+                )
                 for sample in decoded.samples:
                     sample.user_id = user.id
                 # A multi-day backfill can contain millions of samples. Persist and
@@ -1097,8 +1158,11 @@ class SyncManager:
                 return f"wellness/{parts[1]}"
         if record.raw.stream == "heart_rate":
             return "heart_rate/minute_endpoint"
-        if record.raw.stream == "dense_files" and "second_heart_rate" in record.raw.source_key:
-            return "heart_rate/dense_file"
+        if record.raw.stream == "dense_files":
+            if record.raw.source_key.startswith("file_info:active_origin_data:"):
+                return "activity/raw_file"
+            if "second_heart_rate" in record.raw.source_key:
+                return "heart_rate/dense_file"
         return record.raw.stream
 
     @staticmethod

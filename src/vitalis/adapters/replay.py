@@ -29,12 +29,16 @@ from vitalis.application.replay import ReplayCommand, ReplayError, ReplayResult,
 from vitalis.config import settings
 from vitalis.domain import DenseDataFile, User
 
+from vitalis.adapters.persistence.band_sources import BandSourceRecord
+from vitalis.adapters.persistence.sleep_supplements import SleepSupplement
+from vitalis.adapters.persistence.readiness_revisions import ReadinessRevision
 
 FIXTURE_SCHEMA_VERSION = "vitalis.source-replay-fixture.v1"
 MAX_REPLAY_BYTES = 128 * 1024 * 1024
 _FACT_TABLES = (
     orm.WorkoutMetricSample, orm.Workout, orm.SleepRecord, orm.ActivityRecord,
     orm.TrainingRecord, orm.MetricSample, orm.DailyMetric, orm.DenseDataFile, orm.Device,
+    BandSourceRecord, SleepSupplement, ReadinessRevision, orm.DailySignalFeature,
 )
 
 
@@ -246,9 +250,9 @@ def _project(db, dataset, manifest, target_ids, parser_version):
             raw = store.read_payload(journal_id, user_id=dataset.user_id)
             db.info["active_source_record_id"] = journal_id
             if row.stream == "dense_archive":
-                if row.raw_schema_version != DENSE_RAW_SCHEMA_VERSION or not isinstance(raw, bytes):
+                if row.raw_schema_version not in {DENSE_RAW_SCHEMA_VERSION, "zepp-active-origin-v1"} or not isinstance(raw, bytes):
                     raise ReplayError("dense replay raw schema is unsupported")
-                report = _parse_dense_archive(repo, dataset.user_id, row, raw)
+                report = _parse_dense_archive(repo, dataset.user_id, row, raw, timezone_name=manifest.get("selection", {}).get("timezone", "UTC"))
             else:
                 if row.raw_schema_version != RAW_SCHEMA_VERSION or row.payload_format != "json":
                     raise ReplayError("source replay raw schema is unsupported")
@@ -324,11 +328,12 @@ def _project(db, dataset, manifest, target_ids, parser_version):
     return run
 
 
-def _parse_dense_archive(repo, user_id, journal_row, archive):
+def _parse_dense_archive(repo, user_id, journal_row, archive, *, timezone_name="UTC"):
     parts = journal_row.record_id.split(":", 2)
     if len(parts) != 3 or parts[0] != "dense_archive":
         raise ReplayError("dense replay record identity is invalid")
-    indexed = repo.dense_data_file_group(user_id, "second_heart_rate", parts[2], source="zepp")
+    index_stream = "activity_origin" if parts[1] == "ACTIVE_ORIGIN_DATA" else "second_heart_rate"
+    indexed = repo.dense_data_file_group(user_id, index_stream, parts[2], source="zepp")
     files = [DenseDataFile(
         user_id=user_id, source="zepp", stream=row.stream, file_id=row.file_id,
         file_type=row.file_type, date=row.date,
@@ -337,7 +342,12 @@ def _parse_dense_archive(repo, user_id, journal_row, archive):
         source_scope=row.source_scope, device_id=row.device_id,
         parse_status=row.parse_status, sample_count=row.sample_count,
     ) for row in indexed]
-    decoded = decode_sec_hr_archive(archive, files)
+    if parts[1] == "ACTIVE_ORIGIN_DATA":
+        from vitalis.adapters.zepp.raw_activity import decode_activity_archive
+        aliases = SyncManager._dense_device_aliases(repo, user_id)
+        decoded = decode_activity_archive(archive, files, timezone_name=timezone_name, device_aliases=aliases)
+    else:
+        decoded = decode_sec_hr_archive(archive, files)
     for sample in decoded.samples:
         sample.user_id = user_id
     written = repo.save_dense_data_files(decoded.files) + repo.save_metric_samples(decoded.samples)

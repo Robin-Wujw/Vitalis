@@ -262,8 +262,14 @@ class ZeppParser:
         return output
 
     @staticmethod
-    def parse_band_heart_rate(raw: dict) -> list[MetricSample]:
-        """Decode ``band_data.data_hr`` into timestamped minute samples."""
+    def parse_band_heart_rate(
+        raw: dict, timezone_name: str | None = None,
+    ) -> list[MetricSample]:
+        """Decode local minute slots using the frozen zone, then payload offset.
+
+        Resolve each clock slot before converting to UTC so a DST transition
+        does not leave the whole day on midnight's offset.
+        """
         import base64
         import binascii
 
@@ -278,16 +284,15 @@ class ZeppParser:
             except (binascii.Error, ValueError, TypeError):
                 continue
             summary = ZeppParser._base64_summary(item) or {}
-            offset = ZeppParser._first_number(summary, ("tz",)) or 0
-            offset = max(min(int(offset), 18 * 60 * 60), -18 * 60 * 60)
-            midnight = datetime.combine(day, time.min, tzinfo=timezone.utc) - timedelta(seconds=offset)
+            zone = ZeppParser._band_timezone(summary, timezone_name)
+            midnight = datetime.combine(day, time.min, tzinfo=zone)
             device_id = ZeppParser._device_id(item)
             for minute, reading in enumerate(readings[:1440]):
                 if not 20 <= reading <= 240:
                     continue
                 samples.append(MetricSample(
                     metric="heart_rate",
-                    timestamp=midnight + timedelta(minutes=minute),
+                    timestamp=(midnight + timedelta(minutes=minute)).astimezone(timezone.utc),
                     value=float(reading),
                     unit="bpm",
                     source_scope="device" if device_id else "unknown",

@@ -779,7 +779,9 @@ class SyncManager:
                 act.user_id = user.id
                 repo.save_daily(NormalizedDaily(user_id=user.id, date=day, activity=act))
                 written += 1
-            heart_rate = parser.parse_band_heart_rate(payload)
+            heart_rate = parser.parse_band_heart_rate(
+                payload, timezone_name=getattr(self.fetcher, "timezone_name", None),
+            )
             parsed = len(sleeps) + len(activities) + len(heart_rate) + len(nap_days)
             for sample in heart_rate:
                 sample.user_id = user.id

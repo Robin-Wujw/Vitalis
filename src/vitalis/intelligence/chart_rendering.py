@@ -16,12 +16,12 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-_PALETTE = ("#2878b5", "#d46b28", "#16836a", "#9063b5", "#c34870", "#687f20", "#267f91", "#80634c")
-_INK, _MUTED, _RULE = "#192e3b", "#607280", "#dbe4e9"
+_PALETTE = ("#3f6d8f", "#a66543", "#477d70", "#78658f", "#9a6077", "#7c8543", "#527b83", "#806b56")
+_INK, _MUTED, _RULE = "#292620", "#6b6459", "#e4dfd4"
 _UNKNOWN = "#dce3e8"
 _STAGE = {
-    "awake": ("清醒", "#ed9855"), "rem": ("REM", "#af8ddd"),
-    "light": ("浅睡", "#719ce5"), "deep": ("深睡", "#4557a7"),
+    "awake": ("清醒", "#b47755"), "rem": ("REM", "#a87b9c"),
+    "light": ("浅睡", "#8fa9bd"), "deep": ("深睡", "#42618c"),
     "unknown": ("未知", _UNKNOWN),
 }
 _AGGREGATION = {"observed": "原始观测", "median": "已保存桶中位数", "mean": "已保存桶均值", "last": "每桶最后观测", "sum": "已保存桶累计值"}
@@ -656,13 +656,23 @@ def render_chart_html(chart: Any) -> str:
 
 
 _PAGE_STYLE = """
-:root{color-scheme:light}body{margin:0;background:#eef3f5;color:#192e3b;font-family:system-ui,sans-serif}
-main{max-width:1100px;margin:auto;padding:22px}header{padding:20px;background:#153e3b;color:#fff;border-radius:12px}
-h1{font-size:24px;margin:0 0 12px}p{line-height:1.6;overflow-wrap:anywhere}label{display:block;margin:20px 0}
-select{font:inherit;max-width:100%;padding:8px;border:1px solid #b3c1ca;border-radius:6px}
-section{margin:18px 0;background:#fff;border:1px solid #dbe4e9;border-radius:12px;overflow:auto}
-svg{display:block;width:100%;height:auto;min-width:420px}circle:focus,path:focus,rect:focus{outline:2px solid #192e3b}
+:root{color-scheme:light}*{box-sizing:border-box}
+body{margin:0;background:#faf8f4;color:#292620;font:14px/1.5 system-ui,sans-serif}
+main{max-width:960px;margin:auto;padding:20px 24px}
+header{padding:0 0 14px;border-bottom:1px solid #e4dfd4}
+h1{font-size:20px;font-weight:600;margin:0 0 6px}
+p{margin:5px 0;overflow-wrap:anywhere}.meta{font-size:12px;color:#6b6459;font-variant-numeric:tabular-nums}
+.chart-nav{display:flex;align-items:center;gap:12px;padding:12px 0;flex-wrap:wrap}
+label{font-size:12px;color:#6b6459}
+select{font:inherit;max-width:100%;padding:6px 28px 6px 9px;color:inherit;background:#fffdf9;border:1px solid #e4dfd4;border-radius:4px}
+section{margin:0 0 12px;background:#fffdf9;border:1px solid #e4dfd4;border-radius:4px;overflow:hidden}
+.chart-plot{overflow:auto}svg{display:block;width:100%;height:auto;min-width:360px}
+.chart-summary{padding:10px 16px 0;font-size:13px}
+details{padding:10px 16px;border-top:1px solid #e4dfd4;font-size:12px;color:#6b6459}
+summary{cursor:pointer;color:#292620}details p{margin-top:8px}
+select:focus-visible,summary:focus-visible,circle:focus,path:focus,rect:focus{outline:2px solid #806b56;outline-offset:2px}
 [hidden]{display:none!important}
+@media(max-width:600px){main{padding:14px 12px}h1{font-size:18px}.chart-nav{gap:8px}}
 """
 _PAGE_SCRIPT = """
 (() => {
@@ -670,7 +680,7 @@ _PAGE_SCRIPT = """
   const cards = document.querySelectorAll('[data-chart-index]');
   selector.addEventListener('change', () => {
     for (const card of cards) {
-      card.hidden = selector.value !== 'all' && card.dataset.chartIndex !== selector.value;
+      card.hidden = card.dataset.chartIndex !== selector.value;
     }
   });
 })();
@@ -682,19 +692,34 @@ def render_chart_page(bundle: Any) -> str:
     payload = _payload(bundle)
     charts = _rows(payload, "charts", 128)
     title = f'Vitalis 图表 · {_plain(payload.get("period_start"))}—{_plain(payload.get("period_end"))}'
-    options = ['<option value="all">全部图表</option>']
+    options = []
     cards = []
     for index, chart in enumerate(charts):
-        options.append(f'<option value="{index}">{_escape(chart.get("title") or "已保存图表")}</option>')
-        cards.append(f'<section data-chart-index="{index}">{render_chart_svg(chart)}</section>')
+        selected, hidden = (' selected', '') if index == 0 else ('', ' hidden')
+        options.append(f'<option value="{index}"{selected}>{_escape(chart.get("title") or "已保存图表")}</option>')
+        # Only presentation moves to HTML: geometry, source legends and safety
+        # notices remain in the SVG; the saved payload is never mutated.
+        svg = render_chart_svg({**chart, "summary": [], "notes": []}, height=300)
+        summary = "".join(f'<p>{_escape(item)}</p>' for item in chart.get("summary") or [])
+        explanation = "".join(f'<p>{_escape(item)}</p>' for item in chart.get("notes") or [])
+        sources = "".join(f'<p>{_escape(" · ".join(_plain(row.get(key)) for key in ("label", "source", "source_scope", "device_id", "source_field", "qualification") if row.get(key)))}</p>' for row in chart.get("series") or [])
+        details = f'<details><summary>来源与说明</summary>{sources}{explanation}</details>' if sources or explanation else ''
+        summary = f'<div class="chart-summary">{summary}</div>' if summary else ''
+        cards.append(f'<section data-chart-index="{index}"{hidden}>{summary}<div class="chart-plot">{svg}</div>{details}</section>')
     notes = "".join(f'<p>{_escape(note)}</p>' for note in payload.get("notes") or [])
+    if notes:
+        notes = f'<details><summary>报告说明</summary>{notes}</details>'
+    disabled = '' if cards else ' disabled'
     if not cards:
+        options.append('<option>暂无图表</option>')
         notes += "<p>暂无可展示图表，缺失不补零。</p>"
     return ('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src \'none\'; connect-src \'none\'; base-uri \'none\'; form-action \'none\'">'
             f'<title>{_escape(title)}</title><style>{_PAGE_STYLE}</style></head><body><main>'
-            f'<header><h1>{_escape(title)}</h1><p>数据截至 {_escape(payload.get("as_of"))} · {_escape(payload.get("timezone"))}</p>'
-            '<p>悬停或聚焦图中记录可查看保存值与来源；不同来源、单位分别展示。</p></header>'
-            f'<label for="chart-filter">选择图表 <select id="chart-filter">{"".join(options)}</select></label>'
-            + notes + "".join(cards) + f'</main><script>{_PAGE_SCRIPT}</script></body></html>')
+            f'<header><h1>{_escape(title)}</h1><p class="meta">数据截至 {_escape(payload.get("as_of"))} · {_escape(payload.get("timezone"))}</p>'
+            '<p class="meta">悬停或聚焦查看保存值；来源与单位分开展示，缺失不补零。</p></header>'
+            f'<nav class="chart-nav" aria-label="图表导航"><label for="chart-filter">指标</label><select id="chart-filter"{disabled}>{"".join(options)}</select>'
+            f'<span class="meta">{len(charts)} 张图 · 每次查看一张</span></nav>'
+            '<noscript><p class="meta">脚本未启用，仅展示首张图表；切换图表需要启用本页脚本。</p></noscript>'
+            + "".join(cards) + notes + f'</main><script>{_PAGE_SCRIPT}</script></body></html>')

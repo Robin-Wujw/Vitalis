@@ -373,6 +373,55 @@ def test_page_is_self_contained_and_has_deterministic_chart_filter():
     assert "fetch(" not in first and "https://" not in first
 
 
+def test_page_initially_shows_only_first_chart_without_all_option():
+    page = render_chart_page(_bundle(_chart(), _chart(title="第二张")))
+    parsed = _HTML(page)
+    cards = [attrs for tag, attrs in parsed.elements if tag == "section" and "data-chart-index" in attrs]
+    assert len(cards) == 2
+    assert "hidden" not in cards[0] and "hidden" in cards[1]
+    options = [attrs for tag, attrs in parsed.elements if tag == "option"]
+    assert [item["value"] for item in options] == ["0", "1"]
+    assert "selected" in options[0]
+    assert "selector.value !== 'all'" not in page
+
+
+def test_page_collapses_notes_but_keeps_safety_notices_and_unit_panels_visible():
+    chart = _chart(
+        notes=["合成来源解释"], summary=["已保存摘要"], state="partial", truncated=True,
+        series=[_series(), _series(unit="min", source="synthetic-diary")],
+    )
+    page = render_chart_page(_bundle(chart, notes=["合成报告说明"]))
+    parsed = _HTML(page)
+    details = [attrs for tag, attrs in parsed.elements if tag == "details"]
+    assert len(details) == 2 and all("open" not in attrs for attrs in details)
+    assert "来源与说明" in page and "合成来源解释" in page and "合成报告说明" in page
+    root = ET.fromstring(re.search(r"<svg.*?</svg>", page, re.DOTALL).group())
+    text = _all_text(root)
+    assert "合成来源解释" not in text
+    assert "缺失不补零" in text and "截断" in text
+    assert len(_elements(root, "g", "unit-panel")) == 2
+    assert "synthetic-watch" in text and "synthetic-diary" in text
+    assert "已保存摘要" in page
+
+
+def test_page_uses_compact_plot_without_clipping_standalone_svg():
+    page = render_chart_page(_bundle(_chart()))
+    root = ET.fromstring(re.search(r"<svg.*?</svg>", page, re.DOTALL).group())
+    assert float(root.attrib["height"]) < 420
+    assert "background:#faf8f4" in page
+    assert "min-width:420px" not in page
+    assert "max-height" not in page
+    assert float(_svg(_chart()).attrib["height"]) >= 420
+
+
+def test_empty_page_has_disabled_selector_and_explicit_missing_state():
+    page = render_chart_page(_bundle())
+    parsed = _HTML(page)
+    assert "暂无可展示图表，缺失不补零。" in page
+    assert any(tag == "select" and "disabled" in attrs for tag, attrs in parsed.elements)
+    assert not any(tag == "svg" for tag, _ in parsed.elements)
+
+
 def test_renderers_are_pure_and_accept_model_dump_without_importing_model_dependencies():
     chart = _chart(preview_series=[_series()])
     before = deepcopy(chart)

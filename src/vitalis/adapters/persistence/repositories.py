@@ -1041,7 +1041,7 @@ class HealthRepository:
         touched = {
             (sample.user_id, sample.metric, local_day(sample.timestamp))
             for sample in samples
-            if sample.metric in DAILY_FEATURE_METRICS
+            if sample.metric in DAILY_FEATURE_METRICS and sample.user_id in result[1]
         }
         for user_id, metric, day in sorted(touched):
             self.refresh_daily_features(user_id, metric, day)

@@ -24,8 +24,10 @@ def test_evening_chart_survives_projection_and_inline_html_contract():
     assert len(report.charts) == 1
     html = render_report(report,"html").content
     markdown = render_report(report,"markdown").content
-    assert "Zepp BioCharge" in html
-    assert "Zepp BioCharge" in markdown
+    assert "Zepp BioCharge" not in html
+    assert "Zepp BioCharge" not in markdown
+    assert "记录曲线" not in html
+    assert "记录曲线" not in markdown
     assert "<svg" not in html
     validate_report_content(html,"html")
 

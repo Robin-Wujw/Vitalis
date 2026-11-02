@@ -902,6 +902,15 @@ def _pressure_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
         if shown is not None:
             suffix = "%" if str(item.get("metric")).endswith("_pct") else ""
             facts.append(f"{labels[item['metric']]} {shown}{suffix}")
+    limitations = []
+    if not any(str(line).startswith("平均压力评分") for line in facts):
+        stress = activity.get("stress") or {}
+        average = number(stress.get("average"))
+        if average is not None and stress.get("sample_count"):
+            facts.append(f"已采样时段压力均值 {average}（设备参考值）")
+            limitations.append("仅描述有记录的时段，不代表全天连续监测。")
+            if stress.get("truncated"):
+                limitations.append("压力采样未覆盖全部记录。")
     heart = activity.get("heart_rate") or {}
     if isinstance(heart, dict):
         average = number(heart.get("average"))
@@ -909,7 +918,7 @@ def _pressure_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
             facts.append(f"心率记录均值 {average} 次/分钟")
     if not facts:
         return None
-    return {"key": "display_signals", "title": "日内记录", "facts": facts, "interpretation": [], "limitations": [], "display": True}
+    return {"key": "display_signals", "title": "日内记录", "facts": facts, "interpretation": [], "limitations": limitations, "display": True}
 
 
 def _strength_next_advice(strength: dict[str, Any]) -> list[str]:

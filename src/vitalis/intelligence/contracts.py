@@ -14,9 +14,9 @@ from vitalis.intelligence.chart_contracts import Chart
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "17.0"
-WEEKLY_SCHEMA_VERSION = "9.0"
-MONTHLY_SCHEMA_VERSION = "6.0"
+DAILY_SCHEMA_VERSION = "18.0"
+WEEKLY_SCHEMA_VERSION = "10.0"
+MONTHLY_SCHEMA_VERSION = "7.0"
 INTELLIGENCE_VERSION = "19.0"
 DECISION_POLICY_VERSION = "12.0"
 EVIDENCE_VERSION = "2026-09a"
@@ -487,6 +487,9 @@ class SleepFeatures(BaseModel):
 
 
 class HrvStreamFeature(BaseModel):
+    source: str = "unknown"
+    source_scope: str = "unknown"
+    unit: str = "ms"
     metric: Literal["hrv_rmssd", "hrv_sdnn", "sleep_hrv"]
     device_id: str | None = None
     device_label: str | None = None
@@ -575,6 +578,8 @@ class HrvFeatures(BaseModel):
     preferred_metric: Literal["hrv_rmssd", "hrv_sdnn", "sleep_hrv"] | None = None
     preferred_device_id: str | None = None
     preferred_device_label: str | None = None
+    preferred_source: str | None = None
+    preferred_source_scope: str | None = None
     value_ms: float | None = None
     ln_rmssd: float | None = None
     deviation: Deviation | None = None
@@ -585,7 +590,7 @@ class HrvFeatures(BaseModel):
     recent_7d_days: int = Field(default=0, ge=0, le=7)
     previous_7d_days: int = Field(default=0, ge=0, le=7)
     fusion_method: Literal[
-        "vendor_fused_with_device_audit",
+        "vendor_account_summary_with_device_audit",
         "canonical_device_with_corroboration",
     ] | None = None
     fusion_direction: Literal["above", "near", "below", "unknown"] = "unknown"
@@ -660,6 +665,9 @@ class RecoveryFeatures(BaseModel):
     vendor_charge: float | None = None
     vendor_readiness_components: dict[str, float] = Field(default_factory=dict)
     vendor_charge_components: dict[str, float] = Field(default_factory=dict)
+    vendor_provenance: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    wake_charge_provenance: dict[str, Any] = Field(default_factory=dict)
+    readiness_component_provenance: dict[str, dict[str, Any]] = Field(default_factory=dict)
     # Zepp Hybrid Charge on waking (the day's maximum) and the user's range
     # over the previous 60 days: median, 20th and 80th percentile.
     wake_charge: float | None = None
@@ -1894,7 +1902,7 @@ class SubjectiveFeedback(BaseModel):
 
 
 class DailyProfile(BaseModel):
-    schema_version: Literal["17.0"] = DAILY_SCHEMA_VERSION
+    schema_version: Literal["18.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
     intelligence_version: Literal["19.0"] = INTELLIGENCE_VERSION
     decision_policy_version: Literal["12.0"] = DECISION_POLICY_VERSION
@@ -2105,6 +2113,10 @@ class ContextCurrent(BaseModel):
     hrv_metric: str | None = None
     hrv_value_ms: float | None = None
     hrv_device_id: str | None = None
+    hrv_source: str | None = None
+    hrv_source_scope: str | None = None
+    rhr_source_scope: str | None = None
+    rhr_device_id: str | None = None
     rhr_bpm: float | None = None
     recovery_state: RecoveryState
     recovery_state_label: str
@@ -2159,7 +2171,10 @@ class ContextRecent(BaseModel):
 class ContextTrend(BaseModel):
     metric: str
     metric_label: str
-    window_days: Literal[7, 28, 29, 30, 31, 90]
+    source: str = "unknown"
+    source_scope: str = "unknown"
+    unit: str | None = None
+    window_days: Literal[7, 28, 29, 30, 31, 60, 90]
     device_id: str | None = None
     change_percent: float | None = None
     direction: TrendDirection

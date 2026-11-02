@@ -842,7 +842,7 @@ def test_parse_sdnn_samples_and_readiness_extensions():
     assert {sample.device_id for sample in readiness_samples} == {"A1B2C3D4E5F60708"}
 
 
-def test_readiness_without_device_is_preserved_as_vendor_fused():
+def test_readiness_without_device_is_preserved_as_account_summary():
     raw = {"items": [{
         "eventType": "readiness",
         "timestamp": 1_777_334_400_000,
@@ -857,12 +857,12 @@ def test_readiness_without_device_is_preserved_as_vendor_fused():
     samples = ZeppParser.parse_readiness_samples(raw)
 
     assert {(row.metric, row.source_scope, row.device_id) for row in daily} == {
-        ("sleep_hrv", "user_fused", None),
-        ("sleep_rhr", "user_fused", None),
+        ("sleep_hrv", "user_summary", None),
+        ("sleep_rhr", "user_summary", None),
     }
     assert {(row.metric, row.source_scope, row.device_id) for row in samples} == {
-        ("sleep_hrv", "user_fused", None),
-        ("sleep_rhr", "user_fused", None),
+        ("sleep_hrv", "user_summary", None),
+        ("sleep_rhr", "user_summary", None),
     }
 
 

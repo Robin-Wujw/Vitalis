@@ -21,6 +21,7 @@ from .profile import RawDailyProfile, SeriesPoint
 
 _SCOPE_PRIORITY = {
     "user_fused": 4,
+    "user_summary": 4,
     "device": 3,
     "normalized_daily_record": 2,
     "workout_summary": 2,

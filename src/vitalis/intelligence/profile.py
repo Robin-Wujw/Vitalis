@@ -60,12 +60,6 @@ PROFILE_SAMPLE_METRICS = (
     "mental_charge",
     "stress",
 )
-VENDOR_FUSED_DAILY_METRICS = {
-    "sleep_hrv",
-    "sleep_rhr",
-    "hrv_baseline",
-    "rhr_baseline",
-}
 PROFILE_HISTORY_DAYS = 180
 DETAIL_WORKOUTS_PER_FAMILY = 8
 log = logging.getLogger("vitalis.intelligence.profile")
@@ -110,6 +104,7 @@ class RawDailyProfile:
     heart_rate_samples: list[SeriesPoint] = field(default_factory=list)
     chart_samples: dict[str, list[SeriesPoint]] = field(default_factory=dict)
     chart_naps: dict[date, list[dict]] = field(default_factory=dict)
+    chart_band_records: list[dict] = field(default_factory=list)
     chart_inputs: dict = field(default_factory=dict)
     chart_baselines: dict = field(default_factory=dict)
     # Device-data watermark from the same response that last wrote this sleep;
@@ -127,6 +122,7 @@ class RawDailyProfile:
     training_preferences: TrainingPreferences | None = None
     user_profile: UserProfile = field(default_factory=lambda: UserProfile(user_id=""))
     device_models: dict[str, str] = field(default_factory=dict)
+    device_inventory: list[dict] = field(default_factory=list)
     dense_heart_rate_coverage: dict[str, dict] = field(default_factory=dict)
     facts: dict[str, list[MeasurementFact]] = field(default_factory=dict)
     energy_observations: list[EnergyObservation] = field(default_factory=list)
@@ -466,11 +462,17 @@ class ProfileLoader:
                 break
 
     def _add_device_context(self, raw: RawDailyProfile) -> None:
-        raw.device_models = {
-            row.device_id.upper(): row.model
-            for row in self.repo.devices(raw.user_id)
-            if row.device_id
-        }
+        raw.device_inventory = [{"source": row.source, "device_id": row.device_id, "model": row.model,
+                                 "aliases": list(row.aliases or [])}
+                                for row in self.repo.devices(raw.user_id) if row.device_id]
+        raw.device_models = {row["device_id"].upper(): row["model"] for row in raw.device_inventory}
+        alias_models = defaultdict(set)
+        for row in raw.device_inventory:
+            for alias in row["aliases"]:
+                alias_models[str(alias).upper()].add(row["model"])
+        for alias, models in alias_models.items():
+            if len(models) == 1:
+                raw.device_models.setdefault(alias, next(iter(models)))
         start = raw.day - timedelta(days=27)
         files = self.repo.dense_data_files(
             raw.user_id, "second_heart_rate", start, raw.day, limit=20_000
@@ -519,25 +521,8 @@ class ProfileLoader:
             item["today_coverage_seconds"] = _merged_interval_seconds(
                 item.pop("today_intervals")
             )
-        observed_ids = {
-            point.device_id.upper()
-            for points in raw.series.values()
-            for point in points
-            if point.device_id
-        } | set(raw.dense_heart_rate_coverage)
-        inventory = list(raw.device_models.items())
-        for observed_id in observed_ids:
-            if observed_id in raw.device_models:
-                continue
-            matches = [
-                model
-                for inventory_id, model in inventory
-                if len(inventory_id) >= 12
-                and observed_id.startswith(inventory_id[:6])
-                and observed_id.endswith(inventory_id[-6:])
-            ]
-            if len(set(matches)) == 1:
-                raw.device_models[observed_id] = matches[0]
+        # A similar prefix/suffix is not evidence of the same physical device.
+        # Unmatched observed identifiers remain separately visible in chart routes.
 
     def _add_record_series(self, raw: RawDailyProfile) -> None:
         for day, record in raw.sleep_by_day.items():
@@ -585,6 +570,7 @@ class ProfileLoader:
         for day, record in raw.activity_by_day.items():
             source = record.get("source", "zepp")
             scope = record.get("source_scope", "normalized_daily_record")
+            device_id = record.get("device_id") or None
             for metric, field, unit in (
                 ("steps", "steps", "steps"),
                 ("distance_km", "distance_km", "km"),
@@ -594,13 +580,13 @@ class ProfileLoader:
                 value = record.get(field)
                 if _record_field_observed(record, field, value):
                     _append(
-                        raw, metric, value, unit, day, source, scope,
+                        raw, metric, value, unit, day, source, scope, device_id,
                         source_field=f"activity.{field}",
                     )
             resting_hr = record.get("resting_hr")
             if _record_field_observed(record, "resting_hr", resting_hr):
                 _append(
-                    raw, "resting_hr", resting_hr, "bpm", day, source, scope,
+                    raw, "resting_hr", resting_hr, "bpm", day, source, scope, device_id,
                     source_field="activity.resting_hr", positive=True,
                 )
         for day, record in raw.training_by_day.items():
@@ -633,13 +619,6 @@ class ProfileLoader:
     def _add_daily_metrics(self, raw: RawDailyProfile, start: date) -> None:
         for row in self.repo.daily_metrics(raw.user_id, start, raw.day):
             source_scope = row.source_scope
-            if (
-                row.source == "zepp"
-                and row.metric in VENDOR_FUSED_DAILY_METRICS
-                and not row.device_id
-                and source_scope == "unknown"
-            ):
-                source_scope = "user_fused"
             metric = row.metric
             value = row.value
             unit = row.unit
@@ -881,6 +860,9 @@ class ProfileLoader:
             for metric in ("stress", "hrv_rmssd", "hybrid_charge", "physical_charge", "mental_charge", "respiratory_rate"):
                 raw.chart_samples[metric] = [p for p in raw.series.get(metric, [])
                     if p.day == raw.day and isinstance(p.observed_at, datetime) and not p.is_daily_feature]
+        band_records = getattr(self.repo, "band_source_records", None)
+        if callable(band_records):
+            raw.chart_band_records = band_records(raw.user_id, start, raw.day, as_of=raw.as_of)
         naps = getattr(self.repo, "nap_range", None)
         if callable(naps):
             raw.chart_naps = naps(raw.user_id, start, raw.day, raw.as_of)
@@ -1102,8 +1084,7 @@ def _is_vendor_fused_stream(key: tuple[str, str, str | None]) -> bool:
     source, scope, device_id = key
     return (
         source == "zepp"
-        and device_id is None
-        and scope in {"user_fused", "unknown"}
+        and scope in {"user_fused", "user_summary"}
     )
 
 

@@ -10,7 +10,8 @@
 
 - 上游仓库：<https://github.com/lingcang728/ZeppBridge>
 - 已审查版本：`v2.1.0`（2026-09-02）；现有已转化约定所对应的精确历史源码 revision 尚未还原。
-- 最新比对基线：ZeppBridge `main` 的 `fd53afd9fd95389bb1a5192af561a6514e9855c5`
+- 多设备对照基线：ZeppBridge `main` 的 `1012a00abbb41865e8abcfb8f59b3d264fbafe1b`（2026-11-02）。独立实现来源范围、同条目录别名与记账占位处理；参考 `normalizer/device.rs`、`normalizer/band.rs`、`storage/devices.rs` 及测试，不复制其按最长片段猜设备的策略，不把上游 `UserFused` 枚举当作厂商融合算法证明。
+- 先前比对基线：ZeppBridge `main` 的 `fd53afd9fd95389bb1a5192af561a6514e9855c5`
   （2026-09-23）。本次按行为和回归测试借鉴、未整段复制以下上游修复：心率游标单位归一化
   （`c491d2b8b455`）、ODI/OSA 本地日历日期请求（`afb130a09cad`）、SpO2 有界分窗与响应上限处理
   （`592b685b652e`），以及 readiness 缺失值 sentinel 处理（`37e0b52b1425`）。

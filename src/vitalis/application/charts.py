@@ -21,7 +21,7 @@ class ChartQuery:
         self.timezone_name = timezone_name
         self.now_factory = now_factory or (lambda: datetime.now(timezone.utc))
 
-    def query(self, user_id: str, start: date, end: date, *, mode: str = "daily") -> ChartBundle:
+    def query(self, user_id: str, start: date, end: date, *, mode: str = "daily", route: str = "all") -> ChartBundle:
         if start > end or (end-start).days > 365:
             raise ValueError("charts cover at most 366 inclusive local dates")
         if mode not in {"intraday", "daily"}:
@@ -30,8 +30,10 @@ class ChartQuery:
             raise ValueError("intraday charts cover at most seven inclusive local dates")
         raw = self.reader.load(user_id, start, end, as_of=self.now_factory(),
             timezone_name=self.timezone_name, intraday=mode == "intraday")
-        return build_chart_bundle(raw, start, end, period="daily" if mode == "intraday" else "range",
-                                  include_intraday=mode == "intraday")
+        from vitalis.intelligence.chart_routes import filter_bundle
+        bundle = build_chart_bundle(raw, start, end, period="daily" if mode == "intraday" else "range",
+                                    include_intraday=mode == "intraday")
+        return filter_bundle(bundle, route)
 
 
 def report_chart_bundle(report, kind: str) -> ChartBundle:

@@ -484,6 +484,7 @@ def test_profile_loader_attaches_device_identity_and_dense_hr_coverage():
             source="zepp",
             model="Amazfit Helio Strap",
             device_id="CE4A84921FA6",
+            aliases=["CE4A84921FA6", "CE4A84FFFF921FA6"],
         ))
         repo.save_dense_data_files([DenseDataFile(
             user_id=user_id,

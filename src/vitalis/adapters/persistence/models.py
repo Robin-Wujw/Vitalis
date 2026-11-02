@@ -102,6 +102,7 @@ class Device(Base):
     source: Mapped[str] = mapped_column(String(32))
     model: Mapped[str] = mapped_column(String(128), default="")
     device_id: Mapped[str] = mapped_column(String(128), default="")
+    aliases: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     connected_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

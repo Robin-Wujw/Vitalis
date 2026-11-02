@@ -723,8 +723,7 @@ def _is_vendor_fused_stream(stream: tuple[str, str, str | None]) -> bool:
     source, scope, device_id = stream
     return (
         source == "zepp"
-        and device_id is None
-        and scope in {"user_fused", "unknown"}
+        and scope in {"user_fused", "user_summary"}
     )
 
 

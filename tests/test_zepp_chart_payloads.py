@@ -124,7 +124,7 @@ def test_readiness_revision_selection_does_not_merge_devices_or_unknown_identity
     ]
     for rows in (ZeppParser.parse_daily_metrics({"items": items}), ZeppParser.parse_readiness_samples({"items": items})):
         assert {(row.device_id, row.source_scope, row.value) for row in rows} == {
-            (DEVICE_A, "device", 80), (DEVICE_B, "device", 70), (None, "user_fused", 90),
+            (DEVICE_A, "device", 80), (DEVICE_B, "device", 70), (None, "user_summary", 90),
         }
 
 
@@ -163,7 +163,7 @@ def test_readiness_revision_metadata_retains_latest_all_missing_revision():
         payload = {"items": list(ordered)}
         revisions = ZeppParser.parse_readiness_revisions(payload, timezone_name="Asia/Shanghai")
         assert revisions == [
-            {"day": DAY, "device_id": None, "source_scope": "user_fused",
+            {"day": DAY, "device_id": None, "source_scope": "user_summary",
              "observed_at": datetime(2026, 10, 1, 16, tzinfo=timezone.utc), "revision_at": None},
             {"day": DAY, "device_id": DEVICE_A, "source_scope": "device",
              "observed_at": datetime(2026, 10, 1, 16, tzinfo=timezone.utc),

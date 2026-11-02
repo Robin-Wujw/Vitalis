@@ -12,7 +12,8 @@ Some Zepp cloud endpoint, payload-normalization, and region-probing conventions 
 - Upstream repository: <https://github.com/lingcang728/ZeppBridge>
 - Reviewed release: `v2.1.0` (2026-09-02); the precise historical source revision for
   existing translated conventions has not yet been reconstructed.
-- Latest comparison baseline: ZeppBridge `main` at `fd53afd9fd95389bb1a5192af561a6514e9855c5`
+- Multi-device comparison: ZeppBridge `main` at `1012a00abbb41865e8abcfb8f59b3d264fbafe1b` (2026-11-02). Independently implemented scope, co-reported inventory aliases and bookkeeping handling after reviewing `normalizer/device.rs`, `normalizer/band.rs`, `storage/devices.rs` and tests. The longest-segment identity heuristic is not adopted; the upstream `UserFused` enum does not establish the vendor fusion algorithm.
+- Previous comparison baseline: ZeppBridge `main` at `fd53afd9fd95389bb1a5192af561a6514e9855c5`
   (2026-09-23). The following upstream fixes were adapted as behavior and regression
   guidance, not copied wholesale: heart-rate cursor normalization (`c491d2b8b455`),
   local calendar-date ODI/OSA requests (`afb130a09cad`), bounded SpO2 windows and

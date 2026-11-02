@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from .chart_contracts import (
     Chart, ChartBand, ChartBandPoint, ChartBundle, ChartInterval, ChartPoint,
-    ChartReference, ChartRegion, ChartSeries,
+    ChartReference, ChartRegion, ChartSeries, ChartSourceSummary,
 )
 from .profile import RawDailyProfile, SeriesPoint
 
@@ -190,17 +190,28 @@ def _intraday(raw: RawDailyProfile, start: date, end: date) -> list[Chart]:
     return charts
 
 
+def _band_rows(raw: RawDailyProfile, kind: str, fallback: dict) -> list[tuple[date,dict]]:
+    rows=[(r['date'],r['data']) for r in raw.chart_band_records if r['kind']==kind]
+    def identity(day,data):
+        return day,data.get('source','zepp'),data.get('source_scope','unknown'),data.get('device_id') or None
+    known={identity(day,data) for day,data in rows}
+    rows.extend((day,data) for day,data in fallback.items() if identity(day,data) not in known)
+    return sorted(rows,key=lambda item:(item[0],str(item[1].get('source_scope')),str(item[1].get('device_id'))))
+
+
 def _sleep(raw: RawDailyProfile, start: date, end: date) -> Chart | None:
     zone = raw.timezone_name or "UTC"
     left, right = _bounds(start, end, zone)
-    intervals, summary = [], []
-    for day, row in sorted(raw.sleep_by_day.items()):
+    intervals, summary, source_summaries = [], [], []
+    for day, row in _band_rows(raw, 'sleep', raw.sleep_by_day):
         if not start <= day <= end:
             continue
         duration = _number(row.get("sleep_duration"))
         score = _number(row.get("sleep_score"))
         summary.append(f"{day} 主睡眠" + (f" {duration:g} 分钟" if duration is not None else "") +
                        (f" · Zepp 评分 {score:g}" if score is not None else ""))
+        source_summaries.append(ChartSourceSummary(text=summary[-1],source=row.get('source','zepp'),
+            source_scope=row.get('source_scope','unknown'),device_id=row.get('device_id')))
         for stage in row.get("stages") or []:
             a, b = _datetime(_get(stage, "start_time")), _datetime(_get(stage, "end_time"))
             if not a or not b or b <= a or a > raw.as_of:
@@ -208,16 +219,22 @@ def _sleep(raw: RawDailyProfile, start: date, end: date) -> Chart | None:
             category = _get(stage, "stage", "unknown")
             intervals.append(ChartInterval(start=a, end=min(b, raw.as_of), category=category,
                 label=f"{day} 主睡眠 · {category}", source=row.get("source", "zepp"),
-                source_scope="sleep_stage", qualification="vendor_estimate"))
-    naps = getattr(raw, "chart_naps", {})
-    for day, sessions in sorted(naps.items()):
+                source_scope=row.get("source_scope", "unknown"), device_id=row.get("device_id"), qualification="vendor_estimate"))
+    nap_rows = _band_rows(raw, 'naps', {day:{'naps':naps} for day,naps in raw.chart_naps.items()})
+    for day, nap_record in nap_rows:
+        sessions = nap_record.get('naps') or []
         if not start <= day <= end:
             continue
         if not sessions:
             summary.append(f"{day} 来源明确没有午睡记录")
+            source_summaries.append(ChartSourceSummary(text=summary[-1],source=nap_record.get('source','zepp'),
+                source_scope=nap_record.get('source_scope','unknown'),device_id=nap_record.get('device_id')))
         for nap in sessions:
             duration = _number(_get(nap, "sleep_minutes"))
             summary.append(f"{day} 午睡" + (f" {duration:g} 分钟" if duration is not None else "时长资格未知"))
+            source_summaries.append(ChartSourceSummary(text=summary[-1],source=_get(nap,'source','zepp'),
+                source_scope=_get(nap,'source_scope','unknown'),device_id=_get(nap,'device_id'),
+                observed_at=_datetime(_get(nap,'started_at'))))
             for stage in _get(nap, "stages", []):
                 a, b = _datetime(_get(stage, "start_time")), _datetime(_get(stage, "end_time"))
                 if not a or not b or b <= a or a > raw.as_of:
@@ -225,14 +242,14 @@ def _sleep(raw: RawDailyProfile, start: date, end: date) -> Chart | None:
                 category = _get(stage, "stage", "unknown")
                 intervals.append(ChartInterval(start=a, end=min(b, raw.as_of), category=category,
                     label=f"{day} 午睡 · {category}", source=_get(nap, "source", "zepp"),
-                    source_scope="nap_stage", qualification="vendor_estimate"))
+                    source_scope=_get(nap, "source_scope", "unknown"), device_id=_get(nap, "device_id"), qualification="vendor_estimate"))
     if not intervals and not summary:
         return None
     if intervals:
         left = min(left, min(i.start for i in intervals))
         right = max(right, max(i.end for i in intervals))
     return Chart(key="sleep", title="睡眠分期与午睡", kind="stages", unit="stage", timezone=zone,
-        period_start=left, period_end=right, intervals=intervals[:3000], summary=summary,
+        period_start=left, period_end=right, intervals=intervals[:3000], summary=summary, source_summaries=source_summaries[:500],
         state="partial" if not intervals or len(intervals) > 3000 else "available", truncated=len(intervals) > 3000,
         notes=["按实际分期区间绘制；主睡眠与午睡分别标记，未知阶段不推断为清醒。", "睡眠分期与评分来自设备估计。"])
 
@@ -249,7 +266,18 @@ def _series_qualification(points, metric: str) -> str:
 def _daily_series(raw: RawDailyProfile, metric: str, label: str, unit: str,
                   start: date, end: date) -> list[ChartSeries]:
     groups = defaultdict(lambda: defaultdict(list))
-    for p in raw.series.get(metric, []):
+    band_field = {'sleep_duration':('sleep','sleep_duration'), 'sleep_score':('sleep','sleep_score'),
+                  'steps':('activity','steps'), 'resting_hr':('activity','resting_hr')}.get(metric)
+    overridden = {(r['date'],r['data'].get('source','zepp'),r['data'].get('source_scope','unknown'),r['data'].get('device_id') or None)
+                  for r in raw.chart_band_records if band_field and r['kind']==band_field[0]}
+    points = [p for p in raw.series.get(metric, []) if not ((p.day,p.source,p.source_scope,p.device_id) in overridden
+              and (p.source_field or '').startswith(('sleep.','activity.')))]
+    if band_field:
+        for day,row in _band_rows(raw,band_field[0],{}):
+            value = _number(row.get(band_field[1]))
+            if value is not None:
+                points.append(SeriesPoint(metric,value,unit,day,day,row.get('source','zepp'),row.get('source_scope','unknown'),row.get('device_id'),source_field=band_field[0]+'.'+band_field[1]))
+    for p in points:
         if start <= p.day <= end and p.unit == unit and _number(p.value) is not None:
             stamp = _datetime(p.observed_at)
             if stamp and stamp > raw.as_of:
@@ -257,10 +285,14 @@ def _daily_series(raw: RawDailyProfile, metric: str, label: str, unit: str,
             groups[_identity(p)][p.day].append(p)
     # Naps are an independent optional stream, not synthetic zero-duration nights.
     if metric == "nap_minutes":
-        for day, naps in getattr(raw, "chart_naps", {}).items():
+        for day, record in _band_rows(raw, 'naps', {d:{'naps':v} for d,v in raw.chart_naps.items()}):
+            naps = record.get('naps') or []
             if start <= day <= end and all(_number(_get(n, "sleep_minutes")) is not None for n in naps):
-                groups[("zepp", "nap_stage", None, "min")][day] = [
-                    SeriesPoint(metric, sum(_get(n, "sleep_minutes") for n in naps), "min", day, day, "zepp", "nap_stage")]
+                source = record.get('source', 'zepp')
+                scope = record.get('source_scope', 'unknown')
+                device = record.get('device_id')
+                groups[(source, scope, device, "min")][day] = [
+                    SeriesPoint(metric, sum(_get(n, "sleep_minutes") for n in naps), "min", day, day, source, scope, device)]
     output = []
     for identity, by_day in sorted(groups.items(), key=lambda p: str(p[0]))[:MAX_SERIES]:
         points = []
@@ -312,6 +344,7 @@ def _daily_charts(raw: RawDailyProfile, start: date, end: date) -> list[Chart]:
                 lower = {p.timestamp: p.value for p in lo.points} if lo else {}
                 upper = {p.timestamp: p.value for p in hi.points} if hi else {}
                 bands.append(ChartBand(key=row.key+":range", label="Zepp 最佳范围（厂商参考）", source=row.source,
+                    source_scope=row.source_scope, device_id=row.device_id,
                     points=[ChartBandPoint(timestamp=p.timestamp, lower=lower.get(p.timestamp), upper=upper.get(p.timestamp)) for p in row.points]))
         output.append(Chart(key="vendor_load_7d", title="Zepp 7 日训练负荷与厂商参考区间", kind="line", unit="load",
             timezone=zone, period_start=left, period_end=right, series=vendor+over, bands=bands[:8],
@@ -493,6 +526,8 @@ def build_chart_bundle(raw: RawDailyProfile, start: date, end: date, *, period: 
             if sleep:
                 charts.append(sleep)
     charts.extend(_muscle_charts(raw, start, end))
+    from .chart_routes import attach_source_routes
+    charts = attach_source_routes(charts, raw.device_inventory)
     return ChartBundle(user_id=raw.user_id, analysis_run_id=analysis_run_id, as_of=raw.as_of,
         timezone=raw.timezone_name or "UTC", period_start=start, period_end=end, charts=charts,
         notes=["图表只描述已保存记录；缺少获取时间的旧记录不补造获取时刻。"])

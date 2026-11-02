@@ -755,6 +755,7 @@ class HealthRepository:
             f"{device.user_id}:{device.source}:{device.device_id}".encode("utf-8")
         ).hexdigest()
         model = device.model or ""
+        aliases = sorted(set(device.aliases or []))
         dialect = self.db.get_bind().dialect.name
         changed = False
         if dialect in ("sqlite", "postgresql"):
@@ -768,14 +769,16 @@ class HealthRepository:
                 source=device.source,
                 model=model,
                 device_id=device.device_id,
+                aliases=aliases,
             )
             result = self.db.execute(
                 statement.on_conflict_do_update(
                     index_elements=["id"],
-                    set_={"model": statement.excluded.model},
-                    where=(
-                        (statement.excluded.model != "")
-                        & (orm.Device.model != statement.excluded.model)
+                    set_={"model": case((statement.excluded.model != "", statement.excluded.model), else_=orm.Device.model),
+                          "aliases": statement.excluded.aliases},
+                    where=or_(
+                        (statement.excluded.model != "") & (orm.Device.model != statement.excluded.model),
+                        orm.Device.aliases.is_distinct_from(statement.excluded.aliases),
                     ),
                 ).returning(orm.Device.user_id)
             )
@@ -784,7 +787,7 @@ class HealthRepository:
             row = self.db.execute(select(orm.Device).where(
                 orm.Device.id == stable_id,
             )).scalar_one_or_none()
-            changed = row is None or (bool(model) and row.model != model)
+            changed = row is None or (bool(model) and row.model != model) or row.aliases != aliases
             if row is None:
                 row = orm.Device(
                     id=stable_id,
@@ -792,10 +795,13 @@ class HealthRepository:
                     source=device.source,
                     model=model,
                     device_id=device.device_id,
+                    aliases=aliases,
                 )
                 self.db.add(row)
-            elif model:
-                row.model = model
+            else:
+                row.aliases = aliases
+                if model:
+                    row.model = model
         self.db.flush()
         if changed:
             self._bump_existing_input_revisions({device.user_id})
@@ -981,6 +987,14 @@ class HealthRepository:
     def chart_input_snapshot(self, user_id: str, start: date, end: date, *, as_of: datetime, timezone_name: str = "UTC") -> dict:
         from .chart_inputs import read_chart_input_snapshot
         return read_chart_input_snapshot(self.db, user_id, start, end, as_of=as_of, timezone_name=timezone_name)
+
+    def save_band_source(self, user_id: str, day: date, kind: str, payload: dict, *, fetched_at=None) -> int:
+        from .band_sources import save_band_source
+        return save_band_source(self, user_id, day, kind, payload, fetched_at=fetched_at)
+
+    def band_source_records(self, user_id: str, start: date, end: date, *, as_of: datetime) -> list[dict]:
+        from .band_sources import read_band_sources
+        return read_band_sources(self.db, user_id, start, end, as_of=as_of)
 
     def save_naps(self, user_id: str, day: date, naps: list, *, fetched_at=None) -> int:
         from .sleep_supplements import save_naps

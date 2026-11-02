@@ -41,7 +41,7 @@ from .profile import (
     device_label,
     device_measurement_site,
 )
-from .readiness import wake_charge_summary
+from .readiness import is_vendor_account_summary, select_analysis_stream, wake_charge_summary
 from .running import RunningAnalyzer
 from .sleep_completion import main_sleep_finished, minutes_after, usual_sleep_minutes
 from .strength import StrengthAnalyzer, reported_set_count
@@ -85,6 +85,7 @@ class _HrvCandidate:
     source: str
     scope: str
     device_id: str | None
+    unit: str
     device_label: str
     measurement_site: str
     value: float
@@ -98,12 +99,13 @@ class _HrvCandidate:
         ))
         baseline_days = self.baseline.distinct_days if self.baseline else 0
         arm_worn = int(self.measurement_site == "upper_arm")
-        vendor_fused = int(_is_vendor_fused(
+        vendor_account_summary = int(is_vendor_account_summary(
             self.source, self.scope, self.device_id
         ))
         return (
             self.metric_priority,
-            vendor_fused,
+            vendor_account_summary,
+            int(self.device_id is not None and self.scope not in {"", "unknown"}),
             baseline_available,
             baseline_days,
             min(self.sample_count_today, 1_440),
@@ -221,21 +223,22 @@ class HrvAnalyzer:
             for stream, value in daily_stream_values(raw.series.get(metric, []), raw.day).items():
                 source, scope, device_id = stream
                 baseline = _baseline_for(baselines, metric, source, scope, device_id)
-                sample_count = sum(
-                    1
-                    for point in raw.series.get(metric, [])
+                stream_points = [
+                    point for point in raw.series.get(metric, [])
                     if point.day == raw.day
                     and (point.source, point.source_scope, point.device_id) == stream
-                )
+                ]
+                sample_count = sum(point.sample_count for point in stream_points)
                 candidates.append(_HrvCandidate(
                     metric=metric,
                     metric_priority=priority,
                     source=source,
                     scope=scope,
                     device_id=device_id,
+                    unit=stream_points[0].unit,
                     device_label=(
-                        "Zepp 厂商汇总"
-                        if _is_vendor_fused(source, scope, device_id)
+                        "Zepp 账户级汇总"
+                        if is_vendor_account_summary(source, scope, device_id)
                         else device_label(raw, device_id)
                     ),
                     measurement_site=device_measurement_site(raw, device_id),
@@ -276,6 +279,9 @@ class HrvAnalyzer:
         streams = [
             HrvStreamFeature(
                 metric=item.metric,
+                source=item.source,
+                source_scope=item.scope,
+                unit=item.unit,
                 device_id=item.device_id,
                 device_label=item.device_label,
                 measurement_site=item.measurement_site,
@@ -316,12 +322,13 @@ class HrvAnalyzer:
         for rhr_metric in ("sleep_rhr", "resting_hr"):
             for stream, rhr in daily_stream_values(raw.series.get(rhr_metric, []), raw.day).items():
                 rhr_baseline = _baseline_for(baselines, rhr_metric, *stream)
-                vendor_fused = int(_is_vendor_fused(*stream))
+                vendor_account_summary = int(is_vendor_account_summary(*stream))
                 same_device = int(stream[2] == device_id and device_id is not None)
                 available = int(bool(rhr_baseline and rhr_baseline.status == Availability.AVAILABLE))
                 rhr_candidates.append((
-                    vendor_fused,
+                    vendor_account_summary,
                     int(rhr_metric == "sleep_rhr"),
+                    int(stream[2] is not None and stream[1] not in {"", "unknown"}),
                     available,
                     same_device,
                     rhr,
@@ -336,8 +343,8 @@ class HrvAnalyzer:
         rhr_deviation = None
         if rhr_candidates:
             (
-                _, _, _, _, rhr_value, rhr_baseline, rhr_metric, rhr_stream,
-            ) = max(rhr_candidates, key=lambda item: item[:4])
+                _, _, _, _, _, rhr_value, rhr_baseline, rhr_metric, rhr_stream,
+            ) = max(rhr_candidates, key=lambda item: item[:5])
             rhr_source_scope = rhr_stream[1]
             rhr_device_id = rhr_stream[2]
             rhr_deviation = BaselineEngine.deviation(rhr_value, rhr_baseline) if rhr_baseline else None
@@ -388,6 +395,8 @@ class HrvAnalyzer:
             status=Availability.AVAILABLE,
             status_label=AVAILABILITY_LABELS[Availability.AVAILABLE.value],
             preferred_metric=metric,
+            preferred_source=selected.source,
+            preferred_source_scope=selected.scope,
             preferred_device_id=device_id,
             preferred_device_label=selected.device_label,
             value_ms=round(value, 2),
@@ -400,8 +409,8 @@ class HrvAnalyzer:
             recent_7d_days=recent_7d_days,
             previous_7d_days=previous_7d_days,
             fusion_method=(
-                "vendor_fused_with_device_audit"
-                if _is_vendor_fused(
+                "vendor_account_summary_with_device_audit"
+                if is_vendor_account_summary(
                     selected.source, selected.scope, selected.device_id
                 )
                 else "canonical_device_with_corroboration"
@@ -504,7 +513,8 @@ def _daily_sleep_hrv_trend(
             baselines, "sleep_hrv", source, scope, device_id
         )
         return (
-            int(_is_vendor_fused(source, scope, device_id)),
+            int(is_vendor_account_summary(source, scope, device_id)),
+            int(device_id is not None and scope not in {"", "unknown"}),
             int(bool(baseline and baseline.status == Availability.AVAILABLE)),
             baseline.distinct_days if baseline else 0,
             len({point.day for point in points}),
@@ -519,8 +529,8 @@ def _daily_sleep_hrv_trend(
     return DailySleepHrvTrendFeature(
         device_id=device_id,
         device_label=(
-            "Zepp 厂商汇总"
-            if _is_vendor_fused(source, scope, device_id)
+            "Zepp 账户级汇总"
+            if is_vendor_account_summary(source, scope, device_id)
             else device_label(raw, device_id)
         ),
         today_value_ms=round(float(median(today)), 1),
@@ -735,7 +745,7 @@ def _corroborate_hrv_streams(
         return (
             "unknown",
             ConfidenceBand.NONE,
-            "主设备缺少可解释的个人基线",
+            "主来源缺少可解释的个人基线",
             "insufficient",
             0,
             False,
@@ -747,7 +757,7 @@ def _corroborate_hrv_streams(
         return (
             "unknown",
             ConfidenceBand.NONE,
-            "主设备暂时无法与个人基线比较",
+            "主来源暂时无法与个人基线比较",
             "insufficient",
             0,
             False,
@@ -767,7 +777,7 @@ def _corroborate_hrv_streams(
         return (
             selected_direction,
             ConfidenceBand.MODERATE,
-            "按连续主设备的个人基线判断",
+            "按连续主来源的个人基线判断",
             "not_available",
             0,
             False,
@@ -780,16 +790,16 @@ def _corroborate_hrv_streams(
         return (
             selected_direction,
             ConfidenceBand.MODERATE,
-            "次设备未出现相反方向",
+            "同指标次来源未出现相反方向",
             "consistent",
             len(secondary_directions),
             False,
         )
-    if _is_vendor_fused(selected.source, selected.scope, selected.device_id):
+    if is_vendor_account_summary(selected.source, selected.scope, selected.device_id):
         return (
             selected_direction,
             ConfidenceBand.MODERATE,
-            "Zepp 厂商汇总作为主值；分设备流的相反方向仅保留用于审计",
+            "Zepp 账户级汇总作为主值；分设备流的相反方向仅保留用于审计",
             "conflicting",
             len(secondary_directions),
             False,
@@ -801,14 +811,6 @@ def _corroborate_hrv_streams(
         "conflicting",
         len(secondary_directions),
         True,
-    )
-
-
-def _is_vendor_fused(source: str, scope: str, device_id: str | None) -> bool:
-    return (
-        source == "zepp"
-        and device_id is None
-        and scope in {"user_fused", "unknown"}
     )
 
 
@@ -1383,10 +1385,16 @@ class RecoveryAnalyzer:
             state = RecoveryState.NORMAL
             status = Availability.AVAILABLE
 
-        readiness = _current_median(raw.series.get("readiness", []), raw.day)
-        charge = _current_median(
-            raw.series.get("hybrid_charge", []) or raw.series.get("bio_charge", []), raw.day
-        )
+        vendor_provenance = {}
+
+        def current(metric):
+            value, provenance = _current_median(raw.series.get(metric, []), raw.day, metric=metric)
+            if provenance["candidate_count"]:
+                vendor_provenance[metric] = provenance
+            return value
+
+        readiness = current("readiness")
+        charge = current("hybrid_charge" if raw.series.get("hybrid_charge") else "bio_charge")
         readiness_components = {
             label: value
             for metric, label in (
@@ -1397,7 +1405,7 @@ class RecoveryAnalyzer:
                 ("skin_temp_readiness", "皮肤温度"),
                 ("ahi_readiness", "呼吸"),
             )
-            if (value := _current_median(raw.series.get(metric, []), raw.day)) is not None
+            if (value := current(metric)) is not None
         }
         wake_charge = wake_charge_summary(raw)
         charge_components = {
@@ -1406,7 +1414,7 @@ class RecoveryAnalyzer:
                 ("physical_charge", "身体"),
                 ("mental_charge", "心理"),
             )
-            if (value := _current_median(raw.series.get(metric, []), raw.day)) is not None
+            if (value := current(metric)) is not None
         }
         limitations = list(sleep.limitations)
         if interpreted < 2:
@@ -1428,6 +1436,7 @@ class RecoveryAnalyzer:
             vendor_charge=charge,
             vendor_readiness_components=readiness_components,
             vendor_charge_components=charge_components,
+            vendor_provenance=vendor_provenance,
             **wake_charge,
             limitations=limitations,
             limitation_labels=labels(limitations, LIMITATION_LABELS),
@@ -1462,9 +1471,15 @@ def _baseline_for(
     return candidates[0] if candidates else None
 
 
-def _current_median(points: list[SeriesPoint], day: date) -> float | None:
-    values = [point.value for point in points if point.day == day]
-    return round(float(median(values)), 2) if values else None
+def _current_median(
+    points: list[SeriesPoint], day: date, *, metric: str,
+) -> tuple[float | None, dict]:
+    selected, provenance = select_analysis_stream(
+        points, day - timedelta(days=28), day, metric=metric,
+    )
+    values = [point.value for point in selected if point.day == day]
+    provenance["aggregation"] = "same_stream_daily_median"
+    return (round(float(median(values)), 2) if values else None), provenance
 
 
 def _daily_metric_with_deviation(

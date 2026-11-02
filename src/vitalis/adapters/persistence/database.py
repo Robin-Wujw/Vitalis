@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from vitalis.config import settings
 
-SCHEMA_REVISION = "2026-11-chart-inputs"
+SCHEMA_REVISION = "2026-11-device-provenance"
 
 
 class SchemaMismatch(RuntimeError):
@@ -203,6 +203,7 @@ def check_schema(engine: Engine | None = None) -> None:
     from . import source_journal as _source_journal  # noqa: F401
     from . import input_events as _input_events  # noqa: F401
     from . import sleep_supplements as _sleep_supplements  # noqa: F401
+    from . import band_sources as _band_sources  # noqa: F401
     from . import readiness_revisions as _readiness_revisions  # noqa: F401
     from .product_tracking import register_product_tracking_models
     from .chart_inputs import register_chart_input_models
@@ -284,6 +285,7 @@ def init_db(engine: Engine | None = None) -> None:
     from . import source_journal as _source_journal  # noqa: F401
     from . import input_events as _input_events  # noqa: F401
     from . import sleep_supplements as _sleep_supplements  # noqa: F401
+    from . import band_sources as _band_sources  # noqa: F401
     from . import readiness_revisions as _readiness_revisions  # noqa: F401
     from .product_tracking import register_product_tracking_models
     from .chart_inputs import register_chart_input_models

@@ -21,6 +21,10 @@ def test_chart_api_is_read_only_user_scoped_and_preserves_gaps(client):
     chart = next(c for c in payload["charts"] if c["key"] == "heart_rate")
     assert [p["value"] for p in chart["series"][0]["points"] if p["value"] is not None] == [60,80]
     assert any(p["value"] is None for p in chart["series"][0]["points"])
+    assert any(route['id']=='zepp:account' and route['state']=='missing' for route in chart['routes'])
+    missing = client.get(f"/api/charts?from={day}&to={day}&mode=intraday&route=zepp:account", headers={"X-User-Id":"chart-api-user"})
+    assert missing.status_code == 200
+    assert next(c for c in missing.json()['charts'] if c['key']=='heart_rate')['series']==[]
     denied = client.get(f"/api/charts?from={day}&to={day}", authenticate=False)
     assert denied.status_code == 401
 

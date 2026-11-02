@@ -26,6 +26,20 @@ class ChartPoint(ChartValue):
         return value.astimezone(timezone.utc)
 
 
+class ChartRoute(ChartValue):
+    id: str
+    kind: Literal["device", "account", "unknown", "analysis", "external"]
+    label: str
+    source: str
+    device_id: str | None = None
+    device_ids: list[str] = Field(default_factory=list)
+    state: Literal["available", "missing", "unknown"] = "missing"
+    sample_count: int = Field(default=0, ge=0)
+    first_observed_at: datetime | None = None
+    last_observed_at: datetime | None = None
+    reason: str | None = None
+
+
 class ChartSeries(ChartValue):
     key: str
     label: str
@@ -33,6 +47,8 @@ class ChartSeries(ChartValue):
     source: str
     source_scope: str
     device_id: str | None = None
+    device_label: str | None = None
+    route_id: str | None = None
     source_field: str | None = None
     qualification: str = "observed"
     aggregation: Literal["observed", "median", "mean", "last", "sum"] = "observed"
@@ -51,6 +67,8 @@ class ChartInterval(ChartValue):
     label: str
     source: str
     source_scope: str = "unknown"
+    device_id: str | None = None
+    route_id: str | None = None
     qualification: str = "observed"
 
     @model_validator(mode="after")
@@ -70,6 +88,9 @@ class ChartBand(ChartValue):
     key: str
     label: str
     source: str
+    source_scope: str = "unknown"
+    device_id: str | None = None
+    route_id: str | None = None
     qualification: str = "vendor_reference"
     points: list[ChartBandPoint] = Field(default_factory=list, max_length=366)
 
@@ -83,6 +104,9 @@ class ChartRegion(ChartValue):
     side: str = "unknown"
     qualification: str
     source: str
+    source_scope: str = "analysis"
+    device_id: str | None = None
+    route_id: str | None = None
 
 
 class ChartReference(ChartValue):
@@ -90,6 +114,15 @@ class ChartReference(ChartValue):
     upper: float | None = None
     median: float | None = None
     label: str
+
+
+class ChartSourceSummary(ChartValue):
+    text: str
+    source: str
+    source_scope: str = "unknown"
+    device_id: str | None = None
+    route_id: str | None = None
+    observed_at: datetime | None = None
 
 
 class Chart(ChartValue):
@@ -107,10 +140,13 @@ class Chart(ChartValue):
     regions: list[ChartRegion] = Field(default_factory=list, max_length=128)
     notes: list[str] = Field(default_factory=list)
     summary: list[str] = Field(default_factory=list)
+    source_summaries: list[ChartSourceSummary] = Field(default_factory=list, max_length=500)
     state: Literal["available", "partial", "unavailable"] = "unavailable"
     resolution_seconds: int | None = Field(default=None, ge=1)
     reference: ChartReference | None = None
     truncated: bool = False
+    routes: list[ChartRoute] = Field(default_factory=list, max_length=64)
+    selected_route: str = "all"
 
     @model_validator(mode="after")
     def time_window(self):

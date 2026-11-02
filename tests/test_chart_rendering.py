@@ -414,6 +414,180 @@ def test_page_uses_compact_plot_without_clipping_standalone_svg():
     assert float(_svg(_chart()).attrib["height"]) >= 420
 
 
+def _routed_chart(**updates):
+    routes = [
+        {"id": "device:watch", "kind": "device", "label": "合成手表", "source": "zepp",
+         "device_id": "watch", "device_ids": ["watch"], "state": "available", "sample_count": 2},
+        {"id": "device:ring", "kind": "device", "label": "合成指环", "source": "zepp",
+         "device_id": "ring", "device_ids": ["ring"], "state": "missing", "sample_count": 0,
+         "reason": "该来源没有此指标"},
+        {"id": "zepp:account", "kind": "account", "label": "Zepp 汇总", "source": "zepp",
+         "device_ids": ["watch", "ring"], "state": "available", "sample_count": 2},
+    ]
+    series = [
+        _series(key="watch", source="zepp", route_id="device:watch", device_id="watch",
+                device_label="合成手表", points=[_point(0, 60), _point(4, 80)]),
+        _series(key="account", source="zepp", route_id="zepp:account", device_id=None,
+                device_label=None, points=[_point(0, 70), _point(4, 90)]),
+    ]
+    return _chart(routes=routes, selected_route="all", series=series, **updates)
+
+
+def _route_panels(page):
+    return {attrs["data-source-route"]: attrs for tag, attrs in _HTML(page).elements
+            if tag == "div" and attrs.get("class") == "source-panel"}
+
+
+def test_source_selector_keeps_missing_routes_and_defaults_to_available_account():
+    chart = _routed_chart()
+    before = deepcopy(chart)
+    page = render_chart_page(_bundle(chart))
+    parsed = _HTML(page)
+    selectors = [attrs for tag, attrs in parsed.elements if tag == "select" and attrs.get("class") == "source-filter"]
+    assert len(selectors) == 1
+    options = [attrs for tag, attrs in parsed.elements if tag == "option"]
+    assert {attrs["value"] for attrs in options} >= {"all", "device:watch", "device:ring", "zepp:account"}
+    assert any(attrs["value"] == "zepp:account" and "selected" in attrs for attrs in options)
+    assert not any(attrs["value"] == "device:ring" and "disabled" in attrs for attrs in options)
+    panels = _route_panels(page)
+    assert "hidden" not in panels["zepp:account"]
+    assert all("hidden" in attrs for route, attrs in panels.items() if route != "zepp:account")
+    assert "不可用" in page and "非融合" in page and "该来源没有此指标" in page
+    assert chart == before
+    chart["routes"][2].update(state="missing", sample_count=0)
+    chart["series"] = chart["series"][:1]
+    fallback = render_chart_page(_bundle(chart))
+    assert "hidden" not in _route_panels(fallback)["device:watch"]
+    chart["selected_route"] = "device:ring"
+    assert "hidden" not in _route_panels(render_chart_page(_bundle(chart)))["device:ring"]
+    chart["routes"][0].update(state="missing", sample_count=0)
+    chart["series"] = []
+    chart["selected_route"] = "all"
+    empty = render_chart_page(_bundle(chart))
+    assert set(_route_panels(empty)) == {"all", "device:watch", "device:ring", "zepp:account"}
+    assert "hidden" not in _route_panels(empty)["zepp:account"]
+
+
+def test_selected_route_filters_all_geometry_and_missing_never_borrows_values():
+    chart = _routed_chart(summary=["跨来源摘要不得用于单设备"])
+    chart.update(
+        preview_series=deepcopy(chart["series"]),
+        intervals=[{"start": _point(0, None)["timestamp"], "end": _point(1, None)["timestamp"],
+                    "category": "annotation", "label": route, "source": "zepp", "route_id": route}
+                   for route in ("device:watch", "zepp:account")],
+        bands=[{"key": route, "label": route, "source": "zepp", "route_id": route,
+                "points": [{"timestamp": _point(0, None)["timestamp"], "lower": 40, "upper": 100}]}
+               for route in ("device:watch", "zepp:account")],
+        reference={"lower": 45, "upper": 95, "median": 67, "label": "跨来源参考"},
+        selected_route="device:watch",
+    )
+    before = deepcopy(chart)
+    root = _svg(chart)
+    assert len(_elements(root, "polyline", "series-line")) == 1
+    assert len(_elements(root, "circle", "point")) == 2
+    assert len(_elements(root, "rect", "annotation")) == 1
+    assert len(_elements(root, "line", "band-point")) == 1
+    assert not _elements(root, "rect", "reference-band")
+    assert "90 bpm" not in _all_text(root) and "跨来源摘要" not in _all_text(root)
+    assert "合成手表" in _all_text(root)
+    preview = " ".join(_HTML(render_chart_html(chart)).text)
+    assert "12:00 80 bpm" in preview and "12:00 90 bpm" not in preview
+    assert chart == before
+    chart["selected_route"] = "device:ring"
+    missing = _svg(chart)
+    assert not _elements(missing, "circle", "point")
+    assert not _elements(missing, "rect", "annotation")
+    assert not _elements(missing, "line", "band-point")
+    assert "不可用" in _all_text(missing) and "该来源没有此指标" in _all_text(missing)
+    chart["intervals"].append({"start": _point(0, None)["timestamp"], "end": _point(1, None)["timestamp"],
+                               "category": "annotation", "source": "user", "label": "合成用户注释"})
+    context = _svg(chart)
+    assert len(_elements(context, "rect", "annotation")) == 1
+    assert "合成用户注释" in _all_text(context)
+    assert not _elements(context, "circle", "point")
+
+
+def test_all_routes_compare_on_shared_time_and_unit_axes_without_fusing_lines():
+    chart = _routed_chart()
+    chart["series"].append(_series(key="sleep", route_id="device:watch", unit="min", points=[_point(0, 400), _point(4, 500)]))
+    root = _svg(chart)
+    panels = _elements(root, "g", "unit-panel")
+    assert len(panels) == 2
+    assert len(_elements(panels[0], "polyline", "series-line")) == 2
+    assert len(_elements(panels[1], "polyline", "series-line")) == 1
+    points = _elements(panels[0], "circle", "point")
+    assert [point.attrib["cx"] for point in points[:2]] == [point.attrib["cx"] for point in points[2:]]
+    groups = root.findall('.//s:g[@data-source-route]', NS)
+    assert {group.attrib["data-source-route"] for group in groups} == {"device:watch", "zepp:account"}
+    assert "非融合" in _all_text(root)
+
+
+def test_sleep_routes_keep_same_source_devices_in_separate_lanes():
+    intervals = [
+        {"start": _point(0, None)["timestamp"], "end": _point(2, None)["timestamp"],
+         "category": "deep", "label": "深睡", "source": "zepp", "source_scope": "device",
+         "device_id": device, "route_id": f"device:{device}", "qualification": "device_estimated"}
+        for device in ("watch", "ring")
+    ]
+    chart = _routed_chart(kind="stages", unit="stage", intervals=intervals)
+    chart["series"] = []
+    chart["routes"][1].update(state="available", sample_count=1)
+    root = _svg(chart)
+    blocks = _elements(root, "rect", "stage-interval")
+    assert len(blocks) == 2 and blocks[0].attrib["y"] != blocks[1].attrib["y"]
+    assert blocks[0].attrib["x"] == blocks[1].attrib["x"]
+    assert {node.attrib["data-source-route"] for node in root.findall('.//s:g[@class="stage-source"]', NS)} == {"device:watch", "device:ring"}
+    assert "合成手表" in _all_text(root) and "合成指环" in _all_text(root)
+    chart["selected_route"] = "device:ring"
+    selected = _svg(chart)
+    assert len(_elements(selected, "rect", "stage-interval")) == 1
+    assert "watch" not in _all_text(selected)
+
+
+def test_line_points_are_invisible_hit_targets_but_scatter_retains_visible_points():
+    chart = _routed_chart()
+    line = _svg(chart)
+    points = _elements(line, "circle", "point")
+    assert points and all(point.attrib.get("fill-opacity") == "0" for point in points)
+    assert all(point.attrib.get("stroke-opacity") == "0" and point.attrib.get("tabindex") == "0" for point in points)
+    assert all(float(point.attrib["r"]) >= 3 for point in points)
+    assert all(point.find("s:title", NS) is not None for point in points)
+    isolated = _svg(_chart(series=[_series(points=[_point(0, 63)])]))
+    assert len(_elements(isolated, "circle", "isolated-point")) == 1
+    chart["kind"] = "scatter"
+    scatter = _elements(_svg(chart), "circle", "point")
+    assert scatter and all(point.attrib.get("fill-opacity", "1") != "0" for point in scatter)
+
+
+def test_source_route_values_are_escaped_and_never_enter_fixed_script():
+    attack = '\"><script>evil()</script><img src=x onerror=evil()> & \\n'
+    chart = _routed_chart()
+    chart["routes"][0].update(id=attack, label=attack, reason=attack)
+    chart["series"][0].update(route_id=attack, device_label=attack)
+    chart["selected_route"] = attack
+    page = render_chart_page(_bundle(chart))
+    parsed = _HTML(page)
+    assert len([tag for tag, _ in parsed.elements if tag == "script"]) == 1
+    assert not any(tag in {"img", "iframe", "object"} for tag, _ in parsed.elements)
+    assert not any(name.startswith("on") for _, attrs in parsed.elements for name in attrs)
+    panels = _route_panels(page)
+    assert attack in panels and "hidden" not in panels[attack]
+    script = re.search(r"<script>(.*?)</script>", page, re.DOTALL).group(1)
+    baseline = re.search(r"<script>(.*?)</script>", render_chart_page(_bundle(_routed_chart())), re.DOTALL).group(1)
+    assert script == baseline and "evil" not in script and "fetch(" not in script
+    assert "innerHTML" not in script and "source-filter" in script
+
+
+def test_zero_only_bars_and_missing_source_route_are_renderable():
+    chart = _routed_chart(kind='bars')
+    chart['series'][0]['points'] = [_point(0, 0), _point(4, 0)]
+    chart['series'] = chart['series'][:1]
+    page = render_chart_page(_bundle(chart))
+    assert '<svg' in page
+    chart['selected_route'] = 'device:ring'
+    assert '该来源没有此指标' in render_chart_svg(chart)
+
+
 def test_empty_page_has_disabled_selector_and_explicit_missing_state():
     page = render_chart_page(_bundle())
     parsed = _HTML(page)

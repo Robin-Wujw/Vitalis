@@ -92,10 +92,12 @@ def seed_demo_workouts(start: date, end: date, as_of: datetime, timezone_name: s
 def _seed_chart_observations(repository, start: date, end: date, as_of: datetime, timezone_name: str) -> None:
     """Invented curves with deliberate gaps; used only in the isolated demo DB."""
     from math import sin
-    from vitalis.domain import DailyMetric, MetricSample
+    from vitalis.domain import DailyMetric, MetricSample, Device
     from vitalis.adapters.persistence import models as orm
     from sqlalchemy import select
 
+    for identifier, label in (("synthetic-chart-device", "合成 Balance 2"), ("synthetic-strap-device", "合成 Helio Strap")):
+        repository.upsert_device(Device(user_id="demo", source="zepp", model=label, device_id=identifier, aliases=[identifier]), target_date=end)
     metrics = []
     current = start
     while current <= end:
@@ -111,7 +113,7 @@ def _seed_chart_observations(repository, start: date, end: date, as_of: datetime
             ("respiratory_rate", 15+sin(offset/5), "brpm"),
         ):
             metrics.append(DailyMetric(user_id="demo",date=current,metric=metric,value=round(value,2),unit=unit,
-                source_scope="synthetic_chart",qualification="synthetic",fetched_at=as_of-timedelta(minutes=5)))
+                source_scope="user_summary",qualification="synthetic",fetched_at=as_of-timedelta(minutes=5)))
         current += timedelta(days=1)
     repository.save_daily_metrics(metrics)
     midnight, _ = local_day_utc_bounds(end, timezone_name)
@@ -125,16 +127,20 @@ def _seed_chart_observations(repository, start: date, end: date, as_of: datetime
         value = base+6*sin(minute/18)+(38 if 18*60<=minute<18*60+45 else 0)
         samples.append(MetricSample(user_id="demo",metric="heart_rate",timestamp=stamp,value=round(value),unit="bpm",
             source_scope="device",device_id="synthetic-chart-device",fetched_at=as_of-timedelta(minutes=2),qualification="synthetic"))
+        if minute % 5 == 0 and minute < 8 * 60:
+            for identifier, value in (("synthetic-chart-device", 54 + 7*sin(minute/30)), ("synthetic-strap-device", 60 + 6*sin(minute/30))):
+                samples.append(MetricSample(user_id="demo",metric="hrv_rmssd",timestamp=stamp,value=round(value,1),unit="ms",
+                    source_scope="device",device_id=identifier,qualification="synthetic",fetched_at=as_of-timedelta(minutes=2)))
         if minute%6==0:
             samples.append(MetricSample(user_id="demo",metric="stress",timestamp=stamp,
                 value=round(25+10*sin(minute/40)+(30 if 14*60<=minute<16*60 else 0)),unit="score",
-                source_scope="all_day_stress",qualification="synthetic",fetched_at=as_of-timedelta(minutes=2)))
+                source_scope="device",device_id="synthetic-chart-device",qualification="synthetic",fetched_at=as_of-timedelta(minutes=2)))
         if minute%5==0:
             for metric, charge in (("hybrid_charge",75-minute/24), ("physical_charge",82-minute/20), ("mental_charge",72-minute/35)):
                 if metric=="hybrid_charge" and 12*60<=minute<12*60+20:
                     continue
                 samples.append(MetricSample(user_id="demo",metric=metric,timestamp=stamp,value=round(max(0,charge),1),unit="score",
-                    source_scope="device",device_id="synthetic-chart-device",qualification="vendor_reference",fetched_at=as_of-timedelta(minutes=2)))
+                    source_scope="user_summary",qualification="vendor_reference",fetched_at=as_of-timedelta(minutes=2)))
     repository.save_metric_samples(samples)
     sleep = repository.db.execute(select(orm.SleepRecord).where(orm.SleepRecord.user_id=="demo",orm.SleepRecord.date==end)).scalar_one_or_none()
     if sleep is not None:

@@ -28,6 +28,8 @@ _AGGREGATION = {"observed": "原始观测", "median": "已保存桶中位数", "
 _KINDS = {"line", "scatter", "bars", "stages", "body_map"}
 _BODY_NOTE = "训练接触估算，非实测肌肉受力；已记录参与组数不是有效组数，各部位不可相加。"
 _SIDE = {"left": "左侧", "right": "右侧", "bilateral": "双侧", "unknown": "侧别未知"}
+_ROUTE_STATE = {"available": "可用", "missing": "不可用", "unknown": "状态未知"}
+_ROUTE_NOTE = "来源独立展示，非融合；对比使用相同时间轴，同单位共轴，不同单位分面。"
 
 
 def _payload(value: Any) -> Mapping[str, Any]:
@@ -96,6 +98,71 @@ def _rows(payload: Mapping, key: str, maximum: int) -> list[Mapping]:
     return list(result)
 
 
+def _routes(payload: Mapping) -> list[Mapping]:
+    rows = _rows(payload, "routes", 64)
+    ids = [row.get("id") for row in rows]
+    if any(not isinstance(value, str) or not value or value == "all" for value in ids) or len(set(ids)) != len(ids):
+        raise ValueError("chart route ids must be unique non-empty strings other than all")
+    return rows
+
+
+def _route_status(route: Mapping) -> str:
+    state = route.get("state", "unknown")
+    parts = [route.get("label") or route.get("id"), _ROUTE_STATE.get(state, "状态未知")]
+    if state == "available":
+        parts.append(f'已保存样本数 {route.get("sample_count", 0)}')
+    else:
+        parts.append("无可用数据，不以其它来源替代")
+    if route.get("reason"):
+        parts.append(route["reason"])
+    return " · ".join(_plain(part) for part in parts)
+
+
+def _route_view(payload: Mapping, route_id: str | None = None) -> Mapping:
+    """Select saved geometry only; never infer provenance or measurement facts."""
+    rows = _routes(payload)
+    selected = payload.get("selected_route", "all") if route_id is None else route_id
+    if selected == "all":
+        return {**payload, "selected_route": selected} if rows else payload
+    route = next((row for row in rows if row["id"] == selected), None)
+    if route is None:
+        raise ValueError("selected chart route is not present in routes")
+    view = {**payload, "selected_route": selected}
+    available = route.get("state") == "available"
+    for key in ("series", "preview_series", "bands", "regions"):
+        view[key] = [row for row in payload.get(key) or [] if available and row.get("route_id") == selected]
+    view["intervals"] = [row for row in payload.get("intervals") or []
+                         if (available and row.get("route_id") == selected)
+                         or (row.get("source") == "user" and row.get("category") == "annotation")]
+    # The reference has no route attribution. It cannot be borrowed by a
+    # selected device/account, even when its numeric range looks plausible.
+    view["reference"] = None
+    view["source_summaries"] = [row for row in payload.get("source_summaries") or [] if row.get("route_id") == selected]
+    view["summary"] = [_route_status(route), *[row.get("text", "") for row in view["source_summaries"]]]
+    view["state"] = ("partial" if payload.get("state") == "partial" else "available") if available else "unavailable"
+    return view
+
+
+def _default_route(payload: Mapping, routes: list[Mapping]) -> str:
+    selected = payload.get("selected_route", "all")
+    if selected != "all":
+        if not any(route["id"] == selected for route in routes):
+            raise ValueError("selected chart route is not present in routes")
+        return selected
+    account = next((route for route in routes if route["id"] == "zepp:account" and route.get("state") == "available"), None)
+    device = next((route for route in routes if route.get("kind") == "device" and route.get("state") == "available"), None)
+    unknown = next((route for route in routes if route.get("kind") == "unknown" and route.get("state") == "available"), None)
+    available = next((route for route in routes if route.get("state") == "available"), None)
+    choice = account or device or unknown or available or next((route for route in routes if route["id"] == "zepp:account"), None)
+    return choice["id"] if choice else "all"
+
+
+def _source_group(row: Mapping, css: str) -> str:
+    route = row.get("route_id")
+    attribute = f' data-source-route="{_escape(route)}"' if route is not None else ""
+    return f'<g class="{css}"{attribute}>'
+
+
 @dataclass(frozen=True)
 class _Point:
     time: float
@@ -116,8 +183,10 @@ class _Series:
         return _plain(self.fields.get("unit"))
 
 
-def _series(rows: list[Mapping]) -> list[_Series]:
+def _series(rows: list[Mapping], routes: list[Mapping]) -> list[_Series]:
     output = []
+    route_indices = {route["id"]: index for index, route in enumerate(routes)}
+    route_series = {}
     for index, row in enumerate(rows):
         points = []
         for point in _rows(row, "points", 3000):
@@ -128,7 +197,11 @@ def _series(rows: list[Mapping]) -> list[_Series]:
             if lower is not None and upper is not None and lower > upper:
                 raise ValueError("chart minimum must not exceed maximum")
             points.append(_Point(_instant(point.get("timestamp")), _numeric(point.get("value")), count, lower, upper))
-        output.append(_Series(row, tuple(sorted(points, key=lambda point: point.time)), _PALETTE[index % len(_PALETTE)]))
+        route = row.get("route_id")
+        offset = route_series.get(route, 0)
+        color_index = route_indices[route] + offset * max(1, len(routes)) if route in route_indices else index
+        route_series[route] = offset + 1
+        output.append(_Series(row, tuple(sorted(points, key=lambda point: point.time)), _PALETTE[color_index % len(_PALETTE)]))
     return output
 
 
@@ -149,7 +222,7 @@ class _Chart:
 
 
 def _chart(value: Any, *, preview: bool = False) -> _Chart:
-    payload = _payload(value)
+    payload = _route_view(_payload(value))
     if payload.get("kind") not in _KINDS:
         raise ValueError("unsupported chart kind")
     try:
@@ -162,7 +235,7 @@ def _chart(value: Any, *, preview: bool = False) -> _Chart:
     resolution = _numeric(payload.get("resolution_seconds"))
     if resolution is not None and resolution <= 0:
         raise ValueError("chart resolution must be positive")
-    series = _series(_rows(payload, "preview_series" if preview else "series", 48))
+    series = _series(_rows(payload, "preview_series" if preview else "series", 48), _routes(payload))
     for interval in _rows(payload, "intervals", 3000):
         if _instant(interval.get("start")) >= _instant(interval.get("end")):
             raise ValueError("chart interval must increase")
@@ -198,11 +271,13 @@ def _paragraph(text: Any, x: float, y: float, width: float, *, size: int = 12, c
     return "".join(_text(line, x, y + index * (size + 6), size=size, color=color) for index, line in enumerate(lines)), len(lines) * (size + 6)
 
 
-def _caption(series: _Series) -> str:
+def _caption(series: _Series, *, detailed: bool = True) -> str:
     fields = series.fields
-    parts = [fields.get("label") or fields.get("key") or "观测", series.unit,
-             f'来源 {fields.get("source") or "未标记"}', fields.get("source_scope"), fields.get("device_id"), fields.get("qualification")]
-    return " · ".join(_plain(part) for part in parts if part)
+    parts = [fields.get("label") or fields.get("key") or "观测", series.unit, fields.get("device_label")]
+    if detailed or not fields.get("device_label"):
+        parts.extend((f'来源 {fields.get("source") or "未标记"}', fields.get("source_scope"), fields.get("device_id")))
+    parts.append(fields.get("qualification"))
+    return " · ".join(_plain(part) for part in dict.fromkeys(parts) if part)
 
 
 def _tooltip(chart: _Chart, series: _Series, point: _Point) -> str:
@@ -218,10 +293,12 @@ def _tooltip(chart: _Chart, series: _Series, point: _Point) -> str:
 
 def _scale(values: list[float], *, zero: bool = False) -> tuple[float, float, list[float]]:
     values = list(values)
-    if zero:
-        values.append(0)
     if not values:
         return 0, 1, []
+    if zero and all(value == 0 for value in values):
+        return 0, 1, [0, 1]
+    if zero:
+        values.append(0)
     lower, upper = min(values), max(values)
     span = upper - lower
     if not math.isfinite(span):
@@ -311,8 +388,10 @@ def _numeric_svg(chart: _Chart, width: int, y: float, preferred_height: int) -> 
         for interval in payload.get("intervals") or []:
             start, end = max(chart.start, _instant(interval["start"])), min(chart.end, _instant(interval["end"]))
             if end > start:
-                output.append(f'<rect class="annotation" x="{_position(chart.x(start, left, plot_width))}" y="{_position(top)}" width="{_position((end - start) / (chart.end - chart.start) * plot_width)}" height="{plot_height}" fill="#e9b662" fill-opacity="0.12"><title>{_escape(interval.get("label"))} · {_escape(interval.get("source"))} · {_escape(chart.local(_instant(interval["start"])))}—{_escape(chart.local(_instant(interval["end"])))}</title></rect>')
+                output.append(_source_group(interval, "annotation-source"))
+                output.append(f'<rect class="annotation" x="{_position(chart.x(start, left, plot_width))}" y="{_position(top)}" width="{_position((end - start) / (chart.end - chart.start) * plot_width)}" height="{plot_height}" fill="#e9b662" fill-opacity="0.12"><title>{_escape(interval.get("label"))} · {_escape(interval.get("source"))} · {_escape(chart.local(_instant(interval["start"])))}—{_escape(chart.local(_instant(interval["end"])))}</title></rect></g>')
         for band_index, band in enumerate(band_rows):
+            output.append(_source_group(band, "band-source"))
             groups, current = [], []
             for point in sorted(band.get("points") or [], key=lambda row: _instant(row["timestamp"])):
                 time = _instant(point["timestamp"])
@@ -338,13 +417,18 @@ def _numeric_svg(chart: _Chart, width: int, y: float, preferred_height: int) -> 
                     x = chart.x(time, left, plot_width)
                     title = _escape(f"{description} · {chart.local(time)} · {_number(a)}—{_number(b)} {unit}")
                     output.append(f'<line class="band-point" x1="{_position(x)}" x2="{_position(x)}" y1="{_position(py(a))}" y2="{_position(py(b))}" stroke="{color}" stroke-opacity="0.3" stroke-width="3" tabindex="0"><title>{title}</title></line>')
+            output.append("</g>")
         count = 0
         for series in selected:
+            output.append(_source_group(series.fields, "series-source"))
+            isolated = set()
             if payload["kind"] == "line":
                 for segment in _segments(series.points, chart):
                     if len(segment) >= 2:
                         coords = " ".join(f"{_position(chart.x(point.time, left, plot_width))},{_position(py(point.value))}" for point in segment)
                         output.append(f'<polyline class="series-line" points="{coords}" fill="none" stroke="{series.color}" stroke-width="2" stroke-linejoin="round"/>')
+                    else:
+                        isolated.add(segment[0])
             for point in series.points:
                 if point.value is None or not chart.start <= point.time <= chart.end:
                     continue
@@ -355,14 +439,18 @@ def _numeric_svg(chart: _Chart, width: int, y: float, preferred_height: int) -> 
                     baseline = py(0)
                     output.append(f'<rect class="bar" x="{_position(max(left, x - 3))}" y="{_position(min(baseline, point_y))}" width="{_position(min(6, left + plot_width - max(left, x - 3)))}" height="{_position(abs(baseline - point_y))}" fill="{series.color}" stroke="{series.color}" fill-opacity="0.75"><title>{title}</title></rect>')
                 else:
-                    output.append(f'<circle class="point" cx="{_position(x)}" cy="{_position(point_y)}" r="3.5" fill="{series.color}" stroke="#ffffff" stroke-width="0.8" tabindex="0"><title>{title}</title></circle>')
+                    hit = ' fill-opacity="0" stroke-opacity="0" pointer-events="all"' if payload["kind"] == "line" else ""
+                    output.append(f'<circle class="point" cx="{_position(x)}" cy="{_position(point_y)}" r="3.5" fill="{series.color}" stroke="#ffffff" stroke-width="0.8"{hit} tabindex="0"><title>{title}</title></circle>')
+                    if point in isolated:
+                        output.append(f'<circle class="isolated-point" cx="{_position(x)}" cy="{_position(point_y)}" r="2" fill="{series.color}" pointer-events="none"/>')
+            output.append("</g>")
         if not count:
             output.append(_text("无可绘制的数值（缺失不补零）", left + plot_width / 2, top + plot_height / 2, anchor="middle", color=_MUTED))
         output.append(_x_axis(chart, left, top, plot_width, plot_height))
         y = top + plot_height + 45
         for series in selected:
             output.append(f'<rect x="{left:g}" y="{_position(y - 9)}" width="10" height="10" fill="{series.color}"/>')
-            caption = _caption(series)
+            caption = _caption(series, detailed=False)
             if any(point.value is None for point in series.points):
                 caption += " · 缺失处不连线"
             rendered, used = _paragraph(caption, left + 17, y, plot_width - 17, size=11)
@@ -381,21 +469,29 @@ def _numeric_svg(chart: _Chart, width: int, y: float, preferred_height: int) -> 
     return "".join(output), y
 
 
+def _stage_identity(row: Mapping) -> tuple:
+    return tuple(row.get(key) for key in ("route_id", "source", "source_scope", "device_id"))
+
+
 def _stage_svg(chart: _Chart, width: int, y: float) -> tuple[str, float]:
     intervals = chart.fields.get("intervals") or []
-    sources = list(dict.fromkeys((_plain(row.get("source")), _plain(row.get("source_scope"))) for row in intervals))
+    sources = list(dict.fromkeys(_stage_identity(row) for row in intervals))
+    labels = {row["id"]: row.get("label") for row in _routes(chart.fields)}
     left, plot_width = 82, width - 110
     output = []
     if not sources:
         return _text("暂无睡眠阶段记录；未知不补为清醒或深睡。", 24, y + 20, color=_MUTED), y + 48
-    for source, scope in sources:
-        output.append(_text(f"来源 {source or '未标记'} · {scope}", 24, y + 8))
+    for identity in sources:
+        route, source, scope, device = identity
+        caption = " · ".join(_plain(part) for part in (labels.get(route), f"来源 {source or '未标记'}", scope, device) if part)
+        output.append(_source_group({"route_id": route}, "stage-source"))
+        output.append(_text(caption, 24, y + 8))
         top, row_height = y + 25, 28
         for index, (category, (label, color)) in enumerate(_STAGE.items()):
             output.append(_text(label, left - 10, top + index * row_height + 16, color=color if category != "unknown" else _MUTED, anchor="end"))
             output.append(f'<line x1="{left}" x2="{left + plot_width}" y1="{_position(top + index * row_height + 22)}" y2="{_position(top + index * row_height + 22)}" stroke="{_RULE}"/>')
         for interval in intervals:
-            if (_plain(interval.get("source")), _plain(interval.get("source_scope"))) != (source, scope):
+            if _stage_identity(interval) != identity:
                 continue
             start, end = max(chart.start, _instant(interval["start"])), min(chart.end, _instant(interval["end"]))
             if end <= start:
@@ -403,9 +499,10 @@ def _stage_svg(chart: _Chart, width: int, y: float) -> tuple[str, float]:
             category = interval.get("category") if interval.get("category") in _STAGE else "unknown"
             label, color = _STAGE[category]
             row_y = top + list(_STAGE).index(category) * row_height
-            title = f'{interval.get("label") or label} · {chart.local(_instant(interval["start"]))}—{chart.local(_instant(interval["end"]))} · 来源 {source} · {scope} · {interval.get("qualification", "未知")}'
+            title = f'{interval.get("label") or label} · {chart.local(_instant(interval["start"]))}—{chart.local(_instant(interval["end"]))} · {caption} · {interval.get("qualification", "未知")}'
             output.append(f'<rect class="stage-interval" x="{_position(chart.x(start, left, plot_width))}" y="{_position(row_y)}" width="{_position((end - start) / (chart.end - chart.start) * plot_width)}" height="22" rx="2" fill="{color}" tabindex="0"><title>{_escape(title)}</title></rect>')
         output.append(_x_axis(chart, left, top, plot_width, row_height * len(_STAGE)))
+        output.append("</g>")
         y = top + row_height * len(_STAGE) + 47
     return "".join(output), y
 
@@ -538,7 +635,10 @@ def render_chart_svg(chart: Any, *, width: int = 900, height: int = 420) -> str:
     for value, minimum, maximum in ((width, 360, 2400), (height, 240, 1600)):
         if not isinstance(value, int) or isinstance(value, bool) or not minimum <= value <= maximum:
             raise ValueError("chart dimensions are outside the supported range")
-    context = _chart(chart)
+    return _render_svg(_chart(chart), width, height, include_notes=True)
+
+
+def _render_svg(context: _Chart, width: int, height: int, *, include_notes: bool) -> str:
     payload = context.fields
     title = payload.get("title") or "已保存图表"
     output = []
@@ -555,7 +655,9 @@ def render_chart_svg(chart: Any, *, width: int = 900, height: int = 420) -> str:
     else:
         rendered, y = _numeric_svg(context, width, y, height)
     output.append(rendered)
-    notes = [*(payload.get("summary") or []), *(payload.get("notes") or [])]
+    notes = [*(payload.get("summary") or []), *(payload.get("notes") or [])] if include_notes else []
+    if include_notes and payload.get("routes"):
+        notes.append(_ROUTE_NOTE)
     if payload.get("state") in {"partial", "unavailable"}:
         notes.append("部分记录可用，缺失不补零。" if payload["state"] == "partial" else "暂无可用记录，缺失不补零。")
     if payload.get("truncated"):
@@ -599,13 +701,13 @@ def render_chart_html(chart: Any) -> str:
         if 0 < len(intervals) <= 32:
             # Separate sources and categories; interval widths are geometry,
             # not a newly computed sleep statistic.
-            groups = list(dict.fromkeys((_plain(row.get("source")), _plain(row.get("category"))) for row in intervals))
-            for source, category in groups:
+            groups = list(dict.fromkeys((_stage_identity(row), _plain(row.get("category"))) for row in intervals))
+            for identity, category in groups:
                 label, color = _STAGE.get(category, _STAGE["unknown"])
-                output.append(_p(f"{label} · {source}"))
+                output.append(_p(" · ".join(_plain(part) for part in (label, *identity) if part)))
                 output.append('<div style="position:relative;height:8px;margin:3px 3px 8px;background:#f1f4f6">')
                 for interval in intervals:
-                    if (_plain(interval.get("source")), _plain(interval.get("category"))) != (source, category):
+                    if (_stage_identity(interval), _plain(interval.get("category"))) != (identity, category):
                         continue
                     start, end = max(context.start, _instant(interval["start"])), min(context.end, _instant(interval["end"]))
                     if end > start:
@@ -668,6 +770,9 @@ select{font:inherit;max-width:100%;padding:6px 28px 6px 9px;color:inherit;backgr
 section{margin:0 0 12px;background:#fffdf9;border:1px solid #e4dfd4;border-radius:4px;overflow:hidden}
 .chart-plot{overflow:auto}svg{display:block;width:100%;height:auto;min-width:360px}
 .chart-summary{padding:10px 16px 0;font-size:13px}
+.source-nav{display:flex;align-items:center;gap:10px;padding:12px 16px 0;flex-wrap:wrap}
+.source-status,.source-note{padding:6px 16px 0;font-size:12px;color:#6b6459}
+circle.point[fill-opacity="0"]:hover,circle.point[fill-opacity="0"]:focus{fill-opacity:1;stroke-opacity:1}
 details{padding:10px 16px;border-top:1px solid #e4dfd4;font-size:12px;color:#6b6459}
 summary{cursor:pointer;color:#292620}details p{margin-top:8px}
 select:focus-visible,summary:focus-visible,circle:focus,path:focus,rect:focus{outline:2px solid #806b56;outline-offset:2px}
@@ -683,8 +788,34 @@ _PAGE_SCRIPT = """
       card.hidden = card.dataset.chartIndex !== selector.value;
     }
   });
+  for (const card of cards) {
+    const source = card.querySelector('.source-filter');
+    if (!source) continue;
+    source.addEventListener('change', () => {
+      for (const panel of card.querySelectorAll('.source-panel')) {
+        panel.hidden = panel.dataset.sourceRoute !== source.value;
+      }
+    });
+  }
 })();
 """
+
+
+def _page_panel(chart: Mapping, route_id: str, *, hidden: bool) -> str:
+    view = _route_view(chart, route_id)
+    svg = _render_svg(_chart(view), 900, 300, include_notes=False)
+    summary = "".join(f'<p>{_escape(item)}</p>' for item in view.get("summary") or [])
+    explanation = "".join(f'<p>{_escape(item)}</p>' for item in view.get("notes") or [])
+    sources = "".join(f'<p>{_escape(" · ".join(_plain(row.get(key)) for key in ("label", "device_label", "source", "source_scope", "device_id", "source_field", "qualification") if row.get(key)))}</p>' for row in view.get("series") or [])
+    details = f'<details><summary>来源与说明</summary>{sources}{explanation}</details>' if sources or explanation else ''
+    summary = f'<div class="chart-summary">{summary}</div>' if summary else ''
+    status = ""
+    if route_id == "all" and chart.get("routes"):
+        statuses = "".join(f'<p>{_escape(_route_status(row))}</p>' for row in _routes(chart))
+        status = f'<div class="source-status" role="status">{statuses}</div>'
+    visibility = " hidden" if hidden else ""
+    return (f'<div class="source-panel" data-source-route="{_escape(route_id)}"{visibility}>'
+            f'{status}{summary}<div class="chart-plot">{svg}</div>{details}</div>')
 
 
 def render_chart_page(bundle: Any) -> str:
@@ -697,15 +828,20 @@ def render_chart_page(bundle: Any) -> str:
     for index, chart in enumerate(charts):
         selected, hidden = (' selected', '') if index == 0 else ('', ' hidden')
         options.append(f'<option value="{index}"{selected}>{_escape(chart.get("title") or "已保存图表")}</option>')
-        # Only presentation moves to HTML: geometry, source legends and safety
-        # notices remain in the SVG; the saved payload is never mutated.
-        svg = render_chart_svg({**chart, "summary": [], "notes": []}, height=300)
-        summary = "".join(f'<p>{_escape(item)}</p>' for item in chart.get("summary") or [])
-        explanation = "".join(f'<p>{_escape(item)}</p>' for item in chart.get("notes") or [])
-        sources = "".join(f'<p>{_escape(" · ".join(_plain(row.get(key)) for key in ("label", "source", "source_scope", "device_id", "source_field", "qualification") if row.get(key)))}</p>' for row in chart.get("series") or [])
-        details = f'<details><summary>来源与说明</summary>{sources}{explanation}</details>' if sources or explanation else ''
-        summary = f'<div class="chart-summary">{summary}</div>' if summary else ''
-        cards.append(f'<section data-chart-index="{index}"{hidden}>{summary}<div class="chart-plot">{svg}</div>{details}</section>')
+        routes = _routes(chart)
+        active = _default_route(chart, routes)
+        navigation = ""
+        route_ids = ["all", *(route["id"] for route in routes)]
+        if routes:
+            route_options = []
+            for route_id, label in [("all", "全部来源对比（非融合）"), *((route["id"], f'{route.get("label") or route["id"]} · {_ROUTE_STATE.get(route.get("state"), "状态未知")}') for route in routes)]:
+                chosen = ' selected' if route_id == active else ''
+                route_options.append(f'<option value="{_escape(route_id)}"{chosen}>{_escape(label)}</option>')
+            navigation = (f'<div class="source-nav"><label for="source-filter-{index}">来源</label>'
+                          f'<select id="source-filter-{index}" class="source-filter">{"".join(route_options)}</select></div>'
+                          f'<p class="source-note">{_escape(_ROUTE_NOTE)}</p>')
+        panels = "".join(_page_panel(chart, route_id, hidden=route_id != active) for route_id in route_ids)
+        cards.append(f'<section data-chart-index="{index}"{hidden}>{navigation}{panels}</section>')
     notes = "".join(f'<p>{_escape(note)}</p>' for note in payload.get("notes") or [])
     if notes:
         notes = f'<details><summary>报告说明</summary>{notes}</details>'

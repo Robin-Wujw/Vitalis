@@ -927,7 +927,7 @@ def test_hrv_device_disagreement_is_not_averaged_into_a_recovery_signal():
     assert decision.confidence.value == "LOW"
 
 
-def test_zepp_fused_recovery_is_primary_and_device_conflict_is_audit_only():
+def test_zepp_account_summary_is_primary_and_device_conflict_is_audit_only():
     raw = _profile(hrv_today=62)
     raw.series["sleep_hrv"] = _series(
         "sleep_hrv",
@@ -958,8 +958,8 @@ def test_zepp_fused_recovery_is_primary_and_device_conflict_is_audit_only():
 
     assert hrv.value_ms == 50
     assert hrv.preferred_device_id is None
-    assert hrv.preferred_device_label == "Zepp 厂商汇总"
-    assert hrv.fusion_method == "vendor_fused_with_device_audit"
+    assert hrv.preferred_device_label == "Zepp 账户级汇总"
+    assert hrv.fusion_method == "vendor_account_summary_with_device_audit"
     assert hrv.corroboration_status == "conflicting"
     assert not hrv.corroboration_affects_decision
     assert "multi_device_hrv_disagreement" not in hrv.limitations
@@ -968,7 +968,7 @@ def test_zepp_fused_recovery_is_primary_and_device_conflict_is_audit_only():
     assert hrv.rhr_source_scope == "user_fused"
     assert hrv.rhr_device_id is None
     assert hrv.sleep_hrv_daily_trend.device_id is None
-    assert hrv.sleep_hrv_daily_trend.device_label == "Zepp 厂商汇总"
+    assert hrv.sleep_hrv_daily_trend.device_label == "Zepp 账户级汇总"
     assert hrv.sleep_hrv_daily_trend.today_value_ms == 50
 
 

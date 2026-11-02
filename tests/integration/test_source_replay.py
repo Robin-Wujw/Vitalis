@@ -206,7 +206,7 @@ def test_phase3_fixture_preserves_devices_missing_fields_partial_and_unknown_day
         assert {(s.source_scope, s.device_id, s.value, s.unit) for s in samples} == {
             ("device", "SYNTHBALANCE2", 72.0, "bpm"),
             ("device", "SYNTHHELIO157", 76.0, "bpm"),
-            ("user_fused", "", 74.0, "bpm"),
+            ("unknown", "", 74.0, "bpm"),
         }
         assert {s.timestamp for s in samples} == {(START + timedelta(hours=8)).replace(tzinfo=None)}
         hrv = db.scalars(select(orm.MetricSample).where(

@@ -44,21 +44,113 @@ HRV_MEAN_DAYS = 7
 _SIGNED_METRICS = {"skin_temp_delta", "training_load", "sleep_bedtime_offset_minutes"}
 
 
+def is_vendor_account_summary(source: str, scope: str, device_id: str | None) -> bool:
+    """An explicit Zepp account source, not evidence of a fusion algorithm."""
+    # An account-level record may retain a contributing device as metadata.
+    # That identifier neither changes the scope nor verifies how Zepp combined it.
+    return source == "zepp" and scope in {"user_summary", "user_fused"}
+
+
+def _source_priority(source: str, scope: str, device_id: str | None) -> int:
+    if is_vendor_account_summary(source, scope, device_id):
+        return 3
+    if device_id is not None and scope not in {"", "unknown"}:
+        return 2
+    return int(scope not in {"", "unknown"})
+
+
+def select_analysis_stream(
+    points: list[SeriesPoint], start: date, end: date, *, metric: str,
+) -> tuple[list[SeriesPoint], dict]:
+    """Choose one comparable stream for the entire window without ID tie-breaks.
+
+    A current reading is required before considering history-only alternatives.
+    Within that group, explicit account summaries precede identified devices,
+    then other known scopes and finally unknown sources. Coverage breaks ties,
+    never measured values, device names or input order. Equal evidence abstains.
+    """
+    streams: dict[tuple, list[SeriesPoint]] = defaultdict(list)
+    for point in points:
+        if start <= point.day <= end:
+            streams[(point.source, point.source_scope, point.device_id, point.unit)].append(point)
+    provenance = {
+        "metric": metric, "source": None, "source_scope": None, "device_id": None, "unit": None,
+        "window_start": start.isoformat(), "window_end": end.isoformat(),
+        "distinct_days": 0, "sample_count": 0, "candidate_count": len(streams),
+        "selection_reason": "no_data", "fusion_verified": False, "candidates": [],
+    }
+    if not streams:
+        return [], provenance
+
+    candidates = []
+    for stream, samples in streams.items():
+        source, scope, device_id, unit = stream
+        days = {point.day for point in samples}
+        sample_count = sum(point.sample_count for point in samples)
+        coverage: dict[date, int] = defaultdict(int)
+        observed_minutes: dict[date, set[str]] = defaultdict(set)
+        for point in samples:
+            if point.observed_minutes is not None:
+                coverage[point.day] += point.observed_minutes
+            elif isinstance(point.observed_at, datetime):
+                observed_minutes[point.day].add(point.observed_at.replace(second=0, microsecond=0).isoformat())
+        covered_minutes = sum(min(1440, coverage[day] + len(observed_minutes[day])) for day in days)
+        priority = _source_priority(source, scope, device_id)
+        reason = (
+            "explicit_account_summary" if priority == 3
+            else "best_covered_device_stream" if priority == 2
+            else "known_scope_stream" if priority == 1
+            else "unknown_source_only"
+        )
+        details = {
+            "source": source, "source_scope": scope, "device_id": device_id, "unit": unit,
+            "distinct_days": len(days), "sample_count": sample_count,
+            "covered_minutes": covered_minutes, "target_day_present": end in days,
+            "selection_reason": reason, "selected": False,
+            "observed_start": min(point.observed_at.isoformat() for point in samples),
+            "observed_end": max(point.observed_at.isoformat() for point in samples),
+            "source_fields": sorted({point.source_field for point in samples if point.source_field}),
+            "qualifications": sorted({point.qualification for point in samples if point.qualification}),
+        }
+        fetched = [point.fetched_at.isoformat() for point in samples if point.fetched_at]
+        details["fetched_at"] = max(fetched) if fetched else None
+        key = (end in days, priority, len(days), covered_minutes, sample_count)
+        candidates.append((key, samples, details))
+    best_key = max(item[0] for item in candidates)
+    best = [item for item in candidates if item[0] == best_key]
+    # Sorting is for stable audit output only, never to choose a device.
+    provenance["candidates"] = sorted(
+        (item[2] for item in candidates),
+        key=lambda item: (item["source"], item["source_scope"], item["device_id"] or "", item["unit"]),
+    )
+    if len(best) != 1:
+        provenance["selection_reason"] = "ambiguous_equal_coverage"
+        for _, _, details in best:
+            details["selection_reason"] = "ambiguous_equal_coverage"
+        return [], provenance
+    _, selected, details = best[0]
+    details["selected"] = True
+    provenance.update(details)
+    return selected, provenance
+
+
 def _canonical_daily(
     raw: RawDailyProfile, metrics: tuple[str, ...], start: date, end: date,
-) -> tuple[str | None, dict[date, float]]:
-    """Daily medians of the best-covered stream of the first metric with data."""
+) -> tuple[str | None, dict[date, float], dict]:
+    """Daily medians of one source for the first metric with eligible data."""
     for metric in metrics:
-        streams: dict[tuple, dict[date, list[float]]] = defaultdict(lambda: defaultdict(list))
-        for point in raw.series.get(metric, []):
-            if start <= point.day <= end and (point.value > 0 or metric in _SIGNED_METRICS):
-                key = (point.source, point.source_scope, point.device_id, point.unit)
-                streams[key][point.day].append(point.value)
-        if not streams:
+        points = [
+            point for point in raw.series.get(metric, [])
+            if start <= point.day <= end and (point.value > 0 or metric in _SIGNED_METRICS)
+        ]
+        if not points:
             continue
-        best = max(streams.items(), key=lambda item: (end in item[1], len(item[1]), str(item[0])))
-        return metric, {day: float(median(values)) for day, values in best[1].items()}
-    return None, {}
+        selected, provenance = select_analysis_stream(points, start, end, metric=metric)
+        daily: dict[date, list[float]] = defaultdict(list)
+        for point in selected:
+            daily[point.day].append(point.value)
+        return metric, {day: float(median(values)) for day, values in daily.items()}, provenance
+    return None, {}, {}
 
 
 def _robust(values: list[float]) -> tuple[float, float] | None:
@@ -77,35 +169,47 @@ WAKE_CHARGE_DAYS = 60
 WAKE_CHARGE_MIN_DAYS = 14
 
 
-def wake_charge_daily(raw: RawDailyProfile) -> dict[date, float]:
-    """Zepp Hybrid Charge on waking and the user's usual range.
-
-    Charge refills during sleep and drains through the day, so a local day's
-    maximum is the value on waking (equal on 348 of 377 real days, within 2
-    on 368).  Daily features carry that maximum; detail days use samples.
-    """
-    by_day: dict[date, float] = {}
-    for point in raw.series.get("hybrid_charge", []):
+def _wake_charge_selection(raw: RawDailyProfile) -> tuple[dict[date, float], dict]:
+    points = [
+        point for point in raw.series.get("hybrid_charge", [])
         # A vendor daily summary is not a reading on waking.
-        if not point.is_daily_feature and not isinstance(point.observed_at, datetime):
-            continue
+        if not point.is_daily_summary
+        and (point.is_daily_feature or isinstance(point.observed_at, datetime))
+    ]
+    selected, provenance = select_analysis_stream(
+        points, raw.day - timedelta(days=WAKE_CHARGE_DAYS), raw.day, metric="hybrid_charge",
+    )
+    by_day: dict[date, float] = {}
+    for point in selected:
         value = point.maximum if point.maximum is not None else point.value
         if value is not None and value > by_day.get(point.day, float("-inf")):
             by_day[point.day] = float(value)
-    return by_day
+    provenance["aggregation"] = "same_stream_daily_maximum"
+    return by_day, provenance
 
 
-def wake_charge_summary(raw: RawDailyProfile) -> dict[str, float | None]:
+def wake_charge_daily(raw: RawDailyProfile) -> dict[date, float]:
+    """Daily wake proxy from one stream across the complete 60-day baseline.
+
+    Keep the established daily-maximum proxy, but never take the maximum of
+    different devices or borrow another stream's history. Daily features carry
+    a stream's maximum; detail days use only that stream's timestamped samples.
+    """
+    return _wake_charge_selection(raw)[0]
+
+
+def wake_charge_summary(raw: RawDailyProfile) -> dict:
     """The day's wake-up Charge with the median and 20th/80th percentile of
-    the previous 60 days (none with fewer than 14 days)."""
-    by_day = wake_charge_daily(raw)
+    the previous 60 days of the same source (none with fewer than 14 days)."""
+    by_day, provenance = _wake_charge_selection(raw)
     history = sorted(
         value for day, value in by_day.items()
         if raw.day - timedelta(days=WAKE_CHARGE_DAYS) <= day < raw.day
     )
-    output: dict[str, float | None] = {
+    output = {
         "wake_charge": by_day.get(raw.day),
         "wake_charge_reference": None, "wake_charge_low": None, "wake_charge_high": None,
+        "wake_charge_provenance": provenance,
     }
     if len(history) >= WAKE_CHARGE_MIN_DAYS:
         pick = lambda q: history[int(q * (len(history) - 1))]
@@ -119,7 +223,7 @@ def wake_charge_summary(raw: RawDailyProfile) -> dict[str, float | None]:
 
 def _hrv_component(raw: RawDailyProfile) -> dict:
     day = raw.day
-    metric, daily = _canonical_daily(
+    metric, daily, provenance = _canonical_daily(
         raw, ("sleep_hrv", "hrv_rmssd"), day - timedelta(days=HRV_RANGE_DAYS + HRV_MEAN_DAYS), day,
     )
     ln_daily = {item: log(value) for item, value in daily.items() if value > 0}
@@ -134,7 +238,8 @@ def _hrv_component(raw: RawDailyProfile) -> dict:
     stats = _robust(reference)
     current = mean7(day)
     if stats is None or current is None or stats[1] == 0:
-        return {"metric": metric, "score": None, "value": current, "range": None, "streak": 0}
+        return {"metric": metric, "score": None, "value": current, "range": None, "streak": 0,
+                "provenance": provenance}
     center, spread = stats
     low, high = center - HRV_RANGE_SD * spread, center + HRV_RANGE_SD * spread
     streak = 0
@@ -162,25 +267,29 @@ def _hrv_component(raw: RawDailyProfile) -> dict:
         "metric": metric, "score": _clamp(50 + 20 * z), "value": round(current, 4),
         "range": (round(low, 4), round(high, 4)), "streak": streak, "z": round(z, 2),
         "z_night": round(z_night, 2) if z_night is not None else None, "sentence": sentence,
+        "provenance": provenance,
     }
 
 
 def _sleep_component(raw: RawDailyProfile) -> dict:
     day = raw.day
-    _, duration = _canonical_daily(raw, ("sleep_duration",), day - timedelta(days=28), day)
+    _, duration, provenance = _canonical_daily(raw, ("sleep_duration",), day - timedelta(days=28), day)
     if day not in duration:
-        return {"score": None}
+        return {"score": None, "provenance": provenance}
     history = [value for item, value in duration.items() if item < day]
     stats = _robust(history)
     if stats is None:
-        return {"score": None}
+        return {"score": None, "provenance": provenance}
     need, spread = stats
     z = (duration[day] - need) / spread if spread else 0.0
     # Net 7-day debt: a long night pays back a short one.
     debt_hours = max(0.0, sum(
         need - duration[item] for item in duration if day - timedelta(days=6) <= item <= day
     )) / 60
-    _, bedtimes = _canonical_daily(raw, ("sleep_bedtime_offset_minutes",), day - timedelta(days=6), day)
+    _, bedtimes, bedtime_provenance = _canonical_daily(
+        raw, ("sleep_bedtime_offset_minutes",), day - timedelta(days=6), day,
+    )
+    provenance["bedtime_provenance"] = bedtime_provenance
     bedtime_values = list(bedtimes.values())
     bedtime_spread = (
         1.4826 * median(abs(value - median(bedtime_values)) for value in bedtime_values)
@@ -198,33 +307,34 @@ def _sleep_component(raw: RawDailyProfile) -> dict:
     return {
         "score": _clamp(score), "z": round(z, 2), "debt_hours": round(debt_hours, 1),
         "bedtime_spread_minutes": round(bedtime_spread, 1) if bedtime_spread is not None else None,
-        "need_minutes": round(need, 1), "sentence": sentence,
+        "need_minutes": round(need, 1), "sentence": sentence, "provenance": provenance,
     }
 
 
 def _rhr_component(raw: RawDailyProfile) -> dict:
     day = raw.day
-    _, daily = _canonical_daily(raw, ("sleep_rhr", "resting_hr"), day - timedelta(days=28), day)
+    _, daily, provenance = _canonical_daily(raw, ("sleep_rhr", "resting_hr"), day - timedelta(days=28), day)
     stats = _robust([value for item, value in daily.items() if item < day])
     if day not in daily or stats is None or stats[1] == 0:
-        return {"score": None}
+        return {"score": None, "provenance": provenance}
     z = (daily[day] - stats[0]) / stats[1]
     sentence = (
         "静息心率高于你平时" if z > 0.75 else "静息心率低于你平时" if z < -0.75
         else "静息心率接近你平时"
     )
-    return {"score": _clamp(50 - 20 * z), "z": round(z, 2), "sentence": sentence}
+    return {"score": _clamp(50 - 20 * z), "z": round(z, 2), "sentence": sentence,
+            "provenance": provenance}
 
 
 def _load_component(raw: RawDailyProfile) -> dict:
     day = raw.day
-    _, load = _canonical_daily(raw, ("training_load",), day - timedelta(days=27), day)
+    _, load, provenance = _canonical_daily(raw, ("training_load",), day - timedelta(days=27), day)
     if not load:
-        return {"score": None}
+        return {"score": None, "provenance": provenance}
     acute = sum(value for item, value in load.items() if item > day - timedelta(days=7)) / 7
     chronic = sum(load.values()) / 28
     if chronic <= 0:
-        return {"score": None}
+        return {"score": None, "provenance": provenance}
     ratio = acute / chronic
     sentence = (
         "近 7 天负荷明显高于近 4 周平均" if ratio > 1.3
@@ -234,22 +344,24 @@ def _load_component(raw: RawDailyProfile) -> dict:
     # 50 is the personal norm: an ordinary ratio is neutral, a fast rise
     # lowers readiness and a lighter week adds a little.
     score = 50 - 100 * (ratio - 1.3) if ratio > 1.3 else 55 if ratio < 0.8 else 50
-    return {"score": _clamp(score), "acwr": round(ratio, 2), "sentence": sentence}
+    return {"score": _clamp(score), "acwr": round(ratio, 2), "sentence": sentence,
+            "provenance": provenance}
 
 
 def _charge_component(raw: RawDailyProfile) -> dict:
-    by_day = wake_charge_daily(raw)
+    by_day, provenance = _wake_charge_selection(raw)
     history = [value for day, value in by_day.items()
                if raw.day - timedelta(days=WAKE_CHARGE_DAYS) <= day < raw.day]
     stats = _robust(history) if len(history) >= WAKE_CHARGE_MIN_DAYS else None
     if raw.day not in by_day or stats is None or stats[1] == 0:
-        return {"score": None}
+        return {"score": None, "provenance": provenance}
     z = (by_day[raw.day] - stats[0]) / stats[1]
     sentence = (
         "晨起 Charge 低于你平时" if z <= -0.75 else "晨起 Charge 高于你平时" if z >= 0.75
         else "晨起 Charge 接近你平时"
     )
-    return {"score": _clamp(50 + 15 * z), "z": round(z, 2), "value": by_day[raw.day], "sentence": sentence}
+    return {"score": _clamp(50 + 15 * z), "z": round(z, 2), "value": by_day[raw.day],
+            "sentence": sentence, "provenance": provenance}
 
 
 def readiness_score(raw: RawDailyProfile) -> dict:
@@ -308,19 +420,21 @@ def body_signal_inputs(raw: RawDailyProfile) -> dict[str, dict]:
     day = raw.day
     output = {}
     for name, (metrics, _) in BODY_SIGNALS.items():
-        metric, daily = _canonical_daily(raw, metrics, day - timedelta(days=30), day)
+        metric, daily, provenance = _canonical_daily(raw, metrics, day - timedelta(days=30), day)
         nights = [day - timedelta(days=1), day]
         reference = [
             value for item, value in daily.items()
             if nights[0] - timedelta(days=28) <= item < nights[0]
         ]
         if metric is None or any(night not in daily for night in nights) or len(reference) < 14:
-            output[name] = {"status": "INSUFFICIENT", "metric": metric}
+            output[name] = {"status": "INSUFFICIENT", "metric": metric, "provenance": provenance}
             continue
         center = median(reference)
         baseline = BaselineStats(
-            status=Availability.AVAILABLE, metric=metric, source="", source_scope="",
-            device_id=None, unit="", window_days=28, sample_count=len(reference), distinct_days=len(reference),
+            status=Availability.AVAILABLE, metric=metric,
+            source=provenance["source"], source_scope=provenance["source_scope"],
+            device_id=provenance["device_id"], unit=provenance["unit"],
+            window_days=28, sample_count=len(reference), distinct_days=len(reference),
             minimum_days=14, coverage_ratio=round(len(reference) / 28, 4),
             median=center, mad=median(abs(value - center) for value in reference),
             reference_value=center,
@@ -340,7 +454,7 @@ def body_signal_inputs(raw: RawDailyProfile) -> dict[str, dict]:
             "percent": round(fmean(percents), 2) if len(percents) == 2 else None,
             "robust_z": round(fmean(zs), 2) if len(zs) == 2 else None,
             "values": [round(daily[night], 3) for night in nights],
-            "baseline": round(center, 3),
+            "baseline": round(center, 3), "provenance": provenance,
         }
     return output
 
@@ -406,6 +520,10 @@ def apply_readiness(recovery, readiness: dict):
         "readiness_score": score,
         "readiness_factors": list(readiness.get("factors") or []),
         "readiness_hrv_state": readiness.get("hrv_state"),
+        "readiness_component_provenance": {
+            name: item["provenance"] for name, item in (readiness.get("components") or {}).items()
+            if item.get("provenance")
+        },
         "readiness_missing_components": list(
             ((readiness.get("insight") or {}).get("payload") or {}).get("missing_components") or []
         ),

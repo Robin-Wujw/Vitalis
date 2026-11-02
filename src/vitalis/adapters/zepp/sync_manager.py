@@ -762,6 +762,21 @@ class SyncManager:
         heart_rate_seen_until = {} if heart_rate_seen_until is None else heart_rate_seen_until
 
         if stream == "sleep":
+            # Preserve each source before the legacy daily projection selects
+            # one record. Two devices on the same date must not erase each other.
+            save_source = getattr(repo, "save_band_source", None)
+            if callable(save_source):
+                for item in parser._band_items(payload):
+                    single = {"data": {"items": [item]}}
+                    item_sleeps, item_activities = parser.parse_band(single, timezone_name=getattr(self.fetcher, "timezone_name", None))
+                    for kind, records in (("sleep", item_sleeps), ("activity", item_activities)):
+                        for day, value in records.items():
+                            value.user_id = user.id
+                            written += save_source(user.id, day, kind, value.model_dump(mode="json"))
+                    for day, naps in parser.parse_band_naps(single, timezone_name=getattr(self.fetcher, "timezone_name", None)).items():
+                        scope, device_id = parser._band_provenance(item, parser._base64_summary(item) or {})
+                        written += save_source(user.id, day, "naps", {"source": "zepp", "source_scope": scope,
+                            "device_id": device_id, "naps": [n.model_dump(mode="json") for n in naps]})
             sleeps, activities = parser.parse_band(payload, timezone_name=getattr(self.fetcher, "timezone_name", None))
             nap_days = parser.parse_band_naps(payload, timezone_name=getattr(self.fetcher, "timezone_name", None))
             for day, naps in nap_days.items():
@@ -858,7 +873,7 @@ class SyncManager:
 
         elif stream == "daily_summary":
             # Store vendor daily metrics independently from computed Vitalis scores.
-            metrics = parser.parse_daily_metrics(payload, timezone_name=getattr(self.fetcher, "timezone_name", None))
+            metrics = parser.parse_daily_metrics(payload, timezone_name=getattr(self.fetcher, "timezone_name", None), source_key=record.raw.source_key)
             for metric in metrics:
                 metric.user_id = user.id
             readiness_revisions = parser.parse_readiness_revisions(payload, timezone_name=getattr(self.fetcher, "timezone_name", None))

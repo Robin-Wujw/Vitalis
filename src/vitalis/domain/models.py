@@ -29,6 +29,7 @@ class Device(BaseModel):
     source: str = Field(description="数据源，如 zepp / garmin")
     model: str = Field(default="", description="设备型号")
     device_id: str = Field(default="", description="厂商设备 id")
+    aliases: list[str] = Field(default_factory=list, description="Identifiers explicitly co-reported by the same inventory item")
     connected_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -40,6 +41,8 @@ class SleepRecord(BaseModel):
     user_id: str
     date: Optional[DateType] = None
     source: str = "zepp"
+    source_scope: str = "unknown"
+    device_id: str | None = None
 
     sleep_duration: int = Field(ge=0, description="总睡眠时长（分钟）")
     deep_sleep: int | None = Field(default=None, ge=0, description="深睡时长（分钟）")
@@ -103,6 +106,8 @@ class NapRecord(BaseModel):
     awake_minutes: int | None = Field(default=None, ge=0)
     stages: list[SleepStageSlice] = Field(default_factory=list)
     source: str = "zepp"
+    source_scope: str = "unknown"
+    device_id: str | None = None
 
     @field_validator("started_at", "ended_at")
     @classmethod
@@ -356,6 +361,8 @@ class ActivityRecord(BaseModel):
     user_id: str
     date: Optional[DateType] = None
     source: str = "zepp"
+    source_scope: str = "unknown"
+    device_id: str | None = None
     steps: int | None = Field(default=None, ge=0)
     active_minutes: int | None = Field(default=None, ge=0)
     calories: int | None = Field(default=None, ge=0)

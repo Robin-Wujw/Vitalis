@@ -20,11 +20,12 @@ def charts(
     from_date: date = Query(..., alias="from"),
     to_date: date = Query(..., alias="to"),
     mode: Literal["intraday", "daily"] = "daily",
+    route: str = Query("all", max_length=128),
     user_id: str = Depends(require_user_id),
 ) -> ChartBundle:
     """Read stored observations as qualified charts; no synchronization or jobs."""
     try:
-        return get_chart_query().query(user_id, from_date, to_date, mode=mode)
+        return get_chart_query().query(user_id, from_date, to_date, mode=mode, route=route)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="图表范围或数据预算不符合要求") from exc
 
@@ -40,8 +41,12 @@ def _report(user_id: str, kind: str, day: date | None):
 
 
 @router.get("/reports/{kind}/charts", response_model=ChartBundle, operation_id="get_report_charts")
-def report_charts(kind: Kind, day: date | None = None, user_id: str = Depends(require_user_id)) -> ChartBundle:
-    return report_chart_bundle(_report(user_id,kind,day),kind)
+def report_charts(kind: Kind, day: date | None = None, route: str = Query("all", max_length=128), user_id: str = Depends(require_user_id)) -> ChartBundle:
+    from vitalis.intelligence.chart_routes import filter_bundle
+    try:
+        return filter_bundle(report_chart_bundle(_report(user_id,kind,day),kind), route)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="该报告没有指定的来源路线") from exc
 
 
 @router.get("/reports/{kind}/charts.html", response_class=HTMLResponse, operation_id="get_report_chart_page")
@@ -51,10 +56,15 @@ def report_chart_page(kind: Kind, day: date | None = None, user_id: str = Depend
 
 
 @router.get("/reports/{kind}/charts/{chart_key}.svg", operation_id="get_report_chart_svg")
-def report_chart_svg(kind: Kind, chart_key: str, day: date | None = None, user_id: str = Depends(require_user_id)):
+def report_chart_svg(kind: Kind, chart_key: str, day: date | None = None, route: str = Query("all", max_length=128), user_id: str = Depends(require_user_id)):
     from vitalis.intelligence.chart_rendering import render_chart_svg
     bundle = report_chart_bundle(_report(user_id,kind,day),kind)
     chart = next((c for c in bundle.charts if c.key == chart_key), None)
     if chart is None:
         raise HTTPException(status_code=404, detail="该报告没有指定图表")
+    from vitalis.intelligence.chart_routes import filter_chart
+    try:
+        chart = filter_chart(chart, route)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="该图表没有指定的来源路线") from exc
     return Response(render_chart_svg(chart), media_type="image/svg+xml", headers=_PRIVATE)

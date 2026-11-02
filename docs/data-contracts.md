@@ -36,6 +36,14 @@ HRV、血氧、压力和 Charge 等密集样本流在入库事务里同时写日
 
 Zepp 的 `hrv` 端点只返回手动单次 HRV 测量（SDNN），平时为空；夜间 RMSSD 来自 `wellness/hrv_rmssd`。分钟心率端点（`heart_rate/minute_endpoint`）对上传密集心率文件的手表一直为空，分钟心率来自 `heart_rate/dense_file`。这两个端点为空是正常结果，不做停更告警。
 
+## 设备归属与账户汇总
+
+`device` 只表示有明确设备标识的记录；`user_summary` 表示已知账户端点或有依据的 App 记账来源；`user_fused` 只保留厂商明确标记，历史同名scope也仅按账户结果展示；`unknown` 不能因为无device_id提升为融合。DailyHealth/Charge 的已核对占位，以及与样本数完全相符的 `N,app` 编码可以归账户；畸形、多设备歧义及覆盖不完整的设备编码保持未知。设备样本的 `count,device;count,device` 必须在过滤无效测量前按原顺序展开，总长度不符不补齐。
+
+设备目录 `aliases` 只保存同一条目录明确给出的ID/MAC/序列号；不同长度或相似前后缀不证明同一设备。图表按物理设备分组导航，但每条原始来源流仍独立保留，不合并样本。`band_source_records` 保存按日期、kind、source/scope/device区分的睡眠、活动和午睡，避免日级主记录覆盖另一台设备的可回看事实；旧无分来源记录不反推设备。
+
+准备度各分项、Recovery厂商摘要及晨起Charge先选择整窗单一来源，才计算中位数/日最大值和基线；不按每天最高设备拼接、不从别台借历史。来源选择依据目标日可用性、显式账户/设备资格和整窗覆盖，公共选择器完全同资格时保留歧义并不给分项值；公式、权重与阈值不变。`vendor_provenance`、`wake_charge_provenance`、`readiness_component_provenance` 保存选择理由、候选、窗口和覆盖。HRV主值与同指标设备互证仍独立于准备度选择器，原HRV主值平局策略尚未开放用户固定主设备配置；`fusion_method` 的账户路径命名为 `vendor_account_summary_with_device_audit`，不表示Vitalis重新融合生理数值。
+
 ## 缺失、零和不可比
 
 - 缺失字段保持 `null`、空列表或明确不可用状态；绝不补零、拿旧快照填充或把未知训练日改成休息日。

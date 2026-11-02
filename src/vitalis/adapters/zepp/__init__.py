@@ -544,7 +544,7 @@ class ZeppConnector(HealthConnector):
                     timestamp=local_day_utc_bounds(day, settings.timezone)[0],
                     value=hrv_values[day],
                     unit="ms",
-                    source_scope="user_fused",
+                    source_scope="synthetic_daily_summary",
                 ))
             results.append(NormalizedDaily(
                 user_id=user.id, date=day,

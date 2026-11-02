@@ -1309,6 +1309,7 @@ Read stored observations as qualified charts; no synchronization or jobs.
 | X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
 | from | query | yes | {"format": "date", "title": "From", "type": "string"} |  |
 | mode | query | no | {"default": "daily", "enum": ["intraday", "daily"], "title": "Mode", "type": "string"} |  |
+| route | query | no | {"default": "all", "maxLength": 128, "title": "Route", "type": "string"} |  |
 | to | query | yes | {"format": "date", "title": "To", "type": "string"} |  |
 
 #### Request body
@@ -2379,6 +2380,7 @@ Report Chart Svg
 | chart_key | path | yes | {"title": "Chart Key", "type": "string"} |  |
 | kind | path | yes | {"enum": ["daily", "morning", "evening", "weekly", "monthly"], "title": "Kind", "type": "string"} |  |
 | day | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "Day"} |  |
+| route | query | no | {"default": "all", "maxLength": 128, "title": "Route", "type": "string"} |  |
 
 #### Request body
 
@@ -2441,6 +2443,7 @@ Report Charts
 | X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
 | kind | path | yes | {"enum": ["daily", "morning", "evening", "weekly", "monthly"], "title": "Kind", "type": "string"} |  |
 | day | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "Day"} |  |
+| route | query | no | {"default": "all", "maxLength": 128, "title": "Route", "type": "string"} |  |
 
 #### Request body
 
@@ -5396,12 +5399,33 @@ Each reachable component is rendered once; `$ref` values name the headings below
       ],
       "title": "Resolution Seconds"
     },
+    "routes": {
+      "items": {
+        "$ref": "#/components/schemas/ChartRoute"
+      },
+      "maxItems": 64,
+      "title": "Routes",
+      "type": "array"
+    },
+    "selected_route": {
+      "default": "all",
+      "title": "Selected Route",
+      "type": "string"
+    },
     "series": {
       "items": {
         "$ref": "#/components/schemas/ChartSeries"
       },
       "maxItems": 48,
       "title": "Series",
+      "type": "array"
+    },
+    "source_summaries": {
+      "items": {
+        "$ref": "#/components/schemas/ChartSourceSummary"
+      },
+      "maxItems": 500,
+      "title": "Source Summaries",
       "type": "array"
     },
     "state": {
@@ -5459,6 +5483,17 @@ Each reachable component is rendered once; `$ref` values name the headings below
 {
   "additionalProperties": false,
   "properties": {
+    "device_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Device Id"
+    },
     "key": {
       "title": "Key",
       "type": "string"
@@ -5480,8 +5515,24 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "title": "Qualification",
       "type": "string"
     },
+    "route_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Route Id"
+    },
     "source": {
       "title": "Source",
+      "type": "string"
+    },
+    "source_scope": {
+      "default": "unknown",
+      "title": "Source Scope",
       "type": "string"
     }
   },
@@ -5621,6 +5672,17 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "title": "Category",
       "type": "string"
     },
+    "device_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Device Id"
+    },
     "end": {
       "format": "date-time",
       "title": "End",
@@ -5634,6 +5696,17 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "default": "observed",
       "title": "Qualification",
       "type": "string"
+    },
+    "route_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Route Id"
     },
     "source": {
       "title": "Source",
@@ -5779,6 +5852,17 @@ Each reachable component is rendered once; `$ref` values name the headings below
 {
   "additionalProperties": false,
   "properties": {
+    "device_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Device Id"
+    },
     "direct_sets": {
       "anyOf": [
         {
@@ -5827,6 +5911,17 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "title": "Qualification",
       "type": "string"
     },
+    "route_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Route Id"
+    },
     "side": {
       "default": "unknown",
       "title": "Side",
@@ -5834,6 +5929,11 @@ Each reachable component is rendered once; `$ref` values name the headings below
     },
     "source": {
       "title": "Source",
+      "type": "string"
+    },
+    "source_scope": {
+      "default": "analysis",
+      "title": "Source Scope",
       "type": "string"
     }
   },
@@ -5844,6 +5944,116 @@ Each reachable component is rendered once; `$ref` values name the headings below
     "source"
   ],
   "title": "ChartRegion",
+  "type": "object"
+}
+```
+
+### #/components/schemas/ChartRoute
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "device_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Device Id"
+    },
+    "device_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Device Ids",
+      "type": "array"
+    },
+    "first_observed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "First Observed At"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "device",
+        "account",
+        "unknown",
+        "analysis",
+        "external"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "last_observed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Last Observed At"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "sample_count": {
+      "default": 0,
+      "minimum": 0.0,
+      "title": "Sample Count",
+      "type": "integer"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "state": {
+      "default": "missing",
+      "enum": [
+        "available",
+        "missing",
+        "unknown"
+      ],
+      "title": "State",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "label",
+    "source"
+  ],
+  "title": "ChartRoute",
   "type": "object"
 }
 ```
@@ -5876,6 +6086,17 @@ Each reachable component is rendered once; `$ref` values name the headings below
         }
       ],
       "title": "Device Id"
+    },
+    "device_label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Device Label"
     },
     "fetched_at": {
       "anyOf": [
@@ -5946,6 +6167,17 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "title": "Qualification",
       "type": "string"
     },
+    "route_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Route Id"
+    },
     "sample_count": {
       "default": 0,
       "minimum": 0.0,
@@ -5984,6 +6216,69 @@ Each reachable component is rendered once; `$ref` values name the headings below
     "source_scope"
   ],
   "title": "ChartSeries",
+  "type": "object"
+}
+```
+
+### #/components/schemas/ChartSourceSummary
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "device_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Device Id"
+    },
+    "observed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Observed At"
+    },
+    "route_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Route Id"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "source_scope": {
+      "default": "unknown",
+      "title": "Source Scope",
+      "type": "string"
+    },
+    "text": {
+      "title": "Text",
+      "type": "string"
+    }
+  },
+  "required": [
+    "text",
+    "source"
+  ],
+  "title": "ChartSourceSummary",
   "type": "object"
 }
 ```
@@ -6408,6 +6703,28 @@ Each reachable component is rendered once; `$ref` values name the headings below
       ],
       "title": "Hrv Metric"
     },
+    "hrv_source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Hrv Source"
+    },
+    "hrv_source_scope": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Hrv Source Scope"
+    },
     "hrv_value_ms": {
       "anyOf": [
         {
@@ -6470,6 +6787,28 @@ Each reachable component is rendered once; `$ref` values name the headings below
         }
       ],
       "title": "Rhr Bpm"
+    },
+    "rhr_device_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Rhr Device Id"
+    },
+    "rhr_source_scope": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Rhr Source Scope"
     },
     "sleep_minutes": {
       "anyOf": [
@@ -7003,6 +7342,27 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "title": "Metric Label",
       "type": "string"
     },
+    "source": {
+      "default": "unknown",
+      "title": "Source",
+      "type": "string"
+    },
+    "source_scope": {
+      "default": "unknown",
+      "title": "Source Scope",
+      "type": "string"
+    },
+    "unit": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Unit"
+    },
     "window_days": {
       "enum": [
         7,
@@ -7010,6 +7370,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
         29,
         30,
         31,
+        60,
         90
       ],
       "title": "Window Days",
@@ -7419,8 +7780,8 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "object"
     },
     "schema_version": {
-      "const": "17.0",
-      "default": "17.0",
+      "const": "18.0",
+      "default": "18.0",
       "title": "Schema Version",
       "type": "string"
     },
@@ -9648,7 +10009,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "anyOf": [
         {
           "enum": [
-            "vendor_fused_with_device_audit",
+            "vendor_account_summary_with_device_audit",
             "canonical_device_with_corroboration"
           ],
           "type": "string"
@@ -9743,6 +10104,28 @@ Each reachable component is rendered once; `$ref` values name the headings below
         }
       ],
       "title": "Preferred Metric"
+    },
+    "preferred_source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Preferred Source"
+    },
+    "preferred_source_scope": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Preferred Source Scope"
     },
     "previous_7d_days": {
       "default": 0,
@@ -9991,6 +10374,21 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "default": false,
       "title": "Selected",
       "type": "boolean"
+    },
+    "source": {
+      "default": "unknown",
+      "title": "Source",
+      "type": "string"
+    },
+    "source_scope": {
+      "default": "unknown",
+      "title": "Source Scope",
+      "type": "string"
+    },
+    "unit": {
+      "default": "ms",
+      "title": "Unit",
+      "type": "string"
     },
     "value_ms": {
       "title": "Value Ms",
@@ -10579,7 +10977,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "object"
     },
     "schema_version": {
-      "default": "6.0",
+      "default": "7.0",
       "title": "Schema Version",
       "type": "string"
     },
@@ -15153,6 +15551,14 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "title": "Positive Signals",
       "type": "array"
     },
+    "readiness_component_provenance": {
+      "additionalProperties": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Readiness Component Provenance",
+      "type": "object"
+    },
     "readiness_factors": {
       "items": {
         "type": "string"
@@ -15225,6 +15631,14 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "title": "Vendor Charge Components",
       "type": "object"
     },
+    "vendor_provenance": {
+      "additionalProperties": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Vendor Provenance",
+      "type": "object"
+    },
     "vendor_readiness": {
       "anyOf": [
         {
@@ -15285,6 +15699,11 @@ Each reachable component is rendered once; `$ref` values name the headings below
         }
       ],
       "title": "Wake Charge Low"
+    },
+    "wake_charge_provenance": {
+      "additionalProperties": true,
+      "title": "Wake Charge Provenance",
+      "type": "object"
     },
     "wake_charge_reference": {
       "anyOf": [
@@ -23623,7 +24042,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "object"
     },
     "schema_version": {
-      "default": "9.0",
+      "default": "10.0",
       "title": "Schema Version",
       "type": "string"
     },

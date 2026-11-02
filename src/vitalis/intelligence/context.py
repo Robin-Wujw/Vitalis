@@ -35,6 +35,10 @@ class AgentContextEngine:
             hrv_metric=daily.features.hrv.preferred_metric,
             hrv_value_ms=daily.features.hrv.value_ms,
             hrv_device_id=daily.features.hrv.preferred_device_id,
+            hrv_source=daily.features.hrv.preferred_source,
+            hrv_source_scope=daily.features.hrv.preferred_source_scope,
+            rhr_source_scope=daily.features.hrv.rhr_source_scope,
+            rhr_device_id=daily.features.hrv.rhr_device_id,
             rhr_bpm=daily.features.hrv.rhr_bpm,
             recovery_state=daily.states.recovery,
             recovery_state_label=daily.states.recovery_label,
@@ -102,6 +106,7 @@ class AgentContextEngine:
             ContextTrend(
                 metric=item.metric,
                 metric_label=item.metric_label,
+                source=item.source, source_scope=item.source_scope, unit=item.unit,
                 window_days=item.window_days,
                 device_id=item.device_id,
                 change_percent=item.change_percent,

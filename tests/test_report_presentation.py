@@ -81,6 +81,15 @@ def test_morning_metrics_are_stable_and_hrv_is_optional():
     assert [item["key"] for item in result["metrics"]] == ["sleep", "rhr"]
 
 
+def test_intraday_daily_headline_does_not_claim_a_complete_calendar_day():
+    from vitalis.intelligence.report_presentation import daily_profile_presentation
+    payload = _daily()
+    payload['report_context']['target_day_complete'] = False
+    assert daily_profile_presentation(payload)['headline'] == '当日已同步记录'
+    payload['report_context']['target_day_complete'] = True
+    assert daily_profile_presentation(payload)['headline'] == '本地日完整事实快照'
+
+
 def test_daily_missing_sleep_uses_local_gap_without_blocking_activity():
     payload = _daily()
     payload["features"]["sleep"]["duration_minutes"] = None

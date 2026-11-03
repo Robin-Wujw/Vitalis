@@ -1353,7 +1353,7 @@ def daily_profile_presentation(payload: Any) -> dict[str, Any]:
         sections.append(audit)
     return {
         **base,
-        "headline": "本地日完整事实快照",
+        "headline": "本地日完整事实快照" if context.get("target_day_complete") is True else "当日已同步记录",
         "findings": unique(base.get("findings") or []),
         "suggestions": [],
         "sections": sections,

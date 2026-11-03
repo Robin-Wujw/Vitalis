@@ -49,6 +49,25 @@ def test_account_values_keep_contributing_device_without_mutating_raw():
     assert result is not raw and result.series is not raw.series
 
 
+def test_reparsed_identical_account_fact_supersedes_unqualified_duplicate_only_in_report():
+    old = replace(point(value=47, scope="user_fused"), source_field="sample.sleep_hrv")
+    fresh = replace(point(value=47), source_field="sleepHRV", qualification="vendor_reference", fetched_at=datetime(2026,10,13,12,tzinfo=UTC))
+    different = replace(old, value=49)
+    raw = profile(series={"sleep_hrv": [old, fresh, different]}, chart_samples={"sleep_hrv": [old, fresh]})
+    result = report_source_view(raw)
+    assert result.series["sleep_hrv"] == [fresh, different]
+    assert raw.series["sleep_hrv"] == [old, fresh, different]
+    assert result.chart_samples["sleep_hrv"] == [old, fresh]
+    no_proof = replace(fresh, fetched_at=None)
+    assert len(report_source_view(profile(series={"sleep_hrv": [old,no_proof]})).series["sleep_hrv"]) == 2
+
+
+def test_verified_equal_values_at_different_instants_are_not_deduplicated():
+    old=replace(point(),observed_at=datetime(2026,10,13,1,tzinfo=UTC),source_field="sample.sleep_hrv")
+    fresh=replace(old,observed_at=datetime(2026,10,13,2,tzinfo=UTC),source_field="sleepHRV",fetched_at=datetime(2026,10,13,3,tzinfo=UTC))
+    assert len(report_source_view(profile(series={"sleep_hrv":[old,fresh]})).series["sleep_hrv"])==2
+
+
 def test_missing_current_account_never_falls_back_to_device_or_unknown():
     raw = profile(series={"sleep_hrv": [point(day=DAY-timedelta(days=1)),
         point(value=80, scope="device", device="A"), point(value=99, scope="unknown")]})

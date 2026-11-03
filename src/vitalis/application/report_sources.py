@@ -63,6 +63,7 @@ def report_source_view(raw: RawDailyProfile) -> RawDailyProfile:
             and not (point.source_field or "").startswith(("sleep.", "activity.", "training."))]
         for metric, points in raw.series.items()
     }
+    series = {metric: _without_superseded_account_duplicates(points) for metric, points in series.items()}
     for kind, records in (("sleep", sleep), ("activity", activity), ("training", training)):
         _record_series(series, records, kind, raw.timezone_name)
     series = {metric: points for metric, points in series.items() if points}
@@ -87,6 +88,25 @@ def report_source_view(raw: RawDailyProfile) -> RawDailyProfile:
         for metric, points in series.items()
     }
     return view
+
+
+def _without_superseded_account_duplicates(points: list[SeriesPoint]) -> list[SeriesPoint]:
+    """Prefer re-parsed, evidenced facts over identical unqualified projections.
+
+    Raw storage and charts are untouched. Daily features and different instants
+    are never interchangeable; candidates have already passed the as-of gate.
+    """
+    def key(point):
+        return (point.metric, point.day, _observed_key(point.observed_at), point.value,
+                point.unit, point.source, point.device_id, point.is_daily_summary)
+    def placeholder(point):
+        return point.source_field in (None, f"sample.{point.metric}", f"daily.{point.metric}")
+    proven = {key(point) for point in points if point.fetched_at is not None
+              and not point.is_daily_feature and not placeholder(point)
+              and is_report_account_source(point.source, point.source_scope)}
+    return [point for point in points if not (
+        not point.is_daily_feature and point.fetched_at is None and placeholder(point)
+        and is_report_account_source(point.source, point.source_scope) and key(point) in proven)]
 
 
 def _explicit_merged(record: dict) -> bool:

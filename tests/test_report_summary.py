@@ -90,11 +90,10 @@ def test_one_negative_direction_does_not_create_rest_or_override_plan():
     payload["features"]["recovery"]["negative_signals"] = ["HRV_BELOW_BASELINE"]
     text = _text(payload)
     assert "HRV 低于" in text
-    assert "今天按计划正常训练" in text
     assert "休息" not in text and "全休" not in text
+    assert "按计划" not in text and "训练限制" not in text
     payload["decision"]["action_plan"]["primary_session"]["intensity"] = "low"
-    assert "轻量训练" in _text(payload)
-    assert "正常训练" not in _text(payload)
+    assert len(reader_briefing_summary(payload)) == 1
 
 
 def test_negative_evidence_explains_existing_rest_without_new_thresholds():
@@ -172,16 +171,28 @@ def test_missing_baseline_is_not_inferred_from_percent_or_raw_value():
     assert "睡眠个人参照不足" in text
 
 
-def test_spike_without_fatigue_observation_has_both_branches_and_no_extra_dose():
+@pytest.mark.parametrize("kind", ["morning", "evening"])
+def test_marked_load_increase_gets_one_short_rest_reminder(kind):
     payload = _payload()
     _spike(payload)
-    payload["decision"]["action"] = "TRAIN_LIGHT"
-    text = _text(payload)
-    assert "负荷" in text and "不等于已经疲劳" in text
-    assert "无明显疲劳" in text and "热身正常" in text
-    assert "按计划轻量训练" in text and "不额外加量" in text
-    assert "明显疲劳或热身异常" in text and "减量或停止要求" in text
-    assert "旧摘要" not in text
+    lines = reader_briefing_summary(payload, kind=kind)
+    assert lines[1] == "最近加量比较快，累了就适当休息。"
+    for jargon in ("不等于已经疲劳", "若", "次晨计划", "热身正常", "减量或停止要求", "旧摘要"):
+        assert jargon not in "".join(lines)
+
+
+@pytest.mark.parametrize("kind", ["morning", "evening"])
+def test_normal_or_unverified_load_does_not_append_routine_advice(kind):
+    payload = _payload()
+    assert len(reader_briefing_summary(payload, kind=kind)) == 1
+    payload["features"]["training"].update(load_state="INSUFFICIENT_DATA", load_7d_change_percent=999)
+    assert len(reader_briefing_summary(payload, kind=kind)) == 1
+
+
+def test_high_load_rest_reminder_uses_saved_state_not_new_thresholds():
+    payload = _payload()
+    payload["features"]["training"]["load_state"] = "ELEVATED"
+    assert reader_briefing_summary(payload)[1] == "最近练得比较多，累了就适当休息。"
 
 
 @pytest.mark.parametrize("restriction", ["REST", "LIMITED", "PRIMARY_REST", "RECOVERY"])
@@ -198,20 +209,23 @@ def test_rest_or_medical_restriction_wins_over_favorable_load_branch(restriction
         payload["decision"]["action"] = restriction
     text = _text(payload, kind=kind)
     assert ("训练限制" if restriction == "LIMITED" else "恢复活动" if restriction == "RECOVERY" else "休息") in text
-    assert "即使主观不累" in text
+    assert "即使主观不累" not in text
     if restriction == "LIMITED":
         assert "出现明显不适时停止" in text
     assert "若无明显疲劳且热身正常" not in text
     assert "可加量" not in text and "可以高强度" not in text
+    assert "累了就适当休息" not in text  # Specific limits take precedence over optional rest.
+    assert len(reader_briefing_summary(payload, kind=kind)[1]) <= 45
 
 
 def test_evening_never_reuses_today_plan_as_tomorrow_permission():
     payload = _payload()
     _spike(payload)
     text = _text(payload, kind="evening")
-    assert "明日" in text and "次晨" in text
-    assert "允许训练" in text
+    assert "明日" not in text and "次晨" not in text
+    assert "允许训练" not in text
     assert "今天" not in text and "明天可以练" not in text
+    assert "累了就适当休息" in text
 
 
 def test_no_plan_means_no_permission_to_continue_training():
@@ -219,8 +233,8 @@ def test_no_plan_means_no_permission_to_continue_training():
     _spike(payload)
     payload["decision"]["action_plan"]["primary_session"] = None
     text = _text(payload)
-    assert "没有可沿用的训练安排" in text
-    assert "沿用今天" not in text
+    assert "累了就适当休息" in text
+    assert "沿用今天" not in text and "允许训练" not in text
 
 
 @pytest.mark.parametrize("mode", ["argument", "top_level", "metadata"])
@@ -238,9 +252,9 @@ def test_improving_load_event_is_not_presented_as_a_new_increase():
     payload = _payload()
     payload['events'].append({'type':'TRAINING_LOAD_SPIKE','lifecycle':'IMPROVING','deviation_percent':35,'duration_days':8})
     text = _text(payload)
-    assert '提示正在改善' in text
-    assert '近期训练负荷增加较快' not in text and '35%' not in text
-    assert '若无明显疲劳且热身正常' in text
+    assert len(reader_briefing_summary(payload)) == 1
+    assert '训练加量' not in text and '35%' not in text
+    assert '热身正常' not in text and '休息' not in text
 
 
 def test_event_lifetime_is_not_the_load_comparison_window():

@@ -14,7 +14,6 @@ from .report_formatting import number, payload_of
 
 _DIRECTION = {"above": "高于", "near": "接近", "below": "低于"}
 _SLEEP_DIRECTION = {"above": "多于", "near": "接近", "below": "少于"}
-_ACTION = {"TRAIN_HARD": "高负荷训练", "TRAIN_NORMAL": "正常训练", "TRAIN_LIGHT": "轻量训练"}
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -72,45 +71,22 @@ def _recovery_evidence(raw: dict[str, Any]) -> tuple[list[str], list[str]]:
 
 
 def _plan_summary(raw: dict[str, Any], kind: str, *, load_notice: str | None) -> str | None:
+    """Keep specific restrictions; ordinary days need no boilerplate advice."""
     decision = _mapping(raw.get("decision"))
     plan = _mapping(decision.get("action_plan"))
     primary = _mapping(plan.get("primary_session"))
     action = decision.get("action")
-    evening = kind == "evening"
-    prefix = (f"{load_notice}；" if "改善" in (load_notice or "") else f"{load_notice}，但不等于已经疲劳；") if load_notice else ""
-    ending = "，明日安排以次晨更新为准" if evening else ""
+    when = "今晚" if kind == "evening" else "今天"
     if plan.get("safety_status") == "LIMITED":
         stops = [str(item).split("。", 1)[0] for item in primary.get("stop_conditions") or [] if item]
-        limit = f"训练限制仍有效：{stops[0]}" if stops else "原有训练限制仍有效"
-        return prefix + limit + "；即使主观不累，也不解除限制或加练" + ending + "。"
+        return f"训练限制：{stops[0]}。" if stops else "先遵守现有训练限制，不要加练。"
     if action == "REST" or primary.get("session_type") == "REST":
-        when = "目前" if evening else "今天"
-        return prefix + f"{when}安排休息；即使主观不累，也先不加练" + ending + "。"
+        return f"{when}安排休息，先别加练。"
     if action == "RECOVERY" or primary.get("session_type") == "RECOVERY":
-        when = "目前" if evening else "今天"
-        return prefix + f"{when}只安排恢复活动；即使主观不累，也不升级训练或加量" + ending + "。"
-    if action not in _ACTION or not primary:
-        if load_notice:
-            return prefix + "目前没有可沿用的训练安排，不另加训练" + ending + "。"
-        return None
-    action_label = _ACTION[action]
-    if primary.get("intensity") == "low":
-        action_label = "轻量训练"
-    elif action == "TRAIN_HARD" and primary.get("intensity") == "moderate":
-        action_label = "正常训练"
-    if evening:
-        if load_notice:
-            return (
-                prefix + "明日若次晨计划允许训练，且不累、热身正常，可按晨报计划练、不额外加量；"
-                "明显疲劳或热身异常时，不勉强完成，仍遵守计划中的减量或停止要求。"
-            )
-        return "今晚照顾好睡眠，明日训练以次晨更新的安排为准。"
+        return f"{when}只安排恢复活动，不加练。"
     if load_notice:
-        return (
-            prefix + f"若无明显疲劳且热身正常，今天按计划{action_label}、不额外加量；"
-            "若明显疲劳或热身异常，不勉强完成，仍遵守计划中的减量或停止要求。"
-        )
-    return f"今天按计划{action_label}，原有训练限制不变。"
+        return f"{load_notice}，累了就适当休息。"
+    return None
 
 
 def reader_briefing_summary(
@@ -147,23 +123,22 @@ def reader_briefing_summary(
     elif score and status:
         lines.append(f"准备度 {score}/100，{status}。")
     events = [event for event in raw.get("events") or [] if isinstance(event, dict)]
-    load_event = next((event for event in events if event.get("type") == "TRAINING_LOAD_SPIKE" and event.get("lifecycle") != "RESOLVED"), None)
+    load_event = next((event for event in events if event.get("type") == "TRAINING_LOAD_SPIKE"
+                       and event.get("lifecycle") not in {"RESOLVED", "IMPROVING"}), None)
     load_notice = None
-    if load_event and load_event.get("lifecycle") == "IMPROVING":
-        load_notice = "前期训练加量提示正在改善"
-    elif load_event:
+    if load_event:
         comparisons = [item for item in raw.get("trends") or [] if isinstance(item, dict)
                        and item.get("metric") == "training_load" and item.get("status") == "AVAILABLE"
                        and item.get("window_days") == 7 and item.get("change_percent") is not None]
         comparison = next((item for item in comparisons if item.get("change_percent") == load_event.get("deviation_percent")), None)
         change = number(comparison.get("change_percent"), 0) if comparison else None
-        load_notice = (f"近 7 天训练负荷比前 7 天增加 {change}%" if change else "近期训练负荷增加较快")
+        load_notice = (f"近 7 天训练负荷比前 7 天增加 {change}%" if change else "最近加量比较快")
     elif (
         training.get("load_state") == "ELEVATED"
         or _mapping(raw.get("states")).get("training_load") == "ELEVATED"
         or "TRAINING_LOAD_ELEVATED" in (recovery.get("negative_signals") or [])
     ):
-        load_notice = "近期训练负荷高于个人参照"
+        load_notice = "最近练得比较多"
     history = _mapping(training.get("history_coverage"))
     if history.get("prior_7d_verified") is False:
         gaps.append("此前 7 天训练记录尚未查全，无法判断这段训练量是否完整")

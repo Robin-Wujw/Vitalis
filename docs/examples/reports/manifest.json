@@ -11,14 +11,14 @@
         "media_type": "text/markdown",
         "template": "markdown",
         "renderer_version": "6.0",
-        "content_sha256": "9c8a1c31cda95c5caa485952e3c2289328b2a8b0eb4aaa4f63065492624733ea"
+        "content_sha256": "22989fa37722ca7f863fe4d02a8968d615e21b9fbd9a1485fc1c2681af30c144"
       },
       "html": {
         "title": "Vitalis 晨报 · 今天安排：轻量训练",
         "media_type": "text/html",
         "template": "html",
         "renderer_version": "6.0",
-        "content_sha256": "bad975950c9827f92e4653b5413abf3eb03accde3ba09e93719a07bcde52c346"
+        "content_sha256": "75698a16674d88adc4dc9cdd990396753b4d173d5a40e9e3045fcdc9e9ed2592"
       }
     },
     "daily": {
@@ -43,14 +43,14 @@
         "media_type": "text/markdown",
         "template": "markdown",
         "renderer_version": "6.0",
-        "content_sha256": "e6086eaa480b45425f3ee5becd52ded664e9ed53d519af75a677696120d71799"
+        "content_sha256": "c742978d07b8fcf82eca5b302db638d2fa48bbc68ce4fa45e2c532aa2e1a3f20"
       },
       "html": {
         "title": "Vitalis 晚报 · 二头肌弯举总次数增加",
         "media_type": "text/html",
         "template": "html",
         "renderer_version": "6.0",
-        "content_sha256": "abcbeb392ad65ae761102a5b2e19e7703be3fb2ab4a1d815635c3b4d3589b859"
+        "content_sha256": "34e49d44a975829a7ef1364ab1ebb20a721ca62425193dc9cb36ce0acc74583f"
       }
     },
     "weekly": {

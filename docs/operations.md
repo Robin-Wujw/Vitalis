@@ -127,6 +127,8 @@ API 只在本机监听，电脑和手机通过 ZeroTier 私有网络访问：`de
 
 解析器修正后：`vitalis replay source-journal --source-user U --target-user R --start A --end B --as-of T --allow-production` 用新解析器把加密原始响应回放进独立用户 R；`vitalis replay diff --source-user U --replay-user R --start A --end B` 逐表列出新增、删除和变化的事实；确认后 `vitalis replay apply … --confirm` 用回放结果替换 U 在该窗口（最多 14 天）的事实，被替换的行压缩保存在 `replay_applications`，`vitalis replay undo --application ID --confirm` 恢复。apply 和 undo 都会重算日级特征并排对应日期的重新分析。原始响应随数据库保存、不另设期限；回放用户和 `replay_applications` 在确认无误后按[部署](deployment.md)清理旧数据的方式删除，不长期保留。
 
+本次设备来源更正使用独立的离线维护入口 `python -m vitalis.zepp_source_refresh --user U --start A --end B --as-of T --timezone Asia/Shanghai`；默认只读预览，确认后在暂停输入写入者的窗口加 `--apply`。范围最多180个本地日，每批最多14日独立事务，只重解析白名单内的健康来源，保留训练和用户输入；整个链路抑制通知。只有原始 journal 或已保存来源字段提供证明、且时间/值/单位精确匹配时，才移除被更正的旧身份；缺乏依据的旧行保留并计入 `retained_ambiguous_legacy`，不据此声称所有历史图表归属已清理。报告仍只采用已核实的 App 结果；不要用旧通用 `replay apply` 替代这一步。
+
 每次写入心跳都会喂 systemd 看门狗（unit 设 `WatchdogSec=600`）：进程 10 分钟没有心跳（例如超过 `MemoryHigh` 后被内核节流到停住）会被中止并按 `Restart=on-failure` 重启，中止时 faulthandler 把所有线程的 Python 调用栈打进 journal；未完成的分析在租约过期后重跑。worker 漏掉 23:00 晚报定时任务时（冻结或在调度时刻之后才启动），启动时和之后每 5 分钟检查一次：配置了 PushPlus 投递且目标日期还没有晚报定时同步或投递记录时，为投递对象补建一次同步。跨午夜后仍按前一天的日期同步、分析和投递，在次日 00:30 的投递截止时刻停止；已延期的晚报也按同一窗口恢复。
 
 ## 发布入口

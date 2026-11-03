@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from .public_reports import PublicReportView, report_presentation, to_public_report_view
 from .report_formatting import minutes_text, number, payload_of, timestamp_text
 
-RENDERER_VERSION = "5.0"
+RENDERER_VERSION = "6.0"
 ReportTarget = Literal["markdown", "html"]
 _MEDIA_TYPES = {"markdown": "text/markdown", "html": "text/html"}
 _LABELS = {"morning": "晨报", "daily": "日报", "evening": "晚报", "weekly": "周报", "monthly": "月报"}
@@ -306,6 +306,17 @@ def _workout_units(workout: dict[str, Any], zone: str, *, facts_only: bool) -> l
     return units
 
 
+def _microchart_payload(chart, cutoff: str | None) -> dict:
+    """Clip display geometry to the already-recorded report cutoff only."""
+    from datetime import datetime
+    result = chart.model_dump(mode="json")
+    if chart.key == "stress" and cutoff:
+        end = min(chart.period_end, datetime.fromisoformat(cutoff.replace("Z", "+00:00")))
+        if end > chart.period_start:
+            result["period_end"] = end.isoformat()
+    return result
+
+
 def _shown_section(section: dict[str, Any], kind: str) -> bool:
     key = section.get("key")
     return key not in _AUDIT_SECTIONS and bool(section.get("display") or key in _PERIOD_SECTIONS.get(kind, set()))
@@ -322,10 +333,16 @@ def _report_sections(view: dict[str, Any], presentation: dict[str, Any]) -> tupl
         label = quality.get("status_label") or _QUALITY_LABELS.get(quality["status"], "资格未确认")
         notices.append(f"数据质量：{label}")
     suggestions = [("paragraph", str(item)) for item in view.get("suggestions") or []]
+    from .chart_contracts import Chart
+    from .charts import select_report_charts
+    chart_values = [Chart.model_validate(item) for item in presentation.get("charts") or []]
+    compact_charts = {chart.key: chart for chart in select_report_charts(chart_values, kind)}
+    inserted_charts = set()
     sections = []
     if notices:
-        variant = "alert" if view.get("summary") or view.get("alerts") else "status"
-        sections.append(_Section([("block_start", variant)],
+        variant = "brief" if kind in {"morning", "evening"} and not facts_only else "alert" if view.get("summary") or view.get("alerts") else "status"
+        heading = [("h2", "今天怎么安排" if kind == "morning" else "今晚与明天")] if variant == "brief" else []
+        sections.append(_Section([("block_start", variant), *heading],
                                  [(_UNIT_RANKS["finding"], [("paragraph", line)]) for line in notices],
                                  [("block_end", "")]))
     records = _record_units(presentation.get("metrics") or [], facts_only=facts_only)
@@ -351,22 +368,24 @@ def _report_sections(view: dict[str, Any], presentation: dict[str, Any]) -> tupl
                 if text is not None and text not in shown:
                     shown.add(text)
                     values.append(text)
-        units = [(_UNIT_RANKS["fact"], [item]) for item in _fact_items(lines["facts"])]
+        if kind == "morning" and section.get("key") == "display_sleep_reader":
+            units = [(_UNIT_RANKS["fact"], [("sleep_stats", lines["facts"])])]
+        else:
+            units = [(_UNIT_RANKS["fact"], [item]) for item in _fact_items(lines["facts"])]
+        chart_key = "sleep" if kind == "morning" and section.get("key") == "display_sleep_reader" else "stress" if kind == "evening" and section.get("key") == "display_signals" else None
+        if chart_key in compact_charts:
+            units.insert(0, (_UNIT_RANKS["fact"], [("microchart", _microchart_payload(compact_charts[chart_key], view.get("as_of")))]))
+            inserted_charts.add(chart_key)
         units += [(_UNIT_RANKS["finding"], [("paragraph", text)]) for text in lines["interpretation"]]
         units += [(_UNIT_RANKS["limitation"], [("note", text)]) for text in lines["limitations"]]
         if units:
             sections.append(_block(str(section.get("title") or "记录"), units))
     if kind != "morning" and suggestions:
         sections.append(_block(_NEXT_HEADINGS[kind], [], suggestions, variant="plan"))
-    from .chart_contracts import Chart
-    from .charts import select_report_charts
-    charts = [Chart.model_validate(item) for item in presentation.get("charts") or []]
-    if facts_only:
-        charts = [chart for chart in charts if chart.kind != "body_map"]
-    selected_charts = select_report_charts(charts, kind)
-    if selected_charts:
-        sections.append(_block("记录曲线", [(_UNIT_RANKS["fact"], [("chart", chart.model_dump(mode="json"))])
-                                           for chart in selected_charts]))
+    for key, chart in compact_charts.items():
+        if key not in inserted_charts:
+            sections.append(_block("昨夜睡眠" if key == "sleep" else "压力记录", [
+                (_UNIT_RANKS["fact"], [("microchart", _microchart_payload(chart, view.get("as_of")))])]))
     return [], sections
 
 
@@ -522,6 +541,10 @@ def _markdown_line(kind: str, payload: Any) -> str | None:
         return "\n\n".join([f"**{_markdown(payload['heading'])}**", *(_markdown(note) for note in payload["notes"])])
     if kind == "zones":
         return "\n\n".join(_markdown(text) for _, _, text in payload)
+    if kind == "sleep_stats":
+        return "\n\n".join(_markdown(text) for text in payload)
+    if kind == "microchart":
+        return None  # The adjoining saved facts remain readable in Markdown.
     if kind == "chart":
         summary = payload.get("summary") or payload.get("notes") or []
         return "\n\n".join([f"**{_markdown(payload['title'])}**", *[_markdown(line) for line in summary[:2]],
@@ -574,11 +597,12 @@ _ZONE_COLORS = {"放松": "#86b6ef", "正常": "#5598e7", "中等压力": "#256a
 _CARD_STYLES = {
     "": f"margin:12px 0 0;padding:14px 16px;background:{_CARD};border:1px solid {_RULE};border-radius:12px",
     "plan": "margin:12px 0 0;padding:14px 16px;background:#e2f1ee;border-radius:12px",
+    "brief": "margin:12px 0 0;padding:13px 16px;background:#fff;border:1px solid #dde6e9;border-left:3px solid #77969c;border-radius:10px",
     "alert": "margin:12px 0 0;padding:10px 16px;background:#fff6e5;border:1px solid #f1dfb6;border-radius:12px",
     "status": f"margin:12px 0 0;padding:10px 16px;background:{_CARD};border:1px solid {_RULE};border-radius:12px",
     "bare": "margin:16px 0 0",
 }
-_ROW = re.compile(r"^(?P<label>[^：；:;。]{1,24}?)\s+(?P<value>[-+]?\d[\d,.:/]*\s?[%A-Za-z/一-鿿]{0,6})。?$")
+_ROW = re.compile(r"^(?P<label>[^：；:;。]{1,24}?)\s+(?P<value>(?:\d+\s*小时\s*\d+\s*分钟)|(?:[-+]?\d[\d,.:/]*\s?[%A-Za-z/一-鿿]{0,6}))。?$")
 
 
 def _html_record(record: dict[str, Any]) -> str:
@@ -614,6 +638,19 @@ def _html_row(text: str) -> str:
             f'{_html_text(match["value"])}</span></p>')
 
 
+def _html_sleep_stats(lines: list[str]) -> str:
+    stages, rest = [], []
+    for text in lines:
+        match = _ROW.match(_plain(text))
+        if match and match['label'] in {'深睡', '浅睡', 'REM', '清醒'}:
+            stages.append(f'<div style="flex:1 1 110px;padding:8px 10px;box-sizing:border-box;background:#f4f6f8;border-radius:8px">'
+                          f'<p style="margin:0;font-size:11px;color:{_SUB}">{_html_text(match["label"])}</p>'
+                          f'<p style="margin:3px 0 0;font-size:14px;font-weight:600;color:{_INK};white-space:nowrap">{_html_text(match["value"])}</p></div>')
+        else:
+            rest.append(_html_row(text))
+    return '<div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0">' + ''.join(stages) + '</div>' + ''.join(rest)
+
+
 def _html_zones(zones: list[tuple[str, float, str]]) -> str:
     total = sum(share for _, share, _ in zones) or 1.0
     present = [(name, share) for name, share, _ in zones if share > 0]
@@ -647,6 +684,14 @@ def _html_line(kind: str, payload: Any) -> str:
         return _html_record(payload)
     if kind == "row":
         return _html_row(payload)
+    if kind == "sleep_stats":
+        return _html_sleep_stats(payload)
+    if kind == "microchart":
+        from .report_microcharts import render_report_microchart
+        try:
+            return render_report_microchart(payload)
+        except ValueError:
+            return f'<p style="margin:8px 0;font-size:12px;color:{_MUTED}">图暂未展开：来源或分期存在歧义，以下文字记录仍保留。</p>'
     if kind == "zones":
         return _html_zones(payload)
     if kind == "chart":

@@ -42,6 +42,8 @@ class EveningBriefingEngine:
         presentation_payload = dict(payload)
         presentation_payload["report_context"] = context
         presentation = daily_presentation(presentation_payload, facts_only=facts_only)
+        from .report_summary import reader_briefing_summary
+        presentation["alerts"] = reader_briefing_summary(presentation_payload, kind="evening", facts_only=facts_only)
         if presentation.get("suggestions") and not facts_only and not metadata.get("retrospective"):
             presentation["suggestions"].append("明日安排暂定；以明早结合补齐的训练和昨夜恢复后的晨报为准。")
         summary = []

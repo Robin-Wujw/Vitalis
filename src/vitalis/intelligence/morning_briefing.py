@@ -53,6 +53,9 @@ class MorningBriefingEngine:
         presentation_payload = dict(payload)
         presentation_payload["report_context"] = report_context
         presentation = daily_presentation(presentation_payload, morning=True)
+        from .report_summary import reader_briefing_summary
+        presentation["alerts"] = reader_briefing_summary(presentation_payload, kind="morning")
+        presentation["findings"] = []
         observations = [fact for section in sections for fact in section["facts"]]
         reasons = self._reasons(payload)
         cautions = self._cautions(payload, delivery_metadata or {})
@@ -69,7 +72,7 @@ class MorningBriefingEngine:
             "report_context": report_context,
             **presentation,
             "summary": [],
-            "sections": internal_sections(sections) + daily_coaching_sections(presentation_payload),
+            "sections": [self._sleep_reading_section(payload)] + internal_sections(sections) + daily_coaching_sections(presentation_payload),
             "observations": [{"text": item} for item in observations],
             "key_reasons": [{"text": item} for item in reasons],
             "cautions": cautions,
@@ -92,7 +95,7 @@ class MorningBriefingEngine:
              "interpretation": [], "limitations": []},
             *self._observed_sections(payload),
         ]
-        sections = internal_sections(sections)
+        sections = [self._sleep_reading_section(payload)] + internal_sections(sections)
         for section in sections:
             if section["key"] in {"yesterday_activity", "observed_training", "today_activity"}:
                 section["display"] = True
@@ -351,6 +354,23 @@ class MorningBriefingEngine:
              "interpretation": self._plan_interpretation(payload),
              "limitations": self._plan_limitations(payload)},
         ]
+
+    @staticmethod
+    def _sleep_reading_section(payload: dict[str, Any]) -> dict[str, Any]:
+        """Compact stage facts; total and clock times already appear in the tile."""
+        sleep = (payload.get("features") or {}).get("sleep") or {}
+        facts = []
+        for key, label in (("deep_minutes", "深睡"), ("light_minutes", "浅睡"),
+                           ("rem_minutes", "REM"), ("awake_minutes", "清醒")):
+            value = minutes_text(sleep.get(key))
+            if value is not None:
+                facts.append(f"{label} {value}")
+        if sleep.get("wake_count") is not None:
+            facts.append(f"夜间醒来 {sleep['wake_count']} 次")
+        if sleep.get("vendor_sleep_score") is not None:
+            facts.append(f"Zepp 睡眠评分 {number(sleep['vendor_sleep_score'], 0)}/100")
+        return {"key": "display_sleep_reader", "title": "昨夜睡眠", "facts": facts,
+                "interpretation": [], "limitations": [], "display": bool(facts)}
 
     def _sleep_facts(self, sleep: dict[str, Any]) -> list[str]:
         facts = []

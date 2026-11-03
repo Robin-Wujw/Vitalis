@@ -155,7 +155,7 @@ def test_morning_briefing_projects_persisted_daily_snapshot(client):
     assert briefing["as_of"] or briefing["report_context"].get("as_of")
     for field in ("metrics", "findings", "training", "suggestions", "alerts"):
         assert isinstance(briefing[field], list)
-    assert all(section.get("display", False) == section["key"].startswith("display_coaching_") for section in briefing["sections"])
+    assert all(section.get("display", False) == (section["key"].startswith("display_coaching_") or (section["key"] == "display_sleep_reader" and bool(section['facts']))) for section in briefing["sections"])
     assert len(briefing["sections"]) >= 3
     assert "feedback_prompt" not in briefing
     assert client.get(

@@ -1,6 +1,7 @@
 """Cross-channel report content is qualified data, not an HTML/Markdown snapshot."""
 import hashlib
 import json
+import re
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -90,6 +91,17 @@ def test_markdown_and_html_keep_values_units_cutoff_and_ordered_sets():
     for report in (md, html):
         assert report.content_sha256 == hashlib.sha256(report.content.encode("utf-8")).hexdigest()
         assert report.as_dict()["content"] == report.content
+
+
+def test_briefing_duration_stays_one_value_instead_of_becoming_label_text():
+    report = _briefing(sections=[{"key":"sleep_reader","title":"昨晚睡眠","display":True,
+        "facts":["睡眠时长 7 小时 15 分钟", "设备记录深睡 1 小时 1 分钟", "入睡 01:13:00"]}])
+    html = render_report(report, "html").content
+    assert re.search(r'>睡眠时长</span>\s*<span[^>]*>7 小时 15 分钟</span>', html)
+    assert re.search(r'>设备记录深睡</span>\s*<span[^>]*>1 小时 1 分钟</span>', html)
+    assert '>睡眠时长 7 小时</span>' not in html
+    markdown = render_report(report, "markdown").content
+    assert '睡眠时长 7 小时 15 分钟' in markdown
 
 
 def test_missing_optional_hrv_and_no_training_do_not_create_empty_sections():

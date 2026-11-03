@@ -32,6 +32,24 @@ def test_evening_chart_survives_projection_and_inline_html_contract():
     validate_report_content(html,"html")
 
 
+def test_only_morning_sleep_and_evening_stress_use_saved_account_routes():
+    from vitalis.intelligence.charts import select_report_charts
+    from vitalis.intelligence.chart_contracts import ChartRoute,ChartInterval
+    sleep=chart().model_copy(update={'key':'sleep','kind':'stages','unit':'stage','series':[], 'preview_series':[],
+        'intervals':[ChartInterval(start=datetime(2026,9,5,0,tzinfo=timezone.utc),end=datetime(2026,9,5,1,tzinfo=timezone.utc),category='light',label='主睡眠',source='zepp',source_scope='user_fused',route_id='zepp:account')],
+        'routes':[ChartRoute(id='zepp:account',kind='account',label='Zepp App',source='zepp',state='available')]})
+    stress=chart().model_copy(update={'key':'stress','kind':'scatter',
+        'series':[chart().series[0].model_copy(update={'source_scope':'user_summary','route_id':'zepp:account'})],
+        'preview_series':[], 'routes':sleep.routes})
+    assert [c.key for c in select_report_charts([sleep,stress,chart()], 'morning')]==['sleep']
+    assert [c.key for c in select_report_charts([sleep,stress,chart()], 'evening')]==['stress']
+    assert all(c.selected_route=='zepp:account' for c in select_report_charts([sleep,stress],'morning'))
+    for kind in ('daily','weekly','monthly'):
+        assert select_report_charts([sleep,stress,chart()],kind)==[]
+    no_account=stress.model_copy(update={'routes':[],'series':[chart().series[0]]})
+    assert select_report_charts([no_account],'evening')==[]
+
+
 def test_saved_report_chart_html_api(client, monkeypatch):
     from vitalis.entrypoints.api.routes import charts
     report = EveningBriefingEngine().build({**synthetic_daily_fixture(),"charts":[chart().model_dump(mode="json")]})

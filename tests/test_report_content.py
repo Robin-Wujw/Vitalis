@@ -355,7 +355,7 @@ def test_four_report_scenarios_have_full_sections(scenario):
     evening = EveningBriefingEngine().build(daily)
     weekly = WeeklyBriefingEngine().build(synthetic_period_fixture("weekly", scenario))
     monthly = MonthlyBriefingEngine().build(synthetic_period_fixture("monthly", scenario))
-    expected_morning = ["sleep", "recovery"] + ([] if scenario == "missing" else ["today_activity"]) + ["today_plan"]
+    expected_morning = ["display_sleep_reader", "sleep", "recovery"] + ([] if scenario == "missing" else ["today_activity"]) + ["today_plan"]
     if scenario != "missing":
         expected_morning += ["display_coaching_primary_session", "display_coaching_optional_session"]
     assert [item["key"] for item in morning["sections"]] == expected_morning
@@ -370,7 +370,7 @@ def test_four_report_scenarios_have_full_sections(scenario):
     assert (monthly.period_end - monthly.period_start).days == 27
     # Keep internal section shape as an audit, but assert user-visible output
     # only through the canonical renderer.
-    assert all(item.get("display", False) == item["key"].startswith("display_coaching_") for item in morning["sections"])
+    assert all(item.get("display", False) == (item["key"].startswith("display_coaching_") or (item["key"] == "display_sleep_reader" and bool(item["facts"]))) for item in morning["sections"])
     assert all(not section.display for report in (weekly, monthly) for section in report.sections)
     for report in (morning, evening, weekly, monthly):
         payload = report if isinstance(report, dict) else report.model_dump(mode="json")
@@ -443,7 +443,7 @@ def test_heterogeneous_fixture_does_not_make_invalid_cross_source_comparison():
 def test_morning_preserves_recovery_disagreement_and_does_not_judge_single_value():
     result = MorningBriefingEngine().build_payload(synthetic_daily_fixture("heterogeneous"))
     text = render_report(result, target="markdown").content
-    assert "存在来源分歧" in text
+    assert "来源方向冲突" in text
     # Conflicting HRV is optional for the display and must not become a single value.
     assert "71 毫秒" not in text
     assert "绝对" not in text

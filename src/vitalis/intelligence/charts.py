@@ -534,9 +534,16 @@ def build_chart_bundle(raw: RawDailyProfile, start: date, end: date, *, period: 
 
 
 def select_report_charts(charts: list[Chart], kind: str) -> list[Chart]:
-    """Small, period-specific selection for push; complete charts stay in API."""
-    # Charts remain available through the saved-report API and detail page.
-    # Until visual/channel acceptance, none is inserted into reading reports.
-    priorities: dict[str, tuple[str, ...]] = {}
-    by_key = {c.key: c for c in charts}
-    return [by_key[key] for key in priorities.get(kind, ()) if key in by_key][:3]
+    """One compact App-result chart per push; query reports keep their policy."""
+    from .chart_routes import filter_chart
+    priorities = {"morning": ("sleep",), "evening": ("stress",)}
+    by_key = {chart.key: chart for chart in charts}
+    output = []
+    for key in priorities.get(kind, ()):
+        chart = by_key.get(key)
+        if chart is None:
+            continue
+        account = next((route for route in chart.routes if route.id == "zepp:account" and route.state == "available"), None)
+        if account is not None:
+            output.append(filter_chart(chart, account.id))
+    return output

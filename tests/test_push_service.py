@@ -49,12 +49,12 @@ def _daily_payload():
     plan = payload["decision"]["action_plan"]
     plan.update({
         "primary_session": {
-            "title": "轻松跑", "focus": "补足有氧频次并控制恢复成本", "intensity_label": "低强度",
+            "session_type": "RUNNING", "title": "轻松跑", "focus": "补足有氧频次并控制恢复成本", "intensity_label": "低强度",
             "total_duration_minutes": [30, 45], "steps": [{"order": 1, "name": "热身", "duration_minutes": [6, 8], "intensity": "轻松", "instructions": ["先快走，再逐渐过渡到慢跑"]}],
             "personalization_reasons": ["近 7 天完成跑步 2 次，今天优先维持跑步频次。"],
             "stop_conditions": ["出现疼痛时停止。"],
         },
-        "optional_session": {"title": "拉类力量训练", "focus": "背部和肱二头肌", "intensity_label": "中等强度", "total_duration_minutes": [40, 60], "steps": [], "stop_conditions": ["动作失控时停止。"]},
+        "optional_session": {"session_type": "STRENGTH", "title": "拉类力量训练", "focus": "背部和肱二头肌", "intensity_label": "中等强度", "total_duration_minutes": [40, 60], "steps": [], "stop_conditions": ["动作失控时停止。"]},
         "session_relationship": "ADDITION",
         "safety_status": "CLEAR",
     })
@@ -91,7 +91,7 @@ def test_morning_push_uses_complete_report_fields_and_no_automatic_questionnaire
     assert isinstance(message.extras["training"], list)
     assert message.extras["suggestions"]
     assert isinstance(message.extras["alerts"], list)
-    assert all(section["display"] is False for section in message.extras["sections"])
+    assert all(section["display"] == section['key'].startswith('display_') for section in message.extras["sections"])
 
 
 def test_morning_digest_prioritizes_measured_facts_and_keeps_detail_structured():
@@ -145,12 +145,13 @@ def test_morning_displays_sync_limitation_and_recovery_disagreement():
     message = _sent(lambda service: service.push_daily_profile("test-user", payload, period="morning"))
     text = _visible_text(message.body)
     assert "本次同步未完整完成" not in text
-    assert text.count("HRV 记录存在来源分歧") == 1
+    assert text.count("HRV 来源方向冲突") == 1
     assert any(item.startswith("HRV 证据存在分歧") for item in message.extras["cautions"])
-    assert "HRV 记录存在来源分歧，分别保留，不合并比较。" in message.extras["findings"]
+    assert message.extras["findings"] == []
+    assert any("HRV 来源方向冲突" in line for line in message.extras["alerts"])
     assert any(
         "不同记录不能直接混成一个值比较" in item
-        for item in message.extras["sections"][1]["interpretation"]
+        for item in next(section for section in message.extras["sections"] if section['key']=='recovery')["interpretation"]
     )
     assert "Amazfit" not in text
 
@@ -233,7 +234,8 @@ def test_evening_push_uses_top_metrics_and_actual_training_facts():
     ]
     assert len(message.extras["training"]) == 2
     assert message.extras["suggestions"] == []
-    assert message.extras["alerts"] == []
+    assert message.extras["alerts"]
+    assert not any('数据完整' in line or '步数多' in line for line in message.extras["alerts"])
 
 
 def test_evening_stress_only_keeps_a_measured_reference_fact():
@@ -302,7 +304,7 @@ def test_html_report_escapes_user_controlled_values():
     assert '<img src="x"' not in message.body
     assert message.template == "html"
     assert message.extras["template"] == "html"
-    assert message.extras["renderer_version"] == "5.0"
+    assert message.extras["renderer_version"] == "6.0"
     assert message.extras["content_sha256"]
 
 
@@ -413,7 +415,7 @@ def test_reports_group_data_notes_without_repeating_summary_or_generic_limits():
         assert "必要限制" not in text
     assert "数据说明" not in _visible_text(morning.body)
     assert "睡眠分期有缺项" not in _visible_text(morning.body)
-    assert _visible_text(morning.body).count("出现疼痛时停止") == 0
+    assert _visible_text(morning.body).count("出现疼痛时停止") == 1
     evening_training = next(section for section in evening.extras["sections"] if section["key"] == "training")
     assert any(item.startswith("户外跑：") for item in evening_training["facts"])
     assert _visible_text(monthly.body).count("睡眠时长较前一期增加 5.7%") == 1
@@ -541,7 +543,7 @@ def test_four_complete_fixture_entrypoints_build_the_same_sections():
     evening = EveningBriefingEngine().build(daily)
     weekly = WeeklyBriefingEngine().build(synthetic_period_fixture("weekly"))
     monthly = MonthlyBriefingEngine().build(synthetic_period_fixture("monthly"))
-    assert [section["key"] for section in morning["sections"]] == ["sleep", "recovery", "today_activity", "today_plan"]
+    assert [section["key"] for section in morning["sections"]] == ["display_sleep_reader", "sleep", "recovery", "today_activity", "today_plan", "display_coaching_primary_session", "display_coaching_optional_session"]
     assert [section.key for section in evening.sections[:4]] == ["training", "activity", "intraday", "recovery"]
     assert all(not section.display for section in evening.sections[:4])
     assert all(section.display for section in evening.sections[4:])
@@ -931,6 +933,22 @@ def test_feedback_link_is_sent_with_final_body_digest(monkeypatch, template, per
     assert result["_pushplus_result"]["status"] == "accepted"
     assert result["_pushplus_result"]["provider_id"] == "synthetic-short-code"
     assert result["_pushplus_result"]["send_attempt_id"] == "synthetic-send-attempt"
+
+
+@pytest.mark.parametrize('period,key', [('morning','sleep'),('evening','stress')])
+def test_compact_account_chart_and_feedback_fit_actual_push_transport(monkeypatch, period, key):
+    from tests.test_report_microcharts import _sleep, _chart, _series, _interval
+    requests=[]
+    monkeypatch.setattr('vitalis.adapters.notifications.httpx.Client', _accepting_pushplus_client(requests))
+    daily=_daily_payload()
+    daily['report_context']['as_of']='2026-10-08T00:00:00+08:00'
+    daily['charts']=[_sleep(intervals=[_interval(-1+i/5,-1+(i+1)/5,('deep','light','rem','awake')[i%4]) for i in range(40)]) if key=='sleep' else _chart(series=[_series([(i/5,(i*17)%101) for i in range(109)])])]
+    service=PushService(pushplus_token='synthetic-token',template='html',feedback_url='https://example.invalid/api/feedback/synthetic')
+    result=service.push_daily_profile('synthetic-user',daily,period=period)
+    assert result['_pushplus_result']['status']=='accepted'
+    content=requests[0][1]['json']['content']
+    assert 'position:absolute' in content and '记录今天的感觉' in content
+    assert provider_text_length(content)<=PUSHPLUS_CONTENT_BUDGET
 
 
 @pytest.mark.parametrize("template", ["html", "markdown"])

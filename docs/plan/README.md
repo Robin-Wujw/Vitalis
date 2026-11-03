@@ -30,7 +30,7 @@ Vitalis 已有从 Zepp 取数、分析、保存报告，再通过 API、PushPlus
 | 优先级 | 要解决的问题 | 先做哪一步 |
 | --- | --- | --- |
 | P0 | [确认网页登录可靠，再删除旧插件入口](zepp-web-login.md) | 核对历史回填、晨晚报和连续两周使用记录；不能按原定日期直接删除。 |
-| P1 | [验证图表数据与报告接收效果](report-chart-validation.md) | 完成本地回归、真实设备字段对照与私下预览，尚未部署。 |
+| P1 | [验证图表数据与报告接收效果](report-chart-validation.md) | 数据来源已部署；晨晚报短总结与睡眠/压力微图改版先做私密预览，再验收接收效果。 |
 | P1 | [同步时别让数据库阻塞心跳](sync-write-transactions.md) | 先测出哪一步占用写锁，再缩短它。 |
 | P1 | [重启错过周报，也能补上并留下漏发记录](weekly-delivery-reliability.md) | 先确定允许补发到几点，再复现跨发送时刻重启。 |
 | P1 | [让月报摘要和正文使用同一套比较](monthly-comparison-consistency.md) | 确定每个指标采用哪个来源、怎么算变化。 |

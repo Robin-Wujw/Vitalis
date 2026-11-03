@@ -49,7 +49,7 @@ def test_facts_only_projection_is_a_strict_sleep_body_whitelist():
     assert "action_plan" not in briefing
     assert "primary_session" not in repr(briefing)
     assert marker not in repr(briefing)
-    assert [section["key"] for section in briefing["sections"]] == ["sleep", "recovery"]
+    assert [section["key"] for section in briefing["sections"]] == ["display_sleep_reader", "sleep", "recovery"]
     assert briefing["report_context"]["delivery_metadata"] == {
         "facts_only": True,
         "coverage_reason": "prior_7d_unverified",
@@ -331,7 +331,7 @@ def test_facts_only_renders_dated_activity_and_observed_training_without_a_plan(
     report = MorningBriefingEngine().build_payload(daily, {"facts_only": True})
     MorningBriefing.model_validate(report)
     keys = [section["key"] for section in report["sections"]]
-    assert keys == ["sleep", "recovery", "yesterday_activity", "observed_training", "today_activity"]
+    assert keys == ["display_sleep_reader", "sleep", "recovery", "yesterday_activity", "observed_training", "today_activity"]
     text = render_report(report, target="markdown").content
     internal = str(report)
     assert "步数 8,200 步" in text

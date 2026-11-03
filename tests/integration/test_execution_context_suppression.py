@@ -142,6 +142,7 @@ def test_sync_source_terminal_and_coverage_jobs_keep_context():
     from datetime import datetime, timezone
     from vitalis.adapters.zepp.fetcher import FetchWindow
     from vitalis.adapters.zepp.sync_coordinator import ZeppSyncCoordinator
+    from vitalis.adapters.persistence import database
 
     class Connector:
         def fetch_sport_history(self, sport, start, stop, need_sub_data):
@@ -156,7 +157,10 @@ def test_sync_source_terminal_and_coverage_jobs_keep_context():
             return {"data": {"trackid": workout_id, "source": source}}
 
     user = "context-sync"
-    coordinator = ZeppSyncCoordinator(connector=Connector(), wall_clock=lambda: datetime(2026, 10, 29, tzinfo=timezone.utc))
+    # A previous test may first import the coordinator while its own disposable
+    # SessionLocal is patched. Bind this test's restored DB explicitly.
+    coordinator = ZeppSyncCoordinator(connector=Connector(), session_factory=database.SessionLocal,
+                                      wall_clock=lambda: datetime(2026, 10, 29, tzinfo=timezone.utc))
     attempt = coordinator.create_attempt(user, window=FetchWindow.local_dates(DAY, DAY), options={"workout_only": True, "execution_context": CONTEXT})
     coordinator.run_attempt(attempt.id)
     with session_scope() as db:

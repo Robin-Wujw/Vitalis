@@ -80,6 +80,7 @@ class ReportBlock(BaseModel):
     baseline: float | dict[str, Any] | None = None
     deviation: float | dict[str, Any] | None = None
     workouts: list[dict[str, Any]] = Field(default_factory=list)
+    training_summary: dict[str, Any] | None = None
     limitations: list[str] = Field(default_factory=list)
 
 
@@ -866,6 +867,7 @@ def to_public_report_view(value: Any, kind: PublicKind | None = None) -> PublicR
             baseline=None if facts_only else first.get("baseline"), deviation=None if facts_only else first.get("deviation"),
             observed_at=first.get("observed_at"), as_of=_datetime(first.get("as_of")) or as_of,
             coverage=coverage, workouts=training_rows,
+            training_summary=deepcopy(presentation.get("training_summary")) if theme == "training" else None,
         ))
     state = context.get("report_state") or {}
     mode = context.get("source_mode") or "unknown"

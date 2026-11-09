@@ -11,6 +11,7 @@ from .activity import workout_calories_kcal, workout_distance_km
 from .baseline import BaselineEngine, daily_stream_values
 from .weekly_load import weekly_load_plan
 from .workout_effort import workout_rpe
+from .training_day_summary import training_day_summaries
 from .contracts import (
     Availability,
     BaselineStats,
@@ -1204,6 +1205,7 @@ class TrainingAnalyzer:
             ),
             running=running,
             strength=strength,
+            day_summaries=training_day_summaries(raw),
             training_status=training_status,
             weekly_load=weekly_load_plan(raw, raw.training_preferences),
             load_deviation=deviation,

@@ -635,7 +635,7 @@ def _workout_projection(item: dict[str, Any], *, facts: list[str] | None = None,
     workout_date = _date_value(item.get("date"))
     if workout_date is None:
         return None
-    return {"title": _workout_title(item), "date": workout_date, "started_at": item.get("started_at"), "duration_minutes": _number(item.get("duration_minutes")), "facts": unique(facts or []), "exercises": exercises or []}
+    return {"source": item.get("source"), "workout_id": item.get("workout_id"), "title": _workout_title(item), "date": workout_date, "started_at": item.get("started_at"), "duration_minutes": _number(item.get("duration_minutes")), "facts": unique(facts or []), "exercises": exercises or []}
 
 
 def _training_projection(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1108,6 +1108,7 @@ def daily_presentation(payload: Any, *, morning: bool = False, facts_only: bool 
         return {"headline": headline, "as_of": _as_of(raw), "metrics": metrics, "findings": [] if facts_only else _morning_findings(raw), "training": [], "suggestions": [] if facts_only else _daily_suggestions(raw), "alerts": _daily_alerts(raw, facts_only=facts_only)}
     findings, suggestions = ([], []) if facts_only else _strength_change_texts(raw)
     training = _training_projection(raw)
+    training_summary = next((item for item in (((raw.get("features") or {}).get("training") or {}).get("day_summaries") or []) if _same_day(item.get("date"), raw.get("date"))), None)
     if facts_only:
         for workout in training:
             for exercise in workout.get("exercises") or []:
@@ -1123,7 +1124,7 @@ def daily_presentation(payload: Any, *, morning: bool = False, facts_only: bool 
                 name = change.get("exercise_name") or change.get("exercise_id") or "力量训练"
                 headline = f"{name}总次数{'增加' if change['delta_total_repetitions'] > 0 else '减少'}"
                 break
-    return {"headline": headline, "as_of": _as_of(raw), "metrics": metrics, "findings": unique(findings + _recovery_conflict_finding(raw)), "training": training, "suggestions": suggestions, "alerts": _daily_alerts(raw, facts_only=False)}
+    return {"headline": headline, "as_of": _as_of(raw), "metrics": metrics, "findings": unique(findings + _recovery_conflict_finding(raw)), "training": training, "training_summary": training_summary, "suggestions": suggestions, "alerts": _daily_alerts(raw, facts_only=False)}
 
 
 def period_presentation(payload: Any, period: str) -> dict[str, Any]:

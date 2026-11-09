@@ -15504,6 +15504,63 @@ Each reachable component is rendered once; `$ref` values name the headings below
 }
 ```
 
+### #/components/schemas/RecordedTrainingTotal
+
+```json
+{
+  "properties": {
+    "sample_count": {
+      "minimum": 0.0,
+      "title": "Sample Count",
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "AVAILABLE",
+        "PARTIAL",
+        "UNKNOWN"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "total_count": {
+      "minimum": 1.0,
+      "title": "Total Count",
+      "type": "integer"
+    },
+    "unit": {
+      "enum": [
+        "min",
+        "km",
+        "sets"
+      ],
+      "title": "Unit",
+      "type": "string"
+    },
+    "value": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Value"
+    }
+  },
+  "required": [
+    "unit",
+    "sample_count",
+    "total_count",
+    "status"
+  ],
+  "title": "RecordedTrainingTotal",
+  "type": "object"
+}
+```
+
 ### #/components/schemas/RecoveryFeatures
 
 ```json
@@ -15923,6 +15980,18 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "title": "Title",
       "type": "string"
     },
+    "training_summary": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Training Summary"
+    },
     "unit": {
       "anyOf": [
         {
@@ -16101,6 +16170,16 @@ Each reachable component is rendered once; `$ref` values name the headings below
       },
       "title": "Training",
       "type": "array"
+    },
+    "training_summary": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/TrainingDaySummary"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "user_id": {
       "title": "User Id",
@@ -16501,6 +16580,17 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "title": "Facts",
       "type": "array"
     },
+    "source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Source"
+    },
     "started_at": {
       "anyOf": [
         {
@@ -16516,6 +16606,17 @@ Each reachable component is rendered once; `$ref` values name the headings below
     "title": {
       "title": "Title",
       "type": "string"
+    },
+    "workout_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Workout Id"
     }
   },
   "required": [
@@ -20656,6 +20757,72 @@ Each reachable component is rendered once; `$ref` values name the headings below
 }
 ```
 
+### #/components/schemas/TrainingDaySummary
+
+```json
+{
+  "properties": {
+    "as_of": {
+      "format": "date-time",
+      "title": "As Of",
+      "type": "string"
+    },
+    "coverage": {
+      "const": "recorded_sessions_only",
+      "default": "recorded_sessions_only",
+      "title": "Coverage",
+      "type": "string"
+    },
+    "date": {
+      "format": "date",
+      "title": "Date",
+      "type": "string"
+    },
+    "date_basis": {
+      "const": "activity_day",
+      "default": "activity_day",
+      "title": "Date Basis",
+      "type": "string"
+    },
+    "duration": {
+      "$ref": "#/components/schemas/RecordedTrainingTotal"
+    },
+    "groups": {
+      "items": {
+        "$ref": "#/components/schemas/TrainingGroupSummary"
+      },
+      "title": "Groups",
+      "type": "array"
+    },
+    "session_count": {
+      "minimum": 1.0,
+      "title": "Session Count",
+      "type": "integer"
+    },
+    "timezone": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Timezone"
+    }
+  },
+  "required": [
+    "date",
+    "as_of",
+    "session_count",
+    "duration",
+    "groups"
+  ],
+  "title": "TrainingDaySummary",
+  "type": "object"
+}
+```
+
 ### #/components/schemas/TrainingDecision
 
 ```json
@@ -21118,6 +21285,13 @@ Each reachable component is rendered once; `$ref` values name the headings below
       ],
       "title": "Aerobic Minutes 7D"
     },
+    "day_summaries": {
+      "items": {
+        "$ref": "#/components/schemas/TrainingDaySummary"
+      },
+      "title": "Day Summaries",
+      "type": "array"
+    },
     "days_since_last_strength": {
       "anyOf": [
         {
@@ -21348,6 +21522,67 @@ Each reachable component is rendered once; `$ref` values name the headings below
     "status"
   ],
   "title": "TrainingFeatures",
+  "type": "object"
+}
+```
+
+### #/components/schemas/TrainingGroupSummary
+
+```json
+{
+  "properties": {
+    "distance": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/RecordedTrainingTotal"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "duration": {
+      "$ref": "#/components/schemas/RecordedTrainingTotal"
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "records": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Records",
+      "type": "array"
+    },
+    "session_count": {
+      "minimum": 1.0,
+      "title": "Session Count",
+      "type": "integer"
+    },
+    "sets": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/RecordedTrainingTotal"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "kind",
+    "label",
+    "session_count",
+    "duration"
+  ],
+  "title": "TrainingGroupSummary",
   "type": "object"
 }
 ```

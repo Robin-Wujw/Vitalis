@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from .public_reports import PublicReportView, report_presentation, to_public_report_view
 from .report_formatting import minutes_text, number, payload_of, timestamp_text
 
-RENDERER_VERSION = "6.0"
+RENDERER_VERSION = "7.0"
 ReportTarget = Literal["markdown", "html"]
 _MEDIA_TYPES = {"markdown": "text/markdown", "html": "text/html"}
 _LABELS = {"morning": "晨报", "daily": "日报", "evening": "晚报", "weekly": "周报", "monthly": "月报"}
@@ -306,6 +306,40 @@ def _workout_units(workout: dict[str, Any], zone: str, *, facts_only: bool) -> l
     return units
 
 
+def _training_overview_units(workouts: list[dict], summary: dict | None, zone: str, *, facts_only: bool) -> list[tuple[int, list[Item]]]:
+    """Lay out saved totals and original segments without recalculating facts."""
+    lines = []
+    if summary:
+        duration = summary.get("duration") or {}
+        total = f"已记录 {summary['session_count']} 段训练"
+        if duration.get("value") is not None:
+            total += f"，合计 {_value(duration['value'], 'min')}"
+        else:
+            total += "，总时长记录不完整"
+        lines.append(total + "（各段时长相加，不含段间间隔）")
+        for group in summary.get("groups") or []:
+            parts = [f"{group['label']} {group['session_count']} 段"]
+            for field, label in (("duration", "时长"), ("distance", "距离"), ("sets", "设备记录")):
+                metric = group.get(field)
+                if not metric:
+                    continue
+                if metric.get("value") is not None:
+                    shown = _value(metric['value'], metric['unit'], 2 if field == "distance" else 0)
+                    parts.append((label + " " if field == "sets" else "") + shown)
+                else:
+                    parts.append(f"{label}不完整（{metric['sample_count']}/{metric['total_count']} 段有记录）")
+            lines.append(" · ".join(parts))
+    units = [(_UNIT_RANKS["finding"], [("row", line) for line in lines])] if lines else []
+    if all(workout.get("started_at") for workout in workouts):
+        workouts = sorted(workouts, key=lambda workout: str(workout["started_at"]))
+    for index, workout in enumerate(workouts, 1):
+        details = _workout_units(workout, zone, facts_only=facts_only)
+        rank, items = details[0]
+        details[0] = (rank, [("strong", f"第 {index} 段 · {workout.get('title') or '训练'}"), *items])
+        units.extend(details)
+    return units
+
+
 def _microchart_payload(chart, cutoff: str | None) -> dict:
     """Clip display geometry to the already-recorded report cutoff only."""
     from datetime import datetime
@@ -354,8 +388,12 @@ def _report_sections(view: dict[str, Any], presentation: dict[str, Any]) -> tupl
     findings = [] if facts_only else list(dict.fromkeys(str(item) for item in presentation.get("findings") or []))
     if findings:
         sections.append(_block(_FINDING_HEADINGS[kind], [(_UNIT_RANKS["finding"], [("paragraph", item)]) for item in findings]))
-    for workout in presentation.get("training") or []:
-        sections.append(_block(str(workout.get("title") or "训练记录"), _workout_units(workout, zone, facts_only=facts_only)))
+    workouts = presentation.get("training") or []
+    if kind in {"daily", "evening"} and len(workouts) > 1:
+        sections.append(_block("今日训练总览", _training_overview_units(workouts, presentation.get("training_summary"), zone, facts_only=facts_only)))
+    else:
+        for workout in workouts:
+            sections.append(_block(str(workout.get("title") or "训练记录"), _workout_units(workout, zone, facts_only=facts_only)))
     shown = set(findings)
     for section in presentation.get("sections") or []:
         if not _shown_section(section, kind):

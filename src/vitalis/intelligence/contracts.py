@@ -1235,6 +1235,35 @@ class WeeklyLoadPlan(BaseModel):
     reason: str
 
 
+class RecordedTrainingTotal(BaseModel):
+    value: float | None = Field(default=None, ge=0)
+    unit: Literal["min", "km", "sets"]
+    sample_count: int = Field(ge=0)
+    total_count: int = Field(ge=1)
+    status: Literal["AVAILABLE", "PARTIAL", "UNKNOWN"]
+
+
+class TrainingGroupSummary(BaseModel):
+    kind: str
+    label: str
+    session_count: int = Field(ge=1)
+    duration: RecordedTrainingTotal
+    distance: RecordedTrainingTotal | None = None
+    sets: RecordedTrainingTotal | None = None
+    records: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class TrainingDaySummary(BaseModel):
+    date: DateValue
+    date_basis: Literal["activity_day"] = "activity_day"
+    timezone: str | None = None
+    as_of: datetime
+    coverage: Literal["recorded_sessions_only"] = "recorded_sessions_only"
+    session_count: int = Field(ge=1)
+    duration: RecordedTrainingTotal
+    groups: list[TrainingGroupSummary]
+
+
 class TrainingFeatures(BaseModel):
     status: Availability
     status_label: str = ""
@@ -1254,6 +1283,7 @@ class TrainingFeatures(BaseModel):
     workout_type_labels_7d: dict[str, str] = Field(default_factory=dict)
     sport_mode_counts_7d: dict[str, int] = Field(default_factory=dict)
     recent_workouts: list[WorkoutFeature] = Field(default_factory=list)
+    day_summaries: list[TrainingDaySummary] = Field(default_factory=list)
     running: RunningAnalysis | None = None
     strength: StrengthAnalysis | None = None
     training_status: TrainingStatusFeatures | None = None
@@ -1964,6 +1994,8 @@ class ReportExercise(BaseModel):
 
 
 class ReportWorkout(BaseModel):
+    source: str | None = None
+    workout_id: str | None = None
     title: str
     date: DateValue
     started_at: datetime | None = None
@@ -1997,6 +2029,7 @@ class ReportBriefing(BaseModel):
     metrics: list[ReportMetric] = Field(default_factory=list)
     findings: list[str] = Field(default_factory=list)
     training: list[ReportWorkout] = Field(default_factory=list)
+    training_summary: TrainingDaySummary | None = None
     suggestions: list[str] = Field(default_factory=list)
     alerts: list[str] = Field(default_factory=list)
     summary: list[str] = Field(default_factory=list)

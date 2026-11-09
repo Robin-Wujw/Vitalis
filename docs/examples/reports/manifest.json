@@ -10,15 +10,15 @@
         "title": "Vitalis 晨报 · 今天安排：轻量训练",
         "media_type": "text/markdown",
         "template": "markdown",
-        "renderer_version": "6.0",
-        "content_sha256": "22989fa37722ca7f863fe4d02a8968d615e21b9fbd9a1485fc1c2681af30c144"
+        "renderer_version": "7.0",
+        "content_sha256": "f836c443e750ad3f1378c5b2316c3c855b7a878da3652655afb3406387075578"
       },
       "html": {
         "title": "Vitalis 晨报 · 今天安排：轻量训练",
         "media_type": "text/html",
         "template": "html",
-        "renderer_version": "6.0",
-        "content_sha256": "75698a16674d88adc4dc9cdd990396753b4d173d5a40e9e3045fcdc9e9ed2592"
+        "renderer_version": "7.0",
+        "content_sha256": "f403a9682ad1e1191cae393d9336462ac5f62cbb4a14b81799219731c7165674"
       }
     },
     "daily": {
@@ -26,15 +26,15 @@
         "title": "Vitalis 日报 · 当日已同步记录",
         "media_type": "text/markdown",
         "template": "markdown",
-        "renderer_version": "6.0",
-        "content_sha256": "2ee5d680e7602cf14f31f6ef0ca3cf9b1a78f6ffb12846767b2f94ef0d89abb5"
+        "renderer_version": "7.0",
+        "content_sha256": "92765bf1512e45ae530a50af0622f7758fc2f26d67b6db305b7f25795a2998f3"
       },
       "html": {
         "title": "Vitalis 日报 · 当日已同步记录",
         "media_type": "text/html",
         "template": "html",
-        "renderer_version": "6.0",
-        "content_sha256": "f213328662d1a3261c57d40a3435650b53037626569e21057958eb3542ba70eb"
+        "renderer_version": "7.0",
+        "content_sha256": "71e3011115bded64c8944243abe7af5d0f5d12ad774ddab16ae1f12d02df7be7"
       }
     },
     "evening": {
@@ -42,15 +42,15 @@
         "title": "Vitalis 晚报 · 二头肌弯举总次数增加",
         "media_type": "text/markdown",
         "template": "markdown",
-        "renderer_version": "6.0",
-        "content_sha256": "c742978d07b8fcf82eca5b302db638d2fa48bbc68ce4fa45e2c532aa2e1a3f20"
+        "renderer_version": "7.0",
+        "content_sha256": "c512e85d5300cee806a77979342be0b04fc922f547e2f12ce0c8a9a144df0e36"
       },
       "html": {
         "title": "Vitalis 晚报 · 二头肌弯举总次数增加",
         "media_type": "text/html",
         "template": "html",
-        "renderer_version": "6.0",
-        "content_sha256": "34e49d44a975829a7ef1364ab1ebb20a721ca62425193dc9cb36ce0acc74583f"
+        "renderer_version": "7.0",
+        "content_sha256": "5f4e37a6cd5145b4f96aa26b94e83848fbc45f7c619e2d310986b919ec38b890"
       }
     },
     "weekly": {
@@ -58,14 +58,14 @@
         "title": "Vitalis 周报 · 本周睡眠与训练结构",
         "media_type": "text/markdown",
         "template": "markdown",
-        "renderer_version": "6.0",
+        "renderer_version": "7.0",
         "content_sha256": "065a361252cb1a4679cd89fc23745624c4b9d254ea53f3a60f31a39b124db375"
       },
       "html": {
         "title": "Vitalis 周报 · 本周睡眠与训练结构",
         "media_type": "text/html",
         "template": "html",
-        "renderer_version": "6.0",
+        "renderer_version": "7.0",
         "content_sha256": "a953fd6b5bb0c5a5e25b7a7d34d6bb008527991408ddf8772079ef1e158f6279"
       }
     },
@@ -74,14 +74,14 @@
         "title": "Vitalis 月报 · 本月睡眠与训练结构",
         "media_type": "text/markdown",
         "template": "markdown",
-        "renderer_version": "6.0",
+        "renderer_version": "7.0",
         "content_sha256": "ab2ff19472ae3efca99038f074bd0bba28b736a1f9f1e927edf99c37ae19f4fc"
       },
       "html": {
         "title": "Vitalis 月报 · 本月睡眠与训练结构",
         "media_type": "text/html",
         "template": "html",
-        "renderer_version": "6.0",
+        "renderer_version": "7.0",
         "content_sha256": "1d0e21203248ced9bffaf37646324f5852154b3d6229686c3eae2dd2851e9ee7"
       }
     },
@@ -90,14 +90,14 @@
         "title": "Vitalis 周报 · 本周睡眠与训练结构",
         "media_type": "text/markdown",
         "template": "markdown",
-        "renderer_version": "6.0",
+        "renderer_version": "7.0",
         "content_sha256": "ce9beb0c009cb6cc79ad488c78e076db83742532a015e0ba05035f418fb0797a"
       },
       "html": {
         "title": "Vitalis 周报 · 本周睡眠与训练结构",
         "media_type": "text/html",
         "template": "html",
-        "renderer_version": "6.0",
+        "renderer_version": "7.0",
         "content_sha256": "06c18bdcb0a8196d0a9455a08fc2e230990d0475dcdf5269e51929c64cb82ea1"
       }
     }

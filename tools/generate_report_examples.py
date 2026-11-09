@@ -39,10 +39,29 @@ def _render_examples(day: date):
     from vitalis import bootstrap
     from vitalis.adapters.persistence import HealthRepository, session_scope
     from vitalis.config import settings
-    from vitalis.domain import ActivityRecord, NormalizedDaily, SleepRecord
+    from vitalis.domain import ActivityRecord, NormalizedDaily, SleepRecord, Workout, WorkoutType
     from vitalis.intelligence.report_periods import resolve_month_period, resolve_week_period
     from vitalis.intelligence.report_rendering import render_report
 
+    # Demonstrate split runs and split strength work on the same activity day,
+    # alongside the demo's existing detailed strength session.
+    with session_scope() as db:
+        repository = HealthRepository(db)
+        for identity, kind, clock, duration, distance, sets in (
+            ("split-run-1", WorkoutType.RUNNING, time(16), 10, 2.0, None),
+            ("split-run-2", WorkoutType.RUNNING, time(16, 20), 30, 5.0, None),
+            ("split-strength", WorkoutType.STRENGTH, time(19, 10), 15, None, 4),
+        ):
+            repository.save_workout(Workout(
+                user_id="demo", workout_id=identity, type=kind,
+                started_at=datetime.combine(day, clock, ZoneInfo(settings.timezone)).astimezone(timezone.utc),
+                sport_mode=kind.value, sport_mode_label="跑步" if kind == WorkoutType.RUNNING else "力量训练",
+                training_family="aerobic" if kind == WorkoutType.RUNNING else "strength",
+                duration=duration, distance_km=distance, vendor_reported_sets=sets,
+                observed_fields=["duration"] + (["distance_km"] if distance is not None else []),
+            ))
+    cutoff = datetime.combine(day, time(21, 20), ZoneInfo(settings.timezone)).astimezone(timezone.utc)
+    bootstrap.get_intelligence_command(today_factory=lambda: day, now_factory=lambda: cutoff).analyze("demo", day)
     query = bootstrap.get_intelligence_query()
     documents = {
         "morning": query.morning_briefing("demo", day),

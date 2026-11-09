@@ -50,7 +50,11 @@ band 的顶层 `summary.isMerged=1` 证明 App 心率与活动融合路径，睡
 
 Zepp 账户运动列表与详情按独立记录族保留，包括训练时长、距离、负荷、心率、动作组次和来源 RPE；日训练汇总只从准入的 Zepp 运动记录计算，不混入其它来源，也不把算术汇总改称厂商融合。显式用户反馈继续保留。训练与睡眠只限制缺失的指标，不因某项账户流缺失取消整份报告。
 
+`features.training.day_summaries` 在分析层保存近 7 日已记录训练的按日汇总，日期口径为报告时区的 `activity_day`，带 `as_of` 和 `coverage=recorded_sessions_only`。同一 `source + workout_id` 只计一次，跑步、力量和其它运动分别归组，不改写原记录或训练频次。每项时长、跑步距离、设备组数总量保存单位、有效样本数与应有记录数；只有该组全部记录都有有效值时才给总值，否则为 `null` 并标记 `PARTIAL/UNKNOWN`。总时长是记录时长相加，不是首尾时间差；不生成合并配速、平均心率、RPE 或跨负重口径的力量容量。组内保留来源、训练标识、观测时刻和可用的获取时刻，无法取得的时刻保持 `null`。日报、晚报及公开训练块读取同一份 `training_summary`，renderer 只排版。
+
 准备度各分项、Recovery 厂商摘要及晨起 Charge 在上述准入范围内先选择整窗可比来源，再计算中位数、日最大值和基线；不逐日拼接来源，不平均不同设备。晨起 Charge 仍要求时间样本或其日级特征，厂商日摘要不能替代晨起观测。`vendor_provenance`、`wake_charge_provenance`、`readiness_component_provenance` 保存选择理由、窗口和覆盖；`report_context.source_policy` 记录策略版本 `zepp-account-report-1` 与 `device_fallback=false`。Vitalis 评分、权重与阈值不因本次选源改动而改变，派生结论仍标为 Vitalis 分析，不冒充 Zepp 的融合算法。
+
+同日训练汇总不涉及数据库 DDL。旧快照缺少汇总时保持原资格，汇总通过新的分析生成，不由读取或排版补算。
 
 ## 缺失、零和不可比
 

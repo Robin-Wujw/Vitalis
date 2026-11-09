@@ -932,18 +932,15 @@ def _strength_next_advice(strength: dict[str, Any]) -> list[str]:
         # The scheduler already records the actionable restriction when abstaining.
         return list(strength.get('next_focus_reasons') or [])[:1]
     suffix = '，择一' if len(names) > 1 else ''
-    lines = ['下次力量建议：' + '或'.join(names) + suffix + '。']
-    dates = []
-    for item in strength.get('focus_history') or []:
-        value = item.get('last_main_day')
-        if not value or item.get('focus') not in labels:
-            continue
-        day = date.fromisoformat(str(value)[:10])
-        dates.append(f"{labels[item['focus']]} {day.month}月{day.day}日")
-    if dates:
-        lines.append('上次集中训练：' + '；'.join(dates) + '。')
-    lines.append('热身时若仍有明显不适，调整训练或休息。')
-    return lines
+    return ['下次力量建议：' + '或'.join(names) + suffix + '。']
+
+
+def _review_advice(session: dict[str, Any]) -> list[str]:
+    routine = {
+        "先按已记录组数比较近期训练量；标记热身组可以进一步提高估算准确度。",
+        "下次开始前明确本场目标类型、时长与强度，便于评价完成情况。",
+    }
+    return unique([str(item) for item in (session.get("evaluation") or {}).get("suggestions") or [] if item and item not in routine])
 
 
 def _strength_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -1000,16 +997,16 @@ def _strength_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
             status = load.get("status_label")
             if label and ratio is not None and status:
                 facts.append(f"{label}近期训练接触比 {ratio:.2f}（{status}）。")
-        limitations.extend(session.get('limitations') or [])
-        evaluation = session.get('evaluation') or {}
-        for suggestion in evaluation.get('suggestions') or []:
+        # Missing-detail and calculation diagnostics stay in the saved analysis.
+        # Keep qualified capacity caveats above and actionable saved advice.
+        for suggestion in _review_advice(session):
             facts.append('建议：' + suggestion)
     strength = training.get('strength') or {}
     facts.extend(_strength_next_advice(strength))
     if not facts and not limitations:
         return None
     return {
-        "key": "display_strength_card", "title": "力量训练量与下次安排", "facts": unique(facts),
+        "key": "display_strength_card", "title": "力量重点", "facts": unique(facts),
         "interpretation": [], "limitations": unique(limitations), "display": True,
     }
 
@@ -1024,63 +1021,35 @@ def _running_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
     ]
     if not sessions:
         return None
+    timed = [item for item in sessions if _number(item.get("duration_minutes")) is not None]
+    if len(sessions) > 1 and len(timed) != len(sessions):
+        return None
+    session = max(timed, key=lambda item: item["duration_minutes"]) if timed else sessions[0]
     facts: list[str] = []
-    limitations: list[str] = []
-    zone_sources = {"device_workout": "设备区间", "lactate_threshold": "个人乳酸阈心率区间", "mixed": "混合来源区间"}
-    for session in sessions:
-        # Classification is an internal training fact; the public card is a
-        # readable running summary and never promotes a low-confidence label.
-        title = "跑步"
-        zones = [item for item in session.get("heart_rate_zones") or [] if isinstance(item, dict)]
-        if zones:
-            parts = []
-            for zone in zones:
-                share = _number(zone.get("share_percent"))
-                label = zone.get("label") or f"第 {zone.get('zone', '?')} 区"
-                if share is not None:
-                    parts.append(f"{label} {number(share)}%")
-            if parts:
-                source = zone_sources.get(session.get("heart_rate_zone_source"), "已记录区间")
-                facts.append(f"{title}心率区间分布（{source}）：" + "；".join(parts) + "。")
-        else:
-            limitations.append(f"{title}没有足够心率证据，未展示心率区间分布。")
-
-        drift = _number(session.get("cardiac_drift_percent"))
-        if drift is not None:
-            facts.append(f"{title}心率漂移 {drift:+.1f}%。")
-        else:
-            limitation = next((item for item in session.get("limitations") or [] if "漂移" in str(item)), None)
-            if session.get("confidence") not in {"MODERATE", "HIGH"}:
-                limitation = None
-            limitations.append(str(limitation or f"{title}未计算心率漂移；连续低强度和同源速度、心率证据不足。"))
-
-        baseline = session.get("comparable_baseline")
-        if isinstance(baseline, dict):
-            current_pace = _pace_text(session.get("average_pace_seconds_per_km"))
-            reference_pace = _pace_text(baseline.get("median_pace_seconds_per_km"))
-            change = _number(baseline.get("pace_difference_percent"))
-            parts = ["相近距离的近期配速对照"]
-            if current_pace:
-                parts.append(f"当前 {current_pace}")
-            if reference_pace:
-                parts.append(f"对照中位 {reference_pace}")
-            if change is not None:
-                parts.append(f"变化 {change:+.1f}%")
-            # The baseline is distance-matched; its HR is evidence, not a
-            # license to call this a same-heart-rate comparison.
+    drift = _number(session.get("cardiac_drift_percent"))
+    if drift is not None:
+        facts.append(f"跑步心率漂移 {drift:+.1f}%。")
+    baseline = session.get("comparable_baseline")
+    if isinstance(baseline, dict):
+        current_pace = _pace_text(session.get("average_pace_seconds_per_km"))
+        reference_pace = _pace_text(baseline.get("median_pace_seconds_per_km"))
+        if current_pace and reference_pace:
+            parts = ["相近距离的近期配速对照", f"当前 {current_pace}", f"对照中位 {reference_pace}"]
+            # Retain intensity context; distance matching never implies equal HR.
             reference_hr = _number(baseline.get("median_heart_rate_bpm"))
             current_hr = _number(session.get("average_heart_rate_bpm"))
             if current_hr is not None and reference_hr is not None:
-                parts.append(f"当前/对照平均心率 {number(current_hr)} / {number(reference_hr)} 次/分钟")
+                parts.append(f"当前/对照平均心率 {number(current_hr, 0)} / {number(reference_hr, 0)} 次/分钟")
             facts.append("；".join(parts) + "。")
-        else:
-            limitations.append(f"{title}没有足够的相近距离历史样本，未作配速对照。")
-        evaluation = session.get('evaluation') or {}
-        for suggestion in evaluation.get('suggestions') or []:
-            facts.append('建议：' + suggestion)
+    facts.extend('建议：' + item for item in _review_advice(session)[:1])
+    if not facts:
+        return None
+    if len(sessions) > 1:
+        duration = minutes_text(session.get("duration_minutes"))
+        facts.insert(0, f"以下为当天最长一段跑步（{duration}）的分析。")
     return {
-        "key": "display_running_card", "title": "跑步卡", "facts": unique(facts),
-        "interpretation": [], "limitations": unique(limitations), "display": True,
+        "key": "display_running_card", "title": "跑步重点", "facts": unique(facts),
+        "interpretation": [], "limitations": [], "display": True,
     }
 
 

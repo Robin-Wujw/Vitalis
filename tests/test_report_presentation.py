@@ -357,7 +357,7 @@ def test_running_card_reuses_analytics_and_does_not_claim_same_heart_rate():
     card = next(item for item in daily_display_sections(payload) if item["key"] == "display_running_card")
     text = " ".join(card["facts"])
 
-    assert "心率区间分布" in text
+    assert "心率区间分布" not in text
     assert "心率漂移 +4.5%" in text
     assert "相近距离的近期配速对照" in text
     assert "同心率" not in text
@@ -367,28 +367,70 @@ def test_running_card_reuses_analytics_and_does_not_claim_same_heart_rate():
 def _running_card(session):
     payload = _daily()
     payload["features"]["training"]["running"]["recent_sessions"] = [{"date": "2026-10-07", **session}]
-    return next(item for item in daily_display_sections(payload) if item["key"] == "display_running_card")
+    return next((item for item in daily_display_sections(payload) if item["key"] == "display_running_card"), None)
 
 
-def test_running_card_without_heart_rate_detail_states_each_gap():
+def test_running_card_without_extra_insights_is_omitted():
     card = _running_card({"average_pace_seconds_per_km": 380})
-    assert card["facts"] == []
-    limitations = " ".join(card["limitations"])
-    assert "没有足够心率证据" in limitations
-    assert "未计算心率漂移" in limitations
-    assert "没有足够的相近距离历史样本" in limitations
+    assert card is None
 
 
-def test_running_card_too_short_for_drift_keeps_zones_and_says_why():
+def test_running_card_does_not_repeat_zones_or_explain_unavailable_drift():
     card = _running_card({
         "confidence": "MODERATE",
         "heart_rate_zone_source": "device_workout",
         "heart_rate_zones": [{"zone": 2, "label": "二区：耐力", "share_percent": 100}],
         "limitations": ["时长不足 20 分钟，未计算心率漂移。"],
     })
-    assert "心率区间分布（设备区间）：二区：耐力 100%。" in card["facts"][0]
-    assert "时长不足 20 分钟，未计算心率漂移。" in card["limitations"]
-    assert not any("漂移 " in fact for fact in card["facts"])
+    assert card is None
+
+
+def test_running_highlights_choose_the_longest_segment_and_keep_saved_evidence():
+    from copy import deepcopy
+
+    payload = _daily()
+    short = {"date": "2026-10-07", "duration_minutes": 4, "average_pace_seconds_per_km": 600,
+             "comparable_baseline": {"median_pace_seconds_per_km": 660}}
+    longest = {"date": "2026-10-07", "duration_minutes": 31, "distance_km": 6.2,
+               "average_pace_seconds_per_km": 300, "average_heart_rate_bpm": 150,
+               "comparable_baseline": {"median_pace_seconds_per_km": 320, "median_heart_rate_bpm": 145},
+               "limitations": ["本次不是明确识别的连续低强度跑，不解释心率漂移。"],
+               "evaluation": {"suggestions": ["下次开始前明确本场目标类型、时长与强度，便于评价完成情况。"]}}
+    payload["features"]["training"]["running"]["recent_sessions"] = [short, longest]
+    before = deepcopy(payload)
+    card = next(item for item in daily_display_sections(payload) if item["key"] == "display_running_card")
+    text = " ".join(card["facts"])
+    assert "最长一段" in text
+    assert "31 分钟" in text
+    assert "5:00/公里" in text and "5:20/公里" in text
+    assert "10:00/公里" not in text
+    assert "未计算" not in text and "明确本场目标" not in text
+    assert card["limitations"] == []
+    assert payload == before
+
+
+def test_strength_highlights_drop_technical_gaps_and_keep_next_focus_and_safety():
+    from copy import deepcopy
+
+    payload = _daily()
+    strength = payload["features"]["training"]["strength"]
+    strength["next_focus_candidates"] = ["PULL"]
+    strength["recent_sessions"] = [{
+        "date": "2026-10-07", "limitations": [
+            "缺少逐组动作明细，仅保留已记录训练摘要。",
+            "当前云详情未返回明确动作组；App 中的修正内容尚未在已读取字段中取得。",
+            "心率或圈段结构不足，未估计工作段和休息段。",
+            "缺少逐组记录，未估算容量或肌群组数。"],
+        "evaluation": {"suggestions": ["先按已记录组数比较近期训练量；标记热身组可以进一步提高估算准确度。"]},
+    }]
+    before = deepcopy(payload)
+    card = next(item for item in daily_display_sections(payload) if item["key"] == "display_strength_card")
+    assert card["facts"] == ["下次力量建议：背部、二头肌。"]
+    assert card["limitations"] == []
+    assert payload == before
+    strength["recent_sessions"][0]["evaluation"]["suggestions"] = ["已记录明显酸痛；下次先避开受影响部位，结合实际不适调整安排。"]
+    card = next(item for item in daily_display_sections(payload) if item["key"] == "display_strength_card")
+    assert any("明显酸痛" in item for item in card["facts"])
 
 
 def test_partial_day_steps_say_why_they_are_not_compared():

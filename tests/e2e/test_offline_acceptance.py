@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
@@ -133,6 +134,30 @@ def _http_job(origin, token, job_id, kind):
             return state, payload
         time.sleep(0.25)
     raise AssertionError(f"{kind} job never finished")
+
+
+def _sync_analysis_settled(database, user_id, day):
+    """Wait for this fixture's final sync analysis before requesting a new run.
+
+    A terminal sync attempt may still have its completion analysis in flight.
+    Reading the two latest reports while that run publishes races the explicit
+    analysis result; no other user's jobs are consumed or inspected here.
+    """
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        with sqlite3.connect('file:' + database.as_posix() + '?mode=ro', uri=True) as db:
+            completed = db.execute(
+                "SELECT COUNT(*) FROM analysis_jobs WHERE user_id=? AND target_date=? "
+                "AND event_type='sync_completion' AND status='succeeded'", (user_id, day),
+            ).fetchone()[0]
+            active = db.execute(
+                "SELECT COUNT(*) FROM analysis_jobs WHERE user_id=? AND status IN ('queued','running')",
+                (user_id,),
+            ).fetchone()[0]
+        if completed and not active:
+            return
+        time.sleep(0.25)
+    raise AssertionError('fixture sync completion analysis did not settle')
 
 
 def test_fresh_demo_http_skill_analysis_feedback_and_restart(tmp_path):
@@ -264,6 +289,8 @@ def test_fresh_mock_sync_then_morning_and_evening_without_demo(tmp_path):
                     for row in chunks
                 ), stream
             assert any(row["stream"] == "workout_detail" for row in chunks)
+
+            _sync_analysis_settled(database, 'mock-briefing', day)
 
             analysis_http, analysis = _http(
                 origin, token, "/api/analysis-runs",

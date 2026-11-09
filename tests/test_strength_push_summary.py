@@ -23,10 +23,7 @@ def test_strength_push_projects_short_advice_without_changing_evidence():
     payload = card(['PUSH'])
     before = deepcopy(payload)
     facts = _strength_display_section(payload)['facts']
-    assert len(facts) == 3
-    assert facts[0] == '下次力量建议：胸肩、三头肌。'
-    assert '8月17日' in facts[1] and '8月20日' in facts[1]
-    assert '热身' in facts[2]
+    assert facts == ['下次力量建议：胸肩、三头肌。']
     assert not any(word in ''.join(facts) for word in ('近 7 天', '中位数', '不设补量', '未核实'))
     assert payload == before
 

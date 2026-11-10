@@ -288,6 +288,25 @@ def test_real_analysis_command_creates_run_and_snapshots(job_database, monkeypat
         assert db.query(AnalysisRun).filter_by(user_id=user_id).count() == 1
 
 
+@pytest.mark.parametrize("lose_lease", [False, True])
+def test_research_results_publish_with_the_fenced_analysis_transaction(job_database, monkeypatch, lose_lease):
+    from vitalis.application.shadow_batch import ShadowBatch
+    from vitalis.adapters.persistence.models import ShadowResult
+
+    monkeypatch.setattr(database, "SessionLocal", job_database)
+    monkeypatch.setattr(ShadowBatch, "calculate", lambda self, user, day: {
+        "readiness": ("synthetic", {"score": 60})})
+    bootstrap.configure_analysis_jobs()
+    if lose_lease:
+        monkeypatch.setattr(SqlAnalysisJobRepository, "succeed", lambda *a: False)
+    job_id = jobs.create_analysis_job("owner", DAY, "research-fence", refresh_research=True)
+    assert jobs.drain_analysis_jobs(max_jobs=1) == 1
+    assert jobs.get_analysis_job("owner", job_id).status == ("failed" if lose_lease else "succeeded")
+    with job_database() as db:
+        assert db.query(ShadowResult).filter_by(user_id="owner").count() == (0 if lose_lease else 1)
+        assert db.query(NotificationDelivery).filter_by(user_id="owner").count() == 0
+
+
 def test_input_change_during_calculation_requeues_and_next_pass_succeeds(
     job_database, monkeypatch,
 ):

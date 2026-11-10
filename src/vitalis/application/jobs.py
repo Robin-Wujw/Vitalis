@@ -48,6 +48,7 @@ def create_analysis_job(
     idempotency_key: str,
     *,
     delivery_period: str | None = None,
+    refresh_research: bool = False,
 ) -> str:
     """Enqueue once per user/key; scheduled jobs may carry one delivery period."""
     if not isinstance(user_id, str) or not user_id or len(user_id) > 64:
@@ -63,11 +64,14 @@ def create_analysis_job(
 
     if delivery_period not in (None, "morning", "evening", "weekly", "monthly"):
         raise ValueError("delivery_period must be morning, evening, weekly, or monthly")
+    if type(refresh_research) is not bool or (refresh_research and delivery_period is not None):
+        raise ValueError("research refresh must be an explicit analysis without delivery")
     request_hash = sha256(
-        f"analyze:v2:{day.isoformat()}:{delivery_period or '-'}".encode("ascii")
+        f"analyze:v3:{day.isoformat()}:{delivery_period or '-'}:{refresh_research}".encode("ascii")
     ).hexdigest()
     return _store().enqueue(
         user_id, day, idempotency_key, request_hash, delivery_period=delivery_period,
+        refresh_research=refresh_research,
     )
 
 

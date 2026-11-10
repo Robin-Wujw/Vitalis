@@ -9,6 +9,7 @@ from datetime import date, datetime
 from typing import Any, Callable, Protocol
 
 from vitalis.domain import NormalizedDaily
+from vitalis.application.wake_check import WakeDay
 
 
 class RangeSummaryReader(Protocol):
@@ -160,6 +161,10 @@ class HealthReader(Protocol):
     """Persistence port for user-scoped raw health reads."""
 
     def sync_stream_states(self, user_id: str) -> tuple[HealthStreamStateRead, ...]: ...
+
+    def sleep_records(self, user_id: str, start: date, end: date, *, as_of: datetime) -> tuple[dict, ...]: ...
+
+    def wake_days(self, user_id: str, start: date, end: date) -> list[WakeDay]: ...
 
     def latest_sync_attempt(
         self, user_id: str, source: str = "zepp"
@@ -522,6 +527,7 @@ class AnalysisJobRepository(Protocol):
     def enqueue(
         self, user_id: str, day: date, key: str, request_hash: str,
         delivery_period: str | None = None,
+        *, refresh_research: bool = False,
     ) -> str: ...
 
     def get(self, user_id: str, job_id: str) -> AnalysisJobState | None: ...

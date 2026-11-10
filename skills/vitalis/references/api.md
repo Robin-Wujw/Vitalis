@@ -31,6 +31,7 @@ The complete service contract remains available from `GET /openapi.json`.
 | `delete_chart_annotation` | DELETE | `/api/chart-inputs/annotations/{annotation_id}` | Idempotency-Key | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `events_api_intelligence_events_get` | GET | `/api/intelligence/events` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `explain_api_intelligence_explain_get` | GET | `/api/intelligence/explain` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `export_report` | GET | `/api/reports/{kind}/export` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_activity_review_queue` | GET | `/api/chart-inputs/activity-reviews` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_activity_rules` | GET | `/api/chart-inputs/activity-rules` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_chart_annotations` | GET | `/api/chart-inputs/annotations` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
@@ -40,6 +41,7 @@ The complete service contract remains available from `GET /openapi.json`.
 | `get_data_status` | GET | `/api/data-status` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_external_strength_workout` | GET | `/api/chart-inputs/external-workouts/{external_id}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_external_strength_workouts` | GET | `/api/chart-inputs/external-workouts` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_health_catalog` | GET | `/api/health/catalog` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_hevy_link_candidates` | GET | `/api/chart-inputs/external-workouts/{external_id}/candidates` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_job` | GET | `/api/jobs/{job_id}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_product_context` | GET | `/api/product/context` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
@@ -54,8 +56,11 @@ The complete service contract remains available from `GET /openapi.json`.
 | `get_report_chart_svg` | GET | `/api/reports/{kind}/charts/{chart_key}.svg` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_report_charts` | GET | `/api/reports/{kind}/charts` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_report_state` | GET | `/api/reports/{kind}/state` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_research_review` | GET | `/api/intelligence/research/{kind}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_running_analysis` | GET | `/api/intelligence/running` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_sleep_records` | GET | `/api/health/sleep-records` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_strength_review` | GET | `/api/coach/strength-review` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_wake_review` | GET | `/api/health/wake-review` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_workout` | GET | `/api/workouts/{workout_id}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `import_hevy_csv` | POST | `/api/chart-inputs/hevy-imports` | Idempotency-Key | 201, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `link_hevy_workout` | POST | `/api/chart-inputs/external-workouts/{external_id}/link` | Idempotency-Key | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
@@ -1021,6 +1026,73 @@ None.
 }
 ```
 
+### export_report
+
+`GET /api/reports/{kind}/export`
+
+Export Report
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| kind | path | yes | {"enum": ["daily", "morning", "evening", "weekly", "monthly", "weekly-briefing", "monthly-briefing"], "title": "Kind", "type": "string"} |  |
+| day | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "Day"} |  |
+| format | query | no | {"default": "markdown", "enum": ["markdown", "html"], "title": "Format", "type": "string"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Export Report",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
 ### get_activity_review_queue
 
 `GET /api/chart-inputs/activity-reviews`
@@ -1587,6 +1659,70 @@ None.
       "schema": {
         "additionalProperties": true,
         "title": "Response Get External Strength Workouts",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_health_catalog
+
+`GET /api/health/catalog`
+
+Health Catalog
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Get Health Catalog",
         "type": "object"
       }
     }
@@ -2562,6 +2698,73 @@ None.
 }
 ```
 
+### get_research_review
+
+`GET /api/intelligence/research/{kind}`
+
+Research Review
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| kind | path | yes | {"enum": ["readiness", "body_signal"], "title": "Kind", "type": "string"} |  |
+| from | query | yes | {"format": "date", "title": "From", "type": "string"} |  |
+| to | query | yes | {"format": "date", "title": "To", "type": "string"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Get Research Review",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
 ### get_running_analysis
 
 `GET /api/intelligence/running`
@@ -2592,6 +2795,72 @@ None.
       "schema": {
         "additionalProperties": true,
         "title": "Response Get Running Analysis",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_sleep_records
+
+`GET /api/health/sleep-records`
+
+Health Sleep Records
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| from | query | yes | {"format": "date", "title": "From", "type": "string"} |  |
+| to | query | yes | {"format": "date", "title": "To", "type": "string"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Get Sleep Records",
         "type": "object"
       }
     }
@@ -2659,6 +2928,72 @@ None.
       "schema": {
         "additionalProperties": true,
         "title": "Response Get Strength Review",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_wake_review
+
+`GET /api/health/wake-review`
+
+Health Wake Review
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| from | query | yes | {"format": "date", "title": "From", "type": "string"} |  |
+| to | query | yes | {"format": "date", "title": "To", "type": "string"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Get Wake Review",
         "type": "object"
       }
     }
@@ -4911,6 +5246,11 @@ Each reachable component is rendered once; `$ref` values name the headings below
         }
       ],
       "title": "Day"
+    },
+    "refresh_research": {
+      "default": false,
+      "title": "Refresh Research",
+      "type": "boolean"
     }
   },
   "title": "AnalysisJobRequest",
@@ -7754,8 +8094,8 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "string"
     },
     "intelligence_version": {
-      "const": "20.0",
-      "default": "20.0",
+      "const": "21.0",
+      "default": "21.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -7780,8 +8120,8 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "object"
     },
     "schema_version": {
-      "const": "19.0",
-      "default": "19.0",
+      "const": "20.0",
+      "default": "20.0",
       "title": "Schema Version",
       "type": "string"
     },
@@ -10940,7 +11280,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "$ref": "#/components/schemas/MonthlyInferences"
     },
     "intelligence_version": {
-      "default": "20.0",
+      "default": "21.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -13724,7 +14064,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "string"
     },
     "intelligence_version": {
-      "default": "20.0",
+      "default": "21.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -14064,7 +14404,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "string"
     },
     "intelligence_version": {
-      "default": "20.0",
+      "default": "21.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -18136,6 +18476,18 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "title": "Finished",
       "type": "boolean"
     },
+    "in_bed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "In Bed At"
+    },
     "light_minutes": {
       "anyOf": [
         {
@@ -18160,6 +18512,30 @@ Each reachable component is rendered once; `$ref` values name the headings below
       },
       "title": "Limitations",
       "type": "array"
+    },
+    "out_of_bed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Out Of Bed At"
+    },
+    "out_of_bed_delay_minutes": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Out Of Bed Delay Minutes"
     },
     "recorded_after_wake_minutes": {
       "anyOf": [
@@ -18196,6 +18572,31 @@ Each reachable component is rendered once; `$ref` values name the headings below
       ],
       "title": "Rem Minutes"
     },
+    "sleep_efficiency_percent": {
+      "anyOf": [
+        {
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Sleep Efficiency Percent"
+    },
+    "sleep_latency_minutes": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Sleep Latency Minutes"
+    },
     "stage_slice_count": {
       "default": 0,
       "minimum": 0.0,
@@ -18214,6 +18615,18 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "default": "",
       "title": "Status Label",
       "type": "string"
+    },
+    "time_in_bed_minutes": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Time In Bed Minutes"
     },
     "usual_duration_minutes": {
       "anyOf": [
@@ -22779,7 +23192,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "string"
     },
     "intelligence_version": {
-      "default": "20.0",
+      "default": "21.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -24246,7 +24659,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "$ref": "#/components/schemas/WeeklyInferences"
     },
     "intelligence_version": {
-      "default": "20.0",
+      "default": "21.0",
       "title": "Intelligence Version",
       "type": "string"
     },

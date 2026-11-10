@@ -57,6 +57,14 @@ class SleepRecord(BaseModel):
     sleep_score: int | None = Field(default=None, ge=0, le=100, description="睡眠评分")
     bedtime: time | None = None
     wake_time: time | None = None
+    in_bed_at: datetime | None = None
+    out_of_bed_at: datetime | None = None
+    sleep_latency_minutes: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    out_of_bed_delay_minutes: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    time_in_bed_minutes: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    sleep_efficiency_percent: float | None = Field(default=None, ge=0, le=100, allow_inf_nan=False)
+    fetched_at: datetime | None = None
+    source_record_id: str | None = None
     stages: list["SleepStageSlice"] = Field(default_factory=list)
     wake_count: int | None = Field(default=None, ge=0)
     naps: list["NapRecord"] = Field(default_factory=list)
@@ -166,6 +174,14 @@ class Workout(BaseModel):
     recognition_source: str = Field(default="missing_vendor_type", description="运动类型映射来源")
     recognition_source_label: str = Field(default="缺少厂商运动类型", description="运动类型映射来源中文名称")
     duration: int = Field(ge=0, description="时长（分钟）")
+    moving_time_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    paused_time_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    elapsed_time_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    equivalent_pace_seconds_per_km: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    best_equivalent_pace_seconds_per_km: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    anaerobic_training_effect: float | None = Field(default=None, ge=0, le=5, allow_inf_nan=False)
+    fetched_at: datetime | None = None
+    source_record_id: str | None = None
     heart_rate_avg: int | None = Field(default=None, ge=0, description="平均心率 bpm")
     heart_rate_max: int | None = Field(default=None, ge=0)
     load: int | None = Field(default=None, ge=0, description="厂商训练负荷（非负，无固定上限）")

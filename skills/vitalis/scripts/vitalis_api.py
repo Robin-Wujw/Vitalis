@@ -348,7 +348,7 @@ def request(method: str, path: str, token: str, body: dict | None = None,
                     raise ClientError("invalid_response_json") from exc
         except urllib.error.HTTPError as exc:
             try:
-                fields = coach_error_fields(exc, token) if path in ("coach/policy", "coach/operations") else {}
+                fields = coach_error_fields(exc, token)
             finally:
                 exc.close()
             if 300 <= exc.code < 400:
@@ -367,14 +367,58 @@ def request(method: str, path: str, token: str, body: dict | None = None,
             raise ClientError("network_error") from exc
 
 
+def api_path(value: str) -> str:
+    if value.startswith("/api/"):
+        value = value[len("/api/"):]
+    if not value or any(part in {"", ".", ".."} for part in value.split("/")) or not re.fullmatch(r"[A-Za-z0-9._~/-]+", value):
+        raise ClientError("invalid_api_path")
+    return value
+
+
+def write_export(result: dict, output: Path) -> dict:
+    if not isinstance(result.get("content"), str):
+        raise ClientError("invalid_export_response")
+    if output.exists() or output.is_symlink():
+        raise ClientError("output_exists")
+    created = False
+    try:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        created = True
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
+            stream.write(result["content"])
+    except OSError as exc:
+        if created:
+            output.unlink(missing_ok=True)
+        raise ClientError("export_write_failed") from exc
+    return {key: value for key, value in {**result, "output": str(output.resolve())}.items() if key != "content"}
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = JsonArgumentParser(description="Vitalis current API client")
     commands = parser.add_subparsers(dest="command", required=True, parser_class=JsonArgumentParser)
     commands.add_parser("status")
+    commands.add_parser("catalog")
+    generic = commands.add_parser("request", help="Call a business API with JSON from stdin; authorization stays on the server")
+    generic.add_argument("method", choices=("GET", "POST", "PUT", "PATCH", "DELETE"))
+    generic.add_argument("path", type=api_path)
+    generic.add_argument("--param", action="append", default=[], metavar="NAME=VALUE")
+    generic.add_argument("--key-file")
+    metrics = commands.add_parser("metrics", help="Read stored timestamped or daily vendor facts")
+    metrics.add_argument("metric")
+    metrics.add_argument("--from", dest="from_date", required=True)
+    metrics.add_argument("--to", required=True)
+    metrics.add_argument("--daily", action="store_true")
+    metrics.add_argument("--resolution", choices=("raw", "1h", "1d"), default="raw")
+    sleep = commands.add_parser("sleep-records", help="Read stored sleep facts with source evidence")
+    sleep.add_argument("--from", dest="from_date", type=iso_date, required=True)
+    sleep.add_argument("--to", type=iso_date, required=True)
 
     report = commands.add_parser("report")
     report.add_argument("kind", choices=REPORT_KINDS)
     report.add_argument("--day", type=iso_date)
+    report.add_argument("--format", choices=("markdown", "html"), default="markdown")
+    report.add_argument("--output", type=Path)
     report_views = report.add_mutually_exclusive_group()
     report_views.add_argument("--state", action="store_true", help="Read freshness and last-good snapshot state")
     report_views.add_argument("--view", action="store_true", help="Read the saved public report projection")
@@ -382,6 +426,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     analyze = commands.add_parser("analyze")
     analyze.add_argument("--day", type=iso_date, required=True)
     analyze.add_argument("--key-file", required=True)
+    analyze.add_argument("--refresh-research", action="store_true")
 
     job = commands.add_parser("job")
     job.add_argument("id")
@@ -460,6 +505,27 @@ def run(args: argparse.Namespace):
     # Validate config before creating an idempotency file or reading private feedback.
     api_origin()
     token = access_token()
+    if args.command == "catalog":
+        return request("GET", "health/catalog", token)
+    if args.command == "sleep-records":
+        return request("GET", "health/sleep-records", token, params={"from": args.from_date, "to": args.to})
+    if args.command == "metrics":
+        if args.daily:
+            return request("GET", "health/daily-metrics", token, params={"from": iso_date(args.from_date), "to": iso_date(args.to), "metric": args.metric})
+        return request("GET", "health/metrics/" + urllib.parse.quote(args.metric, safe=""), token,
+            params={"from": iso_aware_datetime(args.from_date), "to": iso_aware_datetime(args.to), "resolution": args.resolution})
+    if args.command == "request":
+        params = {}
+        for entry in args.param:
+            name, sep, value = entry.partition("=")
+            if not sep or not name or name in params:
+                raise ClientError("invalid_arguments")
+            params[name] = value
+        body = feedback_body() if args.method in {"POST", "PUT", "PATCH"} else None
+        if args.key_file and args.method == "GET":
+            raise ClientError("invalid_arguments")
+        key = key_from_file(args.key_file, f"{args.method} /api/{args.path}", body or {}) if args.key_file else None
+        return request(args.method, args.path, token, body=body, params=params or None, key=key)
     if args.command == "status":
         return request("GET", "data-status", token)
     if args.command == "coach-policy":
@@ -475,6 +541,14 @@ def run(args: argparse.Namespace):
             "target_km": args.target_km, "effort_basis": args.effort_basis,
         })
     if args.command == "report":
+        if args.output is not None:
+            if args.state or args.view:
+                raise ClientError("invalid_arguments")
+            if args.output.exists() or args.output.is_symlink():
+                raise ClientError("output_exists")
+            result = request("GET", "reports/" + args.kind + "/export", token,
+                params={"format": args.format, **({"day": args.day} if args.day else {})})
+            return write_export(result, args.output)
         suffix = "/state" if args.state else "/view" if args.view else ""
         path = "reports/" + args.kind + suffix
         return request("GET", path, token,
@@ -554,6 +628,8 @@ def run(args: argparse.Namespace):
         return request("POST", "feedback", token, body=body, key=key)
     if args.command == "analyze":
         body = {"day": args.day}
+        if args.refresh_research:
+            body["refresh_research"] = True
         key = key_from_file(args.key_file, "POST /api/analysis-runs", body)
         return request("POST", "analysis-runs", token, body=body, key=key)
     if args.command == "coach-request":

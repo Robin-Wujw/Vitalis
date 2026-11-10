@@ -831,8 +831,10 @@ class HealthRepository:
         streams: set[str] = set()
         if daily.sleep:
             streams.add("sleep")
+            from .record_evidence import bind_record_evidence
+
             changed |= self._upsert(orm.SleepRecord, daily.user_id, daily.date,
-                                    daily.sleep.model_dump(mode="json", exclude_none=True))
+                bind_record_evidence(self, daily.sleep, self.get_sleep(daily.user_id, daily.date), stream="sleep"))
         if daily.activity:
             streams.add("activity")
             changed |= self._upsert(orm.ActivityRecord, daily.user_id, daily.date,
@@ -1810,7 +1812,9 @@ class HealthRepository:
         started_at = _naive_utc(workout.started_at) if workout.started_at else None
         if workout.started_at is not None:
             affected.add(local_day(workout.started_at))
-        data = workout.model_dump(mode="json", exclude_none=True)
+        from .record_evidence import bind_record_evidence
+
+        data = bind_record_evidence(self, workout, existing.data if existing else None, stream="workouts")
         rpe = workout.session_rpe
         if rpe is not None and rpe.source_scope == "workout_summary":
             previous_data = (existing.data or {}).get("session_rpe") if existing else None
@@ -6508,11 +6512,13 @@ class HealthRepository:
         return bool(result.rowcount)
 
     def delete_for_user(self, user_id: str) -> None:
+        from .band_sources import BandSourceRecord
+
         self.db.execute(select(orm.User.id).where(
             orm.User.id == user_id
         ).with_for_update()).scalar_one_or_none()
         for model in (
-            orm.Device, orm.SleepRecord, orm.ActivityRecord, orm.TrainingRecord,
+            BandSourceRecord, orm.Device, orm.SleepRecord, orm.ActivityRecord, orm.TrainingRecord,
             orm.MetricSample, orm.DailySignalFeature, orm.ShadowResult, orm.DailyMetric, orm.DenseDataFile,
             orm.WorkoutMetricSample, orm.StrengthExercise, orm.StrengthCorrectionRevision, orm.Workout,
             orm.TrainingPreference,

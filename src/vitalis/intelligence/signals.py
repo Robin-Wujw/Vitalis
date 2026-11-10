@@ -263,6 +263,20 @@ def _qualification(metric: str) -> SignalQualification:
     kwargs: dict = {"minimum": 0.0}
     if metric == "session_rpe":
         kwargs.update(minimum=1.0, maximum=10.0)
+    elif metric in {"vendor_tsb", "vendor_tsb_total"}:
+        kwargs.update(minimum=-1e6, maximum=1e6)
+    elif metric == "weight":
+        kwargs.update(minimum=1.0, maximum=1000.0)
+    elif metric == "height":
+        kwargs.update(minimum=30.0, maximum=300.0)
+    elif metric == "bmi":
+        kwargs.update(minimum=1.0, maximum=200.0)
+    elif metric == "sleep_efficiency_percent":
+        kwargs.update(maximum=100.0)
+    elif metric in {"time_in_bed_minutes", "sleep_latency_minutes", "out_of_bed_delay_minutes"}:
+        kwargs.update(maximum=1440.0)
+    elif metric == "anaerobic_training_effect":
+        kwargs.update(maximum=5.0)
     elif metric in _SCORE_METRICS:
         kwargs["maximum"] = 100.0
     elif metric in {"skin_temp_delta", "skin_temp_baseline_delta"}:
@@ -350,7 +364,7 @@ def _registry() -> dict[str, SignalDefinition]:
     entries = [
         _definition("sleep_duration", "min", "sleep_day", ("sleep.sleep_duration", "slp.st", "slp.ed", "sleep.duration"), "yes", aggregation="mean_per_effective_day"),
         _definition("deep_sleep", "min", "sleep_day", ("sleep.deep_sleep", "slp.dp", "sleep.stages.deep")),
-        _definition("rem_sleep", "min", "sleep_day", ("sleep.rem_sleep", "slp.rm", "slp.remMinutes", "sleep.stages.rem")),
+        _definition("rem_sleep", "min", "sleep_day", ("sleep.rem_sleep", "slp.dt", "slp.rm", "slp.remMinutes", "sleep.stages.rem")),
         _definition("light_sleep", "min", "sleep_day", ("sleep.light_sleep", "slp.lt", "sleep.stages.light")),
         _definition("awake", "min", "sleep_day", ("sleep.awake", "slp.wk", "sleep.awake")),
         _definition("sleep_score", "score", "sleep_day", ("sleep.sleep_score", "slp.ss", "sleep.sleepScore")),
@@ -440,6 +454,33 @@ def _registry() -> dict[str, SignalDefinition]:
         ("mental_charge", ("Charge.samples.mental",)),
     ):
         entries.append(_definition(metric, "score", "calendar_day", (f"daily.{metric}", f"sample.{metric}") + aliases))
+    for metric, unit, semantics, fields in (
+        ("sleep_latency_minutes", "min", "sleep_day", ("sleep.sleep_latency_minutes", "slp.is")),
+        ("out_of_bed_delay_minutes", "min", "sleep_day", ("sleep.out_of_bed_delay_minutes", "slp.lb")),
+        ("time_in_bed_minutes", "min", "sleep_day", ("sleep.time_in_bed_minutes", "slp.st", "slp.ed", "slp.is", "slp.lb")),
+        ("sleep_efficiency_percent", "%", "sleep_day", ("sleep.sleep_efficiency_percent", "sleep.sleep_duration", "sleep.time_in_bed_minutes")),
+        ("step_goal", "steps", "activity_day", ("daily.step_goal", "stepGoal")),
+        ("calorie_goal", "kcal", "activity_day", ("daily.calorie_goal", "calorieGoal")),
+        ("active_minutes_goal", "min", "activity_day", ("daily.active_minutes_goal", "burningDurationGoal")),
+        ("weight", "kg", "calendar_day", ("sample.weight", "summary.weight")),
+        ("height", "cm", "calendar_day", ("sample.height", "summary.height")),
+        ("bmi", "kg/m2", "calendar_day", ("sample.bmi", "summary.bmi")),
+        *(("vendor_" + key.replace("Total", "_total"), "vendor_load", "activity_day", ("daily.vendor_" + key.replace("Total", "_total"), key))
+            for key in ("atl", "ctl", "tsb", "atlTotal", "ctlTotal", "tsbTotal")),
+    ):
+        entries.append(_definition(metric, unit, semantics, fields).model_copy(update={"visible_channels": ("hermes", "api")}))
+    for metric, unit, field in (
+        ("moving_time_seconds", "s", "exerciseTimeWithMillis"),
+        ("paused_time_seconds", "s", "pauseTimeWithMillis"),
+        ("elapsed_time_seconds", "s", "totalTimeWithMillis"),
+        ("equivalent_pace_seconds_per_km", "s/km", "avgEquivPace"),
+        ("best_equivalent_pace_seconds_per_km", "s/km", "bestEquivPace"),
+        ("anaerobic_training_effect", "score", "anaerobic_te"),
+    ):
+        entries.append(_definition(metric, unit, "activity_day", (f"workout.{metric}", field)).model_copy(
+            update={"visible_channels": ("hermes", "api"), "aggregation_basis": "workout",
+                "coverage_rule": SignalCoverageRule(expected_days=1,
+                    baseline_window_days=0, baseline_minimum_days=0)}))
     return {entry.normalized_metric: entry for entry in entries}
 
 

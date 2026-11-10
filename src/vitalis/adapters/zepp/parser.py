@@ -36,6 +36,7 @@ from vitalis.domain import (
 )
 from .catalog import LAP_62_NAMESPACE, resolve_exercise, verified_lap_labels
 from .sport_types import resolve_cloud_sport_mode, resolve_sport_mode
+from .parsers.supplemental import exertion_metrics, number, sleep_timing, weight_samples, workout_supplements
 
 MAX_WORKOUT_SECONDS = 12 * 60 * 60
 MAX_WELLNESS_SAMPLES_PER_EVENT = 10_000
@@ -154,7 +155,7 @@ class ZeppParser:
                         bedtime = None
                         wake_time = None
                 if duration > 0:
-                    rem = self._first_number(sleep, ("rm", "remMinutes", "rem"))
+                    rem = self._first_number(sleep, ("dt", "rm", "remMinutes", "rem"))
                     if rem is None:
                         rem = self._sleep_stage_minutes(sleep, {8, 11})
                     sleeps[day] = SleepRecord(
@@ -184,6 +185,7 @@ class ZeppParser:
                         wake_count=self._bounded_int(sleep, ("wc",), 0, 100),
                         naps=naps_by_day.get(day, []),
                         naps_known=day in naps_by_day,
+                        **sleep_timing(sleep, self._band_timezone(summary, timezone_name), duration),
                     )
 
             steps = summary.get("stp") or {}
@@ -373,7 +375,8 @@ class ZeppParser:
                 it, ("training_load", "trainLoad", "exercise_load")
             )
             calories = self._nonnegative_number(it, ("calories", "calorie"))
-            distance = self._nonnegative_number(it, ("distance", "dis"))
+            precise_distance = number(it.get("highPrecisionDistance"), 0.001, 1e7)
+            distance = precise_distance if precise_distance is not None else self._nonnegative_number(it, ("distance", "dis"))
             groups = self._nonnegative_number(it, ("total_group",)) if mode.family == "strength" else None
             reported_sets = int(groups) if groups is not None and groups > 0 and groups.is_integer() else None
             rpe_value = it.get("rpe")
@@ -439,7 +442,7 @@ class ZeppParser:
                 load=int(load) if load is not None else None,
                 calories=int(calories) if calories is not None else None,
                 distance_km=(
-                    round(distance / 1000, 3)
+                    round(distance / 1000, 6)
                     if distance is not None and distance >= 0
                     else None
                 ),
@@ -457,6 +460,7 @@ class ZeppParser:
                     it, ("heartrate_setting_type", "heartRateSettingType"), 0, 20
                 ),
                 heart_rate_zone_boundaries_bpm=self._heart_rate_zone_boundaries(it),
+                **workout_supplements(it),
             ))
         return workouts
 
@@ -1178,6 +1182,9 @@ class ZeppParser:
             ("spo2", ("spo2", "bloodOxygen", "blood_oxygen"), "%"),
             ("running_distance", ("totalRunningDistance",), "m"),
             ("cycling_distance", ("totalCyclingDistance",), "m"),
+            ("step_goal", ("stepGoal",), "steps"),
+            ("calorie_goal", ("calorieGoal",), "kcal"),
+            ("active_minutes_goal", ("burningDurationGoal",), "min"),
         )
         output: dict[tuple[date, str, str, str], DailyMetric] = {}
 
@@ -1243,6 +1250,9 @@ class ZeppParser:
                         value = ZeppParser._first_number(nested, keys)
                     if value is None or (unit == "load" and value < 0):
                         continue
+                    is_goal = metric in {"step_goal", "calorie_goal", "active_minutes_goal"}
+                    if is_goal and value <= 0:
+                        continue
                     if metric == "distance_km":
                         value = value / 1000
                     if (
@@ -1253,8 +1263,8 @@ class ZeppParser:
                     store(DailyMetric(
                         date=day, metric=metric, value=value, unit=unit,
                         source_scope=source_scope, device_id=device,
-                        source_field=keys[0] if unit == "load" else None,
-                        qualification="vendor_reference" if unit == "load" else None,
+                        source_field=keys[0] if unit == "load" or is_goal else None,
+                        qualification="vendor_user_target" if is_goal else "vendor_reference" if unit == "load" else None,
                     ))
         return list(output.values())
 
@@ -1568,14 +1578,21 @@ class ZeppParser:
         return all(recognized_item(item) for item in items)
 
     @staticmethod
-    def parse_wellness(raw: dict, source_key: str) -> tuple[list[DailyMetric], list[MetricSample]]:
+    def parse_wellness(raw: dict, source_key: str, *, timezone_name: str | None = None) -> tuple[list[DailyMetric], list[MetricSample]]:
         """Parse the optional wellness shapes verified by ZeppBridge."""
         label = source_key.split(":")[1] if source_key.startswith("wellness:") else ""
         items = ZeppParser._items(raw)
         daily: list[DailyMetric] = []
         samples: list[MetricSample] = []
 
-        if label == "respiratory_rate":
+        if label == "weight":
+            samples.extend(weight_samples(items))
+        elif label == "exertion":
+            daily.extend(exertion_metrics(items, timezone_name))
+        elif label in {"charge_stress", "charge_insights", "readiness_raw"}:
+            # Opaque payloads stay in the encrypted journal. No score is inferred.
+            return [], []
+        elif label == "respiratory_rate":
             import base64
             for item in items:
                 value = item.get("value") if isinstance(item, dict) else None

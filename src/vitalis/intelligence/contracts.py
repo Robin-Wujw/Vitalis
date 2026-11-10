@@ -14,10 +14,10 @@ from vitalis.intelligence.chart_contracts import Chart
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "19.0"
+DAILY_SCHEMA_VERSION = "20.0"
 WEEKLY_SCHEMA_VERSION = "11.0"
 MONTHLY_SCHEMA_VERSION = "8.0"
-INTELLIGENCE_VERSION = "20.0"
+INTELLIGENCE_VERSION = "21.0"
 DECISION_POLICY_VERSION = "12.0"
 EVIDENCE_VERSION = "2026-09a"
 TRAINING_RESPONSE_SCHEMA_VERSION = "2.0"
@@ -449,6 +449,12 @@ class SleepFeatures(BaseModel):
     duration_minutes: int | None = None
     bedtime: str | None = None
     wake_time: str | None = None
+    in_bed_at: datetime | None = None
+    out_of_bed_at: datetime | None = None
+    sleep_latency_minutes: float | None = Field(default=None, ge=0)
+    out_of_bed_delay_minutes: float | None = Field(default=None, ge=0)
+    time_in_bed_minutes: float | None = Field(default=None, gt=0)
+    sleep_efficiency_percent: float | None = Field(default=None, ge=0, le=100)
     deep_minutes: int | None = None
     light_minutes: int | None = None
     rem_minutes: int | None = None
@@ -1932,9 +1938,9 @@ class SubjectiveFeedback(BaseModel):
 
 
 class DailyProfile(BaseModel):
-    schema_version: Literal["19.0"] = DAILY_SCHEMA_VERSION
+    schema_version: Literal["20.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
-    intelligence_version: Literal["20.0"] = INTELLIGENCE_VERSION
+    intelligence_version: Literal["21.0"] = INTELLIGENCE_VERSION
     decision_policy_version: Literal["12.0"] = DECISION_POLICY_VERSION
     evidence_version: Literal["2026-09a"] = EVIDENCE_VERSION
     user_id: str

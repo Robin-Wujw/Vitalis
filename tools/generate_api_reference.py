@@ -13,6 +13,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "skills" / "vitalis" / "references" / "api.md"
 BASE_OPERATIONS = frozenset({
+    "get_health_catalog", "get_sleep_records", "export_report", "get_wake_review", "get_research_review",
     "get_data_status", "get_report", "get_public_report_view", "get_report_state", "create_analysis_run", "get_job",
     "create_sync_job", "list_workouts", "get_workout", "create_feedback",
     "get_coach_policy", "create_coach_operation", "get_strength_review", "get_race_equivalence",
@@ -230,6 +231,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="fail when generated API reference differs")
     args = parser.parse_args(argv)
+    client_source = (ROOT / "src/vitalis/api_client.py").read_bytes()
+    if args.check:
+        if SKILL_SCRIPT.read_bytes() != client_source:
+            print("Standalone Skill client differs from the canonical API client", file=sys.stderr)
+            return 1
+    else:
+        SKILL_SCRIPT.write_bytes(client_source)
     from vitalis.entrypoints.api.app import app
 
     try:

@@ -2,7 +2,7 @@
 
 [文档中心](README.md) | [当前架构](architecture.md) | [Zepp](zepp.md) | [报告与渠道](reports.md)
 
-本页说明进入分析和对外报告的事实资格。字段的完整类型和版本以[领域模型](../src/vitalis/domain/models.py)、[分析合同](../src/vitalis/intelligence/contracts.py)和运行服务 `/openapi.json` 为准。当前本地来源策略候选为日报 schema `19.0`、周报 `11.0`、月报 `8.0`、intelligence `20.0`、decision policy `12.0`、parser `zepp-parser-v3`、数据库 revision `2026-11-vendor-report-sources`；这些版本不表示生产服务已切换，最终回归与候选验收仍待完成。
+本页说明进入分析和对外报告的事实资格。字段的完整类型和版本以[领域模型](../src/vitalis/domain/models.py)、[分析合同](../src/vitalis/intelligence/contracts.py)和运行服务 `/openapi.json` 为准。当前本地来源策略候选为日报 schema `20.0`、周报 `11.0`、月报 `8.0`、intelligence `21.0`、decision policy `12.0`、parser `zepp-parser-v4`、数据库 revision `2026-11-vendor-report-sources`；这些版本不表示生产服务已切换，最终回归与候选验收仍待完成。
 
 ## 事实与来源
 
@@ -29,6 +29,14 @@
 昨夜主睡眠是否已确认结束记在 `features.sleep.finished`。Zepp 的醒来时间可能来自中途上传的半截记录。截至 `as_of`，实际保存该 `sleep_day` 睡眠的完整成功读取，必须开始于醒来至少 60 分钟后（`checked_after_wake_minutes`），且同一 band 响应内的心率数据已推进到醒来后至少 60 分钟（`recorded_after_wake_minutes`），才能确认。请求完成或排队写入耗时不计作等待时间；空、部分、失败及只有活动的响应不能确认睡眠。两项证据按同步分片保存实际睡眠日期与同响应的设备数据水位；其它接口或后续心率上传不能替代该水位，缺失保持未知。`usual_duration_minutes` 仍保存前 14 晚中位数（少于 5 晚为未知）供个人参照，但不用于放宽完成资格。此规则检查上传新鲜度，不把心率存在当作清醒证据，也不保证厂商已识别所有续睡。晨报只用已确认的睡眠出完整版，时间和兜底见[运维](operations.md)。
 
 ## 信号与基线
+
+### Zepp 补充观测
+
+- 睡眠以醒来所属 `sleep_day` 归属。`dt` 是 REM；`is`/`lb` 为入睡潜伏/醒后离床分钟，`obt`/`ebt` 为相对醒来日本地午夜的分钟。只有两侧时间恒等式都在一分钟内一致，才保存 UTC 上床/离床、卧床分钟和睡眠效率；效率分子为已记录睡眠分钟，缺失或矛盾不推断。JSON 事实保留 journal 引用和实际获取时间，相同事实重取不刷新年龄。
+- 训练以 `activity_day` 归属，毫秒字段分别保留为移动、暂停、总经过秒数。三者和差超过 10 ms 时不发布移动/暂停组件；总时长保留厂商原值。高精度距离换算 km；等效配速为 s/km，无氧训练效果为厂商 0–5 分。不能用移动时间偷偷替换原有经过时长。
+- 体重记录仅接受明确 `memberId=-1` 的本人记录；`generatedTime` 是 Unix 秒，观测日期为 `calendar_day`。保留 kg、cm、kg/m2；BMI 还须与同期体重/身高在 0.15 内一致，不推算未返回的体脂、肌肉、水分或基础代谢。
+- DailyHealth 的步数/卡路里/活动分钟目标与实际值分开，标记 `vendor_user_target`。exertion 的六个 ATL/CTL/TSB 字段使用独立 `vendor_*` 名称、`vendor_load` 单位和 `vendor_estimate_unvalidated` 资格；TSB 可为负，不替代 Vitalis 训练负荷或决策。
+- Charge stress/insight 与 readiness watch_score 原始流只加密保存在 journal，状态为 `retained_raw`。它们不是已解码指标，不能进入决策或补成零。空响应表示本次未取得可用记录，不能证明设备支持或确定没有此数据。触及响应上限时标记 partial。
 
 信号注册表 `src/vitalis/intelligence/signals.py` 为每个规范指标登记源字段、单位、日期语义（`sleep_day`、`activity_day`、`calendar_day`）、资格、覆盖规则、可见渠道（晨报、晚报、Hermes、API）、是否进入决策（`yes`、`no`、`shadow`）以及缺失或迟到时的处理；新信号先登记再进入分析。逐信号状态为 `AVAILABLE`、`PARTIAL`、`STALE`、`UNKNOWN`、`INSUFFICIENT`，整份报告的 `data_quality` 不能代替逐信号状态。个人基线取窗口内每日值的中位数和 MAD，窗口长度随比较记录在 `baseline_window_days`。
 

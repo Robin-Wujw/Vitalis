@@ -34,7 +34,8 @@ $env:ZEPP_MOCK = 'true'
 $env:VITALIS_ENV = 'test'
 $env:DATABASE_URL = 'sqlite:///./demo.db'
 uv run --locked --extra dev vitalis demo --database .\demo.db --day 2026-10-07
-uv run --locked --extra dev vitalis report daily --user demo --day 2026-10-07 --format markdown --output .\daily.md
+# 按 docs/quickstart.md 启动 API 并配置 Bearer 后导出
+uv run --locked --extra dev vitalis api report daily --day 2026-10-07 --format markdown --output .\daily.md
 Get-Content .\daily.md
 ```
 

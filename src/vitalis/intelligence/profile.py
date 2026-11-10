@@ -37,6 +37,7 @@ from .report_periods import resolve_month_period
 
 
 PROFILE_SAMPLE_METRICS = (
+    "weight", "height", "bmi",
     "hrv_rmssd",
     "hrv_sdnn",
     "spo2",
@@ -538,6 +539,10 @@ class ProfileLoader:
                 ("awake", "awake", "min"),
                 ("sleep_score", "sleep_score", "score"),
                 ("sleep_wake_count", "wake_count", "count"),
+                ("sleep_latency_minutes", "sleep_latency_minutes", "min"),
+                ("out_of_bed_delay_minutes", "out_of_bed_delay_minutes", "min"),
+                ("time_in_bed_minutes", "time_in_bed_minutes", "min"),
+                ("sleep_efficiency_percent", "sleep_efficiency_percent", "%"),
             ):
                 # SleepRecord keeps an explicit zero distinct from an absent stage.
                 _append(
@@ -550,6 +555,10 @@ class ProfileLoader:
                     scope,
                     device_id,
                     source_field=f"sleep.{field}",
+                    fetched_at=_summary_datetime(record.get("fetched_at")),
+                    qualification="verified_timing_identity" if field in {
+                        "sleep_latency_minutes", "out_of_bed_delay_minutes",
+                        "time_in_bed_minutes", "sleep_efficiency_percent"} else None,
                 )
             window = local_sleep_window(
                 day, record.get("bedtime"), record.get("wake_time"),

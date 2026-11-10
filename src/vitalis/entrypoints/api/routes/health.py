@@ -14,6 +14,33 @@ from vitalis.domain.aggregation import Granularity
 router = APIRouter(prefix="/health", tags=["health"])
 
 
+@router.get("/catalog", operation_id="get_health_catalog")
+def health_catalog(user_id: str = Depends(require_user_id)) -> dict:
+    return get_health_query().catalog()
+
+
+@router.get("/sleep-records", operation_id="get_sleep_records")
+def health_sleep_records(
+    from_date: date = Query(..., alias="from"),
+    to_date: date = Query(..., alias="to"),
+    user_id: str = Depends(require_user_id),
+) -> dict:
+    if not 0 <= (to_date - from_date).days <= 365:
+        raise HTTPException(status_code=422, detail="睡眠查询窗口必须为 1–366 天")
+    return get_health_query().sleep_records(user_id, from_date, to_date)
+
+
+@router.get("/wake-review", operation_id="get_wake_review")
+def health_wake_review(
+    from_date: date = Query(..., alias="from"),
+    to_date: date = Query(..., alias="to"),
+    user_id: str = Depends(require_user_id),
+) -> dict:
+    if not 0 <= (to_date - from_date).days <= 30:
+        raise HTTPException(status_code=422, detail="晨报核查窗口必须为 1–31 天")
+    return get_health_query().wake_review(user_id, from_date, to_date)
+
+
 def health_data_health(user_id: str = Depends(require_user_id)) -> dict:
     """Explain the latest Zepp fetch and durable attempt progress."""
     return get_health_query().data_status(user_id)

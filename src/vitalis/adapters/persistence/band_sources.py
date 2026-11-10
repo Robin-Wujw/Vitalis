@@ -29,10 +29,13 @@ def save_band_source(repo,user_id,day,kind,payload,*,fetched_at=None):
         BandSourceRecord.device_id==device).order_by(BandSourceRecord.fetched_at.desc(),BandSourceRecord.id.desc()).limit(1)).scalar_one_or_none()
     if previous and previous.data==payload:return 0
     journal=repo._active_chart_journal()
+    if journal and (journal.user_id != user_id or journal.source != source or journal.stream != 'sleep'):
+        journal = None
     stamp=fetched_at or (journal.fetched_at if journal else None) or datetime.now(timezone.utc)
     if stamp.tzinfo:stamp=stamp.astimezone(timezone.utc).replace(tzinfo=None)
+    record_id = journal.id if journal and journal.user_id == user_id and journal.source == source else None
     repo.db.add(BandSourceRecord(id=uuid4().hex,user_id=user_id,date=day,kind=kind,source=source,source_scope=scope,
-        device_id=device,data=payload,fetched_at=stamp,source_record_id=journal.id if journal else None))
+        device_id=device,data=payload,fetched_at=stamp,source_record_id=record_id))
     repo.db.flush();repo._bump_existing_input_revisions({user_id})
     repo.enqueue_analysis_job(user_id,day,event_type='source_sync',source=source,affected_dates={day},
         affected_streams={kind,'band_source_records'},reason='source-qualified band facts changed')
@@ -46,5 +49,6 @@ def read_band_sources(db,user_id,start,end,*,as_of):
     selected={}
     for row in rows:
         selected[(row.date,row.kind,row.source,row.source_scope,row.device_id)]={'date':row.date,'kind':row.kind,
-            'data':dict(row.data),'fetched_at':row.fetched_at.replace(tzinfo=timezone.utc)}
+            'data':{**row.data,'fetched_at':row.fetched_at.replace(tzinfo=timezone.utc).isoformat(),
+                'source_record_id':row.source_record_id},'fetched_at':row.fetched_at.replace(tzinfo=timezone.utc)}
     return list(selected.values())

@@ -24,15 +24,6 @@ uv run --locked --extra dev vitalis demo --database .\demo.db --day 2026-10-07
 
 预期输出是 JSON 元信息，包含 `dataset=synthetic_demo`、用户 `demo`、导入天数和 `analysis_run_id`；它不是可读报告。目标数据库必须不存在，已有文件不会覆盖。
 
-从已保存分析导出一份新 Markdown 文件：
-
-```powershell
-uv run --locked --extra dev vitalis report daily --user demo --day 2026-10-07 --format markdown --output .\daily.md
-Get-Content .\daily.md
-```
-
-`report` 只读取持久化分析，不同步、不重新计算、不发送通知，并拒绝覆盖已有输出文件。`morning`、`evening`、`weekly`、`monthly` 可替换 `daily`；`daily` 导出完整本地日事实快照，`evening` 导出面向阅读的当日复盘，二者不是同一语义。`--format html` 写保守的 inline HTML 片段。成功结果是指定路径存在且内容可直接阅读。
-
 ## 读取 API 快照
 
 前提：服务和令牌签发必须使用同一个数据库；本地 API 默认是 `127.0.0.1:8000`。在保持 `DATABASE_URL` 的终端启动服务：
@@ -46,16 +37,26 @@ uv run --locked --extra dev vitalis serve
 ```powershell
 uv run --locked --extra dev vitalis token issue --user demo --scope read --output C:\Users\Public\vitalis-demo-read.token
 $env:VITALIS_ACCESS_TOKEN = Get-Content C:\Users\Public\vitalis-demo-read.token -Raw
+$env:VITALIS_API_BASE_URL = 'http://127.0.0.1:8000'
 curl.exe "http://127.0.0.1:8000/api/reports/daily?day=2026-10-07" -H "Authorization: Bearer $env:VITALIS_ACCESS_TOKEN"
 ```
 
 预期响应是 JSON 报告快照。`GET /api/reports/{kind}` 只读已有结果；没有指定日期快照时返回 404，不会自动分析。`X-User-Id` 不能代替 Bearer 令牌，若同时提供必须与令牌绑定用户一致。完整请求字段以运行服务的 `/openapi.json` 为准。
 
+保持 API 运行及 Bearer 配置，导出已保存分析：
+
+```powershell
+uv run --locked --extra dev vitalis api report daily --day 2026-10-07 --format markdown --output .\daily.md
+Get-Content .\daily.md
+```
+
+客户端调用 `GET /api/reports/daily/export`，只把服务端排版后的正文写入新文件，拒绝覆盖已有文件。`morning`、`evening`、`weekly`、`monthly` 可替换 `daily`；`daily` 导出完整日事实，`evening` 导出当日复盘。`--format html` 写 inline HTML 片段。客户端不需要数据库配置，也不读取厂商凭据。
+
 ## 真实 Zepp 连接
 
 不要把演示库改成真实库。为新的独立数据库设置 `ZEPP_MOCK=false`、有效的 `VITALIS_TOKEN_ENCRYPTION_KEY` 和必要的 Zepp 配置，运行 `vitalis db init`、`vitalis user create --id <用户>`。
 
-当前主入口是不需要插件的网页登录：配置可访问的服务地址后，运行 `vitalis connect zepp --user <用户>`，在电脑浏览器打开生成的登录链接。密码会经过用户自己的 Vitalis 服务转交给 Zepp，不保存；不要把密码或令牌贴到聊天里。完整步骤和安全边界见 [Zepp 连接](zepp.md#网页登录主入口)。旧的浏览器插件配对暂留作备用，它使用官方页面输入密码，是另一条路径，不要混用两种说明。
+当前主入口是不需要插件的网页登录：配置可访问的服务地址并签发有 `manage` scope 的用户令牌后，通过 `POST /api/connect/zepp/pair`（JSON `{}`）取得登录链接，在电脑浏览器打开。可用 `vitalis api request POST connect/zepp/pair`，从 stdin 提供 JSON。密码会经过用户自己的 Vitalis 服务转交给 Zepp，不保存；不要把密码或令牌贴到聊天里。完整步骤见 [Zepp 连接](zepp.md#网页登录主入口)。旧的浏览器插件配对暂留作备用。
 
 真实同步由独立 `vitalis worker` 处理。手动 `POST /api/sync-jobs` 必须带新的 `Idempotency-Key`，得到 `job_id` 后读取 `GET /api/jobs/{job_id}`；受理不等于同步完成。服务默认只绑定回环地址，公网部署还需要 TLS、鉴权、来源白名单和网关配置。
 

@@ -47,6 +47,7 @@ class SqlAnalysisJobRepository:
     def enqueue(
         self, user_id: str, day: date, key: str, request_hash: str,
         delivery_period: str | None = None,
+        *, refresh_research: bool = False,
     ) -> str:
         if delivery_period not in (None, "morning", "evening", "weekly", "monthly"):
             raise ValueError("invalid delivery period")
@@ -87,6 +88,8 @@ class SqlAnalysisJobRepository:
                     affected_start=day,
                     affected_end=day,
                     input_revision=owner.analysis_input_revision,
+                    execution_context={"refresh_research": refresh_research,
+                        "notification_policy": "suppress"} if delivery_period is None else {},
                 ))
                 db.flush()
             return job_id

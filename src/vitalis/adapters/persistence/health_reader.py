@@ -36,6 +36,13 @@ class SqlHealthReader(HealthReader):
     def __init__(self, session_factory: Callable[[], Session] = SessionLocal) -> None:
         self._session_factory = session_factory
 
+    def sleep_records(self, user_id: str, start: date, end: date, *, as_of: datetime) -> tuple[dict, ...]:
+        from .band_sources import read_band_sources
+
+        with self._session_factory() as db:
+            rows = read_band_sources(db, user_id, start, end, as_of=as_of)
+            return tuple(row for row in rows if row["kind"] == "sleep")
+
     def sync_stream_states(self, user_id: str) -> tuple[HealthStreamStateRead, ...]:
         with self._session_factory() as db:
             rows = HealthRepository(db).sync_stream_states(user_id)
@@ -55,6 +62,12 @@ class SqlHealthReader(HealthReader):
                 )
                 for row in rows
             )
+
+    def wake_days(self, user_id: str, start: date, end: date):
+        from vitalis.application.wake_check import collect
+
+        with self._session_factory() as db:
+            return collect(HealthRepository(db), user_id, end, (end - start).days + 1)
 
     def stream_observation_dates(
         self,

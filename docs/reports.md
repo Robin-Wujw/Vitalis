@@ -142,14 +142,14 @@ JSON 图表和单图 SVG 可加 `route=zepp:account` 或返回的 `routes[].id`�
 
 ## 本地导出与 API
 
-从仓库根目录、已有 demo 数据库执行：
+启动 API 并配置绑定用户的 Bearer 后执行：
 
 ```powershell
-uv run --locked --extra dev vitalis report daily --user demo --day 2026-10-07 --format markdown --output .\daily.md
-uv run --locked --extra dev vitalis report evening --user demo --day 2026-10-07 --format html --output .\evening.html
+uv run --locked --extra dev vitalis api report daily --day 2026-10-07 --format markdown --output .\daily.md
+uv run --locked --extra dev vitalis api report evening --day 2026-10-07 --format html --output .\evening.html
 ```
 
-导出是纯预览，要求输出路径不存在。HTTP 使用 `GET /api/reports/{kind}?day=YYYY-MM-DD` 和 Bearer 令牌读取已保存快照；GET 不启动同步或分析。没有快照返回 404。API 的 `daily` 返回完整 `DailyProfile` 事实快照，`evening` 返回面向阅读的晚报投影；还提供 `weekly-briefing` 和 `monthly-briefing` 的读取路径，字段以 `/openapi.json` 为准。
+导出通过 `GET /api/reports/{kind}/export?day=YYYY-MM-DD&format=markdown` 取得服务端排版正文及 SHA-256，客户端只写入新文件。HTTP 使用 `GET /api/reports/{kind}?day=YYYY-MM-DD` 和 Bearer 令牌读取已保存快照；GET 不启动同步或分析。没有快照返回 404。API 的 `daily` 返回完整 `DailyProfile` 事实快照，`evening` 返回面向阅读的晚报投影；还提供 `weekly-briefing` 和 `monthly-briefing` 的读取路径，字段以 `/openapi.json` 为准。
 
 ## PushPlus
 

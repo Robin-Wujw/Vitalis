@@ -68,7 +68,7 @@ def _valid_sleep_night(row: OpenHealthObservation) -> bool:
     if row.sleep_minutes is None or row.sleep_minutes < 0:
         return False
     timing = _window(row)
-    tib = timing[1] if timing else row.time_in_bed_minutes
+    tib = row.time_in_bed_minutes if row.time_in_bed_minutes is not None else timing[1] if timing else None
     if tib is None or not 120 <= tib <= 960:
         return False
     return row.sleep_minutes <= tib + 5
@@ -139,7 +139,7 @@ def compute_sleep(
         base.update(status=OpenHealthStatus.REFUSED, note="目标夜缺少有效 bedtime/wake_time 或 time_in_bed/sleep_minutes。", payload=SleepInsight(target_date=target),
                     refusal_reason=OpenHealthRefusalReason(code="MISSING_SLEEP_TIMING", detail="无法计算或读取目标夜 time-in-bed。", missing_inputs=["bedtime", "wake_time", "time_in_bed_minutes"]))
         return OpenHealthInsights(**base)
-    tib = timing[1] if timing else target_row.time_in_bed_minutes
+    tib = target_row.time_in_bed_minutes if target_row.time_in_bed_minutes is not None else timing[1] if timing else None
     if tib is None or not 120 <= tib <= 960:
         base.update(status=OpenHealthStatus.REFUSED, note="目标夜 time-in-bed 超出可信范围。", payload=SleepInsight(target_date=target),
                     refusal_reason=OpenHealthRefusalReason(code="INVALID_TIME_IN_BED", detail="time-in-bed 必须在 120..960 分钟。", missing_inputs=["time_in_bed_minutes"]))

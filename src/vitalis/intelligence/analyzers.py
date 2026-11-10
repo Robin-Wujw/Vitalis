@@ -191,6 +191,10 @@ class SleepAnalyzer:
             duration_minutes=duration,
             bedtime=str(record["bedtime"]) if record.get("bedtime") else None,
             wake_time=str(record["wake_time"]) if record.get("wake_time") else None,
+            **{field: record.get(field) for field in (
+                "in_bed_at", "out_of_bed_at", "sleep_latency_minutes",
+                "out_of_bed_delay_minutes", "time_in_bed_minutes", "sleep_efficiency_percent",
+            )},
             deep_minutes=stage_minutes("deep_sleep"),
             light_minutes=stage_minutes("light_sleep"),
             rem_minutes=int(rem_sleep) if rem_sleep is not None else None,

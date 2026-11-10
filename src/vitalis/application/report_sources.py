@@ -251,6 +251,11 @@ def _quality(raw: RawDailyProfile) -> DataQuality:
 def _time_visible(raw: RawDailyProfile, value: datetime | date | None) -> bool:
     if value is None:
         return True  # Unknown fetching time remains unknown.
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return False
     if isinstance(value, datetime):
         return _observed_key(value) <= _observed_key(raw.as_of)
     return value <= min(raw.day, local_day(raw.as_of, raw.timezone_name))

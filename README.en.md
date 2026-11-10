@@ -6,14 +6,14 @@ Vitalis turns Zepp sleep, activity, and workout observations into traceable pers
 
 ## Short demo
 
-From the repository root, install the locked environment, enable explicit mock mode, create a new SQLite database, and export a saved report:
+From the repository root, install locked dependencies and create a synthetic database. For export, start the API and configure a Bearer token as described in the quickstart:
 
 ```powershell
 python -m pip install 'uv==0.12.9'
 uv sync --locked --extra dev
 $env:ZEPP_MOCK = 'true'; $env:VITALIS_ENV = 'test'; $env:DATABASE_URL = 'sqlite:///./demo.db'
 uv run --locked --extra dev vitalis demo --database .\demo.db --day 2026-10-07
-uv run --locked --extra dev vitalis report daily --user demo --day 2026-10-07 --format markdown --output .\daily.md
+uv run --locked --extra dev vitalis api report daily --day 2026-10-07 --format markdown --output .\daily.md
 Get-Content .\daily.md
 ```
 

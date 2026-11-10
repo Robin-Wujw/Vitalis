@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Callable, Literal
 
 from vitalis.time import local_day
@@ -46,11 +46,35 @@ class HealthQuery:
         timezone_name: str = "UTC",
         now_factory: Callable[[], datetime] | None = None,
         next_auto_sync_factory: Callable[[], str] | None = None,
+        source_catalog: dict | None = None,
+        wake_poll_seconds: int = 900,
+        wake_window_end: time = time(12),
     ) -> None:
         self._reader = reader
         self._timezone_name = timezone_name
         self._now_factory = now_factory or (lambda: datetime.now(timezone.utc))
         self._next_auto_sync_factory = next_auto_sync_factory
+        self._source_catalog = source_catalog or {}
+        self._wake_poll_seconds = wake_poll_seconds
+        self._wake_window_end = wake_window_end
+
+    def wake_review(self, user_id: str, start: date, end: date) -> dict:
+        from .wake_check import summarize
+
+        rows = self._reader.wake_days(user_id, start, end)
+        result = summarize(rows, timezone_name=self._timezone_name,
+            poll_interval_seconds=self._wake_poll_seconds, window_end=self._wake_window_end)
+        samples = sum(row["minutes_after_wake"] is not None for row in result["days"])
+        return {"user_id": user_id, "from": start, "to": end,
+            "time_basis": "sleep_day", "timezone": self._timezone_name,
+            "sample_count": samples, "coverage": samples / len(rows) if rows else 0,
+            **result}
+
+    def catalog(self) -> dict:
+        from vitalis.intelligence.signals import SIGNAL_REGISTRY
+
+        return {"signals": {key: value.model_dump(mode="json") for key, value in SIGNAL_REGISTRY.items()},
+            "streams": self._source_catalog}
 
     def data_status(self, user_id: str) -> dict:
         """Return source coverage and the latest bounded synchronization result."""
@@ -198,6 +222,11 @@ class HealthQuery:
             "streams": streams,
             "workout_details": self._workout_details(user_id),
         }
+
+    def sleep_records(self, user_id: str, start: date, end: date) -> dict:
+        return {"user_id": user_id, "from": start, "to": end,
+            "time_basis": "sleep_day", "timezone": self._timezone_name,
+            "records": self._reader.sleep_records(user_id, start, end, as_of=_as_utc(self._now_factory()))}
 
     def _workout_details(self, user_id: str) -> dict | None:
         reader = getattr(self._reader, "workout_detail_coverage", None)

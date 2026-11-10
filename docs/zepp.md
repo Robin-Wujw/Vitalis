@@ -26,7 +26,7 @@ Mock 生成同构的睡眠、活动、训练和来源元信息，可离线执行
 不用插件，在电脑浏览器里用 Zepp 手机号或邮箱和密码连接：
 
 1. 按[运维说明](operations.md#zepp-网页登录与重新登录)配置可访问的服务地址。当前私有部署经 ZeroTier 访问；公网入口必须使用 HTTPS。
-2. 运行 `vitalis connect zepp --user <用户>`，打开生成的 `login_url`；默认 60 分钟有效。需要额外通过 PushPlus 发送链接时才加 `--push`。
+2. 使用绑定本人且有 `manage` scope 的 Bearer，通过 `vitalis api request POST connect/zepp/pair`（stdin 输入 `{}`）取得并打开 `login_url`；默认 60 分钟有效。
 3. 在用户自己的 Vitalis 登录页输入账号和密码。密码只经该服务转交 Zepp，不保存；成功后加密保存令牌，并启动历史回填。
 4. 查看连接进度，确认回填和首次分析完成。登录成功不等于历史数据已经齐全。
 
@@ -67,7 +67,15 @@ Idempotency-Key: <new-or-reused-key>
 
 首次连接成功后，worker 回填 180 天历史，完成后自动排队首次分析。进度用 `GET /api/connect/zepp/progress` 读取，状态依次为 `connected` → `credential_verified` → `backfill_requested` → `backfill_progress` → `bootstrap_analysis_queued` → `first_report_ready` → `daily_cadence`，同时给出实际覆盖和暖机进度。
 
-训练明细先落盘再流式解析，单条响应最多 32 MB、展开后最多 25 万个样本（各逐秒序列合计约每秒 10 个，约 6.5 小时）；超过时记为 `resource_limit`，不记成无法识别。实测最大的真实明细是 4 小时 39 分的马拉松：响应 1.6 MB、16.7 万个样本，服务器上解析 4.1 秒、进程峰值 309 MB，在 worker 的 500 MB 软上限内。2026-10-14 以前的上限是 2 万，普通 35 分钟的跑步就会超出，9/28 以来缺失的 71 条明细已用 `vitalis sync details` 补齐。
+训练明细先落盘再流式解析，单条响应最多 32 MB、展开后最多 25 万个样本（各逐秒序列合计约每秒 10 个，约 6.5 小时）；超过时记为 `resource_limit`，不记成无法识别。实测最大的真实明细是 4 小时 39 分的马拉松：响应 1.6 MB、16.7 万个样本，服务器上解析 4.1 秒、进程峰值 309 MB，在 worker 的 500 MB 软上限内。明细回填统一通过 `POST /api/sync-jobs` 的 `detail_only`/`detail_limit` 参数排队，每批成功后核对覆盖再继续。
+
+## 补充数据与可取性
+
+2026-11-10 对照 zepp-mcp `904cc301d63a64da6f633dd8a75b2a612e67240a`、ZeppBridge `a6a805dce7fba941af544e36d251c6d6026a1a21`，并从已授权服务器做只读 GET 核查。已确认可取得睡眠时间组件和 REM、训练毫秒时长与高精度距离、DailyHealth 目标、本人历史体重与 exertion 厂商负荷。体重 endpoint 使用 `members/-1/weightRecords`，fromTime/toTime 为秒；返回仍按 memberId 再过滤。同步计划 `zepp-sync-v7`、解析器 `zepp-parser-v4`；请求目录由 `streams.py` 同时供单次取数和持久任务使用。
+
+Charge stress/insight 和 readiness watch_score 存在非空原始内容，但编码语义尚未验证，先保留加密原文，不对外伪造分数。分钟步数的两种记录宽度尚未与日总量对账通过；Food、Emotion、血压、恢复心率等接口在本次窗口为空或不支持，不能因为 MCP 定义了工具就认定账号能取得。AFib 的 255 等占位值继续排除。
+
+`GET /api/health/catalog` 列出字段单位、来源、资格与 raw-only 流；`GET /api/health/sleep-records` 读取已保存的独立来源睡眠，`GET /api/health/metrics/{metric}` 和 `/api/health/daily-metrics` 读取样本/日事实。同步由 `POST /api/sync-jobs` 排队，完成状态与覆盖分别查询 `/api/jobs/{id}` 和 `/api/data-status`，读取本身不访问 Zepp。
 
 力量 `lap_62` 的普通解析和流式解析共用同一行解析器及完整已核验动作表（`adapters/zepp/data/strength_exercises.json`）。Zepp 10.8.7-play APK 证明 `lap_62[28] → strengthTrainType → actionType`，官方 `/sport/config/muscle` 中文目录共 1,134 项，其中代码 0 是“选择一项训练”界面占位，其余 **1,133 个唯一动作代码全部映射**；原来只收录实际观测的 26 项不再作为覆盖上限。目录响应 SHA-256 为 `7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb`，资源保留 APK 摘要、版本、字段关系和逐项目录定位，不伪造个人观测证据。
 

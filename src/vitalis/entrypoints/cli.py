@@ -12,20 +12,26 @@ from pathlib import Path
 import sqlite3
 import sys
 
-from sqlalchemy.engine import make_url
 
-from vitalis.config import settings
+def _settings():
+    from vitalis.config import settings
+
+    return settings
 
 
 def _database_file() -> Path | None:
-    url = make_url(settings.database_url)
+    from sqlalchemy.engine import make_url
+
+    url = make_url(_settings().database_url)
     if url.get_backend_name() != "sqlite" or not url.database or url.database == ":memory:":
         return None
     return Path(url.database).resolve()
 
 
 def _configured_sqlite_file() -> Path:
-    url = make_url(settings.database_url)
+    from sqlalchemy.engine import make_url
+
+    url = make_url(_settings().database_url)
     if url.drivername != "sqlite" or url.query or not url.database or url.database == ":memory:":
         raise ValueError("db backup requires a configured file-based SQLite database")
     return Path(url.database)
@@ -121,6 +127,7 @@ def _restore(backup: Path, database: Path) -> None:
 
 
 def _doctor() -> int:
+    from sqlalchemy.engine import make_url
     from datetime import datetime, timezone
 
     from vitalis.adapters.persistence.database import SchemaMismatch, SessionLocal, check_schema
@@ -148,8 +155,8 @@ def _doctor() -> int:
             last_seen = row.last_seen_at.isoformat() + "Z"
     print(json.dumps({
         "schema": state,
-        "database_backend": make_url(settings.database_url).get_backend_name(),
-        "timezone": settings.timezone,
+        "database_backend": make_url(_settings().database_url).get_backend_name(),
+        "timezone": _settings().timezone,
         "worker": worker,
         "worker_last_seen_at": last_seen,
     }, ensure_ascii=False))
@@ -163,7 +170,7 @@ def _reset_dev_database(database: Path, confirmed: bool) -> None:
 
     if not confirmed:
         raise ValueError("db reset requires --confirm-discard-local-data")
-    if settings.env not in {"dev", "test"}:
+    if _settings().env not in {"dev", "test"}:
         raise ValueError("db reset is available only in dev/test environments")
     if database.is_symlink() or not database.is_file() or database.suffix not in {".db", ".sqlite"}:
         raise ValueError("db reset requires an existing regular SQLite .db/.sqlite file")
@@ -195,7 +202,7 @@ def _demo(database: Path, day: str | None) -> None:
     if database.suffix not in {".db", ".sqlite"}:
         raise ValueError("demo requires a .db or .sqlite path")
     target_day = date.fromisoformat(day) if day else date.today()
-    settings.database_url = f"sqlite:///{database.resolve().as_posix()}"
+    _settings().database_url = f"sqlite:///{database.resolve().as_posix()}"
 
     from vitalis import bootstrap
     from vitalis.application.sync import SyncCommand
@@ -205,12 +212,12 @@ def _demo(database: Path, day: str | None) -> None:
 
     period = resolve_month_period(target_day)
     start = min(target_day - timedelta(days=55), period.reference_start)
-    as_of = datetime.combine(target_day, time(21, 20), ZoneInfo(settings.timezone)).astimezone(timezone.utc)
+    as_of = datetime.combine(target_day, time(21, 20), ZoneInfo(_settings().timezone)).astimezone(timezone.utc)
     init_db()
     sync = bootstrap.get_demo_sync().execute(SyncCommand(
         "demo", name="Synthetic demo", start=start, end=target_day
     ))
-    seed_demo_workouts(start, target_day, as_of, settings.timezone)
+    seed_demo_workouts(start, target_day, as_of, _settings().timezone)
     result = bootstrap.get_intelligence_command(
         today_factory=lambda: target_day, now_factory=lambda: as_of,
     ).analyze("demo", target_day)
@@ -220,48 +227,6 @@ def _demo(database: Path, day: str | None) -> None:
         "user_id": "demo",
         "days_imported": sync.days_synced,
         "analysis_run_id": result.daily.analysis_run_id,
-    }, ensure_ascii=False))
-
-
-def _write_report(report_kind: str, user_id: str, day: str | None, target: str, output: Path) -> None:
-    """Render a stored briefing to a new local file without sending it."""
-    from datetime import date
-
-    from vitalis import bootstrap
-    from vitalis.intelligence.report_rendering import render_report
-
-    if output.exists() or output.is_symlink():
-        raise ValueError("report output must be a new path; existing files and symlinks are refused")
-    target_day = date.fromisoformat(day) if day else None
-    query = bootstrap.get_intelligence_query()
-    briefing = {
-        "morning": query.morning_briefing,
-        "daily": query.daily,
-        "evening": query.evening_briefing,
-        "weekly": query.weekly_briefing,
-        "monthly": query.monthly_briefing,
-    }[report_kind](user_id, target_day)
-    if briefing is None:
-        raise ValueError(f"no {report_kind} briefing is available for this user and date")
-    rendered = render_report(briefing, target)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    created = False
-    try:
-        descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        created = True
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
-            stream.write(rendered.content)
-    except Exception:
-        if created:
-            output.unlink(missing_ok=True)
-        raise
-    print(json.dumps({
-        "report": report_kind,
-        "target": target,
-        "media_type": rendered.media_type,
-        "renderer_version": rendered.renderer_version,
-        "content_sha256": rendered.content_sha256,
-        "output": str(output.resolve()),
     }, ensure_ascii=False))
 
 
@@ -320,7 +285,7 @@ _REPLAY_INPUT_LIMIT_BYTES = 128 * 1024 * 1024
 
 
 def _require_offline_replay_environment() -> None:
-    if settings.env not in {"dev", "test"}:
+    if _settings().env not in {"dev", "test"}:
         raise ValueError("offline replay is available only in dev/test environments")
 
 
@@ -414,6 +379,11 @@ def _replay_apply_command(args: argparse.Namespace) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "api":
+        from vitalis.api_client import main as api_main
+
+        return api_main(argv[1:])
     parser = argparse.ArgumentParser(prog="vitalis", description="Vitalis health data service")
     try:
         package_version = version("vitalis")
@@ -423,6 +393,7 @@ def main(argv: list[str] | None = None) -> int:
         package_version = __version__
     parser.add_argument("--version", action="version", version=f"%(prog)s {package_version}")
     subcommands = parser.add_subparsers(dest="command", required=True)
+    subcommands.add_parser("api", help="Authenticated HTTP business client (vitalis api --help)")
     subcommands.add_parser("serve", help="Start the loopback API process")
     subcommands.add_parser("worker", help="Start scheduled synchronization and delivery")
     subcommands.add_parser("doctor", help="Check configuration and schema without exposing secrets")
@@ -466,47 +437,9 @@ def main(argv: list[str] | None = None) -> int:
         "rebuild-features",
         help="Recompute daily features of dense sample streams from stored samples",
     )
-    connect = subcommands.add_parser("connect", help="Create a phone login link for a data source")
-    connect.add_argument("source", choices=("zepp",))
-    connect.add_argument("--user", required=True)
-    connect.add_argument("--minutes", type=int, default=60, help="Link lifetime, up to 1440")
-    connect.add_argument("--push", action="store_true", help="Also send the link through PushPlus")
-    wake = subcommands.add_parser("wake-check", help="Review how soon morning reports followed waking")
-    wake.add_argument("--user", required=True)
-    wake.add_argument("--days", type=int, default=7)
-    wake.add_argument("--end", help="Last local date in YYYY-MM-DD format (default: today)")
-    sync = subcommands.add_parser("sync", help="Operator synchronization tasks")
-    sync_commands = sync.add_subparsers(dest="sync_command", required=True)
-    details = sync_commands.add_parser(
-        "details",
-        help="Fetch missing workout details in bounded attempts until none remain",
-    )
-    details.add_argument("--user", required=True)
-    details.add_argument("--days", type=int, default=730)
-    details.add_argument("--max-attempts", type=int, default=60)
-    details.add_argument("--attempt-timeout", type=int, default=900, help="Seconds to wait per attempt")
-    shadow = subcommands.add_parser("shadow", help="Run or summarize off-peak shadow analysis")
-    shadow_commands = shadow.add_subparsers(dest="shadow_command", required=True)
-    shadow_run = shadow_commands.add_parser("run", help="Compute shadow results for one closed day")
-    shadow_run.add_argument("--day", help="Last local date in YYYY-MM-DD format (default: yesterday)")
-    shadow_run.add_argument(
-        "--days", type=int, default=1,
-        help="Replay the shadow modules over this many days ending at --day",
-    )
-    shadow_report = shadow_commands.add_parser("report", help="Summarize a shadow period as JSON")
-    shadow_report.add_argument("kind", choices=("readiness", "body_signal"))
-    shadow_report.add_argument("--user", required=True)
-    shadow_report.add_argument("--days", type=int, default=14)
-    shadow_report.add_argument("--end", help="Last local date in YYYY-MM-DD format (default: yesterday)")
     demo = subcommands.add_parser("demo", help="Create synthetic data in a new SQLite database")
     demo.add_argument("--database", type=Path, required=True)
     demo.add_argument("--day", help="Local date in YYYY-MM-DD format")
-    report = subcommands.add_parser("report", help="Render a stored report without sending it")
-    report.add_argument("kind", choices=("morning", "daily", "evening", "weekly", "monthly"))
-    report.add_argument("--user", required=True)
-    report.add_argument("--day", help="Report date in YYYY-MM-DD format")
-    report.add_argument("--format", dest="target", choices=("markdown", "html"), default="markdown")
-    report.add_argument("--output", type=Path, required=True)
     replay = subcommands.add_parser("replay", help="Replay local source input without network or delivery")
     replay_commands = replay.add_subparsers(dest="replay_command", required=True)
     fixture_replay = replay_commands.add_parser(
@@ -541,7 +474,7 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument("--replay-user", dest="replay_user_id", required=True)
         command.add_argument("--start-date", "--start", dest="start_date", required=True)
         command.add_argument("--end-date", "--end", dest="end_date", required=True)
-        command.add_argument("--timezone", default=settings.timezone)
+        command.add_argument("--timezone", default=_settings().timezone)
         if name == "apply":
             command.add_argument("--confirm", action="store_true")
     undo_replay = replay_commands.add_parser("undo", help="Restore the facts a replay application replaced")
@@ -554,7 +487,7 @@ def main(argv: list[str] | None = None) -> int:
 
             uvicorn.run(
                 "vitalis.entrypoints.api.app:app",
-                host=settings.host, port=settings.port, reload=False,
+                host=_settings().host, port=_settings().port, reload=False,
             )
         elif args.command == "worker":
             from vitalis.entrypoints.worker import main as worker
@@ -610,18 +543,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(_rebuild_features(), ensure_ascii=False))
             else:
                 _restore(args.backup, args.database)
-        elif args.command == "connect":
-            print(json.dumps(_connect_link(args), ensure_ascii=False))
-        elif args.command == "wake-check":
-            print(json.dumps(_wake_check(args), ensure_ascii=False, indent=2))
-        elif args.command == "sync":
-            print(json.dumps(_sync_details(args), ensure_ascii=False))
-        elif args.command == "shadow":
-            print(json.dumps(_shadow_command(args), ensure_ascii=False, indent=2))
         elif args.command == "demo":
             _demo(args.database, args.day)
-        elif args.command == "report":
-            _write_report(args.kind, args.user, args.day, args.target, args.output)
         elif args.command == "replay":
             if args.replay_command == "fixture":
                 path = args.fixture_option or args.fixture_path
@@ -638,129 +561,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"vitalis: {exc}", file=sys.stderr)
         return 1
     return 0
-
-
-def _wake_check(args) -> dict:
-    from vitalis.adapters.persistence import HealthRepository, session_scope
-    from vitalis.adapters.persistence.database import check_schema
-    from vitalis.application.wake_check import collect, summarize
-    from vitalis.time import local_today
-
-    check_schema()
-    end = date.fromisoformat(args.end) if args.end else local_today()
-    with session_scope() as db:
-        days = collect(HealthRepository(db), args.user, end, max(1, args.days))
-    return summarize(
-        days, timezone_name=settings.timezone,
-        poll_interval_seconds=settings.morning_wake_poll_interval_seconds,
-        window_end=settings.morning_wake_window()[1],
-    )
-
-
-def _connect_link(args) -> dict:
-    """Pairing link for the phone login page; the password never touches the CLI."""
-    from vitalis.adapters.persistence.database import check_schema
-    from vitalis.bootstrap import get_connection_service
-
-    check_schema()
-    if not settings.public_url:
-        raise ValueError("VITALIS_PUBLIC_URL is not configured; the phone cannot reach the login page")
-    pairing = get_connection_service().create_pairing(args.user, ttl_minutes=args.minutes)
-    url = f"{settings.public_url}{pairing['login_url']}"
-    if args.push:
-        from vitalis.adapters.notifications import PushMessage, PushService
-
-        PushService().push(PushMessage(
-            title="Vitalis · 连接 Zepp",
-            body=f"用手机打开下面的链接，输入 Zepp 账号和密码完成连接：\n\n[连接 Zepp]({url})\n",
-            user_id=args.user,
-        ))
-    return {"login_url": url, "expires_at": pairing["expires_at"], "pushed": bool(args.push)}
-
-
-def _sync_details(args) -> dict:
-    """Queue detail-only attempts for the running worker and wait for each.
-
-    Every attempt fetches at most four details; progress is the drop in
-    ``missing_detail``.  Stops when nothing is missing or an attempt makes no
-    progress.
-    """
-    import time
-    from uuid import uuid4
-
-    from vitalis.adapters.persistence import HealthRepository, session_scope
-    from vitalis.adapters.persistence.database import check_schema
-    from vitalis.bootstrap import get_connector
-
-    check_schema()
-    connector = get_connector("zepp")
-
-    def coverage() -> dict:
-        with session_scope() as db:
-            return HealthRepository(db).workout_detail_coverage(args.user)
-
-    before = coverage()
-    attempts = []
-    for _ in range(max(1, args.max_attempts)):
-        missing = coverage()["missing_detail"]
-        if missing == 0:
-            break
-        attempt = connector.create_attempt(
-            args.user, days=min(max(args.days, 1), 730), trigger="manual",
-            trigger_ref=f"cli-details-{uuid4().hex}", detail_only=True,
-        )
-        if attempt is None:
-            break
-        deadline = time.monotonic() + max(60, args.attempt_timeout)
-        status = "queued"
-        while time.monotonic() < deadline:
-            with session_scope() as db:
-                row = HealthRepository(db).sync_attempt(attempt.id)
-                status = row.status if row is not None else "missing"
-            if status not in {"queued", "running", "retry_wait"}:
-                break
-            time.sleep(5)
-        after = coverage()["missing_detail"]
-        attempts.append({"attempt_id": attempt.id, "status": status, "missing_after": after})
-        print(json.dumps(attempts[-1], ensure_ascii=False), file=sys.stderr, flush=True)
-        if after >= missing:
-            break
-    final = coverage()
-    return {
-        "before_missing": before["missing_detail"],
-        "after_missing": final["missing_detail"],
-        "attempts": len(attempts),
-        "last_resource_limit_at": (
-            final["last_resource_limit_at"].isoformat()
-            if final["last_resource_limit_at"] else None
-        ),
-    }
-
-
-def _shadow_command(args) -> dict:
-    from datetime import date, timedelta
-
-    from vitalis.adapters.persistence import HealthRepository, session_scope
-    from vitalis.adapters.persistence.database import check_schema
-    from vitalis.time import local_today
-
-    check_schema()
-    if args.shadow_command == "run":
-        from vitalis.scheduler.jobs import shadow_batch_job
-
-        end = date.fromisoformat(args.day) if args.day else local_today() - timedelta(days=1)
-        days = [end - timedelta(days=offset) for offset in range(max(1, args.days) - 1, -1, -1)]
-        return {"days": len(days), "user_runs": sum(shadow_batch_job(day) for day in days)}
-    from vitalis.application.shadow_batch import shadow_report
-
-    end = date.fromisoformat(args.end) if args.end else local_today() - timedelta(days=1)
-    start = end - timedelta(days=max(1, args.days) - 1)
-    with session_scope() as db:
-        rows = [
-            (row.day, row.payload)
-            for row in HealthRepository(db).shadow_results(args.user, args.kind, start, end)
-        ]
-    return shadow_report(args.kind, rows)
 
 
 def _rebuild_features() -> dict:

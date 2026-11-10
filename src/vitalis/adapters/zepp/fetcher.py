@@ -15,6 +15,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from vitalis.adapters.zepp.client import ZeppAPIClient, ZeppAuthError
+from vitalis.adapters.zepp.streams import WELLNESS_STREAMS
 
 MAX_SYNC_DAYS = 730  # 2 年
 CHUNK_DAYS = 7
@@ -694,14 +695,6 @@ class DataFetcher:
 
     def fetch_wellness_records(self, window: FetchWindow) -> list[FetchedRecord]:
         """Fetch independently optional wellness streams documented by ZeppBridge."""
-        specs = (
-            ("all_day_stress", "user", "all_day_stress", None, None),
-            ("respiratory_rate", "v2", "RespiratoryRate", "real_data", None),
-            ("hrv_rmssd", "v2", "HRVRMSSD", "real_data", None),
-            ("lactate_threshold", "v2", "LactateThreshold", "summary", None),
-            ("spo2", "user", "blood_oxygen", None, CHUNK_DAYS),
-            ("pai", "user", "PaiHealthInfo", None, None),
-        )
         records = FetchBatch()
 
         def merge_capability(batch: FetchBatch) -> None:
@@ -713,18 +706,21 @@ class DataFetcher:
             records.incomplete_ranges.extend(batch.incomplete_ranges)
             records.incomplete_reasons.extend(batch.incomplete_reasons)
 
-        for label, surface, event_type, sub_type, chunk_days in specs:
+        for spec in WELLNESS_STREAMS:
+            label, surface, event_type, sub_type = spec.label, spec.surface, spec.event_type, spec.sub_type
             chunks = (
                 window.local_chunks(SPO2_MAX_LOCAL_DAYS, self.timezone_name)
                 if label == "spo2"
-                else window.chunks(chunk_days or CHUNK_DAYS)
+                else window.chunks(CHUNK_DAYS)
             )
             capability = FetchBatch(expected_chunks=len(chunks))
             for chunk in chunks:
                 from_ms = int(chunk.start.timestamp() * 1000)
                 to_ms = int(chunk.end.timestamp() * 1000)
                 try:
-                    if surface == "user":
+                    if surface == "weight":
+                        payload = self._call_connector("fetch_weight_records", int(chunk.start.timestamp()), int(chunk.end.timestamp()), spec.limit)
+                    elif surface == "user":
                         request_from_ms = (
                             from_ms - DAY_MILLISECONDS
                             if label == "all_day_stress" else from_ms
@@ -735,12 +731,12 @@ class DataFetcher:
                         )
                         payload = self._call_connector(
                             "fetch_user_events", event_type, sub_type,
-                            request_from_ms, request_to_ms, 1000, True,
+                            request_from_ms, request_to_ms, spec.limit, True,
                         )
                     else:
                         payload = self._call_connector(
                             "fetch_events", event_type, sub_type or "real_data",
-                            from_ms, to_ms, 1000, True
+                            from_ms, to_ms, spec.limit, True
                         )
                 except ZeppAuthError as exc:
                     # Each wellness capability is optional; only an incomplete range
@@ -760,9 +756,9 @@ class DataFetcher:
                     end_utc=chunk.end,
                     payload=payload,
                     capability="unverified",
-                ), incomplete=label == "spo2" and item_count >= 1000, incomplete_reason=(
-                    f"{label}: response reached the 1000-item limit"
-                    if label == "spo2" and item_count >= 1000 else None
+                ), incomplete=item_count >= spec.limit, incomplete_reason=(
+                    f"{label}: response reached the {spec.limit}-item limit"
+                    if item_count >= spec.limit else None
                 )))
             merge_capability(capability)
         for sub_type in ("odi", "osa_event"):

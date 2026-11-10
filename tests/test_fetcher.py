@@ -46,6 +46,18 @@ def test_watch_statistics_rejects_unknown_statistic():
         client.fetch_watch_statistics("UNKNOWN")
 
 
+def test_weight_endpoint_uses_holder_route_and_unix_seconds(monkeypatch):
+    client = ZeppAPIClient("synthetic-token", "synthetic-user", "api-mifitcn.zepp.com")
+    calls = []
+    monkeypatch.setattr(client, "_get", lambda path, params: calls.append((path, params)) or {"items": []})
+    try:
+        client.fetch_weight_records(1790812800, 1790899200)
+        assert calls == [("/users/synthetic-user/members/-1/weightRecords", {
+            "fromTime": "1790812800", "toTime": "1790899200", "limit": "300", "isForward": "0"})]
+    finally:
+        client.close()
+
+
 def test_sport_detail_rejects_content_length_over_bound():
     client = ZeppAPIClient("token", "user-123", "api-mifitcn.zepp.com")
     transport = httpx.MockTransport(lambda request: httpx.Response(
@@ -220,6 +232,9 @@ def test_daily_and_wellness_requests_are_chunked_for_long_history():
             self.events.append((event_type, sub_type, from_ms, to_ms))
             return {"items": []}
 
+        def fetch_weight_records(self, *args, **kwargs):
+            return {"items": []}
+
         def fetch_user_events(self, event_type, sub_type, from_ms, to_ms, limit, reverse):
             self.user_events.append((event_type, sub_type, from_ms, to_ms))
             return {"items": []}
@@ -251,10 +266,8 @@ def test_daily_and_wellness_requests_are_chunked_for_long_history():
     for daily_call, stress_call in zip(daily_health_calls, stress_calls):
         assert stress_call[2] == daily_call[2] - DAY_MILLISECONDS
         assert stress_call[3] == daily_call[3] + DAY_MILLISECONDS
-    assert not [
-        call for call in connector.events
-        if call[:2] in {("Charge", "stress_data"), ("Charge", "insight_data")}
-    ]
+    assert len([call for call in connector.events if call[:2] == ("Charge", "stress_data")]) == 3
+    assert len([call for call in connector.events if call[:2] == ("Charge", "insight_data")]) == 3
     assert len(rmssd_calls) == 3
     # ODI and OSA each use inclusive local-date windows of at most 3 days.
     assert len(connector.date_events) == 12
@@ -479,6 +492,9 @@ class OptionalFailureConnector:
         self._raise()
 
     def fetch_events(self, *args, **kwargs):
+        self._raise()
+
+    def fetch_weight_records(self, *args, **kwargs):
         self._raise()
 
     def fetch_user_events_date_string(self, *args, **kwargs):
@@ -890,6 +906,9 @@ def test_wholly_unavailable_wellness_capabilities_do_not_create_partial():
         def fetch_events(*args, **kwargs):
             raise ZeppAuthError("capability unavailable", kind="not_available")
 
+        def fetch_weight_records(self, *args, **kwargs):
+            raise ZeppAuthError("capability unavailable", kind="not_available")
+
         @staticmethod
         def fetch_user_events_date_string(*args, **kwargs):
             raise ZeppAuthError("capability unavailable", kind="not_available")
@@ -937,6 +956,9 @@ def test_spo2_cap_retains_rows_and_marks_the_cap_incomplete():
         def fetch_events(self, *args, **kwargs):
             return {"items": []}
 
+        def fetch_weight_records(self, *args, **kwargs):
+            return {"items": []}
+
         def fetch_user_events_date_string(self, *args, **kwargs):
             return {"items": []}
 
@@ -960,6 +982,9 @@ def test_spo2_odi_uses_inclusive_dates_in_configured_dst_zone():
             return {"items": []}
 
         def fetch_events(self, *args, **kwargs):
+            return {"items": []}
+
+        def fetch_weight_records(self, *args, **kwargs):
             return {"items": []}
 
         def fetch_user_events_date_string(self, *args, **kwargs):

@@ -90,10 +90,10 @@ def _owner(db, user_id="source-owner", mode="mock"):
 
 
 def _input(user_id="source-owner", *, mode="mock", fetched_at=FETCHED,
-           payload=None, record_id="heart_rate:synthetic", **kwargs):
+           payload=None, record_id="heart_rate:synthetic", stream="heart_rate", **kwargs):
     return SourceRecordInput(
         user_id=user_id, source="zepp", source_mode=mode,
-        stream="heart_rate", record_id=record_id,
+        stream=stream, record_id=record_id,
         observed_start=START, observed_end=END, fetched_at=fetched_at,
         payload=payload or {"items": [{
             "sample_id": "synthetic-a", "timestamp": START.isoformat(),
@@ -396,6 +396,51 @@ def test_unrecognized_raw_is_retained_for_a_parser_fix(sessions):
         row = db.scalars(select(SourceJournalRecord)).one()
         assert SourceJournalRepository(db).read_payload(row.id, user_id="source-owner") == record.raw.payload
         assert db.scalars(select(orm.MetricSample)).all() == []
+
+
+def test_opaque_wellness_is_encrypted_and_explicitly_retained_without_fake_metrics(sessions):
+    record = FetchedRecord(RawRecord("wellness", "wellness:charge_stress:v2:synthetic", START, END,
+        {"items": [{"value": {"stressInfo": "synthetic-opaque", "steps": 999}}]}))
+    with sessions.begin() as db:
+        repo = _owner(db)
+        report = SyncManager(SimpleNamespace(connector=SimpleNamespace(source_mode="mock")))._persist_record(
+            record, repo, User(id="source-owner"))
+        assert report.parse_status == "retained_raw"
+        assert report.write_status == "not_run" and report.records_written == 0
+        assert report.capability == "unverified"
+        assert SyncManager._aggregate_stage([report.parse_status]) == "retained_raw"
+    with sessions() as db:
+        row = db.scalars(select(SourceJournalRecord)).one()
+        assert SourceJournalRepository(db).read_payload(row.id, user_id="source-owner") == record.raw.payload
+        assert db.scalars(select(orm.DailyMetric)).all() == []
+        assert db.scalars(select(orm.MetricSample)).all() == []
+
+
+def test_json_record_evidence_preserves_first_fetch_and_rejects_foreign_journal(sessions):
+    from vitalis.domain import NormalizedDaily, SleepRecord
+
+    with sessions.begin() as db:
+        repo = _owner(db)
+        journal = _append(db, _input(stream="sleep", record_id="band:synthetic", payload={"synthetic": 1}))
+        db.info["active_source_record_id"] = journal.id
+        sleep = SleepRecord(user_id="source-owner", date=DAY, sleep_duration=420,
+            time_in_bed_minutes=450, sleep_efficiency_percent=420 / 450 * 100)
+        repo.save_daily(NormalizedDaily(user_id="source-owner", date=DAY, sleep=sleep))
+        first = repo.get_sleep("source-owner", DAY)
+        first_revision = repo.analysis_input_revision("source-owner")
+        assert first["source_record_id"] == journal.id
+        assert datetime.fromisoformat(first["fetched_at"]) == FETCHED
+        second = _append(db, _input(stream="sleep", record_id="band:synthetic", payload={"synthetic": 2}, fetched_at=FETCHED + timedelta(days=1)))
+        db.info["active_source_record_id"] = second.id
+        repo.save_daily(NormalizedDaily(user_id="source-owner", date=DAY, sleep=sleep))
+        assert repo.get_sleep("source-owner", DAY) == first
+        assert repo.analysis_input_revision("source-owner") == first_revision
+        repo.upsert_user("other-record-owner")
+        db.flush()
+        sleep.user_id = "other-record-owner"
+        repo.save_daily(NormalizedDaily(user_id=sleep.user_id, date=DAY, sleep=sleep))
+        assert "source_record_id" not in repo.get_sleep(sleep.user_id, DAY)
+        assert "fetched_at" not in repo.get_sleep(sleep.user_id, DAY)
 
 
 def test_bulk_sql_cannot_mutate_raw_and_authorized_user_deletion_cascades(sessions):

@@ -12,6 +12,12 @@
 
 ## Skill 的读写合同
 
+所有用户业务统一经 `/api` 调用，MCP 可按 `/openapi.json` 定义工具；Hermes 沿用已授予的 scope。仓库命令 `vitalis api ...` 和独立 Skill 脚本使用同一标准库 HTTP 客户端，唯一源码为 `src/vitalis/api_client.py`，随 API 参考生成脚本原样同步到 Skill。新增 JSON 接口可直接用 `request METHOD relative-path --param NAME=VALUE`；写入正文来自 stdin，幂等请求使用 `--key-file`。通用入口仍受服务端鉴权和用户意图约束，不能因可调用而自动写入。
+
+数据发现用 `catalog`；原始资格明确的睡眠和指标用 `sleep-records`、`metrics [--daily]`。晨报时机核查读取 `/api/health/wake-review`，实验对比读取 `/api/intelligence/research/{kind}`；`analyze --refresh-research` 需 analyze scope，排队后通过 `job` 查完成。报告导出 `report --output` 调用服务端 export API，客户端不读数据库或重排健康结论。
+
+显式 `sync-jobs`、`analysis-runs` 的任务链默认携带 `notification_policy=suppress`：保存数据与结果，期间不重排或替换推送。它不改变独立定时任务的投递，也不把反馈入口的正常行为改成静默。
+
 将 `skills/vitalis/` 目录复制到任意位置，在私有环境设置 `VITALIS_API_BASE_URL` 和 `VITALIS_ACCESS_TOKEN`，运行：
 
 ```bash

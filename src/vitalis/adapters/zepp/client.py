@@ -120,7 +120,7 @@ LEGACY_SPORTS = (
     "trail", "hiking", "strength", "elliptical", "rowing", "yoga", "climb",
 )
 SPORTS = ["run"]
-WORKOUT_AGGREGATE_PLAN_VERSION = "zepp-sync-v6"
+WORKOUT_AGGREGATE_PLAN_VERSION = "zepp-sync-v7"
 
 
 ZeppErrorKind = Literal[
@@ -385,6 +385,13 @@ class ZeppAPIClient:
             API_DEVICES.format(user_id=self.user_id),
             {"enableMultiDevice": "true", "device_type": "android_phone"},
         )
+
+    def fetch_weight_records(self, from_seconds: int, to_seconds: int, limit: int = 300) -> dict:
+        """Holder-only history; this endpoint's bounds are Unix seconds."""
+        return self._get(f"/users/{self.user_id}/members/-1/weightRecords", {
+            "fromTime": str(from_seconds), "toTime": str(to_seconds),
+            "limit": str(limit), "isForward": "0",
+        })
 
     def fetch_heart_rate(
         self,
@@ -708,6 +715,9 @@ class MockZeppClient:
 
     def fetch_devices(self) -> dict:
         return {"items": [{"displayName": "Mock wearable", "macAddress": "02:00:00:00:00:01"}]}
+
+    def fetch_weight_records(self, from_seconds: int, to_seconds: int, limit: int = 300) -> dict:
+        return {"items": []}
 
     def fetch_band_data(self, from_date: str, to_date: str, query_type: str = "detail",
                         byte_length: int = 8, device_type: int = 0) -> dict:

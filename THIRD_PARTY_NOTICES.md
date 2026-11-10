@@ -21,6 +21,10 @@
 
 本条目记录来源，并不声称 Vitalis 与 ZeppBridge 或 Zepp Health 存在从属、获得其背书或在功能上等同。
 
+## zepp-mcp 协议参考
+
+2026-11-10 审查 [DhavalBhimani44/zepp-mcp](https://github.com/DhavalBhimani44/zepp-mcp) 的 `904cc301d63a64da6f633dd8a75b2a612e67240a`，并复核 ZeppBridge `a6a805dce7fba941af544e36d251c6d6026a1a21`。参考本人历史体重端点、exertion 与 Charge/readiness 原始流以及睡眠/训练补充字段，再经独立实现和已授权只读接口核查建立有界合同；没有复制上游代码或个人数据。zepp-mcp 上游许可证为 MIT。上游列出某工具不证明账号有相应数据，也不证明未解码内容可作为健康指标。
+
 ## zepp-dashboard 行为参考
 
 2026-11-02 对照 [J-solan/zepp-dashboard](https://github.com/J-solan/zepp-dashboard) 的公开 `main` 文档与源码，独立实现午睡连续分段、readiness 修订时间、日负荷与七日累计分离、自动活动标记与厂商训练效果/心率区间字段，并参考其真实时间轴、缺测留白、日级趋势和分项 Charge 展示。没有复制上游代码、人体图片、前端资源或个人数据；人体图为本项目自行编写的简化 SVG。上游为 MIT；其单设备/欧区验证不构成 Vitalis 实测证据。Hevy CSV 仅由用户主动上传，不接入上游账户或服务。

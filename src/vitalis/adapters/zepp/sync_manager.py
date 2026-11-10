@@ -22,7 +22,8 @@ from vitalis.adapters.zepp.fetcher import (
     PartialFetchError,
 )
 from vitalis.adapters.zepp.parser import WorkoutDetailLimitError, ZeppParser
-from vitalis.adapters.zepp.parsers import ParseContext, ParseResult, parse_workout_detail
+from vitalis.adapters.zepp.streams import RAW_ONLY_WELLNESS
+from vitalis.adapters.zepp.parsers.workout_detail import ParseContext, ParseResult, parse_workout_detail
 from vitalis.domain import (
     DenseDataFile,
     NormalizedDaily,
@@ -561,6 +562,13 @@ class SyncManager:
             journal_context["active_source_record_id"] = journal.id
         try:
             detail_result: ParseResult | None = None
+            parts = record.raw.source_key.split(":")
+            if record.raw.stream == "wellness" and len(parts) > 1 and parts[1] in RAW_ONLY_WELLNESS and ZeppParser._items(record.raw.payload):
+                report.parse_status = "retained_raw"
+                report.write_status = "not_run"
+                report.capability = "unverified"
+                report.parsed_at = datetime.now(timezone.utc)
+                return report
             if record.raw.stream == "workout_detail":
                 _, context = self._workout_detail_inputs(record, repo, user)
                 detail_result = parse_workout_detail(record.raw.payload, context)
@@ -966,7 +974,8 @@ class SyncManager:
             written += repo.save_metric_samples(hrv_samples)
 
         elif stream == "wellness":
-            metrics, samples = parser.parse_wellness(payload, record.raw.source_key)
+            metrics, samples = parser.parse_wellness(payload, record.raw.source_key,
+                timezone_name=getattr(self.fetcher, "timezone_name", None))
             if record.raw.source_key.startswith("wellness:all_day_stress:"):
                 metrics = [
                     metric for metric in metrics
@@ -976,6 +985,9 @@ class SyncManager:
                     )
                     < record.raw.end_utc
                 ]
+            elif record.raw.source_key.startswith("wellness:exertion:"):
+                metrics = [metric for metric in metrics if metric.observed_at is not None
+                    and record.raw.start_utc <= metric.observed_at < record.raw.end_utc]
             samples = [
                 sample for sample in samples
                 if record.raw.start_utc <= sample.timestamp < record.raw.end_utc
@@ -1138,7 +1150,7 @@ class SyncManager:
 
     @staticmethod
     def _aggregate_stage(statuses: list[str]) -> str:
-        for status in ("failed", "unrecognized", "success", "no_change", "empty", "not_run", "never"):
+        for status in ("failed", "unrecognized", "success", "no_change", "retained_raw", "empty", "not_run", "never"):
             if status in statuses:
                 return status
         return "never"

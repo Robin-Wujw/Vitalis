@@ -39,6 +39,7 @@ from vitalis.adapters.zepp.fetcher import (
     _sport_history_page,
 )
 from vitalis.adapters.zepp.parser import ZeppParser
+from vitalis.adapters.zepp.streams import WELLNESS_STREAMS
 from vitalis.adapters.zepp.sync_manager import StreamReport, SyncManager, SyncReport
 from vitalis.domain import DenseDataFile, User
 from vitalis.adapters.persistence import HealthRepository
@@ -420,15 +421,8 @@ class ZeppSyncCoordinator:
                                 "limit": 2000, "reverse": True},
                     )); ordinal += 1
 
-            wellness_specs = (
-                ("all_day_stress", "user", "all_day_stress", None, "wellness/all_day_stress"),
-                ("respiratory_rate", "v2", "RespiratoryRate", "real_data", "wellness/respiratory_rate"),
-                ("hrv_rmssd", "v2", "HRVRMSSD", "real_data", "wellness/hrv_rmssd"),
-                ("lactate_threshold", "v2", "LactateThreshold", "summary", "wellness/lactate_threshold"),
-                ("spo2", "user", "blood_oxygen", None, "wellness/spo2_point"),
-                ("pai", "user", "PaiHealthInfo", None, "wellness/pai"),
-            )
-            for label, surface, event_type, sub_type, health in wellness_specs:
+            for spec in WELLNESS_STREAMS:
+                label, surface, event_type, sub_type, health = spec.label, spec.surface, spec.event_type, spec.sub_type, spec.health_stream
                 wellness_windows = (
                     self._local_windows(item, timezone_name, SPO2_MAX_LOCAL_DAYS)
                     if label == "spo2" else [item]
@@ -453,6 +447,7 @@ class ZeppSyncCoordinator:
                             "surface": surface,
                             "event_type": event_type,
                             "sub_type": sub_type,
+                            "limit": spec.limit,
                             "from_ms": request_start_ms,
                             "to_ms": request_end_ms,
                         },
@@ -782,16 +777,17 @@ class ZeppSyncCoordinator:
                 key = f"WatchSportStatistics:{params['statistic']}:{params['start_day']}:{params['end_day']}"
                 return _ChunkResult(FetchedRecord(RawRecord("daily_summary", key, start, end, payload)), 1)
             if operation == "fetch_wellness":
-                if params["surface"] == "user":
+                limit = params.get("limit", 1000)
+                if params["surface"] == "weight":
+                    payload = call("fetch_weight_records", int(start.timestamp()), int(end.timestamp()), limit)
+                elif params["surface"] == "user":
                     payload = call("fetch_user_events", params["event_type"], params["sub_type"], params["from_ms"], params["to_ms"], 1000, True)
                 else:
                     payload = call("fetch_events", params["event_type"], params["sub_type"] or "real_data", params["from_ms"], params["to_ms"], 1000, True)
                 item_count = len(_payload_items(payload))
-                incomplete = (
-                    params["label"] == "spo2" and item_count >= 1000
-                )
+                incomplete = item_count >= limit
                 incomplete_reason = (
-                    f"{params['label']}: response reached the 1000-item limit"
+                    f"{params['label']}: response reached the {limit}-item limit"
                     if incomplete else None
                 )
                 key = f"wellness:{params['label']}:{params['surface']}:{start.date()}:{(end - timedelta(microseconds=1)).date()}"

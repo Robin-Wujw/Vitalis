@@ -77,8 +77,8 @@ class ShadowBatch:
         )
         return {"version": RESPONSE_MODEL_VERSION, **evaluate(rows)}
 
-    def run(self, user_id: str, day: date) -> dict[str, str]:
-        """Compute and store every shadow result for one closed local day."""
+    def calculate(self, user_id: str, day: date) -> dict[str, tuple[str, dict]]:
+        """Compute detached results; the caller owns their publishing transaction."""
         as_of = self._now_factory()
         with self._uow_factory() as uow:
             repo = uow.repository
@@ -127,6 +127,11 @@ class ShadowBatch:
         results["tracking"] = (TRACKING_VERSION, tracking_metrics(
             results["response_model"][1], daily_payloads, warnings, feedback,
         ))
+        return results
+
+    def run(self, user_id: str, day: date) -> dict[str, str]:
+        """Compute and store the scheduled off-peak analysis."""
+        results = self.calculate(user_id, day)
         with self._uow_factory() as uow:
             for kind, (version, payload) in results.items():
                 uow.repository.save_shadow_result(user_id, day, kind, version, payload)

@@ -1,0 +1,661 @@
+#!/usr/bin/env python3
+"""Standalone, Bearer-authenticated client for the current Vitalis /api routes."""
+
+from __future__ import annotations
+
+import argparse
+from datetime import date, datetime
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import re
+import socket
+import stat
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+
+
+TIMEOUT_SECONDS = 10
+MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_FEEDBACK_BYTES = 16 * 1024
+TRANSIENT_STATUSES = {429, 502, 503, 504}
+REPORT_KINDS = (
+    "daily", "morning", "evening", "weekly", "monthly",
+    "weekly-briefing", "monthly-briefing",
+)
+READ_OPERATIONS = {
+    "profile": "intelligence/profile",
+    "running": "intelligence/running",
+    "trends": "intelligence/trends",
+    "events": "intelligence/events",
+    "explain": "intelligence/explain",
+    "context": "intelligence/context",
+    "training-responses": "intelligence/training-responses",
+    "personal-model": "intelligence/personal-model",
+    "personal-associations": "intelligence/personal-associations",
+    "timeline": "intelligence/timeline",
+    "training-preferences": "intelligence/training-preferences",
+    "feedback": "feedback",
+    "product-goals": "product/goals",
+    "product-feedback": "product/feedback",
+    "product-summary": "product/summary",
+    "product-metrics": "product/metrics",
+    "product-context": "product/context",
+    "connection-progress": "connect/zepp/progress",
+}
+WRITE_OPERATIONS = {
+    "profile-patch": ("PATCH", "intelligence/profile"),
+    "preferences-put": ("PUT", "intelligence/training-preferences"),
+    "preferences-patch": ("PATCH", "intelligence/training-preferences"),
+    "strength-confirm": ("POST", "intelligence/workouts/{id}/strength-exercises"),
+    "recommendation-complete": ("POST", "intelligence/recommendations/{id}/complete"),
+    "event-acknowledge": ("POST", "intelligence/events/{id}/acknowledge"),
+    "goal-create": ("POST", "product/goals"),
+    "goal-patch": ("PATCH", "product/goals/{id}"),
+    "product-feedback": ("POST", "product/feedback"),
+}
+KEY_PATTERN = re.compile(r"[A-Za-z0-9._:-]{16,128}\Z")
+
+
+class ClientError(Exception):
+    def __init__(self, code: str, http_status: int | None = None, fields: dict | None = None):
+        self.code = code
+        self.http_status = http_status
+        self.fields = fields or {}
+
+    def as_json(self) -> dict:
+        result = {"status": "error", "error": self.code}
+        if self.http_status is not None:
+            result["http_status"] = self.http_status
+        result.update(self.fields)
+        return result
+
+
+class JsonArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        # argparse may interpolate an invalid argument (including a secret).
+        raise ClientError("invalid_arguments")
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        # No authenticated redirect is necessary for these exact /api paths.
+        return None
+
+
+def api_origin(value: str | None = None) -> str:
+    if value is None:
+        value = os.environ.get("VITALIS_API_BASE_URL", "")
+    try:
+        parts = urllib.parse.urlsplit(value)
+        if (
+            parts.scheme not in ("http", "https") or not parts.netloc
+            or parts.path not in ("", "/") or parts.query or parts.fragment
+            or parts.username is not None or parts.password is not None
+            or "@" in parts.netloc or "\\" in value or "?" in value or "#" in value
+            or any(ord(char) <= 32 or ord(char) == 127 for char in value)
+            or parts.hostname is None
+        ):
+            raise ValueError
+        port = parts.port  # Also validates malformed ports.
+        if port is not None and not 1 <= port <= 65535:
+            raise ValueError
+        if parts.scheme == "http" and parts.hostname.lower() not in (
+            "localhost", "127.0.0.1", "::1",
+        ):
+            raise ValueError
+    except ValueError as exc:
+        raise ClientError("invalid_api_origin") from exc
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, "", "", ""))
+
+
+def token_from_file(filename: str | Path) -> str:
+    """Read a protected credential afresh; publishers must protect its directory."""
+    try:
+        path = Path(filename)
+        if not path.is_absolute() or not stat.S_ISREG(path.lstat().st_mode):
+            raise ValueError
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        with os.fdopen(os.open(path, flags), "rb") as handle:
+            metadata = os.fstat(handle.fileno())
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ValueError
+            # A dedicated service group may read, but not alter, the credential.
+            # Windows deployments must restrict the file and parent using ACLs.
+            if os.name == "posix" and metadata.st_mode & 0o037:
+                raise ValueError
+            raw = handle.read(4097)
+        token = raw.decode("ascii").strip()
+        if len(raw) > 4096 or not token or any(ord(char) < 33 or ord(char) > 126 for char in token):
+            raise ValueError
+        return token
+    except (OSError, ValueError) as exc:
+        raise ClientError("invalid_access_token") from exc
+
+
+def access_token() -> str:
+    if "VITALIS_ACCESS_TOKEN_FILE" in os.environ:
+        return token_from_file(os.environ["VITALIS_ACCESS_TOKEN_FILE"])
+    token = os.environ.get("VITALIS_ACCESS_TOKEN", "")
+    if not token or any(ord(char) < 33 or ord(char) > 126 for char in token):
+        raise ClientError("invalid_access_token")
+    return token
+
+
+def iso_date(value: str) -> str:
+    try:
+        if date.fromisoformat(value).isoformat() == value:
+            return value
+    except ValueError:
+        pass
+    raise ClientError("invalid_arguments")
+
+
+def iso_aware_datetime(value: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None and parsed.utcoffset() is not None:
+            return value
+    except ValueError:
+        pass
+    raise ClientError("invalid_arguments")
+
+
+def positive_int(value: str, maximum: int) -> int:
+    try:
+        number = int(value)
+    except ValueError as exc:
+        raise ClientError("invalid_arguments") from exc
+    if not 1 <= number <= maximum:
+        raise ClientError("invalid_arguments")
+    return number
+
+
+def bounded_text(value: str, maximum: int) -> str:
+    if not value.strip() or len(value) > maximum:
+        raise ClientError("invalid_arguments")
+    return value
+
+
+def race_target_km(value: str) -> float:
+    try:
+        number = float(value)
+    except ValueError as exc:
+        raise ClientError("invalid_arguments") from exc
+    if not math.isfinite(number) or not 3 <= number <= 42.195:
+        raise ClientError("invalid_arguments")
+    return number
+
+
+def strict_json(value):
+    def reject_constant(_value):
+        raise ValueError("non-standard JSON constant")
+
+    def finite_float(raw):
+        number = float(raw)
+        if not math.isfinite(number):
+            raise ValueError("non-finite JSON number")
+        return number
+
+    return json.loads(value, parse_constant=reject_constant, parse_float=finite_float)
+
+
+def key_from_file(filename: str, operation: str, body: dict) -> str:
+    """Persist a key and method/path/body fingerprint before sending a write."""
+    method, separator, path = operation.partition(" ")
+    fingerprint = (
+        {"method": method, "path": path, "body": body}
+        if separator and method and path.startswith("/")
+        else {"operation": operation, "body": body}
+    )
+    digest = hashlib.sha256(
+        json.dumps(fingerprint, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    path = Path(filename)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags, 0o600)
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        raise ClientError("idempotency_file_unavailable") from exc
+    else:
+        key = str(uuid.uuid4())
+        record = {"version": 1, "operation": operation, "request_sha256": digest, "key": key}
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as output:
+                json.dump(record, output, separators=(",", ":"))
+                output.write("\n")
+                output.flush()
+                os.fsync(output.fileno())
+            if os.name == "posix":
+                directory = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+        except OSError as exc:
+            # Leave an incomplete file in place so an uncertain write cannot
+            # silently acquire another key on the next invocation.
+            raise ClientError("idempotency_file_unavailable") from exc
+        return key
+
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "rb") as stored:
+            if not stat.S_ISREG(os.fstat(stored.fileno()).st_mode):
+                raise ClientError("invalid_idempotency_file")
+            content = stored.read(2049)
+            if len(content) > 2048:
+                raise ClientError("invalid_idempotency_file")
+            record = strict_json(content)
+        if (
+            not isinstance(record, dict) or record.get("version") != 1
+            or record.get("operation") != operation
+            or record.get("request_sha256") != digest
+            or not isinstance(record.get("key"), str)
+            or not KEY_PATTERN.fullmatch(record["key"])
+        ):
+            raise ClientError("idempotency_key_mismatch")
+        return record["key"]
+    except (OSError, ValueError, UnicodeError, TypeError, RecursionError) as exc:
+        raise ClientError("invalid_idempotency_file") from exc
+
+
+def feedback_body() -> dict:
+    if sys.stdin.isatty():
+        raise ClientError("feedback_requires_stdin")
+    try:
+        data = sys.stdin.buffer.read(MAX_FEEDBACK_BYTES + 1)
+        if len(data) > MAX_FEEDBACK_BYTES:
+            raise ClientError("feedback_too_large")
+        body = strict_json(data)
+        if not isinstance(body, dict):
+            raise ClientError("invalid_feedback_json")
+        return body
+    except (ValueError, UnicodeError, RecursionError) as exc:
+        raise ClientError("invalid_feedback_json") from exc
+    except OSError as exc:
+        raise ClientError("feedback_input_unavailable") from exc
+
+
+def redact(value, token: str):
+    if isinstance(value, str):
+        return value.replace(token, "[redacted]")
+    if isinstance(value, list):
+        return [redact(item, token) for item in value]
+    if isinstance(value, dict):
+        return {redact(key, token): redact(item, token) for key, item in value.items()}
+    return value
+
+
+def coach_error_fields(response, token: str) -> dict:
+    """Read only bounded machine-readable error metadata, never server prose."""
+    try:
+        raw = response.read(MAX_RESPONSE_BYTES + 1)
+        if len(raw) > MAX_RESPONSE_BYTES:
+            return {}
+        payload = strict_json(raw)
+    except (OSError, ValueError, UnicodeError, RecursionError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    fields = {}
+    for name in ("state", "failure_code", "next_action"):
+        value = payload.get(name)
+        if (isinstance(value, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", value)
+                and token not in value):
+            fields[name] = value
+    if type(payload.get("retryable")) is bool:
+        fields["retryable"] = payload["retryable"]
+    return fields
+
+
+def request(method: str, path: str, token: str, body: dict | None = None,
+            params: dict | None = None, key: str | None = None):
+    origin = api_origin()
+    url = origin + "/api/" + path
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
+    data = None
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(body, separators=(",", ":")).encode("utf-8")
+    if key is not None:
+        headers["Idempotency-Key"] = key
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    # Disable implicit proxies as well as redirects; credentials go only to the configured origin.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    for attempt in range(2 if method == "GET" else 1):
+        try:
+            with opener.open(req, timeout=TIMEOUT_SECONDS) as response:
+                raw = response.read(MAX_RESPONSE_BYTES + 1)
+                if len(raw) > MAX_RESPONSE_BYTES:
+                    raise ClientError("response_too_large")
+                try:
+                    result = strict_json(raw)
+                    if not isinstance(result, (dict, list)):
+                        raise ValueError("expected JSON object or list")
+                    return redact(result, token)
+                except (ValueError, UnicodeError, RecursionError) as exc:
+                    raise ClientError("invalid_response_json") from exc
+        except urllib.error.HTTPError as exc:
+            try:
+                fields = coach_error_fields(exc, token)
+            finally:
+                exc.close()
+            if 300 <= exc.code < 400:
+                raise ClientError("redirect_blocked", exc.code) from None
+            if method == "GET" and attempt == 0 and exc.code in TRANSIENT_STATUSES:
+                time.sleep(0.2)
+                continue
+            if path.startswith("reports/") and exc.code == 404:
+                return {"status": "snapshot_missing", "http_status": 404}
+            code = {401: "unauthorized", 403: "forbidden"}.get(exc.code, "http_error")
+            raise ClientError(code, exc.code, fields) from None
+        except (urllib.error.URLError, socket.timeout, TimeoutError, OSError) as exc:
+            if method == "GET" and attempt == 0:
+                time.sleep(0.2)
+                continue
+            raise ClientError("network_error") from exc
+
+
+def api_path(value: str) -> str:
+    if value.startswith("/api/"):
+        value = value[len("/api/"):]
+    if not value or any(part in {"", ".", ".."} for part in value.split("/")) or not re.fullmatch(r"[A-Za-z0-9._~/-]+", value):
+        raise ClientError("invalid_api_path")
+    return value
+
+
+def write_export(result: dict, output: Path) -> dict:
+    if not isinstance(result.get("content"), str):
+        raise ClientError("invalid_export_response")
+    if output.exists() or output.is_symlink():
+        raise ClientError("output_exists")
+    created = False
+    try:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        created = True
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
+            stream.write(result["content"])
+    except OSError as exc:
+        if created:
+            output.unlink(missing_ok=True)
+        raise ClientError("export_write_failed") from exc
+    return {key: value for key, value in {**result, "output": str(output.resolve())}.items() if key != "content"}
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = JsonArgumentParser(description="Vitalis current API client")
+    commands = parser.add_subparsers(dest="command", required=True, parser_class=JsonArgumentParser)
+    commands.add_parser("status")
+    commands.add_parser("catalog")
+    generic = commands.add_parser("request", help="Call a business API with JSON from stdin; authorization stays on the server")
+    generic.add_argument("method", choices=("GET", "POST", "PUT", "PATCH", "DELETE"))
+    generic.add_argument("path", type=api_path)
+    generic.add_argument("--param", action="append", default=[], metavar="NAME=VALUE")
+    generic.add_argument("--key-file")
+    metrics = commands.add_parser("metrics", help="Read stored timestamped or daily vendor facts")
+    metrics.add_argument("metric")
+    metrics.add_argument("--from", dest="from_date", required=True)
+    metrics.add_argument("--to", required=True)
+    metrics.add_argument("--daily", action="store_true")
+    metrics.add_argument("--resolution", choices=("raw", "1h", "1d"), default="raw")
+    sleep = commands.add_parser("sleep-records", help="Read stored sleep facts with source evidence")
+    sleep.add_argument("--from", dest="from_date", type=iso_date, required=True)
+    sleep.add_argument("--to", type=iso_date, required=True)
+
+    report = commands.add_parser("report")
+    report.add_argument("kind", choices=REPORT_KINDS)
+    report.add_argument("--day", type=iso_date)
+    report.add_argument("--format", choices=("markdown", "html"), default="markdown")
+    report.add_argument("--output", type=Path)
+    report_views = report.add_mutually_exclusive_group()
+    report_views.add_argument("--state", action="store_true", help="Read freshness and last-good snapshot state")
+    report_views.add_argument("--view", action="store_true", help="Read the saved public report projection")
+
+    analyze = commands.add_parser("analyze")
+    analyze.add_argument("--day", type=iso_date, required=True)
+    analyze.add_argument("--key-file", required=True)
+    analyze.add_argument("--refresh-research", action="store_true")
+
+    job = commands.add_parser("job")
+    job.add_argument("id")
+
+    query = commands.add_parser("query")
+    query.add_argument("operation", choices=tuple(READ_OPERATIONS))
+    query.add_argument("--day", type=iso_date)
+    query.add_argument("--include-research", action="store_true")
+    query.add_argument("--start", type=iso_date)
+    query.add_argument("--end", type=iso_date)
+    query.add_argument("--event-type")
+    query.add_argument("--limit", type=lambda value: positive_int(value, 100))
+
+    action = commands.add_parser("action")
+    action.add_argument("operation", choices=tuple(WRITE_OPERATIONS))
+    action.add_argument("--id")
+    action.add_argument("--source")
+    action.add_argument("--key-file")
+
+    feedback = commands.add_parser("feedback")
+    feedback.add_argument("--key-file")
+
+    strength_review = commands.add_parser("strength-review", allow_abbrev=False)
+    strength_review.add_argument("--from", dest="from_date", type=iso_date)
+    strength_review.add_argument("--to", type=iso_date)
+    strength_review.add_argument("--limit", type=lambda value: positive_int(value, 100), default=100)
+
+    race_equivalence = commands.add_parser(
+        "race-equivalence", allow_abbrev=False,
+        description="Read a server-calculated Riegel what-if, not a validated personal forecast.",
+    )
+    race_equivalence.add_argument("--id", type=lambda value: bounded_text(value, 128), required=True)
+    race_equivalence.add_argument("--source", type=lambda value: bounded_text(value, 32), required=True)
+    race_equivalence.add_argument("--target-km", type=race_target_km, default=21.0975)
+    race_equivalence.add_argument("--effort-basis", choices=("scenario", "user_reported_maximal"), default="scenario")
+
+    commands.add_parser("coach-policy")
+    coach = commands.add_parser(
+        "coach-request", allow_abbrev=False,
+        description="Request a server-policy-authorized operation with notifications suppressed.",
+    )
+    coach.add_argument("operation", choices=("refresh-workouts", "analyze"))
+    coach.add_argument("--day", type=iso_date, required=True)
+    coach.add_argument("--key-file", required=True)
+
+    sync = commands.add_parser("sync")
+    sync.add_argument("--key-file", required=True)
+    sync.add_argument("--days", type=lambda value: positive_int(value, 730), default=7)
+    sync.add_argument("--decode-dense-files", action="store_true")
+    sync.add_argument("--detail-backfill", action="store_true")
+    sync.add_argument("--workout-only", action="store_true")
+    sync.add_argument("--detail-only", action="store_true")
+    sync.add_argument("--detail-limit", type=lambda value: positive_int(value, 4))
+    sync.add_argument("--detail-refresh-before", type=iso_aware_datetime)
+
+    workouts = commands.add_parser("workouts")
+    workouts.add_argument("--from", dest="from_date", type=iso_date)
+    workouts.add_argument("--to", type=iso_date)
+    workouts.add_argument("--limit", type=lambda value: positive_int(value, 500))
+    workouts.add_argument("--id")
+    workouts.add_argument("--source")
+    workouts.add_argument("--strength-details", action="store_true", help="Read saved strength sets for at most 20 workouts")
+    workouts.add_argument("--samples", action="store_true", help="Include metric samples for a single workout")
+    args = parser.parse_args(argv)
+    if args.command == "strength-review":
+        if (args.from_date is None) != (args.to is None):
+            raise ClientError("invalid_arguments")
+        if args.from_date is not None:
+            window_days = (date.fromisoformat(args.to) - date.fromisoformat(args.from_date)).days + 1
+            if not 1 <= window_days <= 90:
+                raise ClientError("invalid_arguments")
+    return args
+
+
+def run(args: argparse.Namespace):
+    # Validate config before creating an idempotency file or reading private feedback.
+    api_origin()
+    token = access_token()
+    if args.command == "catalog":
+        return request("GET", "health/catalog", token)
+    if args.command == "sleep-records":
+        return request("GET", "health/sleep-records", token, params={"from": args.from_date, "to": args.to})
+    if args.command == "metrics":
+        if args.daily:
+            return request("GET", "health/daily-metrics", token, params={"from": iso_date(args.from_date), "to": iso_date(args.to), "metric": args.metric})
+        return request("GET", "health/metrics/" + urllib.parse.quote(args.metric, safe=""), token,
+            params={"from": iso_aware_datetime(args.from_date), "to": iso_aware_datetime(args.to), "resolution": args.resolution})
+    if args.command == "request":
+        params = {}
+        for entry in args.param:
+            name, sep, value = entry.partition("=")
+            if not sep or not name or name in params:
+                raise ClientError("invalid_arguments")
+            params[name] = value
+        body = feedback_body() if args.method in {"POST", "PUT", "PATCH"} else None
+        if args.key_file and args.method == "GET":
+            raise ClientError("invalid_arguments")
+        key = key_from_file(args.key_file, f"{args.method} /api/{args.path}", body or {}) if args.key_file else None
+        return request(args.method, args.path, token, body=body, params=params or None, key=key)
+    if args.command == "status":
+        return request("GET", "data-status", token)
+    if args.command == "coach-policy":
+        return request("GET", "coach/policy", token)
+    if args.command == "strength-review":
+        params = {"limit": args.limit}
+        if args.from_date is not None:
+            params.update({"from": args.from_date, "to": args.to})
+        return request("GET", "coach/strength-review", token, params=params)
+    if args.command == "race-equivalence":
+        return request("GET", "coach/race-equivalence", token, params={
+            "workout_id": args.id, "source": args.source,
+            "target_km": args.target_km, "effort_basis": args.effort_basis,
+        })
+    if args.command == "report":
+        if args.output is not None:
+            if args.state or args.view:
+                raise ClientError("invalid_arguments")
+            if args.output.exists() or args.output.is_symlink():
+                raise ClientError("output_exists")
+            result = request("GET", "reports/" + args.kind + "/export", token,
+                params={"format": args.format, **({"day": args.day} if args.day else {})})
+            return write_export(result, args.output)
+        suffix = "/state" if args.state else "/view" if args.view else ""
+        path = "reports/" + args.kind + suffix
+        return request("GET", path, token,
+                       params={"day": args.day} if args.day else None)
+    if args.command == "job":
+        return request("GET", "jobs/" + urllib.parse.quote(args.id, safe=""), token)
+    if args.command == "query":
+        allowed = {
+            "profile": set(), "training-preferences": set(),
+            "running": {"day", "include_research"},
+            "trends": {"day"}, "explain": {"day"}, "context": {"day"},
+            "training-responses": {"day"}, "personal-model": {"day"},
+            "personal-associations": {"day"},
+            "events": {"start", "end", "event_type"},
+            "timeline": {"start", "end", "limit"},
+            "feedback": {"start", "end"},
+            "product-goals": set(),
+            "product-feedback": {"start", "end", "limit"},
+            "product-summary": {"start", "end"},
+            "product-metrics": {"start", "end"},
+            "product-context": {"day"},
+            "connection-progress": set(),
+        }[args.operation]
+        supplied = {
+            "day": args.day, "start": args.start, "end": args.end,
+            "event_type": args.event_type, "limit": args.limit,
+        }
+        if args.include_research and args.operation != "running":
+            raise ClientError("invalid_arguments")
+        if args.operation == "running":
+            supplied["include_research"] = "true" if args.include_research else "false"
+        if any(value is not None and name not in allowed for name, value in supplied.items()):
+            raise ClientError("invalid_arguments")
+        if args.event_type is not None and len(args.event_type) > 64:
+            raise ClientError("invalid_arguments")
+        return request("GET", READ_OPERATIONS[args.operation], token,
+                       params={name: value for name, value in supplied.items() if value is not None} or None)
+    if args.command == "action":
+        method, path = WRITE_OPERATIONS[args.operation]
+        needs_id = "{id}" in path
+        if needs_id != (args.id is not None) or (args.source is not None) != (args.operation == "strength-confirm"):
+            raise ClientError("invalid_arguments")
+        if args.id is not None and (not args.id or len(args.id) > 128):
+            raise ClientError("invalid_arguments")
+        keyed_actions = {"goal-create", "goal-patch", "product-feedback"}
+        if (args.operation in keyed_actions) != (args.key_file is not None):
+            raise ClientError("invalid_arguments")
+        if needs_id:
+            path = path.replace("{id}", urllib.parse.quote(args.id, safe=""))
+        body = None if args.operation == "event-acknowledge" else feedback_body()
+        key = None
+        if args.operation in keyed_actions:
+            key = key_from_file(args.key_file, f"{method} /api/{path}", body)
+        return request(method, path, token, body=body, key=key,
+                       params={"source": args.source} if args.source else None)
+    if args.command == "workouts":
+        if args.id is not None:
+            if args.source is None or args.from_date or args.to or args.limit or args.strength_details:
+                raise ClientError("invalid_arguments")
+            return request("GET", "workouts/" + urllib.parse.quote(args.id, safe=""), token,
+                           params={"source": args.source, "include_samples": "true" if args.samples else "false"})
+        if args.source is not None or args.samples:
+            raise ClientError("invalid_arguments")
+        limit = args.limit
+        if args.strength_details:
+            limit = 20 if limit is None else limit
+            if limit > 20:
+                raise ClientError("invalid_arguments")
+        params = {name: value for name, value in (("from", args.from_date), ("to", args.to),
+                                                  ("limit", limit)) if value is not None}
+        if args.strength_details:
+            params["include_strength_details"] = "true"
+        return request("GET", "workouts", token, params=params)
+    if args.command == "feedback":
+        body = feedback_body()
+        key = key_from_file(args.key_file, "POST /api/feedback", body) if args.key_file else None
+        return request("POST", "feedback", token, body=body, key=key)
+    if args.command == "analyze":
+        body = {"day": args.day}
+        if args.refresh_research:
+            body["refresh_research"] = True
+        key = key_from_file(args.key_file, "POST /api/analysis-runs", body)
+        return request("POST", "analysis-runs", token, body=body, key=key)
+    if args.command == "coach-request":
+        operation = {"refresh-workouts": "refresh_workouts", "analyze": "analyze"}[args.operation]
+        body = {"operation": operation, "day": args.day}
+        key = key_from_file(args.key_file, "POST /api/coach/operations", body)
+        return request("POST", "coach/operations", token, body=body, key=key)
+    body = {"days": args.days, "source": "zepp"}
+    for field in ("decode_dense_files", "detail_backfill", "workout_only", "detail_only",
+                  "detail_limit", "detail_refresh_before"):
+        value = getattr(args, field)
+        if value is not None:
+            body[field] = value
+    key = key_from_file(args.key_file, "POST /api/sync-jobs", body)
+    return request("POST", "sync-jobs", token, body=body, key=key)
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        result = run(parse_args(sys.argv[1:] if argv is None else argv))
+    except ClientError as exc:
+        print(json.dumps(exc.as_json()))
+        return 1
+    print(json.dumps(result, ensure_ascii=True, allow_nan=False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

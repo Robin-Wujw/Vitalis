@@ -50,6 +50,34 @@ class SyncJobRequest(BaseModel):
 
 class AnalysisJobRequest(BaseModel):
     day: date | None = None
+    refresh_research: bool = False
+
+
+def _stored_report(kind: ReportKind, user_id: str, day: date | None, *, export: bool = False):
+    query = get_intelligence_query()
+    selection = {
+        "daily": query.daily, "morning": query.morning_briefing,
+        "evening": query.evening_briefing,
+        "weekly": query.weekly_briefing if export else query.weekly,
+        "monthly": query.monthly_briefing if export else query.monthly,
+        "weekly-briefing": query.weekly_briefing, "monthly-briefing": query.monthly_briefing,
+    }
+    result = selection[kind](user_id, day)
+    if result is None:
+        raise HTTPException(status_code=404, detail="指定日期尚未生成分析快照")
+    return result
+
+
+@router.get("/reports/{kind}/export", operation_id="export_report")
+def export_report(kind: ReportKind, day: date | None = None,
+    format: Literal["markdown", "html"] = "markdown",
+    user_id: str = Depends(require_user_id)) -> dict:
+    from vitalis.intelligence.report_rendering import render_report
+
+    rendered = render_report(_stored_report(kind, user_id, day, export=True), format)
+    return {"user_id": user_id, "report": kind, "target": format,
+        "content": rendered.content, "media_type": rendered.media_type,
+        "renderer_version": rendered.renderer_version, "content_sha256": rendered.content_sha256}
 
 
 @router.get("/data-status", operation_id="get_data_status")
@@ -82,20 +110,7 @@ def get_report(
     day: date | None = None,
     user_id: str = Depends(require_user_id),
 ) -> Report:
-    query = get_intelligence_query()
-    selection = {
-        "daily": query.daily,
-        "morning": query.morning_briefing,
-        "evening": query.evening_briefing,
-        "weekly": query.weekly,
-        "monthly": query.monthly,
-        "weekly-briefing": query.weekly_briefing,
-        "monthly-briefing": query.monthly_briefing,
-    }
-    result = selection[kind](user_id, day)
-    if result is None:
-        raise HTTPException(status_code=404, detail="指定日期尚未生成分析快照")
-    return result
+    return _stored_report(kind, user_id, day)
 
 
 @router.get("/reports/{kind}/view", response_model=PublicReportView, operation_id="get_public_report_view")
@@ -104,16 +119,7 @@ def get_public_report_view(
     day: date | None = None,
     user_id: str = Depends(require_user_id),
 ) -> PublicReportView:
-    query = get_intelligence_query()
-    selection = {
-        "daily": query.daily, "morning": query.morning_briefing,
-        "evening": query.evening_briefing, "weekly": query.weekly,
-        "monthly": query.monthly, "weekly-briefing": query.weekly_briefing,
-        "monthly-briefing": query.monthly_briefing,
-    }
-    result = selection[kind](user_id, day)
-    if result is None:
-        raise HTTPException(status_code=404, detail="指定日期尚未生成分析快照")
+    result = _stored_report(kind, user_id, day)
     normalized = kind.removesuffix("-briefing")
     return to_public_report_view(result, normalized)
 
@@ -148,7 +154,8 @@ def create_analysis_run(
 
     configure_analysis_jobs()
     try:
-        job_id = create_analysis_job(user_id, body.day or local_today(), idempotency_key)
+        job_id = create_analysis_job(user_id, body.day or local_today(), idempotency_key,
+            refresh_research=body.refresh_research)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"job_id": job_id, "status": "queued", "status_url": f"/api/jobs/{job_id}"}
@@ -214,6 +221,7 @@ def create_sync_job(
         detail_only=body.detail_only,
         detail_limit=body.detail_limit,
         detail_refresh_before=body.detail_refresh_before,
+        execution_context={"notification_policy": "suppress", "origin": "explicit_api"},
     )
     try:
         return get_sync_job_service().create(command).as_dict()

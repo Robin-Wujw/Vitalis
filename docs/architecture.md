@@ -6,6 +6,10 @@ Vitalis 是单仓库 Python 服务。FastAPI API 和调度 worker 分进程；�
 
 ## 模块职责
 
+用户业务操作统一经过 HTTP API：报告读取与导出、Zepp 配对、手动同步、显式重算、反馈、纠错和偏好修改。`vitalis api ...`、MCP 和 Hermes 使用同一套 Bearer/scope、幂等键及任务状态；客户端不接触数据库或厂商凭据。数据库初始化、令牌签发、诊断、部署和隔离合成回放保留为本地管理命令，worker 通过应用用例执行后台工作。
+
+`src/vitalis/api_client.py` 是标准库 HTTP 客户端的唯一源码；`skills/vitalis/scripts/vitalis_api.py` 由 `tools/generate_api_reference.py` 原样生成。`request METHOD relative-path --param NAME=VALUE` 覆盖当前 JSON 业务接口，写入 JSON 来自 stdin；鉴权由服务端负责。原先直接访问数据库的 report/connect/sync/wake-check/shadow 业务命令已删除。
+
 | 模块 | 职责 |
 | --- | --- |
 | `src/vitalis/entrypoints/api/` | FastAPI 路由、Bearer scope、错误合同和当前 `/api` OpenAPI。 |

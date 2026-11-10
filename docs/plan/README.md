@@ -35,6 +35,7 @@ Vitalis 已有从 Zepp 取数、分析、保存报告，再通过 API、PushPlus
 | P1 | [重启错过周报，也能补上并留下漏发记录](weekly-delivery-reliability.md) | 先确定允许补发到几点，再复现跨发送时刻重启。 |
 | P1 | [让月报摘要和正文使用同一套比较](monthly-comparison-consistency.md) | 确定每个指标采用哪个来源、怎么算变化。 |
 | P1 | [反馈页别把没记录说成没完成](feedback-record-status.md) | 本次核查发现：先修正完成提示的判断与措辞。 |
+| P2 | [验证 Zepp 原始流解码与分钟步数](zepp-opaque-decoding.md) | 原文可取，先核对编码、时间口径和完整日总量，再开放指标。 |
 | P1 | [先验证跑步能力预测，再决定是否启用](running-performance-model.md) | 补齐验证工具的统计项，准备不参与拟合的真实成绩。 |
 
 ## 功能已有，等实际验证

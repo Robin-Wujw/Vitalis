@@ -27,7 +27,7 @@
 ## 核查时用什么
 
 ```bash
-uv run --locked --extra dev vitalis wake-check --user <用户> --days 7 --end <验收结束日>
+uv run --locked --extra dev vitalis api request GET health/wake-review --param from=<验收开始日> --param to=<验收结束日>
 ```
 
 注意：`wake-check` 的 `report_created_at` 是**投递任务建立时间**，不是手机收到时间；`passes` 主要检查提前触发和延迟中位数，不保证七天每天都成功投递。必须另外逐日核对投递状态，渠道“已受理”也不等于最终送达。

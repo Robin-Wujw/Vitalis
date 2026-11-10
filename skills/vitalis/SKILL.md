@@ -9,6 +9,10 @@ description: Retrieve Vitalis facts, use bounded deterministic coaching tools, c
 
 ## 配置与事实
 
+所有业务操作通过 API 完成；安装仓库时可用 `vitalis api ...`，独立 Skill 使用本目录脚本，两者来自同一源码。新增 JSON 接口可用 `request METHOD relative-path --param NAME=VALUE`，POST/PATCH/PUT 从 stdin 读取 JSON，幂等写入带 `--key-file`；通用入口不扩大用户授权。禁止改用服务器数据库、内部 Python 用例或 Zepp 凭据绕过 API 权限。
+
+`catalog` 查看可用字段、单位与原始流资格；`sleep-records --from D --to D`、`metrics METRIC --from D --to D [--daily]` 读保存的事实。晨报时机用 `request GET health/wake-review --param from=D --param to=D`；实验比较用 `request GET intelligence/research/readiness --param from=D --param to=D`，只解释为未验证实验结果。明确要求重算实验结果时向 `analysis-runs` 提交 `day` 与 `refresh_research=true`，读取任务至完成，不宣称入队即成功。
+
 - 运行 `python <Skill目录>/scripts/vitalis_api.py <命令> ...`。`VITALIS_API_BASE_URL` 是无路径、凭据、查询或片段的 origin，非本机必须 HTTPS，不跟随重定向。令牌优先由 `VITALIS_ACCESS_TOKEN_FILE` 的绝对私密普通文件读取，每次请求重新加载；不接受符号链接，POSIX 不得他人可读或组可写。未配置文件才用 `VITALIS_ACCESS_TOKEN`；文件配置失败不回退。令牌不放命令行、日志或聊天，`X-User-Id` 不选择身份。
 - 区分 API 事实、用户自述、工具计算和教练建议。保留来源、单位、计重方式、观测时间、日期口径、窗口、样本与覆盖；不同用户、设备、来源或单位不混成同一事实。缺失不是零，未知训练日不是休息日。`synthetic`/`mock` 保留测试标签，不把合成来源说成设备实测。资格信息用于判断，只有影响答案时用一句人话说明，不逐项输出内部审计。
 - 确定性工具可以计算有来源的记录量、比较与条件情景，单位换算和格式化也允许。把工具返回的名义量与真实生理能力分开，不虚构恢复分数、趋势、因果、肌肉收益或个人置信度；研究或厂商 readiness/Charge 不升级为正式结论。教练判断不冒充后端已验证安排。

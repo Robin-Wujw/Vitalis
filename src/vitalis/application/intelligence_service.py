@@ -212,6 +212,14 @@ class IntelligenceCommand:
                     raise RuntimeError("analysis job claim is no longer current")
                 uow.commit()
 
+            research_results = {}
+            if execution_context.get("refresh_research") is True:
+                from .shadow_batch import ShadowBatch
+
+                research_results = ShadowBatch(self._uow_factory,
+                    timezone_name=self._timezone, now_factory=lambda: run.started_at,
+                ).calculate(user_id, target)
+
             with self._uow_factory() as uow:
                 repo = uow.repository
                 raw = ProfileLoader(repo).load(
@@ -264,6 +272,8 @@ class IntelligenceCommand:
                     "response_model": model_row.payload if model_row is not None else None,
                     "tracking": tracking_row.payload if tracking_row is not None else None,
                 }
+                prediction_quality.update({kind: payload
+                    for kind, (_, payload) in research_results.items() if kind in prediction_quality})
 
             trace = analyze_with_trace(
                 AnalysisDataset(
@@ -333,6 +343,8 @@ class IntelligenceCommand:
                 if job_claim is not None:
                     if not job_repository.succeed(uow.transaction, job_claim, run.id):
                         raise RuntimeError("analysis job claim is no longer current")
+                for kind, (version, payload) in research_results.items():
+                    repo.save_shadow_result(user_id, target, kind, version, payload)
                 persisted_events = EventLifecycleEngine().reconcile(
                     repo,
                     run.id,
@@ -503,6 +515,18 @@ class IntelligenceQuery:
             "decision_policy_version": row.decision_policy_version,
             "evidence_version": row.evidence_version,
         }
+
+    def research(self, user_id: str, kind: str, start: date, end: date) -> dict:
+        from .shadow_batch import shadow_report
+
+        with self._uow_factory() as uow:
+            rows = [(row.day, row.payload) for row in
+                uow.repository.shadow_results(user_id, kind, start, end)]
+        count = len({day for day, _ in rows})
+        return {"user_id": user_id, "from": start, "to": end,
+            "time_basis": "calendar_day", "qualification": "shadow_only_unvalidated",
+            "sample_count": count, "coverage": count / ((end - start).days + 1),
+            "summary": shadow_report(kind, rows)}
 
     @staticmethod
     def _payload_with_state(payload: dict, state: dict) -> dict:

@@ -83,6 +83,12 @@ def test_no_old_runtime_shadow_packages_remain():
         assert not list((SOURCE / old).glob("*.py")), f"old {old} implementation remains"
 
 
+def test_http_business_client_has_no_server_or_database_dependencies():
+    client = (SOURCE / "api_client.py").read_text(encoding="utf-8")
+    assert not _violations(client, "vitalis", (
+        "vitalis", "sqlalchemy", "sqlite3", "httpx", "requests", "dotenv"))
+
+
 def test_daily_delivery_has_one_pure_policy_and_one_concrete_adapter():
     policy = (SOURCE / "application" / "delivery_policy.py").read_text(encoding="utf-8")
     adapter = (SOURCE / "adapters" / "daily_push.py").read_text(encoding="utf-8")

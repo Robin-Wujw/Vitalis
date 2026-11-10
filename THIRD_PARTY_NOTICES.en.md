@@ -35,6 +35,10 @@ endorsed by, or functionally equivalent to ZeppBridge or Zepp Health.
 
 On 2026-11-02, public `main` documentation and code from [J-solan/zepp-dashboard](https://github.com/J-solan/zepp-dashboard) informed independently implemented nap grouping, readiness revision semantics, daily versus seven-day load separation, auto-activity flags, vendor training-effect and heart-rate-zone fields, and source-qualified time charts. No upstream implementation, anatomical image, frontend asset, or personal data was copied. The simplified anatomical SVG is authored in this project. The upstream is MIT-licensed; its single-device/EU observations are not Vitalis live validation. Hevy CSV data is explicitly uploaded by the user; no upstream account or service is connected.
 
+## zepp-mcp protocol reference
+
+Reviewed [DhavalBhimani44/zepp-mcp](https://github.com/DhavalBhimani44/zepp-mcp) at `904cc301d63a64da6f633dd8a75b2a612e67240a` on 2026-11-10, alongside ZeppBridge `a6a805dce7fba941af544e36d251c6d6026a1a21`. Holder weight history, exertion, opaque Charge/readiness streams, and supplemental sleep/workout fields informed independent implementations with bounded contracts and authorized read-only endpoint checks. No upstream code or personal data was copied. zepp-mcp is MIT-licensed. An upstream tool declaration establishes neither account availability nor eligibility of undecoded content as a health metric.
+
 ## Zepp vendor catalogs
 
 The normalized mappings in `src/vitalis/adapters/zepp/data/` come from three sport assets in the user-supplied Zepp 10.8.7-play APK and the official Chinese `/sport/config/muscle` catalog. They retain only identifiers, labels, crosswalks, and source digests needed for interoperability; APKs, images, decompiled implementations, and personal responses are not distributed. See [Zepp](docs/zepp.md) for the provenance, excluded placeholders, and update procedure for 208 sport modes and 1,133 action labels. Vendor labels do not establish user confirmation or eligibility for exercise prescriptions.

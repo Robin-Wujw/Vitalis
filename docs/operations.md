@@ -107,11 +107,11 @@ worker 的内存上限写在 `deploy/systemd/vitalis-worker.service`（`MemoryHi
 
 日常分析读入库时写好的日级特征（`daily_signal_features`）：HRV、血氧、压力和 Charge 这类密集样本流，只有目标日和前一天读原始样本，更早的日子每个流每天一行（合格值的中位数、最新值、样本数、覆盖分钟数），不再截断样本。特征和样本在同一个事务里写入；首次部署或时区变化后用 `vitalis db rebuild-features` 从已存样本重算（约 1 年数据 2 分钟）。每次分析在 `analysis_runs` 记录耗时 `compute_seconds` 和进程峰值内存 `peak_rss_mb`；耗时超过 30 秒或分析新增的峰值内存（峰值减开始时常驻）超过 150 MB 时，`budget_exceeded` 写明超出项，worker 日志记一行警告。生产库副本上单次分析约 7–8 秒、含解释器的进程峰值约 140–150 MB（旧路径约 26 秒、320 MB）。
 
-影子模块不在日常路径计算，也不进报告：worker 每天 03:30 跑离峰批处理，算前一天的开放健康洞察（EWMA 准备度、TRIMP 负荷、多变量异常）、个人反应模型和四项系统质量指标，并记录当天的 0–100 准备度和身体信号预警（这两项已进入日常分析和晨报，批处理只留跟踪记录），各存一行 `shadow_results`。`vitalis shadow run --day D --days N` 补算或在历史上回放策略改动，`vitalis shadow report readiness|body_signal --user U --days 14` 输出对比（准备度对计票结论的一致率、对厂商 Readiness 的秩相关；预警日列表需要用户确认才能算误报率）。
+影子模块不在日常路径计算，也不进报告：worker 每天 03:30 跑离峰批处理，算前一天的开放健康洞察（EWMA 准备度、TRIMP 负荷、多变量异常）、个人反应模型和四项系统质量指标，并记录当天的 0–100 准备度和身体信号预警（这两项已进入日常分析和晨报，批处理只留跟踪记录），各存一行 `shadow_results`。`POST /api/analysis-runs`（`day` 与 `refresh_research=true`，带幂等键）排队补算指定日；worker 在同一租约与输入 revision 检查下提交实验结果和分析快照，默认抑制通知。`GET /api/intelligence/research/readiness|body_signal?from=D&to=D` 读取已保存结果并输出带样本数、窗口和 coverage 的对比（准备度对计票结论的一致率、对厂商 Readiness 的秩相关；预警日列表需要用户确认才能算误报率）。
 
 ## Zepp 网页登录与重新登录
 
-API 只在本机监听，电脑和手机通过 ZeroTier 私有网络访问：`deploy/systemd/vitalis-private-proxy.socket` 只在 ZeroTier 地址的 80 端口监听（模板里的地址换成实际 ZeroTier 地址），由 `systemd-socket-proxyd` 转发到 `127.0.0.1:8000`；`VITALIS_PUBLIC_URL` 设为 `http://<ZeroTier 地址>`。ZeroTier 端到端加密，所以这条私有链路允许 HTTP；公网地址仍必须 HTTPS。`vitalis connect zepp --user U [--minutes 60] [--push]` 生成登录链接（在连着 ZeroTier 的电脑上打开；`--push` 另经 PushPlus 发一份），密码只经过自己的服务器一次、不保存。
+API 只在本机监听，电脑和手机通过 ZeroTier 私有网络访问：`deploy/systemd/vitalis-private-proxy.socket` 只在 ZeroTier 地址的 80 端口监听（模板里的地址换成实际 ZeroTier 地址），由 `systemd-socket-proxyd` 转发到 `127.0.0.1:8000`；`VITALIS_PUBLIC_URL` 设为 `http://<ZeroTier 地址>`。ZeroTier 端到端加密，所以这条私有链路允许 HTTP；公网地址仍必须 HTTPS。`POST /api/connect/zepp/pair` 使用本人 manage scope 生成登录链接（在连着 ZeroTier 的电脑上打开），密码只经过自己的服务器一次、不保存。
 
 最近一次同步返回需要重新认证时，worker 每小时先用保存的 `login_token` 换新的 `app_token`；换不了（没有 `login_token`、接口拒绝或返回别的账号）就经 PushPlus 发一个 24 小时有效的重新登录链接，每天最多一次，并记一条 `credential_expired` 告警。
 
@@ -123,7 +123,7 @@ API 只在本机监听，电脑和手机通过 ZeroTier 私有网络访问：`de
 
 ## 训练明细补拉与原始响应回放
 
-`vitalis sync details --user U` 在 worker 运行时逐个排“只拉明细”的手动同步（每次最多 4 条），直到没有缺明细的训练或某次没有进展，进度看 `GET /api/data-status` 的 `workout_details`。
+`vitalis api sync --detail-only --detail-limit 4 --key-file <新幂等文件>` 排“只拉明细”的手动同步；轮询任务完成后核对缺口，仍有进展时用新幂等文件继续，进度看 `GET /api/data-status` 的 `workout_details`。
 
 解析器修正后：`vitalis replay source-journal --source-user U --target-user R --start A --end B --as-of T --allow-production` 用新解析器把加密原始响应回放进独立用户 R；`vitalis replay diff --source-user U --replay-user R --start A --end B` 逐表列出新增、删除和变化的事实；确认后 `vitalis replay apply … --confirm` 用回放结果替换 U 在该窗口（最多 14 天）的事实，被替换的行压缩保存在 `replay_applications`，`vitalis replay undo --application ID --confirm` 恢复。apply 和 undo 都会重算日级特征并排对应日期的重新分析。原始响应随数据库保存、不另设期限；回放用户和 `replay_applications` 在确认无误后按[部署](deployment.md)清理旧数据的方式删除，不长期保留。
 
@@ -200,7 +200,7 @@ python -m vitalis.zepp_mapping_refresh --user U --strength-weights --apply
 | `/ready` 503 | 对照 `DATABASE_URL` 检查 schema；用新库 `db init`，不要自动迁移未知旧库。 |
 | worker 无心跳 | 确认独立 worker 进程、同一环境和数据库；查看进程退出原因。 |
 | 报告 404 | 指定日期没有已保存快照；创建分析任务并等待 worker，不要把 404 当零数据。 |
-| 同步需要认证 | worker 会先用 `login_token` 续期，失败时经 PushPlus 发重新登录链接；也可运行 `vitalis connect zepp --user U --push`。不要在日志或聊天中传 Cookie/apptoken。 |
+| 同步需要认证 | worker 会先用 `login_token` 续期，失败时经 PushPlus 发重新登录链接；也可通过 `POST /api/connect/zepp/pair` 获取重新登录链接。不要在日志或聊天中传 Cookie/apptoken。 |
 | 报告延期或漏发 | 从 `/api/deliveries` 的 `failure_code` 看原因（如 `sleep_incomplete`、`stored_data_incomplete`、`morning_fallback_no_facts`、`stale_plan_expired`；`missed` 记录为 `worker_not_running`、`snapshot_unavailable`、`delivery_not_created`），再按上文“漏发排查顺序”查；可用已保存事实时只生成合资格内容。 |
 | 投递 uncertain | 保留不确定状态。响应丢失且没有流水号时无法自动查询，需在供应商侧人工核对；不创建新意图盲重发。 |
 | 投递 failed | 从 `/api/deliveries` 查看 `provider_status`、`send_attempt_count` 和 `next_attempt_at`，结合 worker 的非敏感错误类别排查凭据/模板/目标；明确拒绝的意图由 worker 按退避和最大次数重试。 |

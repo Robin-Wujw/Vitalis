@@ -1,6 +1,7 @@
 """Versioned Vitalis Health Intelligence API."""
 
 from datetime import date, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -31,6 +32,18 @@ from vitalis.time import local_today
 
 
 router = APIRouter(prefix="/intelligence", tags=["intelligence"])
+
+
+@router.get("/research/{kind}", operation_id="get_research_review")
+def research_review(
+    kind: Literal["readiness", "body_signal"],
+    from_date: date = Query(..., alias="from"),
+    to_date: date = Query(..., alias="to"),
+    user_id: str = Depends(require_user_id),
+) -> dict:
+    if not 0 <= (to_date - from_date).days <= 365:
+        raise HTTPException(status_code=422, detail="实验分析窗口必须为 1–366 天")
+    return get_intelligence_query().research(user_id, kind, from_date, to_date)
 
 
 def _snapshot_or_404(value):

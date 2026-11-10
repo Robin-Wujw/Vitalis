@@ -83,8 +83,8 @@ def test_manifest_is_stable_and_request_is_reused():
     first = coordinator.create_attempt("coord-manifest", window=WINDOW, options={"decode_dense_files": False})
     second = coordinator.create_attempt("coord-manifest", window=WINDOW, options={"decode_dense_files": False})
     assert first.id == second.id
-    assert first.chunk_count == 20
-    assert first.plan_version == "zepp-sync-v6"
+    assert first.chunk_count == 25
+    assert first.plan_version == "zepp-sync-v7"
     rows = coordinator.status(first.id)["chunks"]
     assert rows[0]["stable_key"] == stable_chunk_key(
         "heart_rate", "minute", WINDOW.start, WINDOW.end, int(WINDOW.start.timestamp())
@@ -108,7 +108,7 @@ def test_manual_workout_only_manifest_skips_all_health_streams():
     )
     with session_scope() as db:
         chunks = HealthRepository(db).sync_chunks(attempt.id)
-    assert attempt.plan_version == "zepp-sync-v6"
+    assert attempt.plan_version == "zepp-sync-v7"
     assert attempt.chunk_count == len(chunks) == 1
     assert chunks[0].stream == "workouts"
     assert chunks[0].partition == "run"
@@ -118,7 +118,7 @@ def test_manual_workout_only_manifest_skips_all_health_streams():
 
     normal = coordinator.create_attempt(user_id, window=WINDOW, trigger="manual")
     assert normal.id != attempt.id
-    assert normal.chunk_count == 20
+    assert normal.chunk_count == 25
 
 
 def test_workout_only_rejects_scheduled_or_non_boolean_options():
@@ -287,7 +287,7 @@ def test_repeated_detail_only_attempts_drain_backlog_without_history_fetch():
     connector = Connector()
     coordinator = ZeppSyncCoordinator(connector=connector, wall_clock=lambda: NOW)
     first = coordinator.create_attempt(user_id, window=window, options={"detail_only": True})
-    assert first is not None and first.plan_version == "zepp-sync-v6"
+    assert first is not None and first.plan_version == "zepp-sync-v7"
     assert first.chunk_count == 4
     assert coordinator.run_attempt(first.id).success
     with session_scope() as db:
@@ -508,8 +508,8 @@ def test_page_success_creates_atomic_successor():
     coordinator, attempt = _one_chunk_attempt("coord-page", connector)
     report = coordinator.run_attempt(attempt.id, max_chunks=1)
     state = coordinator.status(attempt.id)
-    assert report.progress["succeeded_chunks"] == 20
-    assert len(state["chunks"]) == 21
+    assert report.progress["succeeded_chunks"] == 25
+    assert len(state["chunks"]) == 26
     successors = [row for row in state["chunks"] if row["status"] == "queued"]
     assert len(successors) == 1
     assert successors[0]["stream"] == "heart_rate"

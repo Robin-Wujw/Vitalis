@@ -8,7 +8,7 @@ import pytest
 from vitalis.adapters.zepp.client import MockZeppClient
 from vitalis.adapters.zepp.fetcher import FetchedRecord, RawRecord
 from vitalis.adapters.zepp.parser import MAX_WORKOUT_DETAIL_SAMPLES, WorkoutDetailLimitError
-from vitalis.adapters.zepp.parsers import ParseContext, parse_workout_detail
+from vitalis.adapters.zepp.parsers.workout_detail import ParseContext, parse_workout_detail
 from vitalis.adapters.zepp.sync_manager import SyncManager
 from vitalis.domain import User
 from vitalis.time import local_day_utc_bounds

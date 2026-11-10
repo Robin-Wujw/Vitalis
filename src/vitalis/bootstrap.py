@@ -197,10 +197,17 @@ def _next_auto_sync() -> str:
 
 def get_health_query() -> HealthQuery:
     """Compose the stored raw-health query with the SQL reader adapter."""
+    from vitalis.adapters.zepp.streams import WELLNESS_STREAMS
+
     return HealthQuery(
         SqlHealthReader(database.SessionLocal),
         timezone_name=settings.timezone,
         next_auto_sync_factory=_next_auto_sync,
+        wake_poll_seconds=settings.morning_wake_poll_interval_seconds,
+        wake_window_end=settings.morning_wake_end,
+        source_catalog={item.label: {"stream": item.health_stream,
+            "normalization": "raw_only" if item.raw_only else "typed",
+            "empty_response": "unknown_not_confirmed_absence"} for item in WELLNESS_STREAMS},
     )
 
 

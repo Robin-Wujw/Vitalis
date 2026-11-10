@@ -144,9 +144,9 @@ _METRIC_LABELS = {
     "sleep_latency_minutes": "入睡用时", "out_of_bed_delay_minutes": "醒后至离床",
     "time_in_bed_minutes": "在床时间", "sleep_efficiency_percent": "睡眠效率",
     "step_goal": "Zepp 步数目标", "calorie_goal": "Zepp 热量目标",
-    "active_minutes_goal": "Zepp 活动时长目标", "weight": "最近记录体重",
+    "active_minutes_goal": "Zepp 燃脂时间目标", "vendor_burning_minutes": "Zepp 燃脂时间", "weight": "最近记录体重",
     "height": "最近记录身高", "bmi": "最近记录 BMI",
-    **{f"vendor_{key}": f"Zepp {key.upper().replace('_TOTAL', ' 总口径')}（厂商参考）"
+    **{f"vendor_{key}": f"Zepp {key.upper()}（厂商参考）"
        for key in ("atl", "ctl", "tsb", "atl_total", "ctl_total", "tsb_total")},
     "sleep_duration": "睡眠时长", "sleep_score": "设备睡眠评分",
     "deep_sleep": "深睡", "light_sleep": "浅睡", "rem_sleep": "快速眼动睡眠",
@@ -195,7 +195,7 @@ _COVERAGE_FIELDS = (
 
 def _theme(key: str) -> str:
     key = key.lower()
-    if key in {"step_goal", "calorie_goal", "active_minutes_goal"}:
+    if key in {"step_goal", "calorie_goal", "active_minutes_goal", "vendor_burning_minutes"}:
         return "activity"
     if key in {"out_of_bed_delay_minutes", "time_in_bed_minutes"}:
         return "sleep"

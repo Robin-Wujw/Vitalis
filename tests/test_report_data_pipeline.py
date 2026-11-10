@@ -52,7 +52,8 @@ def synthetic_pipeline_example(*, morning=False, explicit_strength=True, history
                            ("active_minutes", 48, "min"), ("distance", 6200, "m")]
             repo.save_daily_metrics([
                 DailyMetric(user_id=user, date=day, metric=metric, value=value,
-                            unit=unit, source_scope="user_fused")
+                            unit=unit, source_scope="user_fused",
+                            source_field="activeMinutes" if metric == "active_minutes" else None)
                 for metric, value, unit in values
             ])
         affected = set()

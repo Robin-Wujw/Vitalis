@@ -112,6 +112,30 @@ def test_daily_goals_remain_separate_from_observed_totals():
     assert "step_goal_met" not in facts
 
 
+def test_fat_burning_minutes_are_not_general_activity_or_workout_duration():
+    payload = {"items": [{"eventType": "DailyHealth", "value": {
+        "samples": [{"dateString": DAY.isoformat(), "activeMinutes": 80,
+                     "totalBurningDuration": 12, "burningDurationGoal": 30}]}}]}
+    facts = {m.metric: m for m in ZeppParser.parse_daily_metrics(payload, "Asia/Shanghai")}
+    assert facts["active_minutes"].value == 80
+    assert facts["active_minutes"].source_field == "activeMinutes"
+    assert facts["vendor_burning_minutes"].value == 12
+    assert facts["vendor_burning_minutes"].source_field == "totalBurningDuration"
+    assert facts["vendor_burning_minutes"].unit == "min"
+    del payload["items"][0]["value"]["samples"][0]["activeMinutes"]
+    facts = {m.metric: m for m in ZeppParser.parse_daily_metrics(payload, "Asia/Shanghai")}
+    assert "active_minutes" not in facts
+    assert facts["vendor_burning_minutes"].value == 12
+
+
+@pytest.mark.parametrize("minutes", [-1, 1441, 1500])
+def test_daily_burning_time_rejects_invalid_day_totals(minutes):
+    payload = {"items": [{"eventType": "DailyHealth", "value": {
+        "samples": [{"dateString": DAY.isoformat(), "totalBurningDuration": minutes}]}}]}
+    assert not any(item.metric == "vendor_burning_minutes"
+                   for item in ZeppParser.parse_daily_metrics(payload, "Asia/Shanghai"))
+
+
 def test_weight_history_filters_other_members_and_preserves_timestamp():
     payload = {"items": [{"memberId": member, "generatedTime": int(START.timestamp()),
         "summary": {"weight": 72, "height": 180, "bmi": 22.22}}

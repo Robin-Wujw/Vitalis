@@ -68,6 +68,15 @@ def test_verified_equal_values_at_different_instants_are_not_deduplicated():
     assert len(report_source_view(profile(series={"sleep_hrv":[old,fresh]})).series["sleep_hrv"])==2
 
 
+def test_activity_minutes_need_known_semantics_after_dailyhealth_alias_split():
+    old = replace(point("active_minutes", 12, unit="min"), source_field="daily.active_minutes", is_daily_summary=True)
+    correct = replace(old, value=50, source_field="activeMinutes")
+    burning = replace(old, source_field="totalBurningDuration")
+    raw = profile(series={"active_minutes": [old, correct, burning]})
+    assert report_source_view(raw).series["active_minutes"] == [correct]
+    assert raw.series["active_minutes"] == [old, correct, burning]
+
+
 def test_missing_current_account_never_falls_back_to_device_or_unknown():
     raw = profile(series={"sleep_hrv": [point(day=DAY-timedelta(days=1)),
         point(value=80, scope="device", device="A"), point(value=99, scope="unknown")]})

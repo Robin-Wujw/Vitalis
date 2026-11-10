@@ -5,7 +5,7 @@ from collections import Counter
 
 SLEEP_LABELS = {"sleep_latency_minutes": "入睡用时", "out_of_bed_delay_minutes": "醒后至离床",
                 "time_in_bed_minutes": "在床时间", "sleep_efficiency_percent": "睡眠效率"}
-GOAL_LABELS = {"step_goal": "步数", "active_minutes_goal": "活动时长", "calorie_goal": "热量"}
+GOAL_LABELS = {"step_goal": "步数", "active_minutes_goal": "燃脂时间", "calorie_goal": "热量"}
 UNITS = {"steps": "步", "min": "分钟", "kcal": "千卡"}
 
 
@@ -27,6 +27,7 @@ def sleep_timing_lines(sleep: dict, *, detailed: bool = False, timezone_name: st
 
 def recorded_context_sections(context: dict, *, weekly: bool = False) -> list[dict]:
     groups = {"sleep": [], "goals": [], "body": []}
+    goal_notes = []
     records = [*(context.get("metrics") or []), *(context.get("goals") or [])]
     counts = Counter(item.get("metric") for item in records)
 
@@ -67,10 +68,12 @@ def recorded_context_sections(context: dict, *, weekly: bool = False) -> list[di
             if item.get("actual_value") is not None:
                 line += f"；已记录 {number(item['actual_value'], 0)} {unit}"
         groups["goals"].append(line + source_suffix(item))
+        if item.get("metric") == "active_minutes_goal" and not goal_notes:
+            goal_notes.append("燃脂时间按 Zepp 的心率区间记录，不等于训练总时长，也不能据此判断是否减脂。")
     sections = []
     for key, title in (("sleep", "睡眠时间与效率"), ("goals", "活动与当日目标"),
                        ("body", "最近体重记录")):
         if groups[key]:
             sections.append(dict(key=f"recorded_{key}", title=title, facts=groups[key],
-                                 interpretation=[], limitations=[], display=True))
+                                 interpretation=[], limitations=goal_notes if key == "goals" else [], display=True))
     return sections

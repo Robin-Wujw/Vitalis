@@ -66,10 +66,11 @@ def _render_examples(day: date):
             current = day-timedelta(days=offset)
             repository.save_daily_metrics([DailyMetric(user_id="demo", date=current,
                 metric=metric, value=value, unit=unit, source_scope="user_summary",
-                source_field=f"daily.{metric}", fetched_at=cutoff, qualification=qualification)
+                source_field="totalBurningDuration" if metric == "vendor_burning_minutes" else f"daily.{metric}", fetched_at=cutoff, qualification=qualification)
                 for metric, value, unit, qualification in (
                     ("step_goal", 8000, "steps", "vendor_user_target"),
                     ("active_minutes_goal", 40, "min", "vendor_user_target"),
+                    ("vendor_burning_minutes", 25 if offset % 2 else 45, "min", "vendor_heart_rate_zone_minutes"),
                     ("calorie_goal", 400, "kcal", "vendor_user_target"),
                     ("vendor_atl", 42, "vendor_load", "vendor_estimate_unvalidated"),
                     ("vendor_ctl", 45, "vendor_load", "vendor_estimate_unvalidated"),

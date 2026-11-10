@@ -195,7 +195,7 @@ class ZeppParser:
                 distance_meters = self._nonnegative_number(steps, ("dis",))
                 active_minutes = self._nonnegative_number(
                     summary,
-                    ("activeMinutes", "active_minutes", "totalBurningDuration"),
+                    ("activeMinutes", "active_minutes"),
                 )
                 resting_hr = self._nonnegative_number(sleep, ("rhr",))
                 observed_fields = []
@@ -1160,7 +1160,8 @@ class ZeppParser:
         fields: tuple[tuple[str, tuple[str, ...], str], ...] = (
             ("steps", ("steps", "step", "stepCount", "totalSteps"), "steps"),
             ("calories", ("calories", "calorie", "totalCalories"), "kcal"),
-            ("active_minutes", ("activeMinutes", "totalBurningDuration"), "min"),
+            ("active_minutes", ("activeMinutes",), "min"),
+            ("vendor_burning_minutes", ("totalBurningDuration",), "min"),
             ("distance_km", ("distance", "totalDistance"), "km"),
             ("resting_hr", ("resting_hr", "restingHr", "restingHeartRate", "rhr"), "bpm"),
             ("readiness", ("readiness", "readinessScore", "watchScore", "rdnsScore"), "score"),
@@ -1245,10 +1246,14 @@ class ZeppParser:
                 if day is None:
                     continue
                 for metric, keys, unit in fields:
+                    source_obj = obj
                     value = ZeppParser._first_number(obj, keys)
                     if value is None and nested:
+                        source_obj = nested
                         value = ZeppParser._first_number(nested, keys)
                     if value is None or (unit == "load" and value < 0):
+                        continue
+                    if metric == "vendor_burning_minutes" and not 0 <= value <= 1440:
                         continue
                     is_goal = metric in {"step_goal", "calorie_goal", "active_minutes_goal"}
                     if is_goal and value <= 0:
@@ -1263,8 +1268,9 @@ class ZeppParser:
                     store(DailyMetric(
                         date=day, metric=metric, value=value, unit=unit,
                         source_scope=source_scope, device_id=device,
-                        source_field=keys[0] if unit == "load" or is_goal else None,
-                        qualification="vendor_user_target" if is_goal else "vendor_reference" if unit == "load" else None,
+                        source_field=next(key for key in keys if ZeppParser._first_number(source_obj, (key,)) is not None),
+                        qualification=("vendor_user_target" if is_goal else "vendor_reference" if unit == "load"
+                                       else "vendor_heart_rate_zone_minutes" if metric == "vendor_burning_minutes" else None),
                     ))
         return list(output.values())
 

@@ -27,14 +27,14 @@
         "media_type": "text/markdown",
         "template": "markdown",
         "renderer_version": "8.0",
-        "content_sha256": "6b59269afca9334d4517ddbf8770c5862d232618fbe7bae891a572d4a5d7dca0"
+        "content_sha256": "a690eceb816831a0679e2420281323359799c984c10e25e907501f678b81271c"
       },
       "html": {
         "title": "Vitalis 日报 · 当日已同步记录",
         "media_type": "text/html",
         "template": "html",
         "renderer_version": "8.0",
-        "content_sha256": "f483ae28f686ac9402486db0872f5a8bbde164d7a04d9a8f1f922d1c41d42866"
+        "content_sha256": "8cb2e9c19a6f697bd685e6c14e901563c502556b6416caee30a6b42fe852d2c5"
       }
     },
     "evening": {
@@ -59,14 +59,14 @@
         "media_type": "text/markdown",
         "template": "markdown",
         "renderer_version": "8.0",
-        "content_sha256": "33df42f150597ec1d0387dd1e14ea364a01a89326f06c4ca6ba2a2a9264ef54a"
+        "content_sha256": "6db056e27b60b07b70f09e4610d3ff0836114b8f28bfd0d2c4e2b3f6a4cfbf45"
       },
       "html": {
         "title": "Vitalis 周报 · 本周睡眠与训练结构",
         "media_type": "text/html",
         "template": "html",
         "renderer_version": "8.0",
-        "content_sha256": "0fbf0edfbbda7fc75c7765144a3cbced228cbea3bbcbd31d1d3af80bcf368da1"
+        "content_sha256": "b9012f6c908f7cbbb6735bd0a11a02638e72b4a6151f6a48f9846c1839744086"
       }
     },
     "monthly": {

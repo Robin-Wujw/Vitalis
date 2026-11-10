@@ -71,9 +71,13 @@ Idempotency-Key: <new-or-reused-key>
 
 ## 补充数据与可取性
 
-2026-11-10 对照 zepp-mcp `904cc301d63a64da6f633dd8a75b2a612e67240a`、ZeppBridge `a6a805dce7fba941af544e36d251c6d6026a1a21`，并从已授权服务器做只读 GET 核查。已确认可取得睡眠时间组件和 REM、训练毫秒时长与高精度距离、DailyHealth 目标、本人历史体重与 exertion 厂商负荷。体重 endpoint 使用 `members/-1/weightRecords`，fromTime/toTime 为秒；返回仍按 memberId 再过滤。同步计划 `zepp-sync-v8`、解析器 `zepp-parser-v4`；请求目录由 `streams.py` 同时供单次取数和持久任务使用。
+2026-11-10 对照 zepp-mcp `904cc301d63a64da6f633dd8a75b2a612e67240a`、ZeppBridge `a6a805dce7fba941af544e36d251c6d6026a1a21`，并从已授权服务器做只读 GET 核查。已确认可取得睡眠时间组件和 REM、训练毫秒时长与高精度距离、DailyHealth 目标、本人历史体重与 exertion 厂商负荷。体重 endpoint 使用 `members/-1/weightRecords`，fromTime/toTime 为秒；返回仍按 memberId 再过滤。同步计划 `zepp-sync-v8`、解析器 `zepp-parser-v5`；请求目录由 `streams.py` 同时供单次取数和持久任务使用。
 
 Charge stress/insight 和 readiness watch_score 存在非空原始内容，但编码语义尚未验证，先保留加密原文，不对外伪造分数。分钟步数的两种记录宽度尚未与日总量对账通过；Food、Emotion、血压、恢复心率等接口在本次窗口为空或不支持，不能因为 MCP 定义了工具就认定账号能取得。AFib 的 255 等占位值继续排除。
+
+同版 APK 的公开资源 `goal_fatbure_daily` / `goal_set_fatbure_tip` 将目标称为“每日燃脂时间目标”，说明它与燃脂心率区间内的时间有关，不能当全部活动或训练总时长。DailyHealth 的 `totalBurningDuration` 现独立保存为 `vendor_burning_minutes`，与 `burningDurationGoal` 对照；新解析保留实际匹配的源字段。旧日级 `active_minutes` 若没有明确 `activeMinutes` 来源，报告分析暂不采用，原文和历史记录保留供审计；不得把只含 DailyHealth 的回放直接应用到真实用户的整个日期窗口。剩余历史修正边界见[来源修复计划](plan/daily-metric-provenance-repair.md)。
+
+负荷定义的一手证据为同版 APK 的 `phn_exertion_atl_and_ctl_text`、`phn_exertion_training_status_desc` 和 `phn_training_status_formula`：ATL 表示近 7 天活动量加权平均，CTL 表示近 42 天加权平均，TSB 为 CTL−ATL。App 另有运动记录/全天活动统计选项，但 `_total` 与两选项的具体字段映射及加权参数未核实。可以解释名词，不能据此为个人诊断疲劳或许可加量；普通报告省略六字段列表，按需查询仍保留原值和来源。
 
 `GET /api/health/catalog` 列出字段单位、来源、资格与 raw-only 流；`GET /api/health/sleep-records` 读取已保存的独立来源睡眠，`GET /api/health/metrics/{metric}` 和 `/api/health/daily-metrics` 读取样本/日事实。同步由 `POST /api/sync-jobs` 排队，完成状态与覆盖分别查询 `/api/jobs/{id}` 和 `/api/data-status`，读取本身不访问 Zepp。
 

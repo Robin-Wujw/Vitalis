@@ -36,6 +36,7 @@ Vitalis 已有从 Zepp 取数、分析、保存报告，再通过 API、PushPlus
 | P1 | [让月报摘要和正文使用同一套比较](monthly-comparison-consistency.md) | 确定每个指标采用哪个来源、怎么算变化。 |
 | P1 | [反馈页别把没记录说成没完成](feedback-record-status.md) | 本次核查发现：先修正完成提示的判断与措辞。 |
 | P2 | [验证 Zepp 原始流解码与分钟步数](zepp-opaque-decoding.md) | 原文可取，先核对编码、时间口径和完整日总量，再开放指标。 |
+| P1 | [精确修复历史 DailyHealth 指标来源](daily-metric-provenance-repair.md) | 新解析已分开燃脂与活动分钟；先补局部修正合同，不能整窗口回放覆盖其它事实。 |
 | P1 | [先验证跑步能力预测，再决定是否启用](running-performance-model.md) | 补齐验证工具的统计项，准备不参与拟合的真实成绩。 |
 
 ## 功能已有，等实际验证
@@ -45,6 +46,7 @@ Vitalis 已有从 Zepp 取数、分析、保存报告，再通过 API、PushPlus
 | 优先级 | 要确认的事情 | 还缺什么 |
 | --- | --- | --- |
 | P0 | [连续一周确认晨报没有提前发](wake-triggered-morning.md) | 新规则上线后的逐日记录，以及用户对收到时间的确认。 |
+| P0 | [恢复 Hermes 模型可用性并验收新工作流](hermes-model-availability.md) | 新接口与 key 已通过 SDK 连通检查；待完整合成对话及本人私聊验收。 |
 | P1 | [核对力量动作、重量和候选评分](strength-muscle-mapping.md) | 常用动作的真实记录、负重含义和评分案例；无依据的映射不补全。 |
 | P2 | [用手机实际提交一次报告反馈](feedback-tags.md) | 用户自愿提交，并核对保存、重算和防重复。 |
 
@@ -52,7 +54,6 @@ Vitalis 已有从 Zepp 取数、分析、保存报告，再通过 API、PushPlus
 
 | 优先级 | 待决定的事情 | 当前处理 |
 | --- | --- | --- |
-| P0 | [恢复 Hermes 模型可用性并验收新工作流](hermes-model-availability.md) | 新模型地址已选定；待填写独立 key 并完成合成及本人私聊验收。 |
 | P2 | [报告漏发时，要不要用另一个渠道提醒](delivery-alerts.md) | 沿用“只记录、不外发”的选择；选定邮件或 Hermes 后再开发。 |
 
 ## 项目之间的关系

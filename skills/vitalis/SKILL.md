@@ -53,8 +53,8 @@ description: Retrieve Vitalis facts, use bounded deterministic coaching tools, c
 | 需要补查什么 | API 读取与解释 |
 | --- | --- |
 | 睡眠时序 | `sleep-records --from D --to D` 用醒来所属 `sleep_day`。`sleep_latency_minutes` 是入床至入睡，`time_in_bed_minutes` 是在床时长，`sleep_efficiency_percent` 是已计算效率；入床不等于入睡，醒来不等于离床。字段缺失保留未知，不从分期图估值或诊断失眠。回答个人记录只引用已保存个人参照；没有参照就报数字，不自行补“10～20 分钟正常”、效率高低或精度提升的评价。 |
-| 活动目标 | `metrics step_goal --daily --from D --to D`；同样支持 `calorie_goal`、`active_minutes_goal`，日期为 `activity_day`。这些是设备设置目标，热量目标不是实际消耗，更不是饮食预算；进度优先读报告已保存的同日实测对照，目标存在不代表已完成。日内只说已记录与目标，不由当天时刻判断进度偏慢或提前判定失败。 |
-| 明确追问厂商负荷 | 已读报告有对应事实就复用；确需补查时用 `metrics vendor_atl --daily --from D1 --to D2`，按问题换 `vendor_ctl`、`vendor_tsb`。回答保留 Zepp 来源、记录日期、`vendor_load` 单位和原始负值，用一句话说明尚不能用于训练判断。`_total` 与非 `_total` 分开，不相加每日 ATL/CTL/TSB，不拿 TSB 正负或 Charge 当 Vitalis 恢复分数和加量许可。Zepp 公式与区间尚未核实，不套用通用 CTL−ATL 公式，不解释成“疲劳大于适应”“轻度负值”或由该数值许可训练；今天怎么练仍取已保存 Vitalis 决策与明确限制。 |
+| 活动目标 | `metrics step_goal --daily --from D --to D`；同样支持 `calorie_goal`、`active_minutes_goal`，日期为 `activity_day`。`active_minutes_goal` 是 Zepp 燃脂时间目标，只与 `vendor_burning_minutes`（原字段 `totalBurningDuration`）对照：按设备心率区间记录，不等于训练总时长，也不证明实际减脂；不能拿 `active_minutes` 或训练分钟替代。这些是设备设置目标，热量目标不是实际消耗，更不是饮食预算；进度优先读报告已保存的同日实测对照，目标存在不代表已完成。日内只说已记录与目标，不由当天时刻判断进度偏慢或提前判定失败。 |
+| 明确追问厂商负荷 | 已读报告有对应事实就复用；确需补查时用 `metrics vendor_atl --daily --from D1 --to D2`，按问题换 `vendor_ctl`、`vendor_tsb`。先用人话说明：负荷是设备对活动量的估计，不是重量或卡路里；Zepp App 定义 ATL 为近 7 天活动量加权平均、CTL 为近 42 天加权平均、TSB 为 CTL−ATL。解释个人数值时保留 Zepp 来源、记录日期、`vendor_load` 单位和原始负值；加权细节及 `_total` 与统计选项的映射仍未核实，不能由正负推断个人疲劳或训练许可。不相加每日 ATL/CTL/TSB，不拿 TSB 或 Charge 当 Vitalis 恢复分数和加量许可，不解释成“疲劳大于适应”“轻度负值”；今天怎么练仍取已保存 Vitalis 决策与明确限制。 |
 | 体重记录 | `metrics weight --from <带时区时间戳> --to <带时区时间戳>`，默认 raw，例 `2026-02-01T00:00:00+08:00`。不加 `--daily`；同样可查 height/bmi。说清测量日期与单位，不把旧测量当今天体重；只有两次记录时只描述两个时点，不称持续趋势、减脂或增肌，也不推算饮食热量。 |
 | 训练精确时间 | 先用报告或 `workouts --id ID --source SOURCE`，按原字段区分移动、暂停、总用时；配速比较保留用时口径。暂停不等于力量组间休息，缺失分量不做差补齐。 |
 

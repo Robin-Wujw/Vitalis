@@ -112,7 +112,8 @@ def test_report_workflow_routes_saved_supplements_without_promoting_vendor_facts
         "vendor_atl", "vendor_ctl", "vendor_tsb", "vendor_load", "负值", "_total",
         "weight", "带时区", "truncated", "两次", "retained_raw",
         "源数据缺失", "分析陈旧", "refresh-workouts", "不能补取睡眠",
-        "不套用通用 CTL−ATL", "没有参照就报数字", "没有 analyze scope 不等于不能申请分析",
+        "近 7 天活动量加权平均", "近 42 天加权平均", "不能由正负推断个人疲劳",
+        "vendor_burning_minutes", "不等于训练总时长", "没有参照就报数字", "没有 analyze scope 不等于不能申请分析",
     ):
         assert rule in section
     assert "问上周时传今天" in text

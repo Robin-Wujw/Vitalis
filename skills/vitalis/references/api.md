@@ -8235,8 +8235,8 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "string"
     },
     "intelligence_version": {
-      "const": "22.0",
-      "default": "22.0",
+      "const": "23.0",
+      "default": "23.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -11421,7 +11421,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "$ref": "#/components/schemas/MonthlyInferences"
     },
     "intelligence_version": {
-      "default": "22.0",
+      "default": "23.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -14205,7 +14205,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "string"
     },
     "intelligence_version": {
-      "default": "22.0",
+      "default": "23.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -14545,7 +14545,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "string"
     },
     "intelligence_version": {
-      "default": "22.0",
+      "default": "23.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -23821,7 +23821,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "string"
     },
     "intelligence_version": {
-      "default": "22.0",
+      "default": "23.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -25291,7 +25291,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "$ref": "#/components/schemas/WeeklyInferences"
     },
     "intelligence_version": {
-      "default": "22.0",
+      "default": "23.0",
       "title": "Intelligence Version",
       "type": "string"
     },

@@ -2,7 +2,7 @@
 
 [文档中心](README.md) | [当前架构](architecture.md) | [Zepp](zepp.md) | [报告与渠道](reports.md)
 
-本页说明进入分析和对外报告的事实资格。字段的完整类型和版本以[领域模型](../src/vitalis/domain/models.py)、[分析合同](../src/vitalis/intelligence/contracts.py)和运行服务 `/openapi.json` 为准。当前源码为日报 schema `21.0`、周报 `12.0`、月报 `8.0`、intelligence `22.0`、decision policy `12.0`、parser `zepp-parser-v4`、数据库 revision `2026-11-vendor-report-sources`；生产版本以运行服务为准。
+本页说明进入分析和对外报告的事实资格。字段的完整类型和版本以[领域模型](../src/vitalis/domain/models.py)、[分析合同](../src/vitalis/intelligence/contracts.py)和运行服务 `/openapi.json` 为准。当前源码为日报 schema `21.0`、周报 `12.0`、月报 `8.0`、intelligence `23.0`、decision policy `12.0`、parser `zepp-parser-v5`、数据库 revision `2026-11-vendor-report-sources`；生产版本以运行服务为准。
 
 ## 事实与来源
 
@@ -10,7 +10,7 @@
 
 日报 `features.recorded_context`、周报 `facts.recorded_context` 保存补充记录及分析时已经算好的汇总，公开 view 保留同一事实资格。字段包含日期口径、窗口、独立来源、单位、获取/观测时间、样本数、可用日数及覆盖；未知资格明确保留未知。睡眠时间汇总按同一来源的每日末次记录计算，周比较两期各至少 5 晚，差值为分钟或百分点。体重/身高/BMI 只在截至报告日期的 90 日已加载窗口中取有日期的末次记录，不插值、不根据两个测量日推断趋势。厂商负荷保留带符号 TSB 和独立 total 口径，不相加、不参与恢复决策。
 
-活动目标保留 Zepp 设置值；同日唯一合资格账户实测可以独立来源对照，同时保存目标与实际各自的来源和资格。存在来源歧义、单位不一致或日期不同则不计算达成；日内不判未达成，周汇总分母仅为完整且目标/实测均可核对的日数。热量目标未确认能量角色，不拿总热量、活动热量或训练热量替代。`running` schema `4.0` 的运动时间和暂停时间可空，配速保留 `pace_basis`，同场精确秒数优先于取整分钟；历史配速对照不混运动与全程口径。
+活动目标保留 Zepp 设置值；同日唯一合资格账户实测可以独立来源对照，同时保存目标与实际各自的来源和资格。存在来源歧义、单位不一致或日期不同则不计算达成；日内不判未达成，周汇总分母仅为完整且目标/实测均可核对的日数。`active_minutes_goal` 来自 `burningDurationGoal`，含义为 Zepp 燃脂时间目标，只匹配来源字段明确为 `totalBurningDuration` 的 `vendor_burning_minutes`。它按设备心率区间记录，不能用通用 `active_minutes` 或训练总时长替代，也不证明减脂效果；旧记录源字段未知时不追认匹配。热量目标未确认能量角色，不拿总热量、活动热量或训练热量替代。`running` schema `4.0` 的运动时间和暂停时间可空，配速保留 `pace_basis`，同场精确秒数优先于取整分钟；历史配速对照不混运动与全程口径。
 
 数据集的 `source_mode` 与供应商 `source` 独立：真实、合成和离线回放分别为 `real`、`mock`、`replay`。用户数据集首次声明后不能换模式；改用独立用户或数据库。同步请求冻结模式并纳入幂等身份，执行模式不一致时拒绝请求。报告的 `report_context.source_mode` 来自保存的输入标签，不根据当前配置反推；未标记输入显示 `unknown`。`replay` 标签只表示显式离线输入。当前回放系统保留加密不可变原始响应、payload hash、观测/获取时间、schema/parser 版本和分析输入 manifest；回放写入独立用户数据集，不创建来源凭据、同步尝试或投递意图。回放结果先用 `replay diff` 逐表列出与原用户事实的差异，确认后 `replay apply` 才替换原用户该窗口的事实，并保存被替换的行供 `replay undo` 恢复；操作见[运维](operations.md)。
 
@@ -39,7 +39,8 @@
 - 睡眠以醒来所属 `sleep_day` 归属。`dt` 是 REM；`is`/`lb` 为入睡潜伏/醒后离床分钟，`obt`/`ebt` 为相对醒来日本地午夜的分钟。只有两侧时间恒等式都在一分钟内一致，才保存 UTC 上床/离床、卧床分钟和睡眠效率；效率分子为已记录睡眠分钟，缺失或矛盾不推断。JSON 事实保留 journal 引用和实际获取时间，相同事实重取不刷新年龄。
 - 训练以 `activity_day` 归属，毫秒字段分别保留为移动、暂停、总经过秒数。三者和差超过 10 ms 时不发布移动/暂停组件；总时长保留厂商原值。高精度距离换算 km；等效配速为 s/km，无氧训练效果为厂商 0–5 分。不能用移动时间偷偷替换原有经过时长。
 - 体重记录仅接受明确 `memberId=-1` 的本人记录；`generatedTime` 是 Unix 秒，观测日期为 `calendar_day`。保留 kg、cm、kg/m2；BMI 还须与同期体重/身高在 0.15 内一致，不推算未返回的体脂、肌肉、水分或基础代谢。
-- DailyHealth 的步数/卡路里/活动分钟目标与实际值分开，标记 `vendor_user_target`。exertion 的六个 ATL/CTL/TSB 字段使用独立 `vendor_*` 名称、`vendor_load` 单位和 `vendor_estimate_unvalidated` 资格；TSB 可为负，不替代 Vitalis 训练负荷或决策。
+- DailyHealth 的步数/卡路里/燃脂时间目标与实际值分开，标记 `vendor_user_target`。`totalBurningDuration` 独立存为 `vendor_burning_minutes`，保留原字段和 `vendor_heart_rate_zone_minutes` 资格，不再作为 `activeMinutes` 的别名。exertion 的六个 ATL/CTL/TSB 字段使用独立 `vendor_*` 名称、`vendor_load` 单位和 `vendor_estimate_unvalidated` 资格；TSB 可为负，不替代 Vitalis 训练负荷或决策。
+- 日级 `active_minutes` 进入报告分析必须有明确 `activeMinutes` 来源；来源不明的旧日指标保留在查询/审计层，不参与报告事实或趋势。燃脂日计时的解析、信号和目标比较统一拒绝负数及超过 1440 分钟的值。
 - Charge stress/insight 与 readiness watch_score 原始流只加密保存在 journal，状态为 `retained_raw`。它们不是已解码指标，不能进入决策或补成零。空响应表示本次未取得可用记录，不能证明设备支持或确定没有此数据。触及响应上限时标记 partial。
 
 信号注册表 `src/vitalis/intelligence/signals.py` 为每个规范指标登记源字段、单位、日期语义（`sleep_day`、`activity_day`、`calendar_day`）、资格、覆盖规则、可见渠道（晨报、晚报、Hermes、API）、是否进入决策（`yes`、`no`、`shadow`）以及缺失或迟到时的处理；新信号先登记再进入分析。逐信号状态为 `AVAILABLE`、`PARTIAL`、`STALE`、`UNKNOWN`、`INSUFFICIENT`，整份报告的 `data_quality` 不能代替逐信号状态。个人基线取窗口内每日值的中位数和 MAD，窗口长度随比较记录在 `baseline_window_days`。

@@ -59,6 +59,32 @@ def test_conflicting_same_instant_records_do_not_choose_by_input_order():
     assert build_recorded_context(raw, DAY).metrics == []
 
 
+def test_fat_burning_goal_only_compares_its_explicit_vendor_counter():
+    raw = _raw()
+    raw.report_context["target_day_complete"] = True
+    raw.series = {
+        "active_minutes_goal": [replace(_point("active_minutes_goal", 30),
+            source_scope="user_summary", source_field="burningDurationGoal")],
+        "active_minutes": [_point("active_minutes", 90),
+            replace(_point("active_minutes", 80), source_scope="user_summary")],
+        "vendor_burning_minutes": [replace(_point("vendor_burning_minutes", 12),
+            source_scope="user_summary", source_field="totalBurningDuration")],
+    }
+    goal, = build_recorded_context(raw, DAY).goals
+    assert goal.actual_value == 12 and goal.met_days == 0 and goal.evaluated_days == 1
+    assert goal.actual_source_field == "totalBurningDuration"
+    sections = recorded_context_sections({"goals": [goal.model_dump(mode="json")]}, weekly=True)
+    assert "燃脂时间" in sections[0]["facts"][0]
+    assert any("不等于训练总时长" in line for line in sections[0]["limitations"])
+    raw.series["vendor_burning_minutes"] = [replace(raw.series["vendor_burning_minutes"][0], source_field=None)]
+    goal, = build_recorded_context(raw, DAY).goals
+    assert goal.actual_value is None and goal.evaluated_days == 0 and goal.met_days is None
+    raw.series["vendor_burning_minutes"] = [replace(raw.series["vendor_burning_minutes"][0],
+        source_field="totalBurningDuration", value=1500)]
+    goal, = build_recorded_context(raw, DAY).goals
+    assert goal.actual_value is None and goal.met_days is None
+
+
 def test_goal_retains_actual_qualification_and_field_in_public_view():
     raw = _raw()
     raw.series = {

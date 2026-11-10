@@ -240,7 +240,7 @@ _CLOSED_DAY_METRICS = {
     "cycling_distance", "training_load", "training_duration", "pai_daily",
     "pai_low_zone", "pai_medium_zone", "pai_high_zone", "hrv_rmssd", "hrv_sdnn",
     "stress", "stress_min", "stress_max", "stress_relaxed_pct", "stress_normal_pct",
-    "stress_medium_pct", "stress_high_pct", "heart_rate",
+    "stress_medium_pct", "stress_high_pct", "heart_rate", "vendor_burning_minutes",
 }
 _SCORE_METRICS = {
     "sleep_score", "spo2_night_score", "stress", "stress_min", "stress_max",
@@ -255,7 +255,7 @@ _LATEST_METRICS = {
     "rhr_readiness", "skin_temp_readiness", "ahi_readiness", "afib_readiness",
     "bio_charge", "hybrid_charge", "physical_charge", "mental_charge",
     "hrv_baseline", "rhr_baseline", "skin_temp_delta", "skin_temp_baseline_delta",
-    "sleep_hrv", "sleep_rhr",
+    "sleep_hrv", "sleep_rhr", "vendor_burning_minutes",
 }
 
 
@@ -273,7 +273,7 @@ def _qualification(metric: str) -> SignalQualification:
         kwargs.update(minimum=1.0, maximum=200.0)
     elif metric == "sleep_efficiency_percent":
         kwargs.update(maximum=100.0)
-    elif metric in {"time_in_bed_minutes", "sleep_latency_minutes", "out_of_bed_delay_minutes"}:
+    elif metric in {"time_in_bed_minutes", "sleep_latency_minutes", "out_of_bed_delay_minutes", "vendor_burning_minutes"}:
         kwargs.update(maximum=1440.0)
     elif metric == "anaerobic_training_effect":
         kwargs.update(maximum=5.0)
@@ -386,7 +386,7 @@ def _registry() -> dict[str, SignalDefinition]:
         _definition("spo2_measured_minutes", "min", "sleep_day", ("daily.spo2_measured_minutes", "odi.cost"), "no"),
         _definition("steps", "steps", "activity_day", ("activity.steps", "daily.steps", "stp.ttl", "steps", "step", "stepCount", "totalSteps"), aggregation="mean_per_effective_day"),
         _definition("distance_km", "km", "activity_day", ("activity.distance_km", "daily.distance_km", "stp.dis", "distance", "totalDistance"), aggregation="mean_per_effective_day"),
-        _definition("active_minutes", "min", "activity_day", ("activity.active_minutes", "daily.active_minutes", "activeMinutes", "totalBurningDuration"), aggregation="mean_per_effective_day"),
+        _definition("active_minutes", "min", "activity_day", ("activity.active_minutes", "daily.active_minutes", "activeMinutes"), aggregation="mean_per_effective_day"),
         _definition("calories", "kcal", "activity_day", ("activity.calories", "daily.calories", "stp.cal", "calories", "calorie", "totalCalories"), aggregation="mean_per_effective_day"),
         _definition("running_distance", "m", "activity_day", ("daily.running_distance", "totalRunningDistance"), aggregation="mean_per_effective_day"),
         _definition("cycling_distance", "m", "activity_day", ("daily.cycling_distance", "totalCyclingDistance"), aggregation="mean_per_effective_day"),
@@ -462,6 +462,7 @@ def _registry() -> dict[str, SignalDefinition]:
         ("step_goal", "steps", "activity_day", ("daily.step_goal", "stepGoal")),
         ("calorie_goal", "kcal", "activity_day", ("daily.calorie_goal", "calorieGoal")),
         ("active_minutes_goal", "min", "activity_day", ("daily.active_minutes_goal", "burningDurationGoal")),
+        ("vendor_burning_minutes", "min", "activity_day", ("daily.vendor_burning_minutes", "totalBurningDuration")),
         ("weight", "kg", "calendar_day", ("sample.weight", "summary.weight")),
         ("height", "cm", "calendar_day", ("sample.height", "summary.height")),
         ("bmi", "kg/m2", "calendar_day", ("sample.bmi", "summary.bmi")),

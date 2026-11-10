@@ -64,6 +64,10 @@ def report_source_view(raw: RawDailyProfile) -> RawDailyProfile:
         metric: [point for point in points
             if is_report_account_source(point.source, point.source_scope)
             and _point_visible(raw, point)
+            # Old DailyHealth aliases mixed zone minutes with general activity.
+            # Unknown daily provenance remains queryable but cannot feed reports.
+            and not (metric == "active_minutes" and point.is_daily_summary
+                     and point.source_field != "activeMinutes")
             and not (point.source_field or "").startswith(("sleep.", "activity.", "training."))]
         for metric, points in raw.series.items()
     }

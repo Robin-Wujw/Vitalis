@@ -17,7 +17,7 @@ BODY_METRICS = {"weight": "kg", "height": "cm", "bmi": "kg/m2"}
 VENDOR_METRICS = {f"vendor_{key}": "vendor_load"
                   for key in ("atl", "ctl", "tsb", "atl_total", "ctl_total", "tsb_total")}
 GOALS = {"step_goal": ("steps", "steps"), "calorie_goal": (None, "kcal"),
-         "active_minutes_goal": ("active_minutes", "min")}
+         "active_minutes_goal": ("vendor_burning_minutes", "min")}
 
 
 def _instant(value: datetime | date) -> datetime:
@@ -34,6 +34,7 @@ def _streams(raw: RawDailyProfile, metric: str, unit: str, start: date, end: dat
                 or point.source != "zepp" or point.source_scope not in {"user_fused", "user_summary"}
                 or not isinstance(point.value, (int, float)) or isinstance(point.value, bool) or not isfinite(point.value)
                 or point.qualification in {"retained_raw", "raw_not_sleep_stage"}
+                or (metric == "vendor_burning_minutes" and (point.source_field != "totalBurningDuration" or point.value > 1440))
                 or not _visible(raw, point.observed_at)
                 or (point.fetched_at is not None and (not isinstance(point.fetched_at, datetime)
                     or _instant(point.fetched_at) > _instant(raw.as_of)))):

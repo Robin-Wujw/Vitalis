@@ -52,7 +52,7 @@ Vitalis 已有从 Zepp 取数、分析、保存报告，再通过 API、PushPlus
 
 | 优先级 | 待决定的事情 | 当前处理 |
 | --- | --- | --- |
-| P0 | [恢复 Hermes 模型可用性并验收新工作流](hermes-model-availability.md) | 当前配置被上游拒绝；待选定模型并完成合成及本人私聊验收。 |
+| P0 | [恢复 Hermes 模型可用性并验收新工作流](hermes-model-availability.md) | 新模型地址已选定；待填写独立 key 并完成合成及本人私聊验收。 |
 | P2 | [报告漏发时，要不要用另一个渠道提醒](delivery-alerts.md) | 沿用“只记录、不外发”的选择；选定邮件或 Hermes 后再开发。 |
 
 ## 项目之间的关系

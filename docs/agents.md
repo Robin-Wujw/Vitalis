@@ -127,6 +127,8 @@ Linux 的 systemd 模板见 [vitalis-hermes.service](../deploy/systemd/vitalis-h
 
 模板使用启动器的 `--exec`，在 POSIX 上让 Hermes 替换启动器进程，使 systemd 的 `MAINPID`、停止标记和重启状态码对应实际网关；Windows 使用默认启动方式。预先建立服务可写的 `<Vitalis release>/.tmp/hermes-launcher`，并核对 `ProtectHome=true` 下两个虚拟环境的底层 Python 位于 `/opt` 或系统目录。服务使用服务器常驻网络代理；不能依赖电脑的 SSH 反向转发。切换前保留旧 unit 的私密回滚副本；验收后按部署 SOP 清理，既有 Hermes 私密 home 和历史会话不当作测试目录覆盖或删除。
 
+更换模型供应商时，先为新地址建立独立的私密 key 文件（root 属主、Hermes 服务组、`0640`），由管理员填入一行纯 key；不能拿旧供应商的 key 探测新地址。模型地址由 `HERMES_HOME/config.yaml` 的 `model.base_url` 配置，启动器的 `--api-base-url` 则是 Vitalis 健康 API，不能混用。新凭据就绪后，在服务器内以新地址、新 key 和目标模型完成目录查询及隔离合成验收；再停止网关，同时修改模型地址和 `--model-key-file`，重载 unit 并启动，避免热读新地址却仍使用旧进程中的 key。凭据不下载到本地，验收脚本和输出不包含 key。
+
 ## Hermes 令牌自动轮换
 
 同机部署使用独立的 [renewal service](../deploy/systemd/vitalis-token-renewal.service) 和 [timer](../deploy/systemd/vitalis-token-renewal.timer)，不由模型或 Skill 签发。任务以 `vitalis` 账号访问数据库，Hermes 仍只有 scoped API 权限。将模板路径固定到验收 release/venv；root 管理的 `/etc/vitalis/token-renewal.env` 仅设置 `VITALIS_ROTATION_USER=<已核实的用户>`，scope 在 unit 中明确列出并须与现有令牌完全一致。

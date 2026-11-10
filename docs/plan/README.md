@@ -46,7 +46,7 @@ Vitalis 已有从 Zepp 取数、分析、保存报告，再通过 API、PushPlus
 | 优先级 | 要确认的事情 | 还缺什么 |
 | --- | --- | --- |
 | P0 | [连续一周确认晨报没有提前发](wake-triggered-morning.md) | 新规则上线后的逐日记录，以及用户对收到时间的确认。 |
-| P0 | [恢复 Hermes 模型可用性并验收新工作流](hermes-model-availability.md) | 新接口与 key 已通过 SDK 连通检查；待完整合成对话及本人私聊验收。 |
+| P0 | [恢复 Hermes 模型可用性并验收新工作流](hermes-model-availability.md) | 15 轮真实模型合成验收及隔离 home 的 3 轮补验通过关键边界；待本人私聊确认，另有重复只读查询可优化。 |
 | P1 | [核对力量动作、重量和候选评分](strength-muscle-mapping.md) | 常用动作的真实记录、负重含义和评分案例；无依据的映射不补全。 |
 | P2 | [用手机实际提交一次报告反馈](feedback-tags.md) | 用户自愿提交，并核对保存、重算和防重复。 |
 

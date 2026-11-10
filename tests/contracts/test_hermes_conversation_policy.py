@@ -125,6 +125,22 @@ def test_report_workflow_routes_saved_supplements_without_promoting_vendor_facts
     assert "Hermes 不通过通用 request 绕过" in text
 
 
+def test_human_report_answers_keep_vendor_load_details_opt_in():
+    text = _read("skills/vitalis/SKILL.md")
+    section = text.split("## 报告与新增数据", 1)[1].split("\n## ", 1)[0]
+    for rule in (
+        "普通晨报、日报、晚报、周报回答默认不展示 ATL/CTL/TSB",
+        "用户明确询问厂商负荷", "只解释被问到的指标", "不自动展开六个字段",
+        "结构化事实仍保留", "不把省略展示说成缺数据",
+        "不为 `_total` 猜测中文口径",
+    ):
+        assert rule in section
+    assert "report evening --day YYYY-MM-DD --view" in text
+    integration = _read("docs/agents.md")
+    assert "厂商负荷默认不进入普通报告回答" in integration
+    assert "普通晨报、日报、晚报、周报回顾" in integration
+
+
 @pytest.mark.parametrize(("argv", "path", "params"), [
     (["workouts", "--from", "2026-02-01", "--to", "2026-02-18", "--limit", "500"],
      "workouts", {"from": "2026-02-01", "to": "2026-02-18", "limit": 500}),

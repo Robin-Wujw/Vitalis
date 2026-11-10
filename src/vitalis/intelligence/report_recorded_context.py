@@ -26,8 +26,7 @@ def sleep_timing_lines(sleep: dict, *, detailed: bool = False, timezone_name: st
 
 
 def recorded_context_sections(context: dict, *, weekly: bool = False) -> list[dict]:
-    groups = {"sleep": [], "goals": [], "body": [], "vendor": []}
-    vendor_groups: dict[tuple, list[str]] = {}
+    groups = {"sleep": [], "goals": [], "body": []}
     records = [*(context.get("metrics") or []), *(context.get("goals") or [])]
     counts = Counter(item.get("metric") for item in records)
 
@@ -53,17 +52,6 @@ def recorded_context_sections(context: dict, *, weekly: bool = False) -> list[di
         elif metric == "weight":
             # A sparse measurement remains dated; it is not today's body weight.
             groups["body"].append(f"最近记录体重 {number(item.get('latest_value'))} 公斤（{item.get('latest_day') or '日期未确认'}）" + source_suffix(item))
-        elif isinstance(metric, str) and metric.startswith("vendor_"):
-            key = metric.removeprefix("vendor_").removesuffix("_total")
-            name = {"atl": "短期负荷 ATL", "ctl": "长期负荷 CTL", "tsb": "负荷平衡 TSB"}.get(key)
-            if not name:
-                continue
-            basis = "总口径" if metric.endswith("_total") else "基础口径"
-            provenance = item.get("provenance") or {}
-            group = (basis, item.get("latest_day"), provenance.get("source_scope"), provenance.get("device_id"))
-            vendor_groups.setdefault(group, []).append(f"{name} {number(item.get('latest_value'))}" + source_suffix(item))
-    for (basis, day, _, _), parts in vendor_groups.items():
-        groups["vendor"].append(f"{basis}（{day or '日期未确认'}）：" + "；".join(parts))
     for item in context.get("goals") or []:
         label = GOAL_LABELS.get(item.get("metric"))
         if not label:
@@ -81,10 +69,8 @@ def recorded_context_sections(context: dict, *, weekly: bool = False) -> list[di
         groups["goals"].append(line + source_suffix(item))
     sections = []
     for key, title in (("sleep", "睡眠时间与效率"), ("goals", "活动与当日目标"),
-                       ("body", "最近体重记录"), ("vendor", "Zepp 负荷参考")):
+                       ("body", "最近体重记录")):
         if groups[key]:
-            limitations = (["厂商估算，仅供参考；各口径独立，不累加为本周训练量，也不作为恢复或加量许可。"]
-                          if key == "vendor" else [])
             sections.append(dict(key=f"recorded_{key}", title=title, facts=groups[key],
-                                 interpretation=[], limitations=limitations, display=True))
+                                 interpretation=[], limitations=[], display=True))
     return sections

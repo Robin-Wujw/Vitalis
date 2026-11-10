@@ -26,6 +26,7 @@ description: Retrieve Vitalis facts, use bounded deterministic coaching tools, c
 | 昨晚睡得怎样、晨报说了什么 | `report morning --day YYYY-MM-DD --view`；只有要核对时序或缺项时才补睡眠记录。 |
 | 当前适合怎样练 | `report daily --view` 读已保存建议；必要时 `--state` 或 `status` 核对新鲜度和覆盖。 |
 | 今天完成情况、日报明细 | `report daily --day YYYY-MM-DD --view`；解释来源或目标再读取同日期完整日报。 |
+| 晚间回顾、晚报说了什么 | `report evening --day YYYY-MM-DD --view`；按返回的截止时刻解释当天记录，不把尚未结束的当天当完整日比较。 |
 | 上周变化与下周重点 | `report weekly --day YYYY-MM-DD --view`，`--day` 是查询锚点：问上周时传今天，不能传上周日（那会再退一周）。按返回的 `period_start` / `period_end` 解释上一完整周；当前周未结束不能借此回答本周至今。 |
 | 具体训练步骤、解释减量 | 按需读完整 `report daily --day YYYY-MM-DD`；`query explain --day YYYY-MM-DD` 读真实触发事实与 `evidence_refs`。`query context` 的标题不是完整步骤，助手草案不用伪造系统证据。 |
 | 目标、偏好、近期安排 | 只补确实未知的 `query profile`、`query training-preferences`、`workouts`；已知目标、时间和限制不重复询问。 |
@@ -39,7 +40,9 @@ description: Retrieve Vitalis facts, use bounded deterministic coaching tools, c
 
 ## 报告与新增数据
 
-先读对应日期的 `report morning`、`report daily` 或 `report weekly --view`，复用已保存的判断和补充事实，不把全部数据目录逐项查询一遍。需要当前安排、报告缺失或数据看起来不一致时补 `--state`：核对目标日、`analysis_run_id`、新鲜度与 `last_good_snapshot`；跨请求版本不一致时回读一次，不把新事实拼入旧决策并称其已采用。周报使用返回的 `period_start`、`period_end`，比较只引用报告已保存的窗口、样本数与 coverage；不在聊天客户端重算另一套周平均或达标率。
+先读对应日期的 `report morning`、`report daily`、`report evening` 或 `report weekly --view`，复用已保存的判断和补充事实，不把全部数据目录逐项查询一遍。需要当前安排、报告缺失或数据看起来不一致时补 `--state`：核对目标日、`analysis_run_id`、新鲜度与 `last_good_snapshot`；跨请求版本不一致时回读一次，不把新事实拼入旧决策并称其已采用。周报使用返回的 `period_start`、`period_end`，比较只引用报告已保存的窗口、样本数与 coverage；不在聊天客户端重算另一套周平均或达标率。
+
+普通晨报、日报、晚报、周报回答默认不展示 ATL/CTL/TSB，即使 API 返回这些值，也不追加厂商负荷表或两套口径的说明。围绕睡眠、活动完成情况、已保存训练建议和确有依据的变化作答。结构化事实仍保留，不把省略展示说成缺数据；用户明确询问厂商负荷时，才按下表只解释被问到的指标，不自动展开六个字段。不为 `_total` 猜测中文口径；需要区分时保留原字段名，并说明两者关系尚未核实。
 
 问目标或步数、热量、活动完成情况，第一次取数必须是 `report daily --day YYYY-MM-DD --view`（需要审计则完整日报）。报告已包含 recorded_context 或公开事实中的目标与实际，就直接采用，不再逐项查询 metrics；只有回答确实需要且报告缺失的字段才补查。
 
@@ -51,7 +54,7 @@ description: Retrieve Vitalis facts, use bounded deterministic coaching tools, c
 | --- | --- |
 | 睡眠时序 | `sleep-records --from D --to D` 用醒来所属 `sleep_day`。`sleep_latency_minutes` 是入床至入睡，`time_in_bed_minutes` 是在床时长，`sleep_efficiency_percent` 是已计算效率；入床不等于入睡，醒来不等于离床。字段缺失保留未知，不从分期图估值或诊断失眠。回答个人记录只引用已保存个人参照；没有参照就报数字，不自行补“10～20 分钟正常”、效率高低或精度提升的评价。 |
 | 活动目标 | `metrics step_goal --daily --from D --to D`；同样支持 `calorie_goal`、`active_minutes_goal`，日期为 `activity_day`。这些是设备设置目标，热量目标不是实际消耗，更不是饮食预算；进度优先读报告已保存的同日实测对照，目标存在不代表已完成。日内只说已记录与目标，不由当天时刻判断进度偏慢或提前判定失败。 |
-| 厂商负荷 | `metrics vendor_atl --daily --from D1 --to D2`，按问题换 `vendor_ctl`、`vendor_tsb`。保留 `vendor_load` 单位和原始负值；`_total` 与非 `_total` 分开，不相加每日 ATL/CTL/TSB，不拿 TSB 正负或 Charge 当 Vitalis 恢复分数和加量许可。Zepp 公式与区间尚未核实，不套用通用 CTL−ATL 公式，不解释成“疲劳大于适应”“轻度负值”或由该数值许可训练；今天怎么练仍取已保存 Vitalis 决策与明确限制。 |
+| 明确追问厂商负荷 | 已读报告有对应事实就复用；确需补查时用 `metrics vendor_atl --daily --from D1 --to D2`，按问题换 `vendor_ctl`、`vendor_tsb`。回答保留 Zepp 来源、记录日期、`vendor_load` 单位和原始负值，用一句话说明尚不能用于训练判断。`_total` 与非 `_total` 分开，不相加每日 ATL/CTL/TSB，不拿 TSB 正负或 Charge 当 Vitalis 恢复分数和加量许可。Zepp 公式与区间尚未核实，不套用通用 CTL−ATL 公式，不解释成“疲劳大于适应”“轻度负值”或由该数值许可训练；今天怎么练仍取已保存 Vitalis 决策与明确限制。 |
 | 体重记录 | `metrics weight --from <带时区时间戳> --to <带时区时间戳>`，默认 raw，例 `2026-02-01T00:00:00+08:00`。不加 `--daily`；同样可查 height/bmi。说清测量日期与单位，不把旧测量当今天体重；只有两次记录时只描述两个时点，不称持续趋势、减脂或增肌，也不推算饮食热量。 |
 | 训练精确时间 | 先用报告或 `workouts --id ID --source SOURCE`，按原字段区分移动、暂停、总用时；配速比较保留用时口径。暂停不等于力量组间休息，缺失分量不做差补齐。 |
 

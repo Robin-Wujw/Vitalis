@@ -2,6 +2,8 @@
 from dataclasses import replace
 from datetime import date, datetime, timezone
 
+import pytest
+
 from vitalis.application.report_sources import report_source_view
 from vitalis.intelligence.profile import RawDailyProfile, SeriesPoint
 from vitalis.intelligence.recorded_context import build_recorded_context
@@ -117,3 +119,46 @@ def test_weekly_public_context_uses_saved_average_and_keeps_comparison_metadata(
     assert fact["value"] == 16 and fact["latest_value"] == 12
     assert fact["aggregation"] == "mean_per_observed_day"
     assert fact["previous_available_days"] == 6 and fact["change"] == -4
+
+
+@pytest.mark.parametrize("kind", ["morning", "daily", "evening", "weekly"])
+@pytest.mark.parametrize("target", ["markdown", "html"])
+def test_vendor_load_stays_queryable_without_cluttering_readable_reports(kind, target):
+    from tests.test_public_reports import _daily
+    from vitalis.intelligence.evening_briefing import EveningBriefingEngine
+    from vitalis.intelligence.morning_briefing import MorningBriefingEngine
+    from vitalis.intelligence.report_rendering import render_report
+    from vitalis.intelligence.weekly_briefing import WeeklyBriefingEngine
+
+    raw = _raw()
+    vendor_metrics = ("vendor_atl", "vendor_ctl", "vendor_tsb",
+                      "vendor_atl_total", "vendor_ctl_total", "vendor_tsb_total")
+    raw.series = {metric: [replace(_point(metric, value, "vendor_load"),
+        qualification="vendor_estimate_unvalidated")]
+        for metric, value in zip(vendor_metrics, (32, 30, -2, 39, 36, -3))}
+    raw.series["weight"] = [replace(_point("weight", 70, "kg"), qualification="vendor_recorded")]
+    context = build_recorded_context(raw, DAY).model_dump(mode="json")
+    daily = _daily()
+    daily["features"]["recorded_context"] = context
+    if kind == "weekly":
+        saved = {"analysis_run_id": "synthetic-week", "user_id": "synthetic", "date": "2026-11-08",
+            "period": "weekly", "period_start": "2026-11-02", "period_end": "2026-11-08",
+            "report_context": {"as_of": AS_OF.isoformat()}, "facts": {"recorded_context": context}, "metrics": []}
+        document = WeeklyBriefingEngine().build(saved)
+    else:
+        saved = daily
+        if kind == "morning":
+            document = MorningBriefingEngine().build_payload(daily)
+        elif kind == "evening":
+            document = EveningBriefingEngine().build_payload(daily)
+        else:
+            document = daily
+    rendered = render_report(document, target=target).content
+    assert ("最近记录体重" if kind in {"daily", "weekly"} else "睡眠时长") in rendered
+    assert all(term not in rendered for term in ("ATL", "CTL", "TSB", "Zepp 负荷参考", "基础口径", "总口径"))
+    public = to_public_report_view(saved, "weekly" if kind == "weekly" else "daily")
+    retained = {fact["metric"]: fact for block in public.blocks for fact in block.facts
+                if fact.get("metric") in vendor_metrics}
+    assert retained.keys() == set(vendor_metrics)
+    assert retained["vendor_tsb"]["value"] == -2
+    assert all(fact["decision_role"] == "no" for fact in retained.values())

@@ -316,6 +316,7 @@ class SyncJobCommand:
     detail_limit: int | None = None
     detail_refresh_before: str | None = None
     execution_context: dict | None = None
+    streams: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)

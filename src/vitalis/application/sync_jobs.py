@@ -50,6 +50,11 @@ class SyncJobService:
 
     @staticmethod
     def _validate(command: SyncJobCommand) -> None:
+        if command.streams is not None and (
+            not isinstance(command.streams, tuple) or not 1 <= len(command.streams) <= 32
+            or any(not isinstance(item, str) or not 1 <= len(item) <= 64 for item in command.streams)
+        ):
+            raise SyncJobInvalid("streams must contain 1..32 source stream names")
         if not isinstance(command.user_id, str) or not command.user_id or len(command.user_id) > 64:
             raise SyncJobInvalid("invalid user id")
         if not isinstance(command.source, str) or not command.source:

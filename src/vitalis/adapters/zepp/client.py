@@ -120,7 +120,7 @@ LEGACY_SPORTS = (
     "trail", "hiking", "strength", "elliptical", "rowing", "yoga", "climb",
 )
 SPORTS = ["run"]
-WORKOUT_AGGREGATE_PLAN_VERSION = "zepp-sync-v7"
+WORKOUT_AGGREGATE_PLAN_VERSION = "zepp-sync-v8"
 
 
 ZeppErrorKind = Literal[

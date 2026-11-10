@@ -564,6 +564,19 @@ class ZeppSyncCoordinator:
         window = self._window(window, days)
         timezone_name = timezone_name or self._configured_timezone()
         manifest = None if detail_only else self._manifest(window, options, timezone_name)
+        if "streams" in options:
+            selected = options["streams"]
+            if (trigger != "manual" or workout_only or detail_only or sleep_only
+                or options.get("detail_backfill") is True
+                or not isinstance(selected, list) or not 1 <= len(selected) <= 32
+                or any(not isinstance(item, str) or not 1 <= len(item) <= 64 for item in selected)):
+                raise ZeppAuthError("streams 仅支持手动同步的 1..32 个数据流名称", kind="invalid_request")
+            selected = sorted(set(selected))
+            available = {item["health_stream"] for item in manifest}
+            if set(selected) - available:
+                raise ZeppAuthError("streams 包含未知数据流", kind="invalid_request")
+            options["streams"] = selected
+            manifest = [item for item in manifest if item["health_stream"] in selected]
 
         def enqueue(repo: HealthRepository) -> orm.SyncAttempt | None:
             local_manifest = manifest
@@ -985,6 +998,8 @@ class ZeppSyncCoordinator:
         return "unknown"
 
     def _dynamic_specs(self, repo: HealthRepository, attempt: dict[str, Any], chunk: dict[str, Any], result: _ChunkResult) -> list[dict[str, Any]]:
+        if attempt.get("options", {}).get("streams") is not None:
+            return []
         if result.record is None or chunk["stream"] != "workouts" or result.next_cursor is not None:
             return []
         existing = repo.sync_chunks(attempt["id"])
@@ -1987,6 +2002,8 @@ class ZeppSyncJobAdapter:
             "detail_refresh_before": command.detail_refresh_before,
             "detail_limit": command.detail_limit,
         }
+        if command.streams is not None:
+            create_kwargs["streams"] = list(command.streams)
         if command.execution_context is not None:
             create_kwargs["execution_context"] = dict(command.execution_context)
         if window is not None:

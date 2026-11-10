@@ -11,7 +11,7 @@ def clean_business_operation_users():
     yield
     with session_scope() as db:
         repo = HealthRepository(db)
-        for owner in ("wake-api-owner", "research-owner", "research-other", "research-request"):
+        for owner in ("wake-api-owner", "research-owner", "research-other", "research-request", "research-scoped-sync"):
             repo.delete_for_user(owner)
 
 
@@ -79,7 +79,18 @@ def test_manual_sync_api_carries_notification_suppression(client, monkeypatch):
     service = SimpleNamespace(create=lambda command: commands.append(command) or
         SimpleNamespace(as_dict=lambda: {"job_id": "synthetic-sync", "status": "queued"}))
     monkeypatch.setattr(current, "get_sync_job_service", lambda: service)
-    response = client.post("/api/sync-jobs", json={"days": 7}, headers={
+    response = client.post("/api/sync-jobs", json={"days": 7, "streams": ["wellness/weight"]}, headers={
         "X-User-Id": "research-request", "Idempotency-Key": "synthetic-sync-api-key"})
     assert response.status_code == 202
     assert commands[0].execution_context["notification_policy"] == "suppress"
+    assert commands[0].streams == ("wellness/weight",)
+
+
+def test_selected_sync_flows_through_api_application_and_durable_plan(client):
+    response = client.post("/api/sync-jobs", json={"days": 7, "streams": ["wellness/weight"]}, headers={
+        "X-User-Id": "research-scoped-sync", "Idempotency-Key": "synthetic-scoped-sync-key"})
+    assert response.status_code == 202
+    status = client.get(f"/api/jobs/{response.json()['job_id']}", headers={"X-User-Id": "research-scoped-sync"})
+    assert status.status_code == 200
+    assert status.json()["progress"]["total_chunks"] == 1
+    assert {row["health_stream"] for row in status.json()["chunks"]} == {"wellness/weight"}

@@ -46,6 +46,7 @@ class SyncJobRequest(BaseModel):
     detail_only: bool = False
     detail_limit: int | None = Field(default=None, ge=1, le=4)
     detail_refresh_before: str | None = None
+    streams: list[Annotated[str, Field(min_length=1, max_length=64)]] | None = Field(default=None, min_length=1, max_length=32)
 
 
 class AnalysisJobRequest(BaseModel):
@@ -222,6 +223,7 @@ def create_sync_job(
         detail_limit=body.detail_limit,
         detail_refresh_before=body.detail_refresh_before,
         execution_context={"notification_policy": "suppress", "origin": "explicit_api"},
+        streams=tuple(body.streams) if body.streams is not None else None,
     )
     try:
         return get_sync_job_service().create(command).as_dict()

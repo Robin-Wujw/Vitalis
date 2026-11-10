@@ -71,11 +71,13 @@ Idempotency-Key: <new-or-reused-key>
 
 ## 补充数据与可取性
 
-2026-11-10 对照 zepp-mcp `904cc301d63a64da6f633dd8a75b2a612e67240a`、ZeppBridge `a6a805dce7fba941af544e36d251c6d6026a1a21`，并从已授权服务器做只读 GET 核查。已确认可取得睡眠时间组件和 REM、训练毫秒时长与高精度距离、DailyHealth 目标、本人历史体重与 exertion 厂商负荷。体重 endpoint 使用 `members/-1/weightRecords`，fromTime/toTime 为秒；返回仍按 memberId 再过滤。同步计划 `zepp-sync-v7`、解析器 `zepp-parser-v4`；请求目录由 `streams.py` 同时供单次取数和持久任务使用。
+2026-11-10 对照 zepp-mcp `904cc301d63a64da6f633dd8a75b2a612e67240a`、ZeppBridge `a6a805dce7fba941af544e36d251c6d6026a1a21`，并从已授权服务器做只读 GET 核查。已确认可取得睡眠时间组件和 REM、训练毫秒时长与高精度距离、DailyHealth 目标、本人历史体重与 exertion 厂商负荷。体重 endpoint 使用 `members/-1/weightRecords`，fromTime/toTime 为秒；返回仍按 memberId 再过滤。同步计划 `zepp-sync-v8`、解析器 `zepp-parser-v4`；请求目录由 `streams.py` 同时供单次取数和持久任务使用。
 
 Charge stress/insight 和 readiness watch_score 存在非空原始内容，但编码语义尚未验证，先保留加密原文，不对外伪造分数。分钟步数的两种记录宽度尚未与日总量对账通过；Food、Emotion、血压、恢复心率等接口在本次窗口为空或不支持，不能因为 MCP 定义了工具就认定账号能取得。AFib 的 255 等占位值继续排除。
 
 `GET /api/health/catalog` 列出字段单位、来源、资格与 raw-only 流；`GET /api/health/sleep-records` 读取已保存的独立来源睡眠，`GET /api/health/metrics/{metric}` 和 `/api/health/daily-metrics` 读取样本/日事实。同步由 `POST /api/sync-jobs` 排队，完成状态与覆盖分别查询 `/api/jobs/{id}` 和 `/api/data-status`，读取本身不访问 Zepp。
+
+手动同步可用 `streams` 精确选择请求流，例如 `{"days":60,"streams":["sleep","workouts","wellness/weight","wellness/exertion","wellness/charge_stress","wellness/charge_insights","wellness/readiness_raw"],"decode_dense_files":false}`。名称取自数据状态的 stream 或目录的 stream 字段；空、未知流、与 workout_only/detail_only 等专用模式混用均拒绝。顺序不影响幂等身份。所选 workout 摘要不会顺带触发未请求的明细回填；明细使用独立 detail_only 操作。未提供 streams 仍按完整同步计划执行。
 
 力量 `lap_62` 的普通解析和流式解析共用同一行解析器及完整已核验动作表（`adapters/zepp/data/strength_exercises.json`）。Zepp 10.8.7-play APK 证明 `lap_62[28] → strengthTrainType → actionType`，官方 `/sport/config/muscle` 中文目录共 1,134 项，其中代码 0 是“选择一项训练”界面占位，其余 **1,133 个唯一动作代码全部映射**；原来只收录实际观测的 26 项不再作为覆盖上限。目录响应 SHA-256 为 `7e6b4ba617bd8e61b0c269c9c51fb4d7b430c0e30332273a964fa88f8028abeb`，资源保留 APK 摘要、版本、字段关系和逐项目录定位，不伪造个人观测证据。
 

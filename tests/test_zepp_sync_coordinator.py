@@ -84,7 +84,7 @@ def test_manifest_is_stable_and_request_is_reused():
     second = coordinator.create_attempt("coord-manifest", window=WINDOW, options={"decode_dense_files": False})
     assert first.id == second.id
     assert first.chunk_count == 25
-    assert first.plan_version == "zepp-sync-v7"
+    assert first.plan_version == "zepp-sync-v8"
     rows = coordinator.status(first.id)["chunks"]
     assert rows[0]["stable_key"] == stable_chunk_key(
         "heart_rate", "minute", WINDOW.start, WINDOW.end, int(WINDOW.start.timestamp())
@@ -108,7 +108,7 @@ def test_manual_workout_only_manifest_skips_all_health_streams():
     )
     with session_scope() as db:
         chunks = HealthRepository(db).sync_chunks(attempt.id)
-    assert attempt.plan_version == "zepp-sync-v7"
+    assert attempt.plan_version == "zepp-sync-v8"
     assert attempt.chunk_count == len(chunks) == 1
     assert chunks[0].stream == "workouts"
     assert chunks[0].partition == "run"
@@ -119,6 +119,43 @@ def test_manual_workout_only_manifest_skips_all_health_streams():
     normal = coordinator.create_attempt(user_id, window=WINDOW, trigger="manual")
     assert normal.id != attempt.id
     assert normal.chunk_count == 25
+
+
+def test_scoped_supplemental_sync_only_enqueues_selected_streams_and_canonicalizes_order():
+    user_id = "coord-selected-streams"
+    _clean(user_id)
+    coordinator = ZeppSyncCoordinator(wall_clock=lambda: NOW)
+    window = FetchWindow.local_dates(date(2026, 7, 2), date(2026, 8, 30))
+    selected = ["wellness/weight", "wellness/exertion"]
+    first = coordinator.create_attempt(user_id, window=window, options={"streams": selected})
+    second = coordinator.create_attempt(user_id, window=window, options={"streams": selected[::-1]})
+    assert first.id == second.id
+    assert first.options["streams"] == sorted(selected)
+    with session_scope() as db:
+        chunks = HealthRepository(db).sync_chunks(first.id)
+        assert len(chunks) == 18
+        assert {row.health_stream for row in chunks} == set(selected)
+        assert all(row.stages["operation"] == "fetch_wellness" for row in chunks)
+    _clean(user_id)
+
+
+@pytest.mark.parametrize("selected", [[], ["nonexistent"], ["wellness/weight", True], "wellness/weight"])
+def test_scoped_sync_rejects_invalid_selection(selected):
+    coordinator = ZeppSyncCoordinator(wall_clock=lambda: NOW)
+    with pytest.raises(ZeppAuthError):
+        coordinator.create_attempt("coord-invalid-scope", window=WINDOW, options={"streams": selected})
+
+
+def test_scoped_workout_summary_does_not_expand_into_unrequested_details():
+    user_id = "coord-selected-workouts"
+    _clean(user_id)
+    coordinator = ZeppSyncCoordinator(connector=WorkoutConnector(), wall_clock=lambda: NOW)
+    attempt = coordinator.create_attempt(user_id, window=WINDOW, options={"streams": ["workouts"]})
+    coordinator.drain_once(attempt.id)
+    state = coordinator.status(attempt.id)
+    assert state["attempt"]["status"] == "succeeded"
+    assert len(state["chunks"]) == 1
+    _clean(user_id)
 
 
 def test_workout_only_rejects_scheduled_or_non_boolean_options():
@@ -287,7 +324,7 @@ def test_repeated_detail_only_attempts_drain_backlog_without_history_fetch():
     connector = Connector()
     coordinator = ZeppSyncCoordinator(connector=connector, wall_clock=lambda: NOW)
     first = coordinator.create_attempt(user_id, window=window, options={"detail_only": True})
-    assert first is not None and first.plan_version == "zepp-sync-v7"
+    assert first is not None and first.plan_version == "zepp-sync-v8"
     assert first.chunk_count == 4
     assert coordinator.run_attempt(first.id).success
     with session_scope() as db:

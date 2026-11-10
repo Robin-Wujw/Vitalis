@@ -60,6 +60,7 @@ def test_manual_detail_backfill_api_passes_explicit_flags_to_queued_attempt(clie
         "decode_dense_files": None, "detail_backfill": True,
         "workout_only": False, "detail_only": False,
         "detail_refresh_before": None, "detail_limit": None,
+        "execution_context": {"notification_policy": "suppress", "origin": "explicit_api"},
     }
     assert submit({"days": 8})["detail_backfill"] is False
     assert submit({"days": 730, "workout_only": True})["workout_only"] is True
@@ -143,6 +144,7 @@ def test_detail_only_api_freezes_requested_workout_backlog(client, monkeypatch):
         assert attempt.options == {
             "decode_dense_files": False, "detail_only": True, "detail_limit": 1,
             "source_mode": "real",
+            "execution_context": {"notification_policy": "suppress", "origin": "explicit_api"},
         }
         assert len(repo.pending_workout_details(
             user_id, attempt.window_start, attempt.window_end, limit=10,

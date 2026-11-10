@@ -21086,6 +21086,24 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "title": "Source",
       "type": "string"
     },
+    "streams": {
+      "anyOf": [
+        {
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Streams"
+    },
     "to": {
       "anyOf": [
         {

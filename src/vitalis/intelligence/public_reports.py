@@ -141,6 +141,13 @@ _THEMES = {
     "training": "训练记录", "patterns": "变化、反馈与下一步",
 }
 _METRIC_LABELS = {
+    "sleep_latency_minutes": "入睡用时", "out_of_bed_delay_minutes": "醒后至离床",
+    "time_in_bed_minutes": "在床时间", "sleep_efficiency_percent": "睡眠效率",
+    "step_goal": "Zepp 步数目标", "calorie_goal": "Zepp 热量目标",
+    "active_minutes_goal": "Zepp 活动时长目标", "weight": "最近记录体重",
+    "height": "最近记录身高", "bmi": "最近记录 BMI",
+    **{f"vendor_{key}": f"Zepp {key.upper().replace('_TOTAL', ' 总口径')}（厂商参考）"
+       for key in ("atl", "ctl", "tsb", "atl_total", "ctl_total", "tsb_total")},
     "sleep_duration": "睡眠时长", "sleep_score": "设备睡眠评分",
     "deep_sleep": "深睡", "light_sleep": "浅睡", "rem_sleep": "快速眼动睡眠",
     "awake": "夜间清醒", "sleep_awake": "夜间清醒", "sleep_wake_count": "夜间醒来次数",
@@ -176,6 +183,7 @@ _CONTEXT_FIELDS = {
     "as_of", "timezone", "target_date", "target_day_complete", "period_mode", "period_start", "period_end",
     "reference_period", "reference_period_start", "reference_period_end", "source_mode", "report_state",
     "training_history", "delivery_metadata", "warmup_progress",
+    "recorded_context",
 }
 _COVERAGE_FIELDS = (
     "source", "source_scope", "device_id", "unit", "status", "observed_at", "as_of",
@@ -187,6 +195,12 @@ _COVERAGE_FIELDS = (
 
 def _theme(key: str) -> str:
     key = key.lower()
+    if key in {"step_goal", "calorie_goal", "active_minutes_goal"}:
+        return "activity"
+    if key in {"out_of_bed_delay_minutes", "time_in_bed_minutes"}:
+        return "sleep"
+    if key.startswith("vendor_") and key.removeprefix("vendor_") in {"atl", "ctl", "tsb", "atl_total", "ctl_total", "tsb_total"}:
+        return "training"
     if any(part in key for part in ("training_response", "feedback", "association", "goal", "product")):
         return "patterns"
     if any(part in key for part in ("hrv", "rhr", "resting_hr", "recovery", "vitals", "spo2", "oxygen", "odi", "respiratory", "skin_temp", "readiness", "charge", "nocturnal")):
@@ -284,6 +298,33 @@ def _saved_signals(context: dict[str, Any], as_of: datetime | None) -> list[dict
         for item in streams if isinstance(streams, list) else []:
             if isinstance(item, dict):
                 output.append(_fact(str(metric), item, as_of))
+    return output
+
+
+def _recorded_facts(raw: dict, context: dict, as_of: datetime | None, *, kind: str, facts_only: bool) -> list[dict]:
+    """Publish saved supplemental context with its independent provenance."""
+    recorded = ((raw.get("features") or {}).get("recorded_context")
+                or (raw.get("facts") or {}).get("recorded_context")
+                or context.get("recorded_context") or {})
+    output = []
+    for item in [*(recorded.get("metrics") or []), *(recorded.get("goals") or [])]:
+        metric = item.get("metric")
+        if kind == "morning" and metric not in {"sleep_latency_minutes", "out_of_bed_delay_minutes", "time_in_bed_minutes", "sleep_efficiency_percent"}:
+            continue
+        entry = deepcopy(item)
+        is_average = metric in {"sleep_latency_minutes", "out_of_bed_delay_minutes", "time_in_bed_minutes", "sleep_efficiency_percent"} and kind == "weekly"
+        entry.update(value=item.get("average") if is_average else item.get("latest_value"),
+                     observed_at=item.get("latest_observed_at"), fetched_at=item.get("latest_fetched_at"),
+                     calendar_semantics=item.get("date_basis"), distinct_days=item.get("available_days"),
+                     aggregation="mean_per_observed_day" if is_average else "latest_observation",
+                     decision_role="no")
+        if is_average:
+            entry["label"] = "平均" + _label(metric)
+        if facts_only:
+            for key in ("change", "previous_average", "reference_start", "reference_end",
+                        "previous_available_days", "previous_sample_count", "previous_coverage_ratio"):
+                entry.pop(key, None)
+        output.append(_fact(metric, entry, as_of))
     return output
 
 
@@ -655,6 +696,10 @@ def report_presentation(value: Any, kind: PublicKind) -> dict[str, Any]:
 def _public_context(context: dict[str, Any], *, facts_only: bool) -> dict[str, Any]:
     result = {key: deepcopy(value) for key, value in context.items() if key in _CONTEXT_FIELDS}
     if facts_only:
+        for item in (result.get("recorded_context") or {}).get("metrics") or []:
+            for key in ("change", "previous_average", "reference_start", "reference_end",
+                        "previous_available_days", "previous_sample_count", "previous_coverage_ratio"):
+                item.pop(key, None)
         metadata = result.get("delivery_metadata") or {}
         result["delivery_metadata"] = {key: value for key, value in metadata.items() if key in {
             "facts_only", "partial", "late", "delivered_as_of", "scheduled_for", "deadline_at",
@@ -710,6 +755,9 @@ def to_public_report_view(value: Any, kind: PublicKind | None = None) -> PublicR
     facts.extend(item for item in _presentation_facts(presentation, as_of) if item["metric"] not in held_metrics)
     period_facts, association_comparisons = _period_details(context, as_of, facts_only=facts_only, days=days)
     facts.extend(period_facts)
+    recorded = _recorded_facts(raw, context, as_of, kind=inferred, facts_only=facts_only)
+    recorded_metrics = {item["metric"] for item in recorded}
+    facts = [item for item in facts if item["metric"] not in recorded_metrics] + recorded
     grouped: dict[str, list[dict[str, Any]]] = {theme: [] for theme in _THEMES}
     for fact in facts:
         theme = _theme(str(fact["metric"]))

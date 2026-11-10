@@ -41,6 +41,7 @@ from .report_periods import (
 )
 from .trend import TrendEngine
 from .weekly_coaching import build_weekly_coaching
+from .recorded_context import build_recorded_context
 
 PERIOD_DAYS = 7
 MIN_COMPARISON_DAYS = comparison_gate(PERIOD_DAYS)
@@ -110,6 +111,7 @@ class WeeklyProfileEngine:
                 f"已核实 {coverage['record_days']} 天，未知 {coverage['unknown_days']} 天。"
             )
         facts = WeeklyFacts(
+            recorded_context=build_recorded_context(period_raw, period_start),
             sleep=sleep,
             recovery=recovery,
             training=training,

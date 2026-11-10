@@ -100,6 +100,31 @@ def test_policy_verification_is_not_claimed_as_model_evaluation():
         assert rule in text
 
 
+def test_report_workflow_routes_saved_supplements_without_promoting_vendor_facts():
+    text = _read("skills/vitalis/SKILL.md")
+    section = text.split("## 报告与新增数据", 1)[1].split("\n## ", 1)[0]
+    for rule in (
+        "report morning", "report daily", "report weekly", "period_start", "period_end",
+        "--state", "last_good_snapshot", "analysis_run_id", "sleep_day", "activity_day",
+        "sleep-records", "catalog", "不证明当前账户", "source_scope", "user_fused",
+        "sleep_latency_minutes", "time_in_bed_minutes", "sleep_efficiency_percent",
+        "step_goal", "calorie_goal", "active_minutes_goal", "不是实际消耗",
+        "vendor_atl", "vendor_ctl", "vendor_tsb", "vendor_load", "负值", "_total",
+        "weight", "带时区", "truncated", "两次", "retained_raw",
+        "源数据缺失", "分析陈旧", "refresh-workouts", "不能补取睡眠",
+        "不套用通用 CTL−ATL", "没有参照就报数字", "没有 analyze scope 不等于不能申请分析",
+    ):
+        assert rule in section
+    assert "问上周时传今天" in text
+    assert "第一次取数必须是 `report daily" in section
+    assert "不再逐项查询 metrics" in section
+    assert "不得描述尚未确认的 UI" in section
+    assert "需要核对操作资格时直接 GET" in text
+    # A request to examine research does not grant Hermes an analyze scope.
+    assert "明确要求重算实验结果时向 `analysis-runs` 提交" not in text
+    assert "Hermes 不通过通用 request 绕过" in text
+
+
 @pytest.mark.parametrize(("argv", "path", "params"), [
     (["workouts", "--from", "2026-02-01", "--to", "2026-02-18", "--limit", "500"],
      "workouts", {"from": "2026-02-01", "to": "2026-02-18", "limit": 500}),
@@ -124,6 +149,14 @@ def test_policy_verification_is_not_claimed_as_model_evaluation():
      "intelligence/explain", {"day": "2026-02-18"}),
     (["report", "daily", "--day", "2026-02-18", "--state"],
      "reports/daily/state", {"day": "2026-02-18"}),
+    (["sleep-records", "--from", "2026-02-18", "--to", "2026-02-18"],
+     "health/sleep-records", {"from": "2026-02-18", "to": "2026-02-18"}),
+    (["metrics", "step_goal", "--daily", "--from", "2026-02-18", "--to", "2026-02-18"],
+     "health/daily-metrics", {"from": "2026-02-18", "to": "2026-02-18", "metric": "step_goal"}),
+    (["metrics", "vendor_tsb", "--daily", "--from", "2026-02-12", "--to", "2026-02-18"],
+     "health/daily-metrics", {"from": "2026-02-12", "to": "2026-02-18", "metric": "vendor_tsb"}),
+    (["metrics", "weight", "--from", "2026-02-01T00:00:00+08:00", "--to", "2026-02-18T21:00:00+08:00"],
+     "health/metrics/weight", {"from": "2026-02-01T00:00:00+08:00", "to": "2026-02-18T21:00:00+08:00", "resolution": "raw"}),
 ])
 def test_coaching_queries_only_read(monkeypatch, argv, path, params):
     client = runpy.run_path(str(SKILL / "scripts" / "vitalis_api.py"))
@@ -150,5 +183,24 @@ def test_strength_review_rejects_out_of_bound_limits_before_request(monkeypatch,
         client["parse_args"]([
             "strength-review", "--from", "2026-02-01", "--to", "2026-02-18", "--limit", limit,
         ])
+    assert error.value.code == "invalid_arguments"
+    assert calls == []
+
+
+@pytest.mark.parametrize("argv", [
+    ["sleep-records", "--from", "2026-02-18", "--to", "2026-02-01"],
+    ["sleep-records", "--from", "2025-01-01", "--to", "2026-02-18"],
+    ["metrics", "weight", "--from", "2026-02-01", "--to", "2026-02-18"],
+    ["metrics", "weight", "--from", "2026-02-18T00:00:00+08:00", "--to", "2026-02-17T23:00:00+08:00"],
+    ["metrics", "weight", "--from", "2023-02-18T00:00:00Z", "--to", "2026-02-18T00:00:00Z"],
+    ["metrics", "step_goal", "--daily", "--from", "2026-02-18", "--to", "2026-02-01"],
+    ["metrics", "step_goal", "--daily", "--from", "2026-02-01", "--to", "2026-02-18", "--resolution", "1h"],
+])
+def test_supplement_queries_reject_ambiguous_or_out_of_bound_windows_before_request(monkeypatch, argv):
+    client = runpy.run_path(str(SKILL / "scripts" / "vitalis_api.py"))
+    calls = []
+    monkeypatch.setitem(client["run"].__globals__, "request", lambda *a, **kw: calls.append(a))
+    with pytest.raises(client["ClientError"]) as error:
+        client["parse_args"](argv)
     assert error.value.code == "invalid_arguments"
     assert calls == []

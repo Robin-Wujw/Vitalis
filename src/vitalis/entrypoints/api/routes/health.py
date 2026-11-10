@@ -112,7 +112,7 @@ def health_range(
     }
 
 
-@router.get("/metrics/{metric}")
+@router.get("/metrics/{metric}", operation_id="get_health_metric_series")
 def health_metric_series(
     metric: str,
     from_time: datetime | None = Query(None, alias="from"),
@@ -143,7 +143,7 @@ def health_metric_series(
     }
 
 
-@router.get("/daily-metrics")
+@router.get("/daily-metrics", operation_id="get_health_daily_metrics")
 def health_daily_metrics(
     from_date: date = Query(..., alias="from"),
     to_date: date = Query(..., alias="to"),

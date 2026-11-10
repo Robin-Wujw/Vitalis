@@ -10,6 +10,7 @@ from vitalis.time import local_day
 from .contracts import DailyProfile, MorningBriefing
 from .public_reports import SYNC_PENDING_NOTICE, facts_only_notice
 from .report_presentation import daily_coaching_sections, daily_presentation, internal_sections
+from .report_recorded_context import sleep_timing_lines
 from .report_formatting import (
     baseline_text,
     clock_text,
@@ -48,6 +49,7 @@ class MorningBriefingEngine:
             return self._facts_only_payload(payload, metadata)
         sections = self._sections(payload)
         report_context = dict(payload.get("report_context") or {})
+        report_context["recorded_context"] = self._recorded_sleep_context(payload)
         if delivery_metadata:
             report_context["delivery_metadata"] = dict(delivery_metadata)
         presentation_payload = dict(payload)
@@ -101,6 +103,7 @@ class MorningBriefingEngine:
                 section["display"] = True
         observations = [fact for section in sections for fact in section["facts"]]
         report_context = self._facts_only_context(payload.get("report_context"), metadata)
+        report_context["recorded_context"] = self._recorded_sleep_context(payload)
         notice = facts_only_notice(metadata, morning=True)
         cautions = []
         if metadata.get("sync_degraded") and notice != SYNC_PENDING_NOTICE:
@@ -128,6 +131,11 @@ class MorningBriefingEngine:
             "data_quality": {"status": (payload.get("data_quality") or {}).get("status", "INSUFFICIENT")},
             "evidence": {"facts": [], "gates": []},
         }
+
+    @staticmethod
+    def _recorded_sleep_context(payload: dict[str, Any]) -> dict[str, Any]:
+        saved = ((payload.get("features") or {}).get("recorded_context") or {}).get("metrics") or []
+        return {"metrics": [deepcopy(item) for item in saved if item.get("date_basis") == "sleep_day"], "goals": []}
 
     @staticmethod
     def _facts_only_context(context: Any, metadata: dict[str, Any]) -> dict[str, Any]:
@@ -359,7 +367,7 @@ class MorningBriefingEngine:
     def _sleep_reading_section(payload: dict[str, Any]) -> dict[str, Any]:
         """Compact stage facts; total and clock times already appear in the tile."""
         sleep = (payload.get("features") or {}).get("sleep") or {}
-        facts = []
+        facts = sleep_timing_lines(sleep)
         for key, label in (("deep_minutes", "深睡"), ("light_minutes", "浅睡"),
                            ("rem_minutes", "REM"), ("awake_minutes", "清醒")):
             value = minutes_text(sleep.get(key))

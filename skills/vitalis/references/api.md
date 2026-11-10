@@ -42,6 +42,8 @@ The complete service contract remains available from `GET /openapi.json`.
 | `get_external_strength_workout` | GET | `/api/chart-inputs/external-workouts/{external_id}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_external_strength_workouts` | GET | `/api/chart-inputs/external-workouts` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_health_catalog` | GET | `/api/health/catalog` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_health_daily_metrics` | GET | `/api/health/daily-metrics` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_health_metric_series` | GET | `/api/health/metrics/{metric}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_hevy_link_candidates` | GET | `/api/chart-inputs/external-workouts/{external_id}/candidates` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_job` | GET | `/api/jobs/{job_id}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_product_context` | GET | `/api/product/context` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
@@ -1723,6 +1725,145 @@ None.
       "schema": {
         "additionalProperties": true,
         "title": "Response Get Health Catalog",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_health_daily_metrics
+
+`GET /api/health/daily-metrics`
+
+Health Daily Metrics
+
+Query sparse vendor daily metrics without mixing them with computed scores.
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| from | query | yes | {"format": "date", "title": "From", "type": "string"} |  |
+| metric | query | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "Metric"} |  |
+| to | query | yes | {"format": "date", "title": "To", "type": "string"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Get Health Daily Metrics",
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_health_metric_series
+
+`GET /api/health/metrics/{metric}`
+
+Health Metric Series
+
+Query timestamped measurements with optional hourly/daily aggregation.
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| metric | path | yes | {"title": "Metric", "type": "string"} |  |
+| from | query | no | {"anyOf": [{"format": "date-time", "type": "string"}, {"type": "null"}], "title": "From"} |  |
+| resolution | query | no | {"default": "1h", "enum": ["raw", "1h", "1d"], "title": "Resolution", "type": "string"} |  |
+| to | query | no | {"anyOf": [{"format": "date-time", "type": "string"}, {"type": "null"}], "title": "To"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "additionalProperties": true,
+        "title": "Response Get Health Metric Series",
         "type": "object"
       }
     }
@@ -8094,8 +8235,8 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "string"
     },
     "intelligence_version": {
-      "const": "21.0",
-      "default": "21.0",
+      "const": "22.0",
+      "default": "22.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -8120,8 +8261,8 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "object"
     },
     "schema_version": {
-      "const": "20.0",
-      "default": "20.0",
+      "const": "21.0",
+      "default": "21.0",
       "title": "Schema Version",
       "type": "string"
     },
@@ -11280,7 +11421,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "$ref": "#/components/schemas/MonthlyInferences"
     },
     "intelligence_version": {
-      "default": "21.0",
+      "default": "22.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -14064,7 +14205,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "string"
     },
     "intelligence_version": {
-      "default": "21.0",
+      "default": "22.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -14404,7 +14545,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "string"
     },
     "intelligence_version": {
-      "default": "21.0",
+      "default": "22.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -15151,6 +15292,9 @@ Each reachable component is rendered once; `$ref` values name the headings below
     "overnight_vitals": {
       "$ref": "#/components/schemas/OvernightVitalsFeatures"
     },
+    "recorded_context": {
+      "$ref": "#/components/schemas/RecordedContext"
+    },
     "recovery": {
       "$ref": "#/components/schemas/RecoveryFeatures"
     },
@@ -15841,6 +15985,450 @@ Each reachable component is rendered once; `$ref` values name the headings below
   ],
   "title": "RecommendationStatus",
   "type": "string"
+}
+```
+
+### #/components/schemas/RecordedContext
+
+```json
+{
+  "properties": {
+    "goals": {
+      "items": {
+        "$ref": "#/components/schemas/RecordedGoal"
+      },
+      "title": "Goals",
+      "type": "array"
+    },
+    "metrics": {
+      "items": {
+        "$ref": "#/components/schemas/RecordedMetric"
+      },
+      "title": "Metrics",
+      "type": "array"
+    }
+  },
+  "title": "RecordedContext",
+  "type": "object"
+}
+```
+
+### #/components/schemas/RecordedGoal
+
+```json
+{
+  "properties": {
+    "actual_fetched_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Actual Fetched At"
+    },
+    "actual_observed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Actual Observed At"
+    },
+    "actual_provenance": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/Provenance"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "actual_qualification": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Actual Qualification"
+    },
+    "actual_source_field": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Actual Source Field"
+    },
+    "actual_value": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Actual Value"
+    },
+    "available_days": {
+      "minimum": 1.0,
+      "title": "Available Days",
+      "type": "integer"
+    },
+    "coverage_ratio": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Coverage Ratio",
+      "type": "number"
+    },
+    "daily_progress": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Daily Progress",
+      "type": "array"
+    },
+    "date_basis": {
+      "const": "activity_day",
+      "default": "activity_day",
+      "title": "Date Basis",
+      "type": "string"
+    },
+    "evaluated_days": {
+      "default": 0,
+      "minimum": 0.0,
+      "title": "Evaluated Days",
+      "type": "integer"
+    },
+    "evaluation_coverage_ratio": {
+      "default": 0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Evaluation Coverage Ratio",
+      "type": "number"
+    },
+    "latest_day": {
+      "format": "date",
+      "title": "Latest Day",
+      "type": "string"
+    },
+    "latest_fetched_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Latest Fetched At"
+    },
+    "latest_observed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "format": "date",
+          "type": "string"
+        }
+      ],
+      "title": "Latest Observed At"
+    },
+    "latest_value": {
+      "title": "Latest Value",
+      "type": "number"
+    },
+    "met_days": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Met Days"
+    },
+    "metric": {
+      "title": "Metric",
+      "type": "string"
+    },
+    "period_end": {
+      "format": "date",
+      "title": "Period End",
+      "type": "string"
+    },
+    "period_start": {
+      "format": "date",
+      "title": "Period Start",
+      "type": "string"
+    },
+    "provenance": {
+      "$ref": "#/components/schemas/Provenance"
+    },
+    "qualification": {
+      "title": "Qualification",
+      "type": "string"
+    },
+    "sample_count": {
+      "minimum": 1.0,
+      "title": "Sample Count",
+      "type": "integer"
+    },
+    "source_field": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Source Field"
+    },
+    "unit": {
+      "title": "Unit",
+      "type": "string"
+    }
+  },
+  "required": [
+    "metric",
+    "unit",
+    "provenance",
+    "qualification",
+    "period_start",
+    "period_end",
+    "available_days",
+    "sample_count",
+    "coverage_ratio",
+    "latest_value",
+    "latest_day",
+    "latest_observed_at"
+  ],
+  "title": "RecordedGoal",
+  "type": "object"
+}
+```
+
+### #/components/schemas/RecordedMetric
+
+```json
+{
+  "description": "Bounded recorded context, never a readiness or training prescription.",
+  "properties": {
+    "available_days": {
+      "minimum": 1.0,
+      "title": "Available Days",
+      "type": "integer"
+    },
+    "average": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Average"
+    },
+    "change": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Change"
+    },
+    "coverage_ratio": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Coverage Ratio",
+      "type": "number"
+    },
+    "date_basis": {
+      "enum": [
+        "sleep_day",
+        "activity_day",
+        "calendar_day"
+      ],
+      "title": "Date Basis",
+      "type": "string"
+    },
+    "latest_day": {
+      "format": "date",
+      "title": "Latest Day",
+      "type": "string"
+    },
+    "latest_fetched_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Latest Fetched At"
+    },
+    "latest_observed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "format": "date",
+          "type": "string"
+        }
+      ],
+      "title": "Latest Observed At"
+    },
+    "latest_value": {
+      "title": "Latest Value",
+      "type": "number"
+    },
+    "metric": {
+      "title": "Metric",
+      "type": "string"
+    },
+    "period_end": {
+      "format": "date",
+      "title": "Period End",
+      "type": "string"
+    },
+    "period_start": {
+      "format": "date",
+      "title": "Period Start",
+      "type": "string"
+    },
+    "previous_available_days": {
+      "default": 0,
+      "minimum": 0.0,
+      "title": "Previous Available Days",
+      "type": "integer"
+    },
+    "previous_average": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Previous Average"
+    },
+    "previous_coverage_ratio": {
+      "default": 0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Previous Coverage Ratio",
+      "type": "number"
+    },
+    "previous_sample_count": {
+      "default": 0,
+      "minimum": 0.0,
+      "title": "Previous Sample Count",
+      "type": "integer"
+    },
+    "provenance": {
+      "$ref": "#/components/schemas/Provenance"
+    },
+    "qualification": {
+      "title": "Qualification",
+      "type": "string"
+    },
+    "reference_end": {
+      "anyOf": [
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reference End"
+    },
+    "reference_start": {
+      "anyOf": [
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reference Start"
+    },
+    "sample_count": {
+      "minimum": 1.0,
+      "title": "Sample Count",
+      "type": "integer"
+    },
+    "source_field": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Source Field"
+    },
+    "unit": {
+      "title": "Unit",
+      "type": "string"
+    }
+  },
+  "required": [
+    "metric",
+    "unit",
+    "provenance",
+    "qualification",
+    "date_basis",
+    "period_start",
+    "period_end",
+    "sample_count",
+    "available_days",
+    "coverage_ratio",
+    "latest_value",
+    "latest_day",
+    "latest_observed_at"
+  ],
+  "title": "RecordedMetric",
+  "type": "object"
 }
 ```
 
@@ -17319,8 +17907,8 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "array"
     },
     "schema_version": {
-      "const": "3.0",
-      "default": "3.0",
+      "const": "4.0",
+      "default": "4.0",
       "title": "Schema Version",
       "type": "string"
     },
@@ -18129,16 +18717,39 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "title": "Median Vertical Stride Ratio Percent"
     },
     "moving_duration_minutes": {
-      "default": 0,
-      "minimum": 0.0,
-      "title": "Moving Duration Minutes",
-      "type": "number"
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Moving Duration Minutes"
+    },
+    "pace_basis": {
+      "default": "unavailable",
+      "enum": [
+        "moving",
+        "elapsed",
+        "sample_median",
+        "unavailable"
+      ],
+      "title": "Pace Basis",
+      "type": "string"
     },
     "pause_duration_seconds": {
-      "default": 0,
-      "minimum": 0.0,
-      "title": "Pause Duration Seconds",
-      "type": "integer"
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Pause Duration Seconds"
     },
     "segments": {
       "items": {
@@ -23210,7 +23821,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "string"
     },
     "intelligence_version": {
-      "default": "21.0",
+      "default": "22.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -24318,6 +24929,9 @@ Each reachable component is rendered once; `$ref` values name the headings below
     "feedback": {
       "$ref": "#/components/schemas/WeeklyFeedbackFacts"
     },
+    "recorded_context": {
+      "$ref": "#/components/schemas/RecordedContext"
+    },
     "recovery": {
       "$ref": "#/components/schemas/WeeklyRecoveryFacts"
     },
@@ -24677,7 +25291,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "$ref": "#/components/schemas/WeeklyInferences"
     },
     "intelligence_version": {
-      "default": "21.0",
+      "default": "22.0",
       "title": "Intelligence Version",
       "type": "string"
     },
@@ -24714,7 +25328,7 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "type": "object"
     },
     "schema_version": {
-      "default": "11.0",
+      "default": "12.0",
       "title": "Schema Version",
       "type": "string"
     },
@@ -25599,6 +26213,30 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "title": "Duration Minutes",
       "type": "integer"
     },
+    "elapsed_time_seconds": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Elapsed Time Seconds"
+    },
+    "fetched_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Fetched At"
+    },
     "heart_rate_avg_bpm": {
       "anyOf": [
         {
@@ -25622,6 +26260,30 @@ Each reachable component is rendered once; `$ref` values name the headings below
         }
       ],
       "title": "Heart Rate Max Bpm"
+    },
+    "moving_time_seconds": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Moving Time Seconds"
+    },
+    "paused_time_seconds": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Paused Time Seconds"
     },
     "recognition_confidence": {
       "title": "Recognition Confidence",
@@ -25659,6 +26321,17 @@ Each reachable component is rendered once; `$ref` values name the headings below
         }
       ],
       "title": "Source"
+    },
+    "source_record_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Source Record Id"
     },
     "sport_mode": {
       "title": "Sport Mode",

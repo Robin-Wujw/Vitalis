@@ -62,7 +62,8 @@ def score_running(session, workout, target):
             hr = {k: v for k, v in hr.items() if warm <= k*10-origin < session.duration_minutes*60-cool}
             if seconds > 0 and len(hr) * 10 / seconds >= .95:
                 # Sensor gaps are a qualification issue, never a performance penalty.
-                scores['execution'] = range_score(max(0, seconds-session.pause_duration_seconds), (seconds, seconds))
+                if session.pause_duration_seconds is not None:
+                    scores['execution'] = range_score(max(0, seconds-session.pause_duration_seconds), (seconds, seconds))
         else:
             hr = {}
     if bounds and len(hr) >= 48:

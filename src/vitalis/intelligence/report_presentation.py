@@ -496,7 +496,10 @@ def _running_facts(session: dict[str, Any]) -> list[str]:
             facts.append(f"{label} {shown} {unit}")
     pace = _pace_text(session.get("average_pace_seconds_per_km"))
     if pace:
-        facts.append(f"平均配速 {pace}")
+        label = {"moving": "运动配速", "elapsed": "全程平均配速（含暂停）", "sample_median": "采样速度折算配速"}.get(session.get("pace_basis"), "平均配速")
+        facts.append(f"{label} {pace}")
+    if (paused := number(session.get("pause_duration_seconds"))) is not None:
+        facts.append(f"暂停 {paused} 秒")
     for key, label in (("average_heart_rate_bpm", "平均心率"), ("maximum_heart_rate_bpm", "最高心率")):
         shown = number(session.get(key), 0)
         if shown is not None:
@@ -506,6 +509,12 @@ def _running_facts(session: dict[str, Any]) -> list[str]:
 
 def _generic_facts(workout: dict[str, Any]) -> list[str]:
     facts = []
+    for key, label in (("elapsed_time_seconds", "全程时间"), ("moving_time_seconds", "运动时间"),
+                       ("paused_time_seconds", "暂停")):
+        if workout.get("type") == "running" and key != "elapsed_time_seconds":
+            continue
+        if (shown := number(workout.get(key))) is not None:
+            facts.append(f"{label} {shown} 秒")
     effort = workout.get("session_rpe") or {}
     if isinstance(effort, dict) and (rating := number(effort.get("value"))) is not None:
         source = (
@@ -1233,9 +1242,11 @@ def _daily_fact_line(key: str, value: Any, timezone_name: str | None) -> str | N
     return " · ".join(parts)
 
 
-def _daily_sleep_section(features: dict[str, Any]) -> dict[str, Any]:
+def _daily_sleep_section(features: dict[str, Any], timezone_name: str | None = None) -> dict[str, Any]:
     sleep = features.get("sleep") or {}
     facts = []
+    from .report_recorded_context import sleep_timing_lines
+    facts.extend(sleep_timing_lines(sleep, detailed=True, timezone_name=timezone_name))
     duration = minutes_text(sleep.get("duration_minutes"))
     if duration:
         facts.append(f"睡眠时长 {duration}")
@@ -1323,7 +1334,9 @@ def daily_profile_presentation(payload: Any) -> dict[str, Any]:
             line for value in values
             if (line := _daily_fact_line(key, value, timezone_name)) is not None
         )
-    sections = [_daily_sleep_section(features)]
+    sections = [_daily_sleep_section(features, timezone_name)]
+    from .report_recorded_context import recorded_context_sections
+    sections.extend(recorded_context_sections(features.get("recorded_context") or {}))
     sections.extend(daily_display_sections(raw))
     if fact_lines:
         sections.append({"key": "daily_facts", "title": "已保存事实", "facts": unique(fact_lines), "interpretation": [], "limitations": [], "display": True})

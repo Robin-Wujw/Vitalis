@@ -14,10 +14,10 @@ from vitalis.intelligence.chart_contracts import Chart
 DateValue = date
 
 
-DAILY_SCHEMA_VERSION = "20.0"
-WEEKLY_SCHEMA_VERSION = "11.0"
+DAILY_SCHEMA_VERSION = "21.0"
+WEEKLY_SCHEMA_VERSION = "12.0"
 MONTHLY_SCHEMA_VERSION = "8.0"
-INTELLIGENCE_VERSION = "21.0"
+INTELLIGENCE_VERSION = "22.0"
 DECISION_POLICY_VERSION = "12.0"
 EVIDENCE_VERSION = "2026-09a"
 TRAINING_RESPONSE_SCHEMA_VERSION = "2.0"
@@ -697,6 +697,11 @@ class WorkoutFeature(BaseModel):
     started_at: datetime | None = None
     calories_kcal: float | None = Field(default=None, ge=0)
     distance_km: float | None = Field(default=None, ge=0)
+    moving_time_seconds: float | None = Field(default=None, ge=0)
+    paused_time_seconds: float | None = Field(default=None, ge=0)
+    elapsed_time_seconds: float | None = Field(default=None, ge=0)
+    fetched_at: datetime | None = None
+    source_record_id: str | None = None
     type: str
     type_label: str
     sport_mode: str
@@ -781,8 +786,9 @@ class RunningSessionAnalysis(BaseModel):
     confidence: ConfidenceBand
     confidence_label: str
     duration_minutes: int = Field(ge=0)
-    moving_duration_minutes: float = Field(default=0, ge=0)
-    pause_duration_seconds: int = Field(default=0, ge=0)
+    moving_duration_minutes: float | None = Field(default=None, ge=0)
+    pause_duration_seconds: float | None = Field(default=None, ge=0)
+    pace_basis: Literal["moving", "elapsed", "sample_median", "unavailable"] = "unavailable"
     distance_km: float | None = Field(default=None, ge=0)
     average_pace_seconds_per_km: float | None = Field(default=None, ge=0)
     median_speed_mps: float | None = Field(default=None, ge=0)
@@ -822,7 +828,7 @@ class TrainingEvaluation(BaseModel):
 
 
 class RunningAnalysis(BaseModel):
-    schema_version: Literal["3.0"] = "3.0"
+    schema_version: Literal["4.0"] = "4.0"
     status: Availability
     status_label: str
     zone_method: Literal["device_workout", "lactate_threshold", "mixed", "unavailable"] = "unavailable"
@@ -1301,7 +1307,68 @@ class TrainingFeatures(BaseModel):
     limitation_labels: list[str] = Field(default_factory=list)
 
 
+class RecordedMetric(BaseModel):
+    """Bounded recorded context, never a readiness or training prescription."""
+    metric: str
+    unit: str
+    provenance: Provenance
+    qualification: str
+    date_basis: Literal["sleep_day", "activity_day", "calendar_day"]
+    period_start: date
+    period_end: date
+    sample_count: int = Field(ge=1)
+    available_days: int = Field(ge=1)
+    coverage_ratio: float = Field(ge=0, le=1)
+    latest_value: float
+    latest_day: date
+    latest_observed_at: datetime | date
+    latest_fetched_at: datetime | None = None
+    source_field: str | None = None
+    average: float | None = None
+    reference_start: date | None = None
+    reference_end: date | None = None
+    previous_available_days: int = Field(default=0, ge=0)
+    previous_sample_count: int = Field(default=0, ge=0)
+    previous_coverage_ratio: float = Field(default=0, ge=0, le=1)
+    previous_average: float | None = None
+    change: float | None = None
+
+
+class RecordedGoal(BaseModel):
+    metric: str
+    unit: str
+    provenance: Provenance
+    qualification: str
+    date_basis: Literal["activity_day"] = "activity_day"
+    period_start: date
+    period_end: date
+    available_days: int = Field(ge=1)
+    sample_count: int = Field(ge=1)
+    coverage_ratio: float = Field(ge=0, le=1)
+    latest_value: float
+    latest_day: date
+    latest_observed_at: datetime | date
+    latest_fetched_at: datetime | None = None
+    source_field: str | None = None
+    actual_value: float | None = None
+    actual_observed_at: datetime | date | None = None
+    actual_fetched_at: datetime | None = None
+    actual_provenance: Provenance | None = None
+    actual_qualification: str | None = None
+    actual_source_field: str | None = None
+    evaluated_days: int = Field(default=0, ge=0)
+    met_days: int | None = Field(default=None, ge=0)
+    evaluation_coverage_ratio: float = Field(default=0, ge=0, le=1)
+    daily_progress: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RecordedContext(BaseModel):
+    metrics: list[RecordedMetric] = Field(default_factory=list)
+    goals: list[RecordedGoal] = Field(default_factory=list)
+
+
 class ProfileFeatures(BaseModel):
+    recorded_context: RecordedContext = Field(default_factory=RecordedContext)
     activity: ActivityFeatures = Field(default_factory=ActivityFeatures)
     sleep: SleepFeatures
     hrv: HrvFeatures
@@ -1608,6 +1675,7 @@ class WeeklyFeedbackFacts(BaseModel):
 
 
 class WeeklyFacts(BaseModel):
+    recorded_context: RecordedContext = Field(default_factory=RecordedContext)
     sleep: WeeklySleepFacts
     recovery: WeeklyRecoveryFacts
     training: WeeklyTrainingFacts
@@ -1938,9 +2006,9 @@ class SubjectiveFeedback(BaseModel):
 
 
 class DailyProfile(BaseModel):
-    schema_version: Literal["20.0"] = DAILY_SCHEMA_VERSION
+    schema_version: Literal["21.0"] = DAILY_SCHEMA_VERSION
     analysis_run_id: str
-    intelligence_version: Literal["21.0"] = INTELLIGENCE_VERSION
+    intelligence_version: Literal["22.0"] = INTELLIGENCE_VERSION
     decision_policy_version: Literal["12.0"] = DECISION_POLICY_VERSION
     evidence_version: Literal["2026-09a"] = EVIDENCE_VERSION
     user_id: str

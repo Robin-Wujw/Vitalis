@@ -16,6 +16,7 @@ from .report_formatting import (
     unique,
 )
 from .report_presentation import internal_sections, period_presentation
+from .report_recorded_context import recorded_context_sections
 
 _ACTIVITY_UNIT_LABELS = {
     "steps": "步",
@@ -74,7 +75,7 @@ class WeeklyBriefingEngine:
             data_quality=payload.get("data_quality") or {},
             **presentation,
             summary=self._summary(payload, sections),
-            sections=internal_sections(sections),
+            sections=internal_sections(sections) + recorded_context_sections(facts.get("recorded_context") or {}, weekly=True),
         ).model_dump(mode="json")
 
     def build(self, profile: Any) -> ReportBriefing:
@@ -134,8 +135,6 @@ class WeeklyBriefingEngine:
         if not fact_lines:
             fact_lines.append("本周期没有足够的睡眠、HRV 或静息心率事实可比较。")
         interpretations = list(inferences.get("key_changes") or [])
-        if not interpretations:
-            interpretations = self._recovery_impact(sleep, recovery)
         average_sleep = sleep.get("average_minutes")
         if average_sleep is not None:
             if average_sleep < 420:
@@ -156,21 +155,6 @@ class WeeklyBriefingEngine:
                 f"本周仅有 {number(sleep['available_days'], 0)} 晚睡眠记录，暂不比较趋势。"
             )
         return {"key": "sleep_recovery", "title": "睡眠与恢复变化", "facts": fact_lines, "interpretation": unique(interpretations)[:8], "limitations": []}
-
-    @staticmethod
-    def _recovery_impact(sleep: dict[str, Any], recovery: dict[str, Any]) -> list[str]:
-        output = []
-        if sleep.get("change_percent") is not None:
-            direction = "增加" if sleep["change_percent"] > 0 else "减少"
-            output.append(f"平均睡眠较前一期{direction} {abs(sleep['change_percent']):.1f}%，这会影响本周训练剂量的可持续性判断。")
-        if recovery.get("hrv_change_percent") is not None or recovery.get("rhr_change_percent") is not None:
-            parts = []
-            if recovery.get("hrv_change_percent") is not None:
-                parts.append(f"HRV {recovery['hrv_change_percent']:+.1f}%")
-            if recovery.get("rhr_change_percent") is not None:
-                parts.append(f"静息心率 {recovery['rhr_change_percent']:+.1f}%")
-            output.append("恢复信号较前一期变化：" + "；".join(parts) + "，训练结构调整仍需结合覆盖和既有门控。")
-        return output
 
     def _training(self, facts: dict[str, Any], inferences: dict[str, Any]) -> dict[str, Any]:
         training = facts.get("training") or {}

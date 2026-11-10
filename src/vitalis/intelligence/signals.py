@@ -468,7 +468,8 @@ def _registry() -> dict[str, SignalDefinition]:
         *(("vendor_" + key.replace("Total", "_total"), "vendor_load", "activity_day", ("daily.vendor_" + key.replace("Total", "_total"), key))
             for key in ("atl", "ctl", "tsb", "atlTotal", "ctlTotal", "tsbTotal")),
     ):
-        entries.append(_definition(metric, unit, semantics, fields).model_copy(update={"visible_channels": ("hermes", "api")}))
+        channels = ("morning", "hermes", "api") if semantics == "sleep_day" else ("hermes", "api")
+        entries.append(_definition(metric, unit, semantics, fields).model_copy(update={"visible_channels": channels}))
     for metric, unit, field in (
         ("moving_time_seconds", "s", "exerciseTimeWithMillis"),
         ("paused_time_seconds", "s", "pauseTimeWithMillis"),
@@ -478,7 +479,7 @@ def _registry() -> dict[str, SignalDefinition]:
         ("anaerobic_training_effect", "score", "anaerobic_te"),
     ):
         entries.append(_definition(metric, unit, "activity_day", (f"workout.{metric}", field)).model_copy(
-            update={"visible_channels": ("hermes", "api"), "aggregation_basis": "workout",
+            update={"visible_channels": ("evening", "hermes", "api") if metric.endswith("time_seconds") else ("hermes", "api"), "aggregation_basis": "workout",
                 "coverage_rule": SignalCoverageRule(expected_days=1,
                     baseline_window_days=0, baseline_minimum_days=0)}))
     return {entry.normalized_metric: entry for entry in entries}

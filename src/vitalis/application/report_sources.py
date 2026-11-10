@@ -31,7 +31,11 @@ SOURCE_POLICY_VERSION = "zepp-account-report-1"
 _RECORD_FIELDS = {
     "sleep": (("sleep_duration", "sleep_duration", "min"), ("deep_sleep", "deep_sleep", "min"),
         ("rem_sleep", "rem_sleep", "min"), ("light_sleep", "light_sleep", "min"),
-        ("awake", "awake", "min"), ("sleep_score", "sleep_score", "score"), ("sleep_wake_count", "wake_count", "count")),
+        ("awake", "awake", "min"), ("sleep_score", "sleep_score", "score"), ("sleep_wake_count", "wake_count", "count"),
+        ("sleep_latency_minutes", "sleep_latency_minutes", "min"),
+        ("out_of_bed_delay_minutes", "out_of_bed_delay_minutes", "min"),
+        ("time_in_bed_minutes", "time_in_bed_minutes", "min"),
+        ("sleep_efficiency_percent", "sleep_efficiency_percent", "%")),
     "activity": (("steps", "steps", "steps"), ("distance_km", "distance_km", "km"),
         ("active_minutes", "active_minutes", "min"), ("calories", "calories", "kcal"), ("resting_hr", "resting_hr", "bpm")),
     "training": (("training_load", "total_load", "load"), ("training_duration", "total_duration", "min")),
@@ -199,8 +203,19 @@ def _record_series(series: dict, records: dict, kind: str, zone: str | None) -> 
 
 
 def _append(series: dict, record: dict, day: date, metric: str, value: float, unit: str, field: str) -> None:
+    fetched = record.get("fetched_at")
+    if isinstance(fetched, str):
+        try:
+            fetched = datetime.fromisoformat(fetched.replace("Z", "+00:00"))
+        except ValueError:
+            return
+    if fetched is not None:
+        if not isinstance(fetched, datetime):
+            return
+        fetched = _observed_key(fetched)
     series.setdefault(metric, []).append(SeriesPoint(metric, value, unit, day, day,
         record["source"], record["source_scope"], record.get("device_id"), source_field=field,
+        fetched_at=fetched,
         qualification=record.get("qualification")))
 
 
@@ -258,7 +273,7 @@ def _time_visible(raw: RawDailyProfile, value: datetime | date | None) -> bool:
             return False
     if isinstance(value, datetime):
         return _observed_key(value) <= _observed_key(raw.as_of)
-    return value <= min(raw.day, local_day(raw.as_of, raw.timezone_name))
+    return isinstance(value, date) and value <= min(raw.day, local_day(raw.as_of, raw.timezone_name))
 
 
 def _point_visible(raw: RawDailyProfile, point: SeriesPoint) -> bool:

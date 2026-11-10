@@ -1152,6 +1152,10 @@ class TrainingAnalyzer:
                 duration_minutes=int(data.get("duration", 0) or 0),
                 calories_kcal=workout_calories_kcal(data),
                 distance_km=workout_distance_km(data),
+                **{field: data.get(field) for field in (
+                    "moving_time_seconds", "paused_time_seconds", "elapsed_time_seconds",
+                    "fetched_at", "source_record_id",
+                )},
                 vendor_load=(
                     float(data["load"]) if data.get("load") is not None else None
                 ),

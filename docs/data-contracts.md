@@ -2,11 +2,15 @@
 
 [文档中心](README.md) | [当前架构](architecture.md) | [Zepp](zepp.md) | [报告与渠道](reports.md)
 
-本页说明进入分析和对外报告的事实资格。字段的完整类型和版本以[领域模型](../src/vitalis/domain/models.py)、[分析合同](../src/vitalis/intelligence/contracts.py)和运行服务 `/openapi.json` 为准。当前本地来源策略候选为日报 schema `20.0`、周报 `11.0`、月报 `8.0`、intelligence `21.0`、decision policy `12.0`、parser `zepp-parser-v4`、数据库 revision `2026-11-vendor-report-sources`；这些版本不表示生产服务已切换，最终回归与候选验收仍待完成。
+本页说明进入分析和对外报告的事实资格。字段的完整类型和版本以[领域模型](../src/vitalis/domain/models.py)、[分析合同](../src/vitalis/intelligence/contracts.py)和运行服务 `/openapi.json` 为准。当前源码为日报 schema `21.0`、周报 `12.0`、月报 `8.0`、intelligence `22.0`、decision policy `12.0`、parser `zepp-parser-v4`、数据库 revision `2026-11-vendor-report-sources`；生产版本以运行服务为准。
 
 ## 事实与来源
 
 规范事实至少保留用户、来源、来源范围、设备（如有）、单位和观测时间。健康观测、厂商日指标、训练摘要、训练明细和用户反馈是不同类型，不能因为字段名称相似就合并。分析结果还保留 `analysis_run_id`、schema/intelligence/decision/evidence 版本和生成时间。
+
+日报 `features.recorded_context`、周报 `facts.recorded_context` 保存补充记录及分析时已经算好的汇总，公开 view 保留同一事实资格。字段包含日期口径、窗口、独立来源、单位、获取/观测时间、样本数、可用日数及覆盖；未知资格明确保留未知。睡眠时间汇总按同一来源的每日末次记录计算，周比较两期各至少 5 晚，差值为分钟或百分点。体重/身高/BMI 只在截至报告日期的 90 日已加载窗口中取有日期的末次记录，不插值、不根据两个测量日推断趋势。厂商负荷保留带符号 TSB 和独立 total 口径，不相加、不参与恢复决策。
+
+活动目标保留 Zepp 设置值；同日唯一合资格账户实测可以独立来源对照，同时保存目标与实际各自的来源和资格。存在来源歧义、单位不一致或日期不同则不计算达成；日内不判未达成，周汇总分母仅为完整且目标/实测均可核对的日数。热量目标未确认能量角色，不拿总热量、活动热量或训练热量替代。`running` schema `4.0` 的运动时间和暂停时间可空，配速保留 `pace_basis`，同场精确秒数优先于取整分钟；历史配速对照不混运动与全程口径。
 
 数据集的 `source_mode` 与供应商 `source` 独立：真实、合成和离线回放分别为 `real`、`mock`、`replay`。用户数据集首次声明后不能换模式；改用独立用户或数据库。同步请求冻结模式并纳入幂等身份，执行模式不一致时拒绝请求。报告的 `report_context.source_mode` 来自保存的输入标签，不根据当前配置反推；未标记输入显示 `unknown`。`replay` 标签只表示显式离线输入。当前回放系统保留加密不可变原始响应、payload hash、观测/获取时间、schema/parser 版本和分析输入 manifest；回放写入独立用户数据集，不创建来源凭据、同步尝试或投递意图。回放结果先用 `replay diff` 逐表列出与原用户事实的差异，确认后 `replay apply` 才替换原用户该窗口的事实，并保存被替换的行供 `replay undo` 恢复；操作见[运维](operations.md)。
 

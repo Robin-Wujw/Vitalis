@@ -10,6 +10,57 @@ TARGET = date(2026, 8, 29)
 START = datetime(2026, 8, 29, 6, tzinfo=timezone.utc)
 
 
+def test_precise_vendor_time_drives_pace_and_pause_without_minute_rounding():
+    workout = _run([], duration=31, distance=5)
+    workout["data"].update(moving_time_seconds=1800.5,
+        paused_time_seconds=30.25, elapsed_time_seconds=1830.75)
+    session = RunningAnalyzer().analyze(_raw([workout])).recent_sessions[0]
+    assert session.average_pace_seconds_per_km == 360.1
+    assert session.pause_duration_seconds == 30.25
+    assert session.pace_basis == "moving"
+    assert RunningAnalyzer()._workout_pace(workout) == 360.1
+
+
+def test_missing_pause_is_unknown_and_elapsed_pace_stays_labeled():
+    workout = _run([], duration=31, distance=5)
+    workout["data"]["elapsed_time_seconds"] = 1830.75
+    session = RunningAnalyzer().analyze(_raw([workout])).recent_sessions[0]
+    assert session.moving_duration_minutes is None
+    assert session.pause_duration_seconds is None
+    assert session.pace_basis == "elapsed"
+    assert session.average_pace_seconds_per_km == 366.1
+
+
+def test_inconsistent_time_components_abstain_but_explicit_zero_pause_survives():
+    workout = _run([])
+    workout["data"].update(moving_time_seconds=1800, paused_time_seconds=100, elapsed_time_seconds=1800)
+    bad = RunningAnalyzer().analyze(_raw([workout])).recent_sessions[0]
+    assert bad.moving_duration_minutes is None and bad.pause_duration_seconds is None
+    workout["data"]["paused_time_seconds"] = 0
+    good = RunningAnalyzer().analyze(_raw([workout])).recent_sessions[0]
+    assert good.moving_duration_minutes == 30 and good.pause_duration_seconds == 0
+
+
+def test_running_comparison_does_not_mix_moving_and_elapsed_pace():
+    history = [_run([], day=TARGET-timedelta(days=i), workout_id=f"history-{i}") for i in (1, 2, 3)]
+    workout = _run([])
+    workout["data"].update(moving_time_seconds=1700, paused_time_seconds=100, elapsed_time_seconds=1800)
+    session = next(item for item in RunningAnalyzer().analyze(_raw([*history, workout])).recent_sessions if item.workout_id == "run-1")
+    assert session.comparable_baseline is None
+
+
+def test_running_trends_keep_pace_denominators_in_separate_cohorts():
+    from vitalis.intelligence.trend import TrendEngine
+    elapsed = _run([], workout_id="elapsed")
+    moving = _run([], workout_id="moving")
+    moving["data"].update(moving_time_seconds=1700, paused_time_seconds=100, elapsed_time_seconds=1800)
+    trends = [item for item in TrendEngine().calculate(_raw([elapsed, moving]), windows=(7,)) if item.metric == "running_pace"]
+    assert len(trends) == 2
+    assert all(item.current_sample_count == 1 for item in trends)
+    assert any("pace_basis=moving" in item.qualification for item in trends)
+    assert any("pace_basis=elapsed" in item.qualification for item in trends)
+
+
 def _sample(second: int, metric: str, value: float, unit: str):
     return WorkoutMetricSample(
         workout_id="run-1",
@@ -192,7 +243,7 @@ def test_running_analysis_uses_device_zones_dynamics_and_comparable_runs():
     analysis = RunningAnalyzer().analyze(_raw([*history, target], threshold=200))
     session = analysis.recent_sessions[0]
 
-    assert analysis.schema_version == "3.0"
+    assert analysis.schema_version == "4.0"
     assert analysis.zone_method == "device_workout"
     assert session.heart_rate_zone_source == "device_workout"
     assert session.heart_rate_zones[3].lower_bpm == 162

@@ -346,6 +346,7 @@ def build_daily_profile(
     target = raw.day
     baselines = BaselineEngine().build(raw.series, target)
     from vitalis.intelligence.activity import ActivityAnalyzer
+    from vitalis.intelligence.recorded_context import build_recorded_context
 
     activity = ActivityAnalyzer().analyze(raw, baselines)
     previous_day = target - timedelta(days=1)
@@ -405,6 +406,7 @@ def build_daily_profile(
         facts=raw.facts,
         baselines=baselines,
         features={
+            "recorded_context": build_recorded_context(raw, target),
             "activity": activity,
             "sleep": sleep,
             "hrv": hrv,

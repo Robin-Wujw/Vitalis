@@ -184,7 +184,12 @@ class RunningAnalyzer:
                 ("running_heart_rate", "bpm", heart_rate_value, heart_rate_scope),
                 ("running_cardiac_drift", "%", drift, "workout_detail"),
             ):
-                output.append({**common, "metric": metric, "value": value, "unit": unit, "source_scope": scope})
+                qualification = common["qualification"]
+                if metric == "running_pace":
+                    basis = "moving" if self._timing(workout)[1] is not None else "elapsed"
+                    qualification += f"; pace_basis={basis}"
+                output.append({**common, "metric": metric, "value": value, "unit": unit, "source_scope": scope,
+                               "qualification": qualification})
         return output
 
     @staticmethod
@@ -236,16 +241,16 @@ class RunningAnalyzer:
         vertical_ratio = grouped.get("vertical_stride_ratio", [])
         duration = self._duration(workout)
         pauses = self._pauses(workout)
-        pause_seconds = sum(item[1] for item in pauses)
-        moving_seconds = max(duration * 60 - pause_seconds, 0)
-        moving_minutes = round(moving_seconds / 60, 1)
+        elapsed_seconds, moving_seconds, pause_seconds = self._timing(workout)
+        moving_minutes = round(moving_seconds / 60, 1) if moving_seconds is not None else None
         distance = self._distance(workout)
         median_speed = self._median_value(speed)
-        average_pace = (
-            round(moving_seconds / distance, 1)
-            if distance and distance > 0 and moving_seconds > 0
-            else round(1000 / median_speed, 1) if median_speed else None
-        )
+        pace_seconds = moving_seconds if moving_seconds is not None else elapsed_seconds
+        pace_basis = "moving" if moving_seconds is not None else "elapsed"
+        average_pace = round(pace_seconds / distance, 1) if distance and pace_seconds > 0 else None
+        if average_pace is None:
+            average_pace = round(1000 / median_speed, 1) if median_speed else None
+            pace_basis = "sample_median" if average_pace is not None else "unavailable"
         cadence_median = self._median_value(cadence)
         cadence_variability = None
         if cadence_median:
@@ -303,6 +308,7 @@ class RunningAnalyzer:
             duration_minutes=duration,
             moving_duration_minutes=moving_minutes,
             pause_duration_seconds=pause_seconds,
+            pace_basis=pace_basis,
             distance_km=distance,
             average_pace_seconds_per_km=average_pace,
             median_speed_mps=round(median_speed, 3) if median_speed else None,
@@ -369,6 +375,32 @@ class RunningAnalyzer:
     @staticmethod
     def _duration(workout: dict) -> int:
         return max(int((workout.get("data") or {}).get("duration") or 0), 0)
+
+    @staticmethod
+    def _timing(workout: dict) -> tuple[float, float | None, float | None]:
+        data = workout.get("data") or {}
+        def seconds(key):
+            value = data.get(key)
+            return float(value) if isinstance(value, (float, int)) and not isinstance(value, bool) and isfinite(value) and value >= 0 else None
+        elapsed = seconds("elapsed_time_seconds")
+        moving, paused = seconds("moving_time_seconds"), seconds("paused_time_seconds")
+        if elapsed is not None:
+            if ((moving is not None and moving > elapsed) or (paused is not None and paused > elapsed)
+                    or (moving is not None and paused is not None and abs(elapsed-moving-paused) > 0.01)):
+                moving = paused = None
+        else:
+            elapsed = RunningAnalyzer._duration(workout)*60
+        if moving is None and paused is None and not any(data.get(key) is not None for key in
+                ("moving_time_seconds", "paused_time_seconds", "elapsed_time_seconds")):
+            detail = workout.get("detail") or {}
+            # An explicitly supplied pause list can describe zero pauses;
+            # missing detail cannot establish uninterrupted moving time.
+            if isinstance(detail.get("pauses"), list):
+                pauses = RunningAnalyzer._pauses(workout)
+                if len(pauses) == len(detail["pauses"]):
+                    paused = float(sum(item[1] for item in pauses))
+                    moving = elapsed-paused if paused <= elapsed else None
+        return elapsed, moving, paused
 
     @staticmethod
     def _distance(workout: dict) -> float | None:
@@ -608,7 +640,7 @@ class RunningAnalyzer:
         current_power: float | None,
     ) -> ComparableRunBaseline | None:
         distance = self._distance(workout)
-        if not distance or not current_pace:
+        if not distance or not current_pace or self._workout_pace(workout) is None:
             return None
         comparable = [
             item for item in reversed(sorted(prior_runs, key=self._workout_sort_key))
@@ -616,6 +648,7 @@ class RunningAnalyzer:
             and item.get("device_id") == workout.get("device_id")
             and (candidate_distance := self._distance(item)) is not None
             and distance * 0.8 <= candidate_distance <= distance * 1.2
+            and (self._timing(item)[1] is not None) == (self._timing(workout)[1] is not None)
             and self._workout_pace(item) is not None
         ][:10]
         if len(comparable) < 3:
@@ -652,8 +685,9 @@ class RunningAnalyzer:
 
     def _workout_pace(self, workout: dict) -> float | None:
         distance = self._distance(workout)
-        duration = self._duration(workout)
-        return duration * 60 / distance if distance and duration > 0 else None
+        elapsed, moving, _ = self._timing(workout)
+        seconds = moving if moving is not None else elapsed
+        return seconds / distance if distance and seconds > 0 else None
 
     @staticmethod
     def _workout_average_hr(workout: dict) -> float | None:

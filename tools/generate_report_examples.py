@@ -39,7 +39,7 @@ def _render_examples(day: date):
     from vitalis import bootstrap
     from vitalis.adapters.persistence import HealthRepository, session_scope
     from vitalis.config import settings
-    from vitalis.domain import ActivityRecord, NormalizedDaily, SleepRecord, Workout, WorkoutType
+    from vitalis.domain import ActivityRecord, DailyMetric, MetricSample, NormalizedDaily, SleepRecord, Workout, WorkoutType
     from vitalis.intelligence.report_periods import resolve_month_period, resolve_week_period
     from vitalis.intelligence.report_rendering import render_report
 
@@ -47,6 +47,37 @@ def _render_examples(day: date):
     # alongside the demo's existing detailed strength session.
     with session_scope() as db:
         repository = HealthRepository(db)
+        cutoff = datetime.combine(day, time(21, 20), ZoneInfo(settings.timezone)).astimezone(timezone.utc)
+        from vitalis.time import local_sleep_window
+        for row in repository.sleep_range("demo", day-timedelta(days=20), day):
+            sleep = SleepRecord.model_validate({**row, "user_id": "demo"})
+            window = local_sleep_window(sleep.date, sleep.bedtime, sleep.wake_time, settings.timezone)
+            if window is None:
+                continue
+            asleep, woke = window
+            bed, leave = asleep-timedelta(minutes=15), woke+timedelta(minutes=10)
+            in_bed = (leave-bed).total_seconds()/60
+            sleep = sleep.model_copy(update={"in_bed_at": bed, "out_of_bed_at": leave,
+                "sleep_latency_minutes": 15, "out_of_bed_delay_minutes": 10,
+                "time_in_bed_minutes": in_bed, "sleep_efficiency_percent": sleep.sleep_duration/in_bed*100,
+                "fetched_at": cutoff})
+            repository.save_daily(NormalizedDaily(user_id="demo", date=sleep.date, sleep=sleep))
+        for offset in range(21):
+            current = day-timedelta(days=offset)
+            repository.save_daily_metrics([DailyMetric(user_id="demo", date=current,
+                metric=metric, value=value, unit=unit, source_scope="user_summary",
+                source_field=f"daily.{metric}", fetched_at=cutoff, qualification=qualification)
+                for metric, value, unit, qualification in (
+                    ("step_goal", 8000, "steps", "vendor_user_target"),
+                    ("active_minutes_goal", 40, "min", "vendor_user_target"),
+                    ("calorie_goal", 400, "kcal", "vendor_user_target"),
+                    ("vendor_atl", 42, "vendor_load", "vendor_estimate_unvalidated"),
+                    ("vendor_ctl", 45, "vendor_load", "vendor_estimate_unvalidated"),
+                    ("vendor_tsb", 3, "vendor_load", "vendor_estimate_unvalidated"),
+                )])
+        repository.save_metric_samples([MetricSample(user_id="demo", metric="weight", value=70, unit="kg",
+            timestamp=cutoff-timedelta(days=3), fetched_at=cutoff, source_scope="user_summary",
+            source_field="summary.weight", qualification="vendor_recorded")])
         for identity, kind, clock, duration, distance, sets in (
             ("split-run-1", WorkoutType.RUNNING, time(16), 10, 2.0, None),
             ("split-run-2", WorkoutType.RUNNING, time(16, 20), 30, 5.0, None),
@@ -58,6 +89,8 @@ def _render_examples(day: date):
                 sport_mode=kind.value, sport_mode_label="跑步" if kind == WorkoutType.RUNNING else "力量训练",
                 training_family="aerobic" if kind == WorkoutType.RUNNING else "strength",
                 duration=duration, distance_km=distance, vendor_reported_sets=sets,
+                elapsed_time_seconds=duration*60, moving_time_seconds=duration*60-30,
+                paused_time_seconds=30, fetched_at=cutoff,
                 observed_fields=["duration"] + (["distance_km"] if distance is not None else []),
             ))
     cutoff = datetime.combine(day, time(21, 20), ZoneInfo(settings.timezone)).astimezone(timezone.utc)

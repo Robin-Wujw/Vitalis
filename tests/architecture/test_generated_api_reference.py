@@ -21,6 +21,14 @@ def test_reference_covers_every_skill_allowlisted_operation():
     assert "/api/sources/{source}/revoke" not in "\n".join(lines)
 
 
+def test_reference_covers_both_supplemental_metric_routes():
+    rendered = reference.render_reference(app.openapi())
+    assert "### get_health_metric_series" in rendered
+    assert "### get_health_daily_metrics" in rendered
+    assert "`GET /api/health/metrics/{metric}`" in rendered
+    assert "`GET /api/health/daily-metrics`" in rendered
+
+
 def test_unknown_skill_route_fails_generation(tmp_path, monkeypatch):
     script = tmp_path / "vitalis_api.py"
     script.write_text(

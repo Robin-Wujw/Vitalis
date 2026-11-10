@@ -270,6 +270,7 @@ def test_goal_adherence_rewards_controlled_easy_running_and_abstains_for_missing
                   {'duration_minutes': (5, 5)}, {}, {'duration_minutes': (5, 5)}]}}
     raw = RawDailyProfile(user_id='synthetic', day=DAY)
     easy = _stable_run(DAY, 'easy', speed=2.5)
+    easy['detail'] = {'pauses': []}
     raw.workouts = [easy]
     session = RunningAnalyzer().analyze(raw).recent_sessions[0]
     review = review_running(session, target=target, workout=easy)
@@ -279,6 +280,10 @@ def test_goal_adherence_rewards_controlled_easy_running_and_abstains_for_missing
     assert review_running(session, target=target, workout=fast).candidate_score < review.candidate_score
     missing = {**easy, 'samples': [x for x in easy['samples'] if x.metric != 'heart_rate']}
     assert review_running(session, target=target, workout=missing).candidate_score is None
+    unknown_pause = {**easy, 'detail': {}}
+    raw.workouts = [unknown_pause]
+    unknown_session = RunningAnalyzer().analyze(raw).recent_sessions[0]
+    assert review_running(unknown_session, target=target, workout=unknown_pause).candidate_score is None
 
 
 def test_relative_index_validation_purges_overlapping_outcomes():

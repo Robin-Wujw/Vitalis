@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import hashlib
 import json
 import math
@@ -406,10 +406,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     generic.add_argument("--key-file")
     metrics = commands.add_parser("metrics", help="Read stored timestamped or daily vendor facts")
     metrics.add_argument("metric")
-    metrics.add_argument("--from", dest="from_date", required=True)
-    metrics.add_argument("--to", required=True)
-    metrics.add_argument("--daily", action="store_true")
-    metrics.add_argument("--resolution", choices=("raw", "1h", "1d"), default="raw")
+    metrics.add_argument("--from", dest="from_date", required=True, help="Timezone-aware timestamp; YYYY-MM-DD with --daily")
+    metrics.add_argument("--to", required=True, help="Timezone-aware timestamp; YYYY-MM-DD with --daily")
+    metrics.add_argument("--daily", action="store_true", help="Read vendor daily facts instead of timestamped measurements")
+    metrics.add_argument("--resolution", choices=("raw", "1h", "1d"), default="raw", help="Timestamped measurements only")
     sleep = commands.add_parser("sleep-records", help="Read stored sleep facts with source evidence")
     sleep.add_argument("--from", dest="from_date", type=iso_date, required=True)
     sleep.add_argument("--to", type=iso_date, required=True)
@@ -491,6 +491,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     workouts.add_argument("--strength-details", action="store_true", help="Read saved strength sets for at most 20 workouts")
     workouts.add_argument("--samples", action="store_true", help="Include metric samples for a single workout")
     args = parser.parse_args(argv)
+    if args.command == "sleep-records":
+        if not 0 <= (date.fromisoformat(args.to) - date.fromisoformat(args.from_date)).days <= 365:
+            raise ClientError("invalid_arguments")
+    if args.command == "metrics":
+        if args.daily:
+            start = date.fromisoformat(iso_date(args.from_date))
+            end = date.fromisoformat(iso_date(args.to))
+            if args.resolution != "raw":
+                raise ClientError("invalid_arguments")
+        else:
+            start = datetime.fromisoformat(iso_aware_datetime(args.from_date).replace("Z", "+00:00"))
+            end = datetime.fromisoformat(iso_aware_datetime(args.to).replace("Z", "+00:00"))
+        if not timedelta(0) <= end - start <= timedelta(days=730):
+            raise ClientError("invalid_arguments")
     if args.command == "strength-review":
         if (args.from_date is None) != (args.to is None):
             raise ClientError("invalid_arguments")
@@ -511,9 +525,9 @@ def run(args: argparse.Namespace):
         return request("GET", "health/sleep-records", token, params={"from": args.from_date, "to": args.to})
     if args.command == "metrics":
         if args.daily:
-            return request("GET", "health/daily-metrics", token, params={"from": iso_date(args.from_date), "to": iso_date(args.to), "metric": args.metric})
+            return request("GET", "health/daily-metrics", token, params={"from": args.from_date, "to": args.to, "metric": args.metric})
         return request("GET", "health/metrics/" + urllib.parse.quote(args.metric, safe=""), token,
-            params={"from": iso_aware_datetime(args.from_date), "to": iso_aware_datetime(args.to), "resolution": args.resolution})
+            params={"from": args.from_date, "to": args.to, "resolution": args.resolution})
     if args.command == "request":
         params = {}
         for entry in args.param:

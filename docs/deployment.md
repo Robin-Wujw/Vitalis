@@ -71,7 +71,7 @@ UV_PROJECT_ENVIRONMENT=<candidate-venv> uv run --locked --extra dev python -m py
 
 图表与多设备候选使用 `2026-11-vendor-report-sources` schema：增加 `sleep_supplements`、`readiness_revisions`、`band_source_records` 和 `chart_*` 显式输入表，设备目录增加 `aliases` JSON字段；`metric_samples` 与 `daily_metrics` 只新增可空的来源字段、资格、观测/修订/获取时间及 journal 引用，并新增 `contributing_device_id` 保留融合/择优结果的贡献设备而不当作整流身份。现有记录和表不删除。以候选 ORM metadata 和部署库实际结构核对 DDL，先在隔离合成库验证，再按加表加字段路径应用；反向 DDL 只撤销本次新增结构，操作前确认尚无需保留的新输入。
 
-日报/周报/月报合同分别为 20.0/11.0/8.0，分析版本21.0、解析版本zepp-parser-v4；旧版本报告不自动冒充已按App结果生成的新快照。只在来源修正和输入范围核对后排分析；尤其不要把旧 `wtlSum` 混口径值直接当正确日负荷重算。刷新需重读 band 的独立融合标记及压力 App 日输出，避免旧错误设备标签与新账户scope并存重复；SEC_HR和ACTIVE_ORIGIN_DATA归档需完成索引、下载、解析和按来源覆盖核对，不把索引当样本。实际验收与剩余边界见[图表验证计划](plan/report-chart-validation.md)。生产 DDL、来源刷新和服务切换只在候选隔离验收及明确部署授权后执行；私密预览使用通知抑制上下文，不额外发送。
+日报/周报/月报合同分别为 21.0/12.0/8.0，分析版本22.0、解析版本zepp-parser-v4；旧版本报告不自动冒充已按App结果生成的新快照。只在来源修正和输入范围核对后排分析；尤其不要把旧 `wtlSum` 混口径值直接当正确日负荷重算。刷新需重读 band 的独立融合标记及压力 App 日输出，避免旧错误设备标签与新账户scope并存重复；SEC_HR和ACTIVE_ORIGIN_DATA归档需完成索引、下载、解析和按来源覆盖核对，不把索引当样本。实际验收与剩余边界见[图表验证计划](plan/report-chart-validation.md)。生产 DDL、来源刷新和服务切换只在候选隔离验收及明确部署授权后执行；私密预览使用通知抑制上下文，不额外发送。
 
 ## 3. 停止服务；破坏性迁移才备份
 

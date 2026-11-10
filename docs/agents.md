@@ -16,6 +16,10 @@
 
 数据发现用 `catalog`；原始资格明确的睡眠和指标用 `sleep-records`、`metrics [--daily]`。晨报时机核查读取 `/api/health/wake-review`，实验对比读取 `/api/intelligence/research/{kind}`；`analyze --refresh-research` 需 analyze scope，排队后通过 `job` 查完成。报告导出 `report --output` 调用服务端 export API，客户端不读数据库或重排健康结论。
 
+Hermes 回答晨间状态、当日回顾和完整周比较时，先读对应报告的公开投影；只有缺项或需解释时才读状态、完整报告或独立记录。跨请求核对目标日期与 `analysis_run_id`，不把新事实拼进旧决策；更新中的同日期 last-good 可继续解释已有记录，但不能证明当前恢复。周报按返回的 `period_start`、`period_end` 使用已保存比较，不能拿上一完整周回答本周至今。
+
+新增事实的路由和资格由 [Vitalis Skill 的报告流程](../skills/vitalis/SKILL.md#报告与新增数据)维护：睡眠按 `sleep_day` 查询；设备目标与同日实际分开；ATL/CTL/TSB 保留厂商单位且不累加；稀疏体重标测量日期。`catalog` 是字段目录，不是账户数据清单；实际可用性要核对记录和覆盖。日指标用 `metrics … --daily` 配本地日期，体重等时间戳流用带时区的起止时间，客户端提前拒绝反向或超长窗口，不能把 `--resolution` 聚合选项配给日指标。源数据已到但报告陈旧时可按 policy 申请分析；训练 refresh 不能补取睡眠、体重或目标，Hermes 不因新增数据取得 sync/analyze/manage 权限。
+
 显式 `sync-jobs`、`analysis-runs` 的任务链默认携带 `notification_policy=suppress`：保存数据与结果，期间不重排或替换推送。它不改变独立定时任务的投递，也不把反馈入口的正常行为改成静默。
 
 将 `skills/vitalis/` 目录复制到任意位置，在私有环境设置 `VITALIS_API_BASE_URL` 和 `VITALIS_ACCESS_TOKEN`，运行：
@@ -154,6 +158,9 @@ Linux 的 systemd 模板见 [vitalis-hermes.service](../deploy/systemd/vitalis-h
 | 近期普通跑记录，用户问半马多久；之后说明其中某场为全力测试 | 先选代表记录调用 race-equivalence 给条件情景等效；说明不是实际预测或个人置信区间；仅明确自述后采用 user_reported_maximal，不写反馈、不受 CS 未验证阻断。 |
 | 缺明细、授权有效/拒绝两组 | 先查详情与 coach-policy；拒绝不写，有效 grant 只走 coach-request，验证根预算、静默上下文与回读，不扩大日期或额外反馈。 |
 | “本月至今训练如何”与 stale 局部恢复快照 | 按月初到截止日查覆盖，不拿上一完整月或短窗代替；已知部分照常回答，局部恢复缺口不全局阻断。 |
+| 晨报仍是 last-good，睡眠源记录已更新；随后问入睡耗时 | 先读相关报告与状态，核对日期/版本；只查对应 sleep_day 的记录，区分入床、入睡、醒来、离床，不把新值称为旧决策已采用，不发训练 refresh 补睡眠。 |
+| 问今天目标完成多少、负 TSB 是否说明不能练，再问两条体重记录 | 优先读日报保存对照，设备目标不是实测或饮食预算；TSB 保留厂商标签与负值，不能推翻已有决策；体重只描述测量时点，不从两条记录声称持续减脂。 |
+| 问上周表现，追问本周至今；目录存在但原始流 retained_raw | 使用返回的完整周范围和已保存比较；追问时换正确窗口，不挪用上周结论；目录不证明账户可用，不把原文保留当解码评分，不越权同步。 |
 | 先讨论酸痛、计划，再明确“帮我记录” | 明确意图之前无反馈写入；之后仅提交所请求反馈一次，成功核对才说已记录，不额外补发分析。 |
 | 模型服务不可用 | 对话如实失败，确定性日报与推送不受影响；仅使用合成数据和假发送器，不发送真实通知。 |
 

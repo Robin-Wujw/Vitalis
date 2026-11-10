@@ -304,7 +304,7 @@ def test_html_report_escapes_user_controlled_values():
     assert '<img src="x"' not in message.body
     assert message.template == "html"
     assert message.extras["template"] == "html"
-    assert message.extras["renderer_version"] == "7.0"
+    assert message.extras["renderer_version"] == "8.0"
     assert message.extras["content_sha256"]
 
 

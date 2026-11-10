@@ -500,6 +500,21 @@ def test_readable_limits_cover_short_and_long_report_kinds():
     assert REPORT_VISIBLE_LIMITS["monthly"] < 18_000
 
 
+@pytest.mark.parametrize("separator", ["，", ","])
+def test_load_sentence_keeps_days_inline_instead_of_a_distant_value(separator):
+    sentence = f"本周还剩 177{separator}留给接下来的 5 天"
+    briefing = _briefing(sections=[{
+        "key": "display_weekly_load", "title": "本周负荷", "display": True,
+        "facts": [sentence, "训练时长 45 分钟"],
+    }])
+    content = render_report(briefing, "html").content
+    paragraph = next(part.split("</p>", 1)[0] for part in content.split("<p ") if "本周还剩" in part)
+    assert sentence in paragraph
+    assert "display:flex" not in paragraph and "<span" not in paragraph
+    assert "justify-content:space-between" in content  # Actual label/value rows still align.
+    assert sentence in render_report(briefing, "markdown").content
+
+
 @pytest.mark.parametrize("target", ["markdown", "html"])
 def test_transport_budget_is_independent_from_visible_text_budget(target):
     briefing = large_briefing()

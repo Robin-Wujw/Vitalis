@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from .public_reports import PublicReportView, report_presentation, to_public_report_view
 from .report_formatting import minutes_text, number, payload_of, timestamp_text
 
-RENDERER_VERSION = "7.0"
+RENDERER_VERSION = "8.0"
 ReportTarget = Literal["markdown", "html"]
 _MEDIA_TYPES = {"markdown": "text/markdown", "html": "text/html"}
 _LABELS = {"morning": "晨报", "daily": "日报", "evening": "晚报", "weekly": "周报", "monthly": "月报"}
@@ -640,7 +640,7 @@ _CARD_STYLES = {
     "status": f"margin:12px 0 0;padding:10px 16px;background:{_CARD};border:1px solid {_RULE};border-radius:12px",
     "bare": "margin:16px 0 0",
 }
-_ROW = re.compile(r"^(?P<label>[^：；:;。]{1,24}?)\s+(?P<value>(?:\d+\s*小时\s*\d+\s*分钟)|(?:[-+]?\d[\d,.:/]*\s?[%A-Za-z/一-鿿]{0,6}))。?$")
+_ROW = re.compile(r"^(?P<label>[^，,：；:;。]{1,24}?)\s+(?P<value>(?:\d+\s*小时\s*\d+\s*分钟)|(?:[-+]?\d[\d,.:/]*\s?[%A-Za-z/一-鿿]{0,6}))。?$")
 
 
 def _html_record(record: dict[str, Any]) -> str:

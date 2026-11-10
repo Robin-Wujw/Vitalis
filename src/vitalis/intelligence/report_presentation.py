@@ -943,6 +943,16 @@ def _review_advice(session: dict[str, Any]) -> list[str]:
     return unique([str(item) for item in (session.get("evaluation") or {}).get("suggestions") or [] if item and item not in routine])
 
 
+def _training_advice_allowed(payload: dict[str, Any]) -> bool:
+    return (payload.get("decision") or {}).get("action") not in {"REST", "RECOVERY", "INSUFFICIENT_DATA"}
+
+
+def _strength_review_restricted(session: dict[str, Any]) -> bool:
+    soreness = _number(session.get("muscle_soreness"))
+    rpe = _number(session.get("session_rpe"))
+    return (soreness is not None and soreness >= 4) or (rpe is not None and rpe >= 9)
+
+
 def _strength_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
     """Expose qualified strength capacity without interpreting unknown vendor codes."""
     training = (payload.get("features") or {}).get("training") or {}
@@ -953,6 +963,7 @@ def _strength_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
     ]
     if not sessions:
         return None
+    allow_progression = _training_advice_allowed(payload) and not any(_strength_review_restricted(item) for item in sessions)
     facts: list[str] = []
     limitations: list[str] = []
     for session in sessions:
@@ -999,10 +1010,12 @@ def _strength_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
                 facts.append(f"{label}近期训练接触比 {ratio:.2f}（{status}）。")
         # Missing-detail and calculation diagnostics stay in the saved analysis.
         # Keep qualified capacity caveats above and actionable saved advice.
-        for suggestion in _review_advice(session):
-            facts.append('建议：' + suggestion)
+        if allow_progression or _strength_review_restricted(session):
+            for suggestion in _review_advice(session):
+                facts.append('建议：' + suggestion)
     strength = training.get('strength') or {}
-    facts.extend(_strength_next_advice(strength))
+    if _training_advice_allowed(payload):
+        facts.extend(_strength_next_advice(strength))
     if not facts and not limitations:
         return None
     return {
@@ -1041,7 +1054,8 @@ def _running_display_section(payload: dict[str, Any]) -> dict[str, Any] | None:
             if current_hr is not None and reference_hr is not None:
                 parts.append(f"当前/对照平均心率 {number(current_hr, 0)} / {number(reference_hr, 0)} 次/分钟")
             facts.append("；".join(parts) + "。")
-    facts.extend('建议：' + item for item in _review_advice(session)[:1])
+    if _training_advice_allowed(payload):
+        facts.extend('建议：' + item for item in _review_advice(session)[:1])
     if not facts:
         return None
     if len(sessions) > 1:
@@ -1126,7 +1140,6 @@ def daily_display_sections(payload: Any, *, facts_only: bool = False) -> list[di
     activity = features.get("activity") or {}
     training = features.get("training") or {}
     activity_facts = []
-    activity_limitations = []
     workout_duration = _number(training.get("today_duration_minutes"))
     if workout_duration is None:
         durations = [
@@ -1141,7 +1154,6 @@ def daily_display_sections(payload: Any, *, facts_only: bool = False) -> list[di
         item = activity.get(key) or {}
         value = _number(item.get("value")) if isinstance(item, dict) else None
         if key == "active_minutes" and value is not None and workout_duration is not None and value < workout_duration:
-            activity_limitations.append("设备活动总时长小于当天已记录训练时长，未展示该汇总值。")
             continue
         if value is not None:
             activity_facts.append(f"{label} {number(value, digits)} {unit}")
@@ -1151,10 +1163,10 @@ def daily_display_sections(payload: Any, *, facts_only: bool = False) -> list[di
         shown = value_with_unit(item.get("value"), item.get("unit"))
         if shown:
             activity_facts.append(f"{energy_label(item.get('role'))} {shown}")
-    if activity_facts or activity_limitations:
+    if activity_facts:
         sections.append({
             "key": "display_activity", "title": "日常活动与能量", "facts": unique(activity_facts),
-            "interpretation": [], "limitations": unique(activity_limitations), "display": True,
+            "interpretation": [], "limitations": [], "display": True,
         })
     pressure = _pressure_display_section(raw)
     if pressure:

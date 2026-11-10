@@ -171,6 +171,21 @@ def test_pressure_uses_saved_points_not_preview_when_they_fit():
     assert [_percent(style, "top") for style in points] == [82, 34]
 
 
+def test_pressure_preview_reports_latest_observation_not_bucket_start():
+    chart = _chart(
+        series=[_series([(index / 15, 30) for index in range(350)], last_observed_at=_stamp(23.5))],
+        preview_series=[_series([(0, 20), (12, 40), (22, 50)], last_observed_at=_stamp(23.5))],
+    )
+    result = render_report_microchart(chart)
+    assert "观测截至 23:30" in result
+    assert max(_percent(style, "left") for style in _points(result)) > 90
+
+
+def test_pressure_does_not_claim_latest_observation_after_report_cutoff():
+    chart = _chart(period_end=_stamp(12), series=[_series([(1, 20)], last_observed_at=_stamp(23))])
+    assert "观测截至 23:00" not in render_report_microchart(chart)
+
+
 def test_pressure_cutoff_and_outside_points_follow_supplied_window():
     chart = _chart(period_end=_stamp(12), series=[_series([(-1, 90), (0, 10), (6, 40), (13, 90)])])
     result = render_report_microchart(chart)

@@ -281,10 +281,48 @@ def test_visible_daily_activity_suppresses_contradictory_vendor_active_minutes()
     }]
 
     sections = daily_display_sections(payload)
-    activity = next(item for item in sections if item["key"] == "display_activity")
+    text = str(sections)
+    assert "活动时长 30 分钟" not in text
+    assert "设备活动总时长小于当天已记录训练时长" not in text
 
-    assert "活动时长 30 分钟" not in activity["facts"]
-    assert any("设备活动总时长小于当天已记录训练时长" in item for item in activity["limitations"])
+
+def test_training_cards_respect_rest_and_preserve_soreness_restriction():
+    payload = _daily(decision={"action": "REST"})
+    payload["features"]["training"]["running"]["recent_sessions"] = [{
+        "date": "2026-10-07", "evaluation": {
+            "suggestions": ["跑步进阶建议"],
+        },
+    }]
+    payload["features"]["training"]["strength"]["recent_sessions"] = [{
+        "date": "2026-10-07", "muscle_soreness": 4, "evaluation": {
+            "suggestions": ["明显酸痛，先避开该部位"],
+        },
+    }]
+    text = str(daily_display_sections(payload))
+    assert "跑步进阶建议" not in text
+    assert "明显酸痛，先避开该部位" in text
+
+
+def test_running_card_shows_saved_action_without_empty_efficiency_commentary():
+    card = _running_card({"evaluation": {
+        "observations": ["这次跑得更快，心率也更高；不能单凭配速判断跑步效率提升。"],
+        "suggestions": ["下次轻松跑先放慢到能连贯交谈，不追配速。"],
+    }})
+    assert card is not None
+    assert "连贯交谈" in str(card["facts"])
+    assert "效率提升" not in str(card)
+
+
+def test_multiple_strength_sessions_do_not_mix_progression_with_soreness_advice():
+    payload = _daily()
+    payload["features"]["training"]["strength"]["recent_sessions"] = [
+        {"date": "2026-10-07", "session_rpe": 9,
+         "evaluation": {"suggestions": ["先减少剂量，核对恢复。"]}},
+        {"date": "2026-10-07", "evaluation": {"suggestions": ["增加次数或重量。"]}},
+    ]
+    text = str(daily_display_sections(payload))
+    assert "先减少剂量" in text
+    assert "增加次数或重量" not in text
 
 
 def test_strength_card_projects_saved_capacity_without_recalculating_raw_sets():

@@ -1,4 +1,10 @@
-"""Evidence-limited session reviews; unvalidated totals are never published."""
+"""Evidence-limited reviews; coaching references live in docs/reports.md.
+
+CDC's talk test supports relative effort cues without an invented HR target.
+ACSM's 2026 position stand supports gradual resistance progression and does
+not require training to failure. These cues are conditional education, never
+clearance to train or proof of adaptation from a single session.
+"""
 
 from .contracts import TrainingEvaluation
 
@@ -15,8 +21,8 @@ def review_strength(session, *, target=None):
         suggestions.append("已记录明显酸痛；下次先避开受影响部位，结合实际不适调整安排。")
     elif session.session_rpe is not None and session.session_rpe >= 9:
         suggestions.append("本场主观用力较高；下次先保持或减少剂量，核对恢复后再考虑进阶。")
-    elif not c.working_sets or c.working_sets < c.recorded_sets:
-        suggestions.append("先按已记录组数比较近期训练量；标记热身组可以进一步提高估算准确度。")
+    else:
+        suggestions.append("下次恢复后练力量时，先保证动作稳定，不必每组练到力竭；能稳定完成计划后，再逐步增加次数或重量。")
     review = TrainingEvaluation(
         state="PARTIAL" if observations else "INSUFFICIENT_DATA",
         observations=observations, suggestions=suggestions[:2],
@@ -48,7 +54,7 @@ def review_running(session, *, target=None, workout=None):
         b = session.comparable_baseline
         observations.append(f"与此前 {b.sample_count} 场相近距离记录相比，配速变化 {b.pace_difference_percent:+.1f}%；强度和天气未完全匹配。")
     if not suggestions:
-        suggestions.append("下次开始前明确本场目标类型、时长与强度，便于评价完成情况。")
+        suggestions.append("下次若安排轻松跑，以能连贯交谈的强度为准；若只能说几个字就要换气，先放慢，不必追今天的配速。")
     review = TrainingEvaluation(
         target_origin="inferred" if session.confidence.value in {"MODERATE", "HIGH"} else "unavailable",
         observations=observations, suggestions=suggestions[:2],

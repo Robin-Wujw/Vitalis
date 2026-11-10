@@ -209,8 +209,8 @@ def _stress(payload: Mapping, zone: ZoneInfo, start: float, end: float) -> str:
                                 raise ValueError("invalid saved preview range")
                             if high > low:
                                 ranges.append((stamp, low, high))
-            choices.append((key, aggregation, points, ranges))
-    for key, aggregation, points, ranges in choices:
+            choices.append((key, aggregation, points, ranges, row.get("last_observed_at")))
+    for key, aggregation, points, ranges, last_observed_at in choices:
         if not points or len(points) > 120:
             continue
         tiles = []
@@ -228,6 +228,10 @@ def _stress(payload: Mapping, zone: ZoneInfo, start: float, end: float) -> str:
                 '<div style="position:relative;height:42px;margin:5px 3px 5px 0;font:10px/0 monospace;color:#8faab8">'
                 + "".join(tiles) + "</div>" + _axis(start, end, zone, sleep=False) + "</div></div>")
         note = "空白表示未记录，不是零压力。"
+        if last_observed_at is not None:
+            last = _instant(last_observed_at)
+            if start <= last <= end:
+                note = f"观测截至 {_clock(last, zone)}。" + note
         if key == "preview_series":
             note += "时段概览：点为" + _AGGREGATIONS[aggregation].removeprefix("已保存") + ("，竖线为观测范围。" if ranges else "。")
         else:
@@ -237,7 +241,7 @@ def _stress(payload: Mapping, zone: ZoneInfo, start: float, end: float) -> str:
         result = _card("压力观测 · 0–100 · 低 / 中 / 高参考，非诊断", body, note)
         if len(result) < _MAX_FRAGMENT:
             return result
-    if any(points for _, _, points, _ in choices):
+    if any(points for _, _, points, _, _ in choices):
         return _empty("stress", "点位较多，微图未展开；未重新抽样或聚合。")
     return _empty("stress")
 

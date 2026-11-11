@@ -40,7 +40,8 @@ def test_analysis_projects_activity_arrays_out_in_sql_but_api_preserves_them(tmp
         assert rows[0]["data"]["fetched_at"] == stamp.isoformat()
         assert len(statements) == 1 and "json_remove(" in statements[0]
         event.remove(engine, "before_cursor_execute", capture)
-        full = SqlHealthReader(sessions).activity_records(owner, day, day, as_of=stamp)
+        full = SqlHealthReader(sessions).activity_records(owner, day, day, as_of=stamp,
+            include_minutes=True, include_hourly=True)
         assert full[0]["data"]["band_activity"] == activity
     finally:
         engine.dispose()

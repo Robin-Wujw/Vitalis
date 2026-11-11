@@ -82,6 +82,19 @@ class HealthMetricRead:
 
 
 @dataclass(frozen=True)
+class HealthBodyRecordRead:
+    """One complete scale observation with all of its saved measurements."""
+
+    timestamp: datetime
+    source: str
+    source_scope: str
+    device_id: str
+    source_record_id: str
+    sample_ordinal: int
+    measurements: tuple[tuple[str, HealthMetricRead], ...]
+
+
+@dataclass(frozen=True)
 class HealthDailyMetricRead:
     """Detached sparse daily metric."""
 
@@ -162,11 +175,15 @@ class HealthReader(Protocol):
 
     def sync_stream_states(self, user_id: str) -> tuple[HealthStreamStateRead, ...]: ...
 
-    def sleep_records(self, user_id: str, start: date, end: date, *, as_of: datetime) -> tuple[dict, ...]: ...
+    def sleep_records(self, user_id: str, start: date, end: date, *, as_of: datetime,
+                      limit: int | None = None, max_bytes: int | None = None) -> tuple[dict, ...]: ...
 
-    def activity_records(self, user_id: str, start: date, end: date, *, as_of: datetime) -> tuple[dict, ...]: ...
+    def activity_records(self, user_id: str, start: date, end: date, *, as_of: datetime,
+                         include_minutes: bool = False, include_hourly: bool = False,
+                         limit: int | None = None, max_bytes: int | None = None) -> tuple[dict, ...]: ...
 
-    def nap_records(self, user_id: str, start: date, end: date, *, as_of: datetime) -> tuple[dict, ...]: ...
+    def nap_records(self, user_id: str, start: date, end: date, *, as_of: datetime,
+                    limit: int | None = None, max_bytes: int | None = None) -> tuple[dict, ...]: ...
 
     def source_snapshot(self, user_id: str, kind: str) -> dict | None: ...
 
@@ -200,8 +217,13 @@ class HealthReader(Protocol):
         self, user_id: str, metric: str, start: datetime, end: datetime
     ) -> AbstractContextManager[Iterator[HealthMetricRead]]: ...
 
+    def body_composition_records(
+        self, user_id: str, metrics: tuple[str, ...], start: datetime | None, end: datetime,
+        *, limit: int, after: tuple | None = None,
+    ) -> tuple[HealthBodyRecordRead, ...]: ...
+
     def daily_metrics(
-        self, user_id: str, start: date, end: date, metric: str | None = None
+        self, user_id: str, start: date, end: date, metric: str | None = None, *, limit: int | None = None
     ) -> tuple[HealthDailyMetricRead, ...]: ...
 
     def dense_files(

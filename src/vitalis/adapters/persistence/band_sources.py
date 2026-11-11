@@ -42,7 +42,8 @@ def save_band_source(repo,user_id,day,kind,payload,*,fetched_at=None):
     return 1
 
 
-def read_band_sources(db,user_id,start,end,*,as_of,include_activity_details=True,kind=None):
+def read_band_sources(db,user_id,start,end,*,as_of,include_activity_details=True,kind=None,
+                      include_minutes=True,include_hourly=True,limit=None,max_bytes=None):
     cutoff=as_of.astimezone(timezone.utc).replace(tzinfo=None) if as_of.tzinfo else as_of
     data=BandSourceRecord.data
     if not include_activity_details:
@@ -53,17 +54,38 @@ def read_band_sources(db,user_id,start,end,*,as_of,include_activity_details=True
             data=cast(data,JSONB).op('-')('band_activity')
         else:
             data=type_coerce(func.json_remove(data,'$.band_activity'),JSON)
+    elif not include_minutes or not include_hourly:
+        fields=[]
+        if not include_minutes:fields.extend(('minute_steps','raw_minutes'))
+        if not include_hourly:fields.append('hourly_steps')
+        if db.get_bind().dialect.name == 'postgresql':
+            from sqlalchemy.dialects.postgresql import JSONB, array
+            data=cast(data,JSONB)
+            for field in fields:data=data.op('#-')(array(['band_activity',field]))
+        else:
+            data=type_coerce(func.json_remove(data,*(f'$.band_activity.{field}' for field in fields)),JSON)
+    conditions=[BandSourceRecord.user_id==user_id,BandSourceRecord.date.between(start,end),
+                BandSourceRecord.fetched_at<=cutoff]
+    if kind is not None:conditions.append(BandSourceRecord.kind==kind)
+    latest=select(BandSourceRecord.id,func.row_number().over(
+        partition_by=(BandSourceRecord.date,BandSourceRecord.kind,BandSourceRecord.source,
+                      BandSourceRecord.source_scope,BandSourceRecord.device_id),
+        order_by=(BandSourceRecord.fetched_at.desc(),BandSourceRecord.id.desc())).label('position'))
+    latest=latest.where(*conditions).subquery()
     query=select(BandSourceRecord.date,BandSourceRecord.kind,BandSourceRecord.source,
         BandSourceRecord.source_scope,BandSourceRecord.device_id,data.label('data'),
-        BandSourceRecord.fetched_at,BandSourceRecord.source_record_id).where(
-        BandSourceRecord.user_id==user_id,BandSourceRecord.date.between(start,end),
-        BandSourceRecord.fetched_at<=cutoff).order_by(BandSourceRecord.fetched_at,BandSourceRecord.id)
-    if kind is not None:
-        query=query.where(BandSourceRecord.kind==kind)
-    rows=db.execute(query)
-    selected={}
+        BandSourceRecord.fetched_at,BandSourceRecord.source_record_id).where(BandSourceRecord.id.in_(
+            select(latest.c.id).where(latest.c.position==1))).order_by(BandSourceRecord.date,
+            BandSourceRecord.source,BandSourceRecord.source_scope,BandSourceRecord.device_id,BandSourceRecord.kind)
+    if limit is not None:query=query.limit(limit)
+    rows=db.execute(query.execution_options(yield_per=128))
+    selected=[]
+    size=0
     for row in rows:
-        selected[(row.date,row.kind,row.source,row.source_scope,row.device_id)]={'date':row.date,'kind':row.kind,
+        if max_bytes is not None:
+            from vitalis.application.health_query_budget import json_size
+            size+=json_size(row.data,max_bytes-size)
+        selected.append({'date':row.date,'kind':row.kind,
             'data':{**row.data,'fetched_at':row.fetched_at.replace(tzinfo=timezone.utc).isoformat(),
-                'source_record_id':row.source_record_id},'fetched_at':row.fetched_at.replace(tzinfo=timezone.utc)}
-    return list(selected.values())
+                'source_record_id':row.source_record_id},'fetched_at':row.fetched_at.replace(tzinfo=timezone.utc)})
+    return selected

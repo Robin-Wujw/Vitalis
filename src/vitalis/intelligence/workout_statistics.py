@@ -134,7 +134,10 @@ def _totals(rows):
         if len(sources) > 1:
             limitation = "multiple_sources_use_partitions"
             used = 0
-        elif metric in {"pace", "swim_pace", "cadence", "swolf", "distance_per_stroke", "stride_length", "ground_contact_time", "vertical_oscillation"} and len(sports) > 1:
+        elif metric in {"pace", "swim_pace"} and len({sport_family(row) for row, _ in observed}) > 1:
+            limitation = "multiple_families_use_partitions"
+            used = 0
+        elif metric in {"cadence", "swolf", "distance_per_stroke", "stride_length", "ground_contact_time", "vertical_oscillation"} and len(sports) > 1:
             limitation = "multiple_sports_use_partitions"
             used = 0
         elif observed:
@@ -171,27 +174,43 @@ def _point(row, metric):
             "source_record_id": row.get("source_record_id")}
 
 
-def _series(rows, metric):
+def _series_partitions(rows, metric, *, by_family=False):
     partitions = defaultdict(list)
+    denominators = defaultdict(int)
     for row in rows:
+        family = sport_family(row)
+        identity = (("family", family) if family != "unknown" else ("unclassified", sport_identity(row))) if by_family else sport_identity(row)
+        key = (row.get("source"), identity)
+        denominators[key] += 1
         if _value(row, metric) is not None:
-            partitions[(row.get("source"), sport_identity(row))].append(_point(row, metric))
+            partitions[key].append(_point(row, metric))
     results = []
     for (source, sport), points in sorted(partitions.items(), key=lambda pair: str(pair[0])):
         values = [point["value"] for point in points]
         result = {"source": source, "sport": sport, "values": points, "observations": len(points),
                   "mean": fmean(values), "minimum": min(values), "maximum": max(values), "trend": None}
+        if by_family:
+            result.pop("sport")
+            result.update(sport_family=points[0]["sport_family"], sports=sorted({point["sport"] for point in points}))
+        best = (min if metric in _LOWER else max)(points, key=lambda point: point["value"])
+        result["best"] = {**best, "unit": METRICS[metric][0], "scope": "queried_range",
+                          "selection": "minimum" if metric in _LOWER else "maximum"}
         days = [date.fromisoformat(point["activity_day"]) for point in points]
         if len(points) >= 3 and len(set(days)) > 1:
             fit = linear_regression([(day - days[0]).days for day in days], values)
             result["trend"] = {"change_per_30_days": round(fit.slope * 30, 6),
                 "method": "least_squares_over_activity_day", "observations": len(points),
                 "from": days[0].isoformat(), "to": days[-1].isoformat()}
-        denominator = sum(row.get("source") == source and sport_identity(row) == sport for row in rows)
+        denominator = denominators[(source, sport)]
         result["workouts"] = denominator
         result["coverage"] = len(points) / denominator
         results.append(result)
-    return {"metric": metric, "unit": METRICS[metric][0], "partitions": results,
+    return results
+
+
+def _series(rows, metric):
+    return {"metric": metric, "unit": METRICS[metric][0], "partitions": _series_partitions(rows, metric),
+            "family_partitions": _series_partitions(rows, metric, by_family=True),
             "qualification": "descriptive_no_health_direction_inferred"}
 
 

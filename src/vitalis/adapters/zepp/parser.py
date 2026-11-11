@@ -1684,6 +1684,14 @@ class ZeppParser:
                 day = ZeppParser._metric_date(item, None)
                 if subtype == "odi" and day:
                     source_scope, device_id = ZeppParser._provenance(item)
+                    validity = item.get("valid")
+                    if type(validity) is int and 0 <= validity <= 2**31 - 1:
+                        daily.append(DailyMetric(
+                            date=day, metric="spo2_odi_validity_code", value=validity, unit="vendor_code",
+                            source_scope=source_scope, device_id=device_id,
+                            source_field="odi.valid", qualification="vendor_semantics_unverified",
+                            observed_at=ZeppParser._parse_datetime_value(item.get("timestamp")),
+                        ))
                     for metric, keys, unit in (
                         ("spo2_odi", ("odi",), "events/h"),
                         ("spo2_odi_events", ("odiNum",), "count"),

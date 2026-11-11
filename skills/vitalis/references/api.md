@@ -1329,7 +1329,10 @@ Body Composition
 | --- | --- | --- | --- | --- |
 | Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
 | X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| before | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "Before"} |  |
+| cursor | query | no | {"anyOf": [{"maxLength": 4096, "minLength": 1, "type": "string"}, {"type": "null"}], "title": "Cursor"} |  |
 | from | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "From"} |  |
+| limit | query | no | {"default": 20, "maximum": 200, "minimum": 1, "title": "Limit", "type": "integer"} |  |
 | to | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "To"} |  |
 
 #### Request body

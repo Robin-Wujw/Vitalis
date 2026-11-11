@@ -485,6 +485,7 @@ class HealthQuery:
             return {
                 "user_id": user_id,
                 "authorized": False,
+                "token_expires_at": None,
                 "detail": "未导入凭据",
                 "import_page": "/api/connect/zepp/scan",
             }
@@ -503,6 +504,7 @@ class HealthQuery:
             "valid": valid,
             "vendor_user_id": metadata.vendor_user_id,
             "region_host": metadata.region_host,
+            "token_expires_at": _iso_utc(metadata.expires_at) if metadata.expires_at else None,
             "detail": detail,
             "error_kind": None,
             "retryable": False,

@@ -24,29 +24,30 @@ def number(value: object, minimum: float, maximum: float) -> float | None:
 
 def sleep_timing(sleep: dict, zone, asleep_minutes: int) -> dict:
     """Require both local-minute identities before calling a span time in bed."""
+    latency = number(sleep.get("is"), 0, 1440)
+    reported = {"sleep_latency_minutes": latency} if latency is not None else {}
     values = [number(sleep.get(key), 1, 1e11) for key in ("st", "ed")]
     if any(value is None for value in values) or values[1] <= values[0]:
-        return {}
+        return reported
     try:
         start, end = (datetime.fromtimestamp(value, timezone.utc) for value in values)
         midnight = datetime.combine(end.astimezone(zone).date(), time.min)
     except (OverflowError, OSError, ValueError):
-        return {}
-    latency = number(sleep.get("is"), 0, 1440)
+        return reported
     delay = number(sleep.get("lb"), 0, 1440)
     into = number(sleep.get("obt"), -1440, 1440)
     out = number(sleep.get("ebt"), -1440, 2880)
     if any(value is None for value in (latency, delay, into, out)):
-        return {}
+        return reported
     bed = start - timedelta(minutes=latency)
     leave = end + timedelta(minutes=delay)
     offsets = [(value.astimezone(zone).replace(tzinfo=None) - midnight).total_seconds() / 60
         for value in (bed, leave)]
     if abs(offsets[0] - into) > 1 or abs(offsets[1] - out) > 1:
-        return {}
+        return reported
     minutes = (leave - bed).total_seconds() / 60
     if not 0 < asleep_minutes <= minutes <= 1440:
-        return {}
+        return reported
     return {
         "in_bed_at": bed, "out_of_bed_at": leave,
         "sleep_latency_minutes": latency, "out_of_bed_delay_minutes": delay,

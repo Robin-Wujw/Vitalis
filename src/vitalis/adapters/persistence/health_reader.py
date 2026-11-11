@@ -5,13 +5,14 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from copy import deepcopy
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.orm import Session
 
 from vitalis.application.ports import (
+    HealthBodyRecordRead,
     HealthBrowserLinkRead,
     HealthDailyMetricRead,
     HealthDenseFileRead,
@@ -36,17 +37,21 @@ class SqlHealthReader(HealthReader):
     def __init__(self, session_factory: Callable[[], Session] = SessionLocal) -> None:
         self._session_factory = session_factory
 
-    def sleep_records(self, user_id: str, start: date, end: date, *, as_of: datetime) -> tuple[dict, ...]:
+    def sleep_records(self, user_id: str, start: date, end: date, *, as_of: datetime,
+                      limit: int | None = None, max_bytes: int | None = None) -> tuple[dict, ...]:
         from .band_sources import read_band_sources
 
         with self._session_factory() as db:
             return tuple(read_band_sources(db, user_id, start, end, as_of=as_of,
-                                          include_activity_details=False, kind="sleep"))
+                                          include_activity_details=False, kind="sleep",limit=limit,max_bytes=max_bytes))
 
-    def activity_records(self, user_id: str, start: date, end: date, *, as_of: datetime) -> tuple[dict, ...]:
+    def activity_records(self, user_id: str, start: date, end: date, *, as_of: datetime,
+                         include_minutes: bool = False, include_hourly: bool = False,
+                         limit: int | None = None, max_bytes: int | None = None) -> tuple[dict, ...]:
         from .band_sources import read_band_sources
         with self._session_factory() as db:
-            return tuple(read_band_sources(db, user_id, start, end, as_of=as_of, kind="activity"))
+            return tuple(read_band_sources(db, user_id, start, end, as_of=as_of, kind="activity",
+                include_minutes=include_minutes,include_hourly=include_hourly,limit=limit,max_bytes=max_bytes))
 
     def source_snapshot(self, user_id: str, kind: str) -> dict | None:
         with self._session_factory() as db:
@@ -54,11 +59,12 @@ class SqlHealthReader(HealthReader):
             return {"data": deepcopy(row.data), "fetched_at": row.fetched_at,
                     "source_record_id": row.source_record_id, "source": row.source} if row else None
 
-    def nap_records(self, user_id: str, start: date, end: date, *, as_of: datetime) -> tuple[dict, ...]:
+    def nap_records(self, user_id: str, start: date, end: date, *, as_of: datetime,
+                    limit: int | None = None, max_bytes: int | None = None) -> tuple[dict, ...]:
         from .band_sources import read_band_sources
         with self._session_factory() as db:
             return tuple(read_band_sources(db, user_id, start, end, as_of=as_of,
-                                          include_activity_details=False, kind="naps"))
+                                          include_activity_details=False, kind="naps",limit=limit,max_bytes=max_bytes))
 
     def raw_source_records(self, user_id: str, stream: str, start: date, end: date, limit: int) -> tuple[dict, ...]:
         from .source_journal import SourceJournalRecord as Raw, SourceJournalRepository as Journal
@@ -222,11 +228,55 @@ class SqlHealthReader(HealthReader):
             )
             yield (_metric_read(row) for row in rows)
 
+    def body_composition_records(
+        self, user_id: str, metrics: tuple[str, ...], start: datetime | None, end: datetime,
+        *, limit: int, after: tuple | None = None,
+    ) -> tuple[HealthBodyRecordRead, ...]:
+        """Merge bounded indexed metric pages, then read complete chosen records."""
+        sample = orm.MetricSample
+        keys = (sample.timestamp, sample.source, sample.source_scope, sample.device_id,
+                sample.source_record_id, sample.sample_ordinal)
+        conditions = [sample.user_id == user_id,
+            sample.timestamp < end.astimezone(timezone.utc).replace(tzinfo=None)]
+        if start is not None:
+            conditions.append(sample.timestamp >= start.astimezone(timezone.utc).replace(tzinfo=None))
+        if after is not None:
+            position = (after[0].astimezone(timezone.utc).replace(tzinfo=None), *after[1:])
+            conditions.append(tuple_(*keys) < tuple_(*position))
+        with self._session_factory() as db:
+            candidates = set()
+            # Each observation has at most one row per metric. A record outside
+            # every metric's first N positions cannot be in the merged first N.
+            for metric in metrics:
+                candidates.update(tuple(row) for row in db.execute(select(*keys).where(
+                    *conditions, sample.metric == metric,
+                ).order_by(*(column.desc() for column in keys)).limit(limit)))
+            selected = sorted(candidates, reverse=True)[:limit]
+            if not selected:
+                return ()
+            grouped = {key: [] for key in selected}
+            rows = db.scalars(select(sample).where(sample.user_id == user_id,
+                sample.metric.in_(metrics), sample.timestamp.in_({key[0] for key in selected}),
+                tuple_(*keys).in_(selected)))
+            for row in rows:
+                key = (row.timestamp, row.source, row.source_scope, row.device_id,
+                       row.source_record_id, row.sample_ordinal)
+                grouped[key].append((row.metric, _metric_read(row)))
+            return tuple(HealthBodyRecordRead(*key, measurements=tuple(sorted(grouped[key])))
+                         for key in selected)
+
     def daily_metrics(
-        self, user_id: str, start: date, end: date, metric: str | None = None
+        self, user_id: str, start: date, end: date, metric: str | None = None, *, limit: int | None = None
     ) -> tuple[HealthDailyMetricRead, ...]:
         with self._session_factory() as db:
-            rows = HealthRepository(db).daily_metrics(user_id, start, end, metric)
+            statement = select(orm.DailyMetric).where(orm.DailyMetric.user_id == user_id,
+                orm.DailyMetric.date.between(start, end))
+            if metric is not None:
+                statement = statement.where(orm.DailyMetric.metric == metric)
+            statement = statement.order_by(orm.DailyMetric.date, orm.DailyMetric.metric)
+            if limit is not None:
+                statement = statement.limit(limit)
+            rows = db.scalars(statement.execution_options(yield_per=128))
             return tuple(
                 HealthDailyMetricRead(
                     date=row.date,

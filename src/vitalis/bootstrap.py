@@ -219,7 +219,8 @@ def get_workout_statistics():
 
 def get_health_analytics():
     from vitalis.application.health_analytics import HealthAnalytics
-    return HealthAnalytics(SqlHealthReader(database.SessionLocal), timezone_name=settings.timezone)
+    return HealthAnalytics(SqlHealthReader(database.SessionLocal), timezone_name=settings.timezone,
+        cursor_secret=settings.token_encryption_key or "vitalis-synthetic-body-cursor")
 
 
 def get_vendor_query():

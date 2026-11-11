@@ -3,14 +3,16 @@ from datetime import UTC, date, datetime
 from types import SimpleNamespace
 
 from vitalis.application.health_analytics import HealthAnalytics
-from vitalis.application.ports import HealthDailyMetricRead, HealthMetricRead
+from vitalis.application.ports import HealthBodyRecordRead, HealthDailyMetricRead, HealthMetricRead
 
 
 def test_body_coverage_counts_local_observation_days():
     rows = [HealthMetricRead(timestamp=stamp, value=70, unit="kg", source="zepp",
         source_scope="scale", device_id="synthetic", source_record_id=str(i), sample_ordinal=0)
         for i, stamp in enumerate((datetime(2026, 9, 1, 23, tzinfo=UTC), datetime(2026, 9, 2, 1, tzinfo=UTC)))]
-    reader = SimpleNamespace(metric_samples=lambda _, metric, *args, **kwargs: rows if metric == "weight" else [])
+    records = tuple(HealthBodyRecordRead(row.timestamp, row.source, row.source_scope,
+        row.device_id, row.source_record_id, row.sample_ordinal, (("weight", row),)) for row in rows)
+    reader = SimpleNamespace(body_composition_records=lambda *args, **kwargs: records)
     result = HealthAnalytics(reader, timezone_name="Asia/Singapore").body_composition(
         "synthetic", date(2026, 9, 2), date(2026, 9, 2))
     assert result["sample_count"] == 2
@@ -22,7 +24,7 @@ def test_threshold_current_separates_reference_and_unverified_measurements():
         unit="bpm", source="zepp", source_scope="device", device_id="synthetic",
         source_field="lactateThresholdHr", qualification=qualification)
         for i, qualification in enumerate(("vendor_reference", "vendor_unit_unverified"))]
-    reader = SimpleNamespace(daily_metrics=lambda _, start, end, metric: rows if metric == "lactate_threshold_hr" else [],
+    reader = SimpleNamespace(daily_metrics=lambda _, start, end, metric, **k: rows if metric == "lactate_threshold_hr" else [],
         workout_statistics_workouts=lambda *args, **kwargs: [])
     result = HealthAnalytics(reader).thresholds("synthetic", date(2026, 9, 1), date(2026, 9, 3))
     assert len(result["current"]["lactate_threshold_hr"]) == 2

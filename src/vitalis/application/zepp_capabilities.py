@@ -6,7 +6,7 @@ TOOLS = {
     "zepp_sleep": {"endpoints": ["GET /api/health/sleep"], "options": ["from", "to"]},
     "zepp_list_workouts": {"endpoints": ["GET /api/workouts"], "options": ["from", "to", "sport", "family", "type", "source", "limit", "offset"]},
     "zepp_workout_detail": {"endpoints": ["GET /api/workouts/{workout_id}/sections"], "options": ["source", "include"]},
-    "zepp_body_composition": {"endpoints": ["GET /api/health/body-composition"], "options": ["from", "to"]},
+    "zepp_body_composition": {"endpoints": ["GET /api/health/body-composition"], "options": ["from", "to", "limit", "before", "cursor"]},
     "zepp_training_thresholds": {"endpoints": ["GET /api/health/training-thresholds"], "options": ["from", "to"]},
     "zepp_health_metrics": {"endpoints": ["GET /api/health/summary/{category}"], "options": ["from", "to", "include_samples"]},
     "zepp_workout_stats": {"endpoints": ["GET /api/workouts/statistics"], "options": ["from", "to", "sport", "group_by", "metric", "family", "source"]},
@@ -37,6 +37,7 @@ def schema(*, sports, wellness, workout):
             "muscleRate and oneFootMeasureTime units are unknown",
             "GPS streams retain their vendor encoding; no guessed coordinates",
             "Charge stress_data/insight_data and readiness watch_score_data remain raw",
+            "Auth country_code is not saved as public metadata; do not infer it from region_host",
             "A successful empty vendor response does not prove the user performed no activity"],
         "read_contract": {"network": "only explicit sync/raw jobs contact Zepp", "empty": "no_data",
             "missing": "null_or_absent_never_zero", "windows": "local inclusive dates, UTC sample intervals half-open"}}

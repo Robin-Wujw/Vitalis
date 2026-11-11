@@ -3,16 +3,16 @@ from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from contextlib import contextmanager
 
-from vitalis.application.ports import HealthMetricRead
+from vitalis.application.ports import HealthBodyRecordRead, HealthMetricRead
 
 DAY = date(2026, 1, 3)
 
 
 def reader():
-    source = SimpleNamespace(daily_metrics=lambda *a: (), metric_samples=lambda *a, **k: (),
+    source = SimpleNamespace(daily_metrics=lambda *a, **k: (), metric_samples=lambda *a, **k: (),
         activity_records=lambda *a, **k: (), sleep_records=lambda *a, **k: (),
         nap_records=lambda *a, **k: (), source_snapshot=lambda *a: None,
-        workout_statistics_workouts=lambda *a, **k: ())
+        workout_statistics_workouts=lambda *a, **k: (), body_composition_records=lambda *a, **k: ())
     @contextmanager
     def metric_rows(*args):
         yield iter(source.metric_samples(*args))
@@ -69,7 +69,7 @@ def test_sleep_enrichment_keeps_daily_readiness_and_odi_separate_from_sleep_wind
     source.sleep_records = lambda *a, **k: ({"date": DAY, "data": {
         "sleep_duration": 420, "source": "zepp", "source_scope": "device", "device_id": "watch-one",
         "sleep_started_at": "2026-01-02T23:00:00+00:00", "sleep_ended_at": "2026-01-03T06:00:00+00:00"}},)
-    source.daily_metrics = lambda *a: tuple(HealthDailyMetricRead(
+    source.daily_metrics = lambda *a, **k: tuple(HealthDailyMetricRead(
         date=day, metric=metric, value=value, unit=unit, source="zepp", source_scope="device", device_id=device,
         source_field=field, qualification="vendor_reported", observed_at=datetime(2026, 1, 3, 8, tzinfo=timezone.utc),
         fetched_at=datetime(2026, 1, 3, 9, tzinfo=timezone.utc))
@@ -94,10 +94,10 @@ def test_body_records_preserve_timestamp_and_qualification():
     from vitalis.application.health_analytics import HealthAnalytics
     source = reader()
     stamp = datetime(2026, 1, 3, tzinfo=timezone.utc)
-    source.metric_samples = lambda user, metric, *a, **k: (
-        HealthMetricRead(stamp, 30, "unknown", "zepp", "user_summary", None, None, None,
-            source_field="summary.muscleRate", qualification="community_schema"),
-    ) if metric == "muscle_rate" else ()
+    sample = HealthMetricRead(stamp, 30, "unknown", "zepp", "user_summary", None, None, None,
+        source_field="summary.muscleRate", qualification="community_schema")
+    source.body_composition_records = lambda *a, **k: (
+        HealthBodyRecordRead(stamp, "zepp", "user_summary", "", "", 0, (("muscle_rate", sample),)),)
     result = HealthAnalytics(source, timezone_name="UTC").body_composition("u", DAY, DAY)
     assert len(result["records"]) == 1
     assert result["records"][0]["measurements"]["muscle_rate"]["value"] == 30

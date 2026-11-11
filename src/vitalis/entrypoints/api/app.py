@@ -13,6 +13,7 @@ from vitalis import __version__
 from vitalis.bootstrap import available_sources
 from vitalis.config import settings
 from vitalis.adapters.persistence.database import SchemaMismatch, check_schema
+from vitalis.adapters.persistence.errors import is_sqlite_contention
 
 from .errors import ERROR_RESPONSES, error_response
 from .routes import (
@@ -75,7 +76,11 @@ def create_app() -> FastAPI:
             if not is_api:
                 raise
             log.warning("API request failed: request_id=%s type=%s", request_id, type(exc).__name__)
-            response = error_response(500, request_id)
+            if is_sqlite_contention(exc):
+                response = error_response(503, request_id)
+                response.headers["Retry-After"] = "5"
+            else:
+                response = error_response(500, request_id)
         else:
             if is_api and response.status_code >= 400:
                 # Only fixed, non-secret headers survive the public error body.

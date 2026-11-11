@@ -1,12 +1,15 @@
 """Durable coordinator integration for account metadata and explicit raw reads."""
 from datetime import UTC, date, datetime, timedelta
 import json
+import sqlite3
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 
 from vitalis.adapters.persistence import HealthRepository, session_scope
-from vitalis.adapters.persistence.models import SourceSnapshot
+from vitalis.adapters.persistence.models import AnalysisJob, SourceSnapshot
 from vitalis.adapters.persistence.source_journal import JournalError, SourceJournalRecord, SourceJournalRepository
 from vitalis.adapters.zepp.client import MockZeppClient, ZeppAuthError, ZeppAPIClient
 from vitalis.adapters.zepp.fetcher import FetchWindow
@@ -146,6 +149,87 @@ def test_raw_http_scope_owner_and_sanitized_result(client, issue_token):
     body = {"path": "/v2/users/me/events", "params": {}}
     assert client.post("/api/sources/zepp/raw-requests", json=body,
         headers={**read, "Idempotency-Key": "synthetic-raw-key-0001"}).status_code == 403
+
+
+@pytest.mark.parametrize("code,status", [
+    (sqlite3.SQLITE_BUSY, 503), (sqlite3.SQLITE_LOCKED, 503),
+    (sqlite3.SQLITE_BUSY_SNAPSHOT, 503), (sqlite3.SQLITE_LOCKED_SHAREDCACHE, 503),
+    (sqlite3.SQLITE_IOERR, 500), (None, 500),
+])
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_raw_post_storage_failures_use_error_codes_without_exposing_sql(
+    client, issue_token, monkeypatch, caplog, code, status, wrapped,
+):
+    from vitalis.entrypoints.api.routes import vendor
+
+    secret = "synthetic-private-sql-parameters"
+    error = sqlite3.OperationalError("database is locked: " + secret)
+    if code is not None:
+        error.sqlite_errorcode = code
+    failure = OperationalError("INSERT " + secret, {"private": secret}, error) if wrapped else error
+
+    def create(_command):
+        raise failure
+
+    monkeypatch.setattr(vendor, "get_sync_job_service", lambda: SimpleNamespace(create=create))
+    headers = {"Authorization": "Bearer " + issue_token("raw-storage-failure", ["source_raw"]),
+               "Idempotency-Key": "synthetic-raw-failure-key"}
+    response = client.post("/api/sources/zepp/raw-requests", headers=headers,
+                           json={"path": "/v2/users/me/events", "params": {}})
+    assert response.status_code == status
+    body = response.json()
+    assert body["state"] == "failed"
+    assert body["failure_code"] == ("service_unavailable" if status == 503 else "internal_error")
+    assert body["retryable"] is (status == 503)
+    assert body["next_action"] == ("retry_later" if status == 503 else "check_service")
+    assert body["request_id"] == response.headers["X-Request-ID"]
+    assert response.headers.get("Retry-After") == ("5" if status == 503 else None)
+    assert secret not in response.text + caplog.text
+
+
+def test_raw_http_post_dispatch_and_result_use_one_durable_chunk(client, issue_token, monkeypatch):
+    from vitalis.adapters.zepp import ZeppConnector
+
+    owner = "raw-http-dispatch"
+    calls = []
+
+    def fetch_raw(_client, request):
+        calls.append(request)
+        return Connector().fetch_raw(request)
+
+    monkeypatch.setattr(MockZeppClient, "fetch_raw", fetch_raw)
+    headers = {"Authorization": "Bearer " + issue_token(owner, ["source_raw"]),
+               "Idempotency-Key": "synthetic-raw-dispatch-key"}
+    body = {"path": "/v2/users/me/events", "params": {"eventType": "Synthetic"}}
+    created = client.post("/api/sources/zepp/raw-requests", headers=headers, json=body)
+    assert created.status_code == 202, created.text
+    assert calls == []
+    accepted = created.json()
+    repeated = client.post("/api/sources/zepp/raw-requests", headers=headers, json=body)
+    assert repeated.status_code == 202 and repeated.json()["job_id"] == accepted["job_id"]
+    pending = client.get(accepted["result_url"], headers=headers)
+    assert pending.status_code == 202 and pending.json()["state"] == "pending"
+    with session_scope() as db:
+        repo = HealthRepository(db)
+        chunks = repo.sync_chunks(accepted["job_id"])
+        assert len(chunks) == 1
+        assert chunks[0].stream == "raw_request"
+        assert chunks[0].stages["operation"] == "fetch_raw"
+        from vitalis.adapters.persistence.models import SyncAttempt
+        attempt = db.get(SyncAttempt, accepted["job_id"])
+        assert attempt.options["execution_context"]["notification_policy"] == "suppress"
+    worker = ZeppSyncCoordinator(connector=ZeppConnector(mock=True))
+    worker.drain_once(accepted["job_id"])
+    assert calls == [body]
+    result = client.get(accepted["result_url"], headers=headers)
+    assert result.status_code == 200, result.text
+    assert result.json()["state"] == "ready"
+    assert result.json()["status"] == "succeeded"
+    assert result.json()["result"]["payload"]["items"][0]["value"]["score"] == 73
+    assert result.json()["result"]["qualification"] == "raw_unverified"
+    assert "synthetic-secret" not in result.text
+    with session_scope() as db:
+        assert db.scalars(select(AnalysisJob).where(AnalysisJob.user_id == owner)).all() == []
 
 
 def test_raw_job_result_has_stable_413(client, issue_token, monkeypatch):

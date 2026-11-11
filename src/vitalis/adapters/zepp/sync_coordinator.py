@@ -1429,6 +1429,9 @@ class ZeppSyncCoordinator:
         reports.  The sync window and stream manifest are retained on the job so
         partial/cancelled attempts remain auditable without mutating snapshots.
         """
+        if (attempt.get("options") or {}).get("raw_request") is not None:
+            # Explicit raw reads retain payloads without changing normalized facts.
+            return
         if terminal_status not in {
             "succeeded", "partial", "failed", "needs_reauth", "cancelled",
         }:

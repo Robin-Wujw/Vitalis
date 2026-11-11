@@ -100,6 +100,8 @@ Charge stress/insight 和 readiness watch_score_data 有非空原始内容，但
 
 标准查询需要 read scope，读取本地保存值。数据缺失返回 no_data，功能存在不保证账号有数据；统计窗口和覆盖只承诺已保存记录。原始请求与原文读取另需 source_raw：固定已认证区域主机、仅 GET、本人路径用 `users/me`，拒绝主机/身份/凭证覆盖，展开 JSON 最多 2 MiB。任务使用现有 SyncAttempt、幂等键、worker 租约与账号 fencing，HTTP 路由不直接联网。原文加密保存，输出递归移除凭据字段；超预算413、失败502、待完成202。`/raw-records` 先列元信息，再按ID读取；opaque 流保持 raw_unverified。Hermes 当前令牌没有 source_raw。
 
+2026-11-11 服务器通过 HTTP 完成 14 项能力读回：定向健康/档案同步、训练详情刷新和有界原始 GET 均成功。本人账号可读到 PAI 总值/每日/区间分项、呼吸、readiness、档案和设备元信息；体成分当前只有体重、身高与 BMI，不能推断有体脂或肌肉记录。训练详情已按 5.2 合同读回；本人分钟活动形状仍是 `unverified_layout`，不输出伪造的小时或分钟步数。无本人记录的字段通过合成有数据/无数据测试核对实现，不能把这些测试写成真实设备验证。验收用临时维护令牌已撤销，未向真实渠道发送测试通知。
+
 同版 APK 的公开资源 `goal_fatbure_daily` / `goal_set_fatbure_tip` 将目标称为“每日燃脂时间目标”，说明它与燃脂心率区间内的时间有关，不能当全部活动或训练总时长。DailyHealth 的 `totalBurningDuration` 现独立保存为 `vendor_burning_minutes`，与 `burningDurationGoal` 对照；新解析保留实际匹配的源字段。旧日级 `active_minutes` 若没有明确 `activeMinutes` 来源，报告分析暂不采用，原文和历史记录保留供审计；不得把只含 DailyHealth 的回放直接应用到真实用户的整个日期窗口。剩余历史修正边界见[来源修复计划](plan/daily-metric-provenance-repair.md)。
 
 负荷定义的一手证据为同版 APK 的 `phn_exertion_atl_and_ctl_text`、`phn_exertion_training_status_desc` 和 `phn_training_status_formula`：ATL 表示近 7 天活动量加权平均，CTL 表示近 42 天加权平均，TSB 为 CTL−ATL。App 另有运动记录/全天活动统计选项，但 `_total` 与两选项的具体字段映射及加权参数未核实。可以解释名词，不能据此为个人诊断疲劳或许可加量；普通报告省略六字段列表，按需查询仍保留原值和来源。

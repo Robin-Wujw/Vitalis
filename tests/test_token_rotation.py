@@ -142,3 +142,32 @@ def test_cli_rotation_requires_explicit_identity_and_scopes():
     from vitalis.entrypoints.cli import main
     with pytest.raises(SystemExit):
         main(["token", "rotate", "--token-file", "/private/access.token"])
+
+
+@pytest.mark.parametrize("operation", ["issue", "rotate"])
+def test_cli_token_commands_preserve_explicit_source_raw_scope(operation, tmp_path, issue_token, monkeypatch, capsys):
+    from vitalis.entrypoints.cli import main
+
+    owner = f"cli-source-raw-{operation}"
+    original = issue_token(owner, {"read", "source_raw"})
+    tmp_path.chmod(0o700)
+    path = tmp_path / "source-raw.token"
+    if os.name != "posix":
+        monkeypatch.setattr(rotation, "_check_directory", lambda path: None)
+    monkeypatch.setattr(rotation, "_probe", lambda *args: None)
+    args = ["token", operation, "--user", owner, "--scope", "read", "--scope", "source_raw"]
+    if operation == "rotate":
+        path.write_text(original + "\n", encoding="ascii")
+        path.chmod(0o600)
+        args += ["--token-file", str(path), "--force"]
+    else:
+        args += ["--output", str(path)]
+    assert main(args) == 0
+    saved = path.read_text(encoding="ascii").strip()
+    assert saved != original
+    with session_scope() as db:
+        row = db.get(AccessToken, token_digest(saved))
+        assert row.user_id == owner and set(row.scopes) == {"read", "source_raw"}
+        assert row.revoked_at is None
+    output = capsys.readouterr()
+    assert saved not in output.out + output.err and original not in output.out + output.err

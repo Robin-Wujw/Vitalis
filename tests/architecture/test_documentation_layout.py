@@ -54,9 +54,9 @@ def test_runtime_examples_track_api_worker_and_authentication():
     assert not any(path.startswith("/api/v1") for path in paths)
     assert "start_scheduler()" in _read("src/vitalis/entrypoints/worker.py")
     assert "start_scheduler()" not in _read("src/vitalis/entrypoints/api/app.py")
-    assert 'frozenset({"read", "analyze", "sync", "feedback", "manage", "coach", "source_raw"})' in _read(
-        "src/vitalis/adapters/persistence/access_tokens.py"
-    )
+    from vitalis.application.access_scopes import ACCESS_SCOPES
+    assert ACCESS_SCOPES == {"read", "analyze", "sync", "feedback", "manage", "coach", "source_raw"}
+    assert all(f"`{scope}`" in _read("docs/agents.md") for scope in ACCESS_SCOPES)
     assert "/api/reports/daily" in _read("docs/quickstart.md")
     assert "Bearer" in _read("docs/agents.md")
     assert "X-User-Id" in _read("docs/agents.md")

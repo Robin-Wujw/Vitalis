@@ -404,7 +404,7 @@ def main(argv: list[str] | None = None) -> int:
     user_commands = user.add_subparsers(dest="user_command", required=True)
     create_user = user_commands.add_parser("create", help="Create a local user")
     create_user.add_argument("--id", required=True)
-    from vitalis.adapters.persistence.access_tokens import ACCESS_SCOPES
+    from vitalis.application.access_scopes import ACCESS_SCOPES
 
     token = subcommands.add_parser("token", help="Provision scoped API access")
     token_commands = token.add_subparsers(dest="token_command", required=True)

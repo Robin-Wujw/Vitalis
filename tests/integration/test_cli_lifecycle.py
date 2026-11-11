@@ -88,7 +88,9 @@ def test_new_database_demo_analysis_and_restart(tmp_path):
     assert result["dataset"] == "synthetic_demo"
     assert result["days_imported"] > 0
     assert result["analysis_run_id"]
-    assert _cli("doctor", database_url=f"sqlite:///{target.as_posix()}").returncode == 0
+    assert target.is_file(), "demo must initialize its requested database, not the CLI startup database"
+    doctor = _cli("doctor", database_url=f"sqlite:///{target.as_posix()}")
+    assert doctor.returncode == 0, doctor.stdout + doctor.stderr
     assert _cli("db", "init", database_url=f"sqlite:///{target.as_posix()}").returncode == 0
     again = _cli("demo", "--database", target)
     assert again.returncode == 1

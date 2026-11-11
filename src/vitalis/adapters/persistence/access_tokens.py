@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from .models import AccessToken, User
+from vitalis.application.access_scopes import ACCESS_SCOPES
 
-ACCESS_SCOPES = frozenset({"read", "analyze", "sync", "feedback", "manage", "coach", "source_raw"})
+from .models import AccessToken, User
 
 
 def _utc_naive(value: datetime) -> datetime:

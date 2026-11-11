@@ -30,6 +30,193 @@ def test_generic_request_can_select_multiple_workout_sections(installed):
     assert query["include"] == ["summary", "laps"]
 
 
+def body_page(number, cursor=None, *, count=1):
+    return {
+        "state": "partial" if cursor else "ready" if count else "no_data",
+        "range": {"from": None, "to": "2026-11-01", "timezone": "Asia/Shanghai", "time_basis": "calendar_day"},
+        "records": [{"sample_id": f"sample-{number}-{index}", "source": "synthetic",
+            "observed_at": "2026-10-01T00:00:00+00:00", "measurements": {
+                "weight": {"value": 70 + number, "unit": "kg", "qualification": "observed"},
+                "bmi": {"value": 22, "unit": "kg/m2", "qualification": "derived"},
+            }} for index in range(count)],
+        "has_more": cursor is not None, "next_cursor": cursor, "truncated": cursor is not None,
+        "sample_count": count, "limit": 20,
+        "coverage": {"scope": "returned_page_records_only", "days_with_data": min(count, 1)},
+        "supported_metrics": ["weight", "bmi", "body_fat"],
+    }
+
+
+def test_follow_cursor_keeps_exact_cursor_dates_and_complete_records(installed):
+    cursor = "eyJ2Ij" + "A_b-9" * 400 + ".4c8d"
+    pages = [body_page(1, cursor), body_page(2)]
+    with mock_api() as (base, calls, responses):
+        responses[("GET", "/api/health/body-composition")] = [(200, page, {}) for page in pages]
+        code, result = invoke(installed, base, "request", "GET", "/api/health/body-composition",
+            "--follow-cursor", "--param", "from=2000-01-01", "--param", "to=2026-11-01",
+            "--param", "before=2026-10-31", "--param", "limit=20")
+    assert code == 0, result
+    assert len(calls) == 2
+    query = {"from": ["2000-01-01"], "to": ["2026-11-01"], "before": ["2026-10-31"], "limit": ["20"]}
+    assert parse_qs(urlsplit(calls[0][1]).query) == query
+    assert parse_qs(urlsplit(calls[1][1]).query) == {**query, "cursor": [cursor]}
+    assert result["records"] == pages[0]["records"] + pages[1]["records"]
+    assert result["pages"] == [{key: value for key, value in page.items() if key != "records"} for page in pages]
+    assert result["state"] == "ready"
+    assert result["pagination"]["complete"] is True
+    assert result["pagination"]["stop_reason"] == "exhausted"
+    assert result["pagination"]["resume_params"] is None
+    assert result["coverage"] == {"scope": "saved_records_only"}
+    assert result["has_more"] is False and result["next_cursor"] is None
+
+
+@pytest.mark.parametrize("method,path", [("POST", "health/body-composition"),
+    ("PATCH", "health/body-composition"), ("DELETE", "health/body-composition"),
+    ("GET", "health/period-summary"), ("GET", "sources/zepp/raw-requests")])
+def test_follow_cursor_rejects_other_routes_before_stdin_key_or_http(installed, tmp_path, method, path):
+    key_file = tmp_path / "must-not-exist.json"
+    with mock_api() as (base, calls, _):
+        code, result = invoke(installed, base, "request", method, path, "--follow-cursor",
+            "--key-file", str(key_file), body="not JSON")
+    assert code == 1 and result == {"status": "error", "error": "invalid_arguments"}
+    assert calls == [] and not key_file.exists()
+
+
+@pytest.mark.parametrize("name", ["cursor", "from", "to", "before", "limit"])
+def test_follow_cursor_rejects_repeated_single_value_parameters(installed, name):
+    with mock_api() as (base, calls, _):
+        code, result = invoke(installed, base, "request", "GET", "health/body-composition", "--follow-cursor",
+            "--param", name + "=first", "--param", name + "=second")
+    assert code == 1 and result == {"status": "error", "error": "invalid_arguments"}
+    assert calls == []
+
+
+@pytest.mark.parametrize("budget,maximum,reason", [("MAX_CURSOR_PAGES", 1, "page_limit"),
+    ("MAX_CURSOR_RECORDS", 1, "record_limit"), ("MAX_CURSOR_RESPONSE_BYTES", 1, "response_byte_limit")])
+def test_follow_cursor_stops_before_consuming_over_budget_page(installed, monkeypatch, budget, maximum, reason):
+    client = runpy.run_path(str(installed))
+    pages = [body_page(1, "second-page"), body_page(2, count=2)]
+    if budget == "MAX_CURSOR_RESPONSE_BYTES":
+        maximum = len(json.dumps(pages[0]).encode()) + 20
+    monkeypatch.setitem(client["run"].__globals__, budget, maximum)
+    monkeypatch.setenv("VITALIS_ACCESS_TOKEN", TOKEN)
+    with mock_api() as (base, calls, responses):
+        monkeypatch.setenv("VITALIS_API_BASE_URL", base)
+        responses[("GET", "/api/health/body-composition")] = [(200, page, {}) for page in pages]
+        result = client["run"](client["parse_args"](["request", "GET", "health/body-composition", "--follow-cursor",
+            "--param", "before=2026-11-01"]))
+    assert result["state"] == "partial"
+    assert result["records"] == pages[0]["records"]
+    assert result["next_cursor"] == "second-page"
+    assert result["has_more"] is True
+    assert result["pagination"]["complete"] is False
+    assert result["pagination"]["stop_reason"] == reason
+    assert result["pagination"]["resume_params"] == {"before": "2026-11-01", "cursor": "second-page"}
+    assert len(calls) == (1 if budget in {"MAX_CURSOR_PAGES", "MAX_CURSOR_RECORDS"} else 2)
+
+
+def test_follow_cursor_rejects_entire_page_when_remaining_record_budget_is_small(installed, monkeypatch):
+    client = runpy.run_path(str(installed))
+    monkeypatch.setitem(client["run"].__globals__, "MAX_CURSOR_RECORDS", 2)
+    monkeypatch.setenv("VITALIS_ACCESS_TOKEN", TOKEN)
+    with mock_api() as (base, calls, responses):
+        monkeypatch.setenv("VITALIS_API_BASE_URL", base)
+        pages = [body_page(1, "second-page"), body_page(2, count=2)]
+        responses[("GET", "/api/health/body-composition")] = [(200, page, {}) for page in pages]
+        result = client["run"](client["parse_args"](["request", "GET", "health/body-composition", "--follow-cursor"]))
+    assert len(calls) == 2
+    assert result["records"] == pages[0]["records"]
+    assert result["next_cursor"] == "second-page"
+    assert result["pagination"]["stop_reason"] == "record_limit"
+
+
+@pytest.mark.parametrize("bad_page,reason", [({"records": []}, "invalid_page"),
+    (body_page(2, "second-page"), "cursor_cycle"),
+    ({**body_page(2), "has_more": True}, "invalid_page"),
+    ({**body_page(2), "sample_count": 999}, "invalid_page"),
+    (body_page(2, "a" * 4097), "invalid_page"),
+    ({**body_page(2), "range": {"to": "2026-11-02"}}, "invalid_page")])
+def test_follow_cursor_stops_on_malformed_or_repeated_cursor(installed, bad_page, reason):
+    first = body_page(1, "second-page")
+    with mock_api() as (base, calls, responses):
+        responses[("GET", "/api/health/body-composition")] = [(200, first, {}), (200, bad_page, {})]
+        code, result = invoke(installed, base, "request", "GET", "health/body-composition", "--follow-cursor")
+    assert code == 0 and len(calls) == 2
+    assert result["state"] == "partial"
+    assert result["records"] == first["records"]
+    assert result["next_cursor"] == "second-page"
+    assert result["pagination"]["stop_reason"] == reason
+    assert result["pagination"]["complete"] is False
+
+
+def test_follow_cursor_returns_partial_safe_error_and_unconsumed_cursor(installed):
+    first = body_page(1, "second-page")
+    with mock_api() as (base, calls, responses):
+        responses[("GET", "/api/health/body-composition")] = [(200, first, {}), (422,
+            {"state": "failed", "failure_code": "invalid_cursor", "retryable": False,
+             "next_action": "correct_request", "detail": "private contents"}, {})]
+        code, result = invoke(installed, base, "request", "GET", "health/body-composition", "--follow-cursor")
+    assert code == 0 and len(calls) == 2
+    assert result["state"] == "partial" and result["records"] == first["records"]
+    assert result["next_cursor"] == "second-page"
+    assert result["pagination"]["stop_reason"] == "request_failed"
+    assert result["pagination"]["error"] == {"status": "error", "error": "http_error", "http_status": 422,
+        "state": "failed", "failure_code": "invalid_cursor", "retryable": False, "next_action": "correct_request"}
+    assert "private contents" not in json.dumps(result)
+
+
+def test_follow_cursor_first_http_error_is_still_failure(installed):
+    with mock_api() as (base, calls, responses):
+        responses[("GET", "/api/health/body-composition")] = [(403, {}, {})]
+        code, result = invoke(installed, base, "request", "GET", "health/body-composition", "--follow-cursor")
+    assert len(calls) == 1
+    assert code == 1 and result == {"status": "error", "error": "forbidden", "http_status": 403}
+
+
+def test_follow_cursor_supports_resume_and_empty_saved_history(installed):
+    with mock_api() as (base, calls, responses):
+        responses[("GET", "/api/health/body-composition")] = [(200, body_page(1, count=0), {})]
+        code, result = invoke(installed, base, "request", "GET", "health/body-composition", "--follow-cursor",
+            "--param", "cursor=existing-complete-cursor")
+    assert code == 0, result
+    assert parse_qs(urlsplit(calls[0][1]).query) == {"cursor": ["existing-complete-cursor"]}
+    assert result["state"] == "no_data" and result["records"] == []
+    assert result["pagination"]["complete"] is True
+    assert result["coverage"]["scope"] == "saved_records_only"
+
+
+def test_follow_cursor_first_page_over_budget_keeps_original_resume_parameters(installed, monkeypatch):
+    client = runpy.run_path(str(installed))
+    monkeypatch.setitem(client["run"].__globals__, "MAX_CURSOR_RESPONSE_BYTES", 1)
+    monkeypatch.setenv("VITALIS_ACCESS_TOKEN", TOKEN)
+    with mock_api() as (base, calls, responses):
+        monkeypatch.setenv("VITALIS_API_BASE_URL", base)
+        responses[("GET", "/api/health/body-composition")] = [(200, body_page(1), {})]
+        result = client["run"](client["parse_args"](["request", "GET", "health/body-composition", "--follow-cursor",
+            "--param", "from=2000-01-01"]))
+    assert len(calls) == 1 and result["records"] == [] and result["pages"] == []
+    assert result["state"] == "partial" and result["next_cursor"] is None
+    assert result["pagination"]["resume_params"] == {"from": "2000-01-01"}
+    assert result["pagination"]["response_bytes"] == 2  # One bounded sentinel byte detects overflow.
+    assert result["pagination"]["stop_reason"] == "response_byte_limit"
+
+
+def test_follow_cursor_retry_response_also_consumes_byte_budget(installed, monkeypatch):
+    client = runpy.run_path(str(installed))
+    first = body_page(1, "second-page")
+    error = {"state": "failed", "failure_code": "unavailable", "retryable": True, "next_action": "retry_later"}
+    budget = len(json.dumps(first).encode()) + len(json.dumps(error).encode()) + 10
+    monkeypatch.setitem(client["run"].__globals__, "MAX_CURSOR_RESPONSE_BYTES", budget)
+    monkeypatch.setenv("VITALIS_ACCESS_TOKEN", TOKEN)
+    with mock_api() as (base, calls, responses):
+        monkeypatch.setenv("VITALIS_API_BASE_URL", base)
+        responses[("GET", "/api/health/body-composition")] = [(200, first, {}), (503, error, {}), (200, body_page(2), {})]
+        result = client["run"](client["parse_args"](["request", "GET", "health/body-composition", "--follow-cursor"]))
+    assert len(calls) == 3 and result["records"] == first["records"]
+    assert result["next_cursor"] == "second-page"
+    assert result["pagination"]["response_bytes"] == budget + 1
+    assert result["pagination"]["stop_reason"] == "response_byte_limit"
+
+
 @pytest.fixture
 def installed(tmp_path):
     bundle = tmp_path / "detached" / "vitalis"

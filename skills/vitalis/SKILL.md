@@ -50,8 +50,11 @@ description: Retrieve Vitalis facts, use bounded deterministic coaching tools, c
 | 日活动及小时步数 | `health/daily-summary`，按需 `include_hourly=true`；分钟最多 31 天，用 `include_minutes=true`。区间总量读取各来源 `summary.指标[].summary.total`，周期摘要在 `activity.summary` 下，不把不同设备相加。 |
 | 某日心率、区间睡眠 | `health/heart-rate --param day=YYYY-MM-DD`，按需 `include_series=true`；`health/sleep` 返回完整睡眠、午睡及睡眠窗呼吸/HRV。 |
 | HRV、压力、血氧、PAI、Charge、准备度、每日目标 | `health/summary/CATEGORY`，类别为 hrv/stress/spo2/pai/body_charge/readiness/daily_goals/resting_heart_rate/respiratory_rate；按需 include_samples=true。 |
-| 体重体脂、乳酸阈值 | `health/body-composition` 支持 `limit`、`before=YYYY-MM-DD` 和 `from`/`to`；保持原日期筛选，把 `next_cursor` 作为下一页的 `cursor`，不能把第一页当全部历史。乳酸阈值读 `health/training-thresholds`。 |
+| 体重体脂、乳酸阈值 | 全部已保存体成分用 `request GET health/body-composition --follow-cursor --param limit=200`，支持 `before=YYYY-MM-DD` 和 `from`/`to`；客户端原样传完整游标，不手抄或缩写。乳酸阈值读 `health/training-thresholds`。 |
 | Zepp 档案、设备固件、能力范围 | `sources/zepp/profile`、`sources/zepp/schema`；与本人确认的 `query profile` 分开。 |
+| Zepp 凭据授权、已保存的到期时间 | `request GET health/token-status`；`query connection-progress` 只查连接/同步进度，不能用它回答凭据到期。 |
+
+体成分完整命令：`python <Skill目录>/scripts/vitalis_api.py request GET health/body-composition --follow-cursor --param limit=200`。最多 50 页、10,000 条完整记录、8 MiB 响应；`state=partial` 时按 `pagination.stop_reason` 说明未读完，续查保留 `pagination.resume_params` 的完整参数。逐页 coverage 保留在 `pages`，读完仅表示此次已保存分页结束，不能证明厂商历史已全部同步。凭据完整命令：`python <Skill目录>/scripts/vitalis_api.py request GET health/token-status`；到期字段为空就回答未保存，不为此额外查档案或进度。
 
 `no_data` 表示本地窗口没有记录，不代表没功能、没发生或零值。先结合 `status` 的取数状态解释；指标目录不是本人数据证明。不同来源、设备、单位、资格保持分组，samples_truncated 仅截样本展示，coverage_scope 只承诺已保存观测。厂商皮温原值、muscleRate、GPS 编码等不猜单位；目标中的 vendor_burning_minutes 是 Zepp 燃脂时间，不是全天运动时长。
 

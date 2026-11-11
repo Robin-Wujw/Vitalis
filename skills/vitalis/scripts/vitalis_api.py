@@ -24,6 +24,9 @@ import uuid
 TIMEOUT_SECONDS = 10
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_FEEDBACK_BYTES = 16 * 1024
+MAX_CURSOR_PAGES = 50
+MAX_CURSOR_RECORDS = 10_000
+MAX_CURSOR_RESPONSE_BYTES = 8 * 1024 * 1024
 TRANSIENT_STATUSES = {429, 502, 503, 504}
 REPORT_KINDS = (
     "daily", "morning", "evening", "weekly", "monthly",
@@ -75,6 +78,25 @@ class ClientError(Exception):
             result["http_status"] = self.http_status
         result.update(self.fields)
         return result
+
+
+class ResponseBudget:
+    """Bound bytes received across a cursor traversal, including failed attempts."""
+
+    def __init__(self, limit: int):
+        self.limit = limit
+        self.received = 0
+
+    def read(self, response) -> bytes:
+        remaining = self.limit - self.received
+        if remaining <= 0:
+            raise ClientError("response_byte_limit")
+        maximum = min(MAX_RESPONSE_BYTES, remaining)
+        raw = response.read(maximum + 1)
+        self.received += len(raw)
+        if len(raw) > maximum:
+            raise ClientError("response_byte_limit" if maximum == remaining else "response_too_large")
+        return raw
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -295,14 +317,14 @@ def redact(value, token: str):
     return value
 
 
-def coach_error_fields(response, token: str) -> dict:
+def coach_error_fields(response, token: str, budget: ResponseBudget | None = None) -> dict:
     """Read only bounded machine-readable error metadata, never server prose."""
     try:
-        raw = response.read(MAX_RESPONSE_BYTES + 1)
+        raw = budget.read(response) if budget is not None else response.read(MAX_RESPONSE_BYTES + 1)
         if len(raw) > MAX_RESPONSE_BYTES:
             return {}
         payload = strict_json(raw)
-    except (OSError, ValueError, UnicodeError, RecursionError):
+    except (OSError, ValueError, UnicodeError, RecursionError, ClientError):
         return {}
     if not isinstance(payload, dict):
         return {}
@@ -318,7 +340,7 @@ def coach_error_fields(response, token: str) -> dict:
 
 
 def request(method: str, path: str, token: str, body: dict | None = None,
-            params: dict | None = None, key: str | None = None):
+            params: dict | None = None, key: str | None = None, *, budget: ResponseBudget | None = None):
     origin = api_origin()
     url = origin + "/api/" + path
     if params:
@@ -334,9 +356,11 @@ def request(method: str, path: str, token: str, body: dict | None = None,
     # Disable implicit proxies as well as redirects; credentials go only to the configured origin.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     for attempt in range(2 if method == "GET" else 1):
+        if budget is not None and budget.received >= budget.limit:
+            raise ClientError("response_byte_limit")
         try:
             with opener.open(req, timeout=TIMEOUT_SECONDS) as response:
-                raw = response.read(MAX_RESPONSE_BYTES + 1)
+                raw = budget.read(response) if budget is not None else response.read(MAX_RESPONSE_BYTES + 1)
                 if len(raw) > MAX_RESPONSE_BYTES:
                     raise ClientError("response_too_large")
                 try:
@@ -348,7 +372,7 @@ def request(method: str, path: str, token: str, body: dict | None = None,
                     raise ClientError("invalid_response_json") from exc
         except urllib.error.HTTPError as exc:
             try:
-                fields = coach_error_fields(exc, token)
+                fields = coach_error_fields(exc, token, budget)
             finally:
                 exc.close()
             if 300 <= exc.code < 400:
@@ -365,6 +389,74 @@ def request(method: str, path: str, token: str, body: dict | None = None,
                 time.sleep(0.2)
                 continue
             raise ClientError("network_error") from exc
+
+
+def follow_body_cursor(token: str, params: dict):
+    """Transport complete pages without recalculating their health facts or coverage."""
+    params = dict(params)
+    records, pages = [], []
+    seen = set()
+    budget = ResponseBudget(MAX_CURSOR_RESPONSE_BYTES)
+    complete, error = False, None
+    while True:
+        if len(pages) >= MAX_CURSOR_PAGES:
+            reason = "page_limit"
+            break
+        if len(records) >= MAX_CURSOR_RECORDS:
+            reason = "record_limit"
+            break
+        cursor = params.get("cursor")
+        if cursor is not None:
+            seen.add(cursor)
+        try:
+            page = request("GET", "health/body-composition", token, params=params, budget=budget)
+        except ClientError as exc:
+            if exc.code == "response_byte_limit":
+                reason = "response_byte_limit"
+            elif not pages:
+                raise
+            else:
+                reason, error = "request_failed", exc.as_json()
+            break
+        if not valid_body_page(page) or pages and page["range"] != pages[0]["range"]:
+            reason = "invalid_page"
+            break
+        next_cursor = page["next_cursor"]
+        if next_cursor is not None and next_cursor in seen:
+            reason = "cursor_cycle"
+            break
+        if len(records) + len(page["records"]) > MAX_CURSOR_RECORDS:
+            reason = "record_limit"
+            break
+        # Consume only whole pages. On any failure, params still points to the unconsumed page.
+        records.extend(page["records"])
+        pages.append({name: value for name, value in page.items() if name != "records"})
+        if not page["has_more"]:
+            complete, reason = True, "exhausted"
+            break
+        params["cursor"] = next_cursor
+    pagination = {"complete": complete, "stop_reason": reason, "pages_read": len(pages),
+        "records_returned": len(records), "response_bytes": budget.received,
+        "resume_params": None if complete else params}
+    if error is not None:
+        pagination["error"] = error
+    return {"state": "partial" if not complete else "ready" if records else "no_data",
+        "records": records, "pages": pages, "coverage": {"scope": "saved_records_only"},
+        "has_more": not complete, "next_cursor": None if complete else params.get("cursor"),
+        "truncated": not complete, "pagination": pagination}
+
+
+def valid_body_page(page) -> bool:
+    if not isinstance(page, dict):
+        return False
+    records = page.get("records")
+    has_more, cursor = page.get("has_more"), page.get("next_cursor")
+    return (isinstance(records, list) and all(isinstance(record, dict) for record in records)
+        and type(page.get("sample_count")) is int and page["sample_count"] == len(records)
+        and isinstance(page.get("coverage"), dict) and isinstance(page.get("range"), dict)
+        and type(has_more) is bool and page.get("truncated") is has_more
+        and page.get("state") == ("partial" if has_more else "ready" if records else "no_data")
+        and (bool(records) and isinstance(cursor, str) and 1 <= len(cursor) <= 4096 if has_more else cursor is None))
 
 
 def api_path(value: str) -> str:
@@ -404,6 +496,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     generic.add_argument("path", type=api_path)
     generic.add_argument("--param", action="append", default=[], metavar="NAME=VALUE")
     generic.add_argument("--key-file")
+    generic.add_argument("--follow-cursor", action="store_true", help="Read saved body-composition pages within client budgets")
     metrics = commands.add_parser("metrics", help="Read stored timestamped or daily vendor facts")
     metrics.add_argument("metric")
     metrics.add_argument("--from", dest="from_date", required=True, help="Timezone-aware timestamp; YYYY-MM-DD with --daily")
@@ -491,6 +584,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     workouts.add_argument("--strength-details", action="store_true", help="Read saved strength sets for at most 20 workouts")
     workouts.add_argument("--samples", action="store_true", help="Include metric samples for a single workout")
     args = parser.parse_args(argv)
+    if args.command == "request" and args.follow_cursor and (args.method != "GET" or args.path != "health/body-composition"):
+        raise ClientError("invalid_arguments")
     if args.command == "sleep-records":
         if not 0 <= (date.fromisoformat(args.to) - date.fromisoformat(args.from_date)).days <= 365:
             raise ClientError("invalid_arguments")
@@ -541,6 +636,8 @@ def run(args: argparse.Namespace):
         body = feedback_body() if args.method in {"POST", "PUT", "PATCH"} else None
         if args.key_file and args.method == "GET":
             raise ClientError("invalid_arguments")
+        if args.follow_cursor:
+            return follow_body_cursor(token, params)
         key = key_from_file(args.key_file, f"{args.method} /api/{args.path}", body or {}) if args.key_file else None
         return request(args.method, args.path, token, body=body, params=params or None, key=key)
     if args.command == "status":

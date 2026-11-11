@@ -6,6 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from vitalis.entrypoints.api.deps import require_scope, require_user_id
+from vitalis.entrypoints.api.date_windows import date_window
 from vitalis.intelligence.contracts import (
     AgentContext,
     DecisionExplanation,
@@ -92,8 +93,7 @@ def events(
     event_type: str | None = None,
     user_id: str = Depends(require_user_id),
 ) -> HealthEventResponse:
-    period_end = end or local_today()
-    period_start = start or period_end - timedelta(days=27)
+    period_start, period_end = date_window(start, end, default_days=28)
     try:
         return get_intelligence_query().events(user_id, period_start, period_end, event_type)
     except ValueError as exc:

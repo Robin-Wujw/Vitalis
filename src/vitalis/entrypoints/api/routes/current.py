@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from vitalis.entrypoints.api.deps import require_scope, require_user_id
+from vitalis.entrypoints.api.date_windows import date_window
 from vitalis.bootstrap import (
     get_health_query,
     get_source_account_service,
@@ -250,10 +251,7 @@ def list_workouts(
 ) -> dict:
     if include_strength_details and limit > 20:
         raise HTTPException(status_code=422, detail="Strength details require limit 1..20")
-    end = to_date or local_today()
-    start = from_date or (end - timedelta(days=27))
-    if start > end:
-        start, end = end, start
+    start, end = date_window(from_date, to_date, default_days=28)
     from vitalis.bootstrap import get_workout_statistics
     from vitalis.config import settings
     return get_workout_statistics().list_workouts(user_id, start=start, end=end,

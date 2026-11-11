@@ -7,7 +7,7 @@ class VendorQuery:
         self._reader = reader
 
     def records(self, user_id, stream, start, end, limit=50):
-        if not 0 <= (end - start).days < 730 or not 1 <= limit <= 100:
+        if start > end or not 1 <= limit <= 100:
             raise ValueError("invalid raw record range or limit")
         rows = self._reader.raw_source_records(user_id, stream, start, end, limit + 1)
         return {"state": "ready" if rows else "no_data", "records": rows[:limit],

@@ -1,5 +1,5 @@
 """Descriptive health endpoints; all facts and arithmetic live below HTTP."""
-from datetime import date, timedelta
+from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -7,20 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from vitalis.bootstrap import get_health_analytics
 from vitalis.application.health_query_budget import HealthQueryBudgetExceeded
 from vitalis.entrypoints.api.deps import require_user_id
+from vitalis.entrypoints.api.date_windows import date_window
 from vitalis.time import local_today
 
 router = APIRouter(prefix="/health", tags=["health"])
 
 
 def period(from_date: date | None = Query(None, alias="from"), to_date: date | None = Query(None, alias="to")):
-    end = to_date or local_today()
-    try:
-        start = from_date or end - timedelta(days=29)
-    except OverflowError as exc:
-        raise HTTPException(422, "invalid health query range") from exc
-    if start > end:
-        raise HTTPException(422, "from must not be after to")
-    return start, end
+    return date_window(from_date, to_date, default_days=30)
 
 
 def _query(call):

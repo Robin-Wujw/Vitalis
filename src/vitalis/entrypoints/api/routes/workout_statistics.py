@@ -1,11 +1,11 @@
 """Source-qualified workout analytics and opt-in detail sections."""
-from datetime import date, timedelta
+from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from vitalis.entrypoints.api.deps import require_user_id
-from vitalis.time import local_today
+from vitalis.entrypoints.api.date_windows import date_window
 
 router = APIRouter(tags=["workouts"])
 
@@ -36,10 +36,7 @@ def statistics(
     user_id: str = Depends(require_user_id),
 ):
     from vitalis.config import settings
-    end = to_date or local_today()
-    start = from_date or end - timedelta(days=89)
-    if start > end:
-        raise HTTPException(status_code=422, detail="from must not be after to")
+    start, end = date_window(from_date, to_date, default_days=90)
     return _service().statistics(user_id, start=start, end=end, timezone_name=settings.timezone,
         group_by=group_by, metric=metric, sport=sport, family=family, workout_type=workout_type, source=source)
 

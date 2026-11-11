@@ -16,7 +16,7 @@
 
 数据发现用 `catalog`；原始资格明确的睡眠和指标用 `sleep-records`、`metrics [--daily]`。晨报时机核查读取 `/api/health/wake-review`，实验对比读取 `/api/intelligence/research/{kind}`；`analyze --refresh-research` 需 analyze scope，排队后通过 `job` 查完成。报告导出 `report --output` 调用服务端 export API，客户端不读数据库或重排健康结论。
 
-体成分历史用 `request GET health/body-composition --follow-cursor --param limit=200`：薄客户端保留日期筛选并原样传递 API 返回的完整游标，最多读取 50 页、10,000 条完整测量记录、累计 8 MiB 响应（失败尝试也计入；探测超限至多多读 1 字节）。只允许这个只读路由；未加 flag 的通用请求仍只取一页。输出 `records` 和各页原始 metadata/coverage（`pages`），不合并健康统计。预算、循环游标、畸形响应或后续请求失败均停止并标记 `state=partial`，用 `pagination.stop_reason` 说明原因，`pagination.resume_params` 与 `next_cursor` 指向尚未消费的完整页；第一页 HTTP 失败保留非零退出码。`pagination.complete=true` 只表示本次已保存分页读完，不能证明云端同步完整；有初始 cursor 时也不声称已读之前的页。Zepp 凭据与保存的到期时间直接读 `request GET health/token-status`，连接进度另用 `query connection-progress`。
+体成分历史用 `request GET health/body-composition --follow-cursor --param to=YYYY-MM-DD --param limit=200`：`to`/`before` 都包含该本地日，截至 D 直接传 D、不加一天，优先 `to=D`。薄客户端保留日期筛选并原样传递 API 返回的完整游标，最多读取 50 页、10,000 条完整测量记录、累计 8 MiB 响应（失败尝试也计入；探测超限至多多读 1 字节）。只允许这个只读路由；未加 flag 的通用请求仍只取一页。输出 `records` 和各页原始 metadata/coverage（`pages`），不合并健康统计。预算、循环游标、畸形响应或后续请求失败均停止并标记 `state=partial`，用 `pagination.stop_reason` 说明原因，`pagination.resume_params` 与 `next_cursor` 指向尚未消费的完整页；第一页 HTTP 失败保留非零退出码。`pagination.complete=true` 只表示本次已保存分页读完，不能证明云端同步完整；有初始 cursor 时也不声称已读之前的页。Zepp 凭据与保存的到期时间直接读 `request GET health/token-status`，连接进度另用 `query connection-progress`。
 
 Hermes 回答晨间状态、当日回顾和完整周比较时，先读对应报告的公开投影；只有缺项或需解释时才读状态、完整报告或独立记录。跨请求核对目标日期与 `analysis_run_id`，不把新事实拼进旧决策；更新中的同日期 last-good 可继续解释已有记录，但不能证明当前恢复。周报按返回的 `period_start`、`period_end` 使用已保存比较，不能拿上一完整周回答本周至今。
 

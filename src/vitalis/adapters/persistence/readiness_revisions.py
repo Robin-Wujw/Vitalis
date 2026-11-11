@@ -12,7 +12,8 @@ from . import models as orm
 
 READINESS_METRICS = frozenset({"readiness", "physical_readiness", "mental_readiness", "hrv_readiness",
     "rhr_readiness", "skin_temp_readiness", "ahi_readiness", "afib_readiness", "skin_temp_delta",
-    "skin_temp_baseline_delta", "sleep_hrv", "sleep_rhr", "hrv_baseline", "rhr_baseline"})
+    "skin_temp_baseline_delta", "skin_temperature_offset_raw", "skin_temperature_baseline_raw",
+    "readiness_status", "sleep_hrv", "sleep_rhr", "hrv_baseline", "rhr_baseline"})
 
 
 class ReadinessRevision(Base):

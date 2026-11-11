@@ -32,13 +32,14 @@ from vitalis.domain import DenseDataFile, User
 from vitalis.adapters.persistence.band_sources import BandSourceRecord
 from vitalis.adapters.persistence.sleep_supplements import SleepSupplement
 from vitalis.adapters.persistence.readiness_revisions import ReadinessRevision
+from vitalis.adapters.persistence.pai_revisions import PaiRevision
 
 FIXTURE_SCHEMA_VERSION = "vitalis.source-replay-fixture.v1"
 MAX_REPLAY_BYTES = 128 * 1024 * 1024
 _FACT_TABLES = (
     orm.WorkoutMetricSample, orm.Workout, orm.SleepRecord, orm.ActivityRecord,
     orm.TrainingRecord, orm.MetricSample, orm.DailyMetric, orm.DenseDataFile, orm.Device,
-    BandSourceRecord, SleepSupplement, ReadinessRevision, orm.DailySignalFeature,
+    BandSourceRecord, SleepSupplement, ReadinessRevision, PaiRevision, orm.SourceSnapshot, orm.DailySignalFeature,
 )
 
 
@@ -262,13 +263,17 @@ def _project(db, dataset, manifest, target_ids, parser_version):
                     raw, row.capability,
                 ), incomplete=row.incomplete)
                 if row.stream == "devices":
+                    from vitalis.adapters.persistence.source_snapshots import save_source_snapshot
+                    from vitalis.adapters.zepp.parsers.identity import devices as public_devices
                     devices = ZeppParser().parse_devices(raw)
                     for device in devices:
                         device.user_id = dataset.user_id
                         repo.upsert_device(device)
+                    save_source_snapshot(repo, dataset.user_id, "devices", {"devices": public_devices(raw)},
+                                         fetched_at=_timestamp(row.fetched_at))
                     report = StreamReport("devices", "success", records_written=len(devices),
                                           parse_status="success", write_status="success")
-                elif row.stream in {"sleep", "heart_rate", "workouts", "workout_detail", "daily_summary", "hrv", "wellness", "dense_files"}:
+                elif row.stream in {"profile", "raw_request", "sleep", "heart_rate", "workouts", "workout_detail", "daily_summary", "hrv", "wellness", "dense_files"}:
                     report = manager._persist_record(
                         fetched, repo, User(id=dataset.user_id), fetched_at=_timestamp(row.fetched_at),
                     )

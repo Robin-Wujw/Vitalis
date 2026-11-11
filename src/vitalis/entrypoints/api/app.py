@@ -28,12 +28,18 @@ from .routes import (
 
 from .routes.charts import router as charts_router
 from .routes.chart_inputs import router as chart_inputs_router
+from .routes.workout_statistics import router as workout_statistics_router
+from .routes.health_analytics import router as health_analytics_router
+from .routes.vendor import router as vendor_router
 
 log = logging.getLogger("vitalis.entrypoints.api")
 
 api = APIRouter(prefix="/api", responses=ERROR_RESPONSES)
 api.include_router(charts_router)
 api.include_router(chart_inputs_router)
+api.include_router(workout_statistics_router)
+api.include_router(health_analytics_router)
+api.include_router(vendor_router)
 api.include_router(current_router)
 api.include_router(coach_router)
 api.include_router(connect_router)

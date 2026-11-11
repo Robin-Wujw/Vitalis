@@ -84,7 +84,7 @@ def test_read_windows_and_detail_limits_are_not_complete_history_claims():
         "月初", "截止日", "workouts --from", "--limit 500",
         "--strength-details --limit 20", "detail.strength_sets", "--samples",
         "strength_details.state", "一次缺失不能推广为全部缺失", "截断",
-        "同一天仍达到上限", "不能据此证明同步覆盖完整", "不是完整月报",
+        "next_offset", "coverage.truncated", "不能据此证明同步覆盖完整", "不是完整月报",
         "完整 `report daily --day", "query explain --day", "标题",
     ):
         assert rule in text

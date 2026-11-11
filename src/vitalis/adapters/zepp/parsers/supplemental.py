@@ -55,16 +55,18 @@ def sleep_timing(sleep: dict, zone, asleep_minutes: int) -> dict:
     }
 
 
-def workout_supplements(row: dict) -> dict:
+def workout_supplements(row: dict, *, training_family: str | None = None) -> dict:
     """Preserve each time denominator and keep inconsistent components unknown."""
-    fields = {}
+    from .workout_extras import summary_extras
+
+    fields = summary_extras(row, training_family=training_family)
     for normalized, vendor in (("moving_time_seconds", "exerciseTimeWithMillis"),
         ("paused_time_seconds", "pauseTimeWithMillis"),
         ("elapsed_time_seconds", "totalTimeWithMillis")):
         raw = number(row.get(vendor), 0, 7 * 86400 * 1000)
         if raw is not None:
             fields[normalized] = raw / 1000
-    if len(fields) == 3 and abs(fields["elapsed_time_seconds"] - fields["moving_time_seconds"] - fields["paused_time_seconds"]) > 0.01:
+    if all(key in fields for key in ("elapsed_time_seconds", "moving_time_seconds", "paused_time_seconds")) and abs(fields["elapsed_time_seconds"] - fields["moving_time_seconds"] - fields["paused_time_seconds"]) > 0.01:
         fields.pop("moving_time_seconds")
         fields.pop("paused_time_seconds")
     for normalized, vendor, lower, upper, scale in (
@@ -94,15 +96,47 @@ def weight_samples(items: list[dict]) -> list[MetricSample]:
             continue
         weight = number(summary.get("weight"), 1, 1000)
         height = number(summary.get("height"), 30, 300)
-        bmi = number(summary.get("bmi"), 1, 200)
-        if weight is None or height is None or bmi is None or abs(bmi - weight / (height / 100) ** 2) > 0.15:
+        vendor_bmi = bmi = number(summary.get("bmi"), 1, 200)
+        inconsistent = (weight is not None and height is not None and bmi is not None
+                        and abs(bmi - weight / (height / 100) ** 2) > 0.15)
+        if weight is None or height is None or inconsistent:
             bmi = None
         for metric, value, unit in (("weight", weight, "kg"), ("height", height, "cm"), ("bmi", bmi, "kg/m2")):
             if value is not None:
                 output.append(MetricSample(metric=metric, timestamp=timestamp,
                     value=value, unit=unit, source_scope="user_summary",
                     source_field=f"summary.{metric}", qualification="vendor_recorded"))
+        if vendor_bmi is not None and bmi is None:
+            output.append(MetricSample(metric="vendor_bmi", timestamp=timestamp,
+                value=vendor_bmi, unit="kg/m2", source_scope="user_summary",
+                source_field="summary.bmi", qualification="inconsistent_record" if inconsistent else "unchecked_record"))
+        for field, metric, unit in BODY_FIELDS:
+            value = number(summary.get(field), 0.000001, 1e6)
+            if value is not None:
+                output.append(MetricSample(metric=metric, timestamp=timestamp, value=value,
+                    unit=unit, source_scope="user_summary", source_field=f"summary.{field}",
+                    qualification="community_schema_inconsistent_record" if inconsistent else "community_schema"))
+        for field in ("impedance", "encryptImpedance"):
+            value = number(summary.get(field), 0.000001, 1e6)
+            if value is not None:
+                output.append(MetricSample(metric="impedance", timestamp=timestamp, value=value,
+                    unit="ohm", source_scope="user_summary", source_field=f"summary.{field}",
+                    qualification="community_schema_inconsistent_record" if inconsistent else "community_schema"))
+                break
     return output
+
+
+# Units are community schema claims, not independent device verification.
+# muscleRate and oneFootMeasureTime deliberately retain unknown units.
+BODY_FIELDS = (
+    ("fatRate", "body_fat_percent", "%"), ("bodyWaterRate", "body_water_percent", "%"),
+    ("boneMass", "bone_mass", "kg"), ("metabolism", "basal_metabolism", "kcal/day"),
+    ("muscleRate", "muscle_rate", "unknown"), ("muscleAge", "muscle_age", "year"),
+    ("proteinRatio", "protein_percent", "%"), ("standBodyWeight", "ideal_weight", "kg"),
+    ("visceralFat", "visceral_fat_rating", "vendor_rating"), ("bodyScore", "body_score", "score"),
+    ("bodyStyle", "body_style_code", "vendor_code"), ("bodyBalanceScore", "body_balance_score", "score"),
+    ("oneFootMeasureTime", "one_foot_measure_time", "unknown"), ("age", "body_age", "year"),
+)
 
 
 def exertion_metrics(items: list[dict], timezone_name: str | None) -> list[DailyMetric]:

@@ -57,6 +57,8 @@ class SleepRecord(BaseModel):
     sleep_score: int | None = Field(default=None, ge=0, le=100, description="睡眠评分")
     bedtime: time | None = None
     wake_time: time | None = None
+    sleep_started_at: datetime | None = None
+    sleep_ended_at: datetime | None = None
     in_bed_at: datetime | None = None
     out_of_bed_at: datetime | None = None
     sleep_latency_minutes: float | None = Field(default=None, ge=0, allow_inf_nan=False)
@@ -217,6 +219,11 @@ class Workout(BaseModel):
         default_factory=list,
         description="Six strictly increasing device boundaries from heart_range",
     )
+    vendor_summary_metrics: dict[str, dict] = Field(default_factory=dict)
+    vendor_training_plan: dict = Field(default_factory=dict)
+    vendor_personal_bests: dict = Field(default_factory=dict)
+    vendor_multisport: dict = Field(default_factory=dict)
+    vendor_sets: list[dict] = Field(default_factory=list)
 
 
 class WorkoutMetricSample(BaseModel):
@@ -254,6 +261,10 @@ class WorkoutLap(BaseModel):
     index: int = Field(ge=0)
     duration_seconds: int = Field(ge=0)
     distance_meters: float = Field(ge=0)
+    vendor_metrics: dict[str, float] = Field(default_factory=dict)
+    vendor_numeric_columns: dict[str, float] = Field(default_factory=dict)
+    qualification: str = "vendor_reported"
+    kind: Literal["lap", "length_candidate", "set_summary_candidate"] = "lap"
 
 
 class WorkoutPause(BaseModel):
@@ -287,19 +298,24 @@ class StrengthSetObservation(BaseModel):
     rest_seconds: int | None = Field(default=None, ge=0)
 
 
-WORKOUT_DETAIL_SCHEMA_VERSION = "5.1"
+WORKOUT_DETAIL_SCHEMA_VERSION = "5.2"
 
 
 class WorkoutDetail(BaseModel):
     """Current normalized workout-detail contract."""
 
-    schema_version: Literal["5.1"] = WORKOUT_DETAIL_SCHEMA_VERSION
+    schema_version: Literal["5.2"] = WORKOUT_DETAIL_SCHEMA_VERSION
     workout_id: str
     metrics_present: list[str] = Field(default_factory=list)
     metric_sample_counts: dict[str, int] = Field(default_factory=dict)
     laps: list[WorkoutLap] = Field(default_factory=list)
     pauses: list[WorkoutPause] = Field(default_factory=list)
     strength_sets: list[StrengthSetObservation] = Field(default_factory=list)
+    splits: dict[str, list[dict]] = Field(default_factory=dict)
+    swimming: dict = Field(default_factory=dict)
+    gps: dict[str, dict] = Field(default_factory=dict)
+    vendor_streams: dict[str, dict] = Field(default_factory=dict)
+    available_fields: list[str] = Field(default_factory=list)
     samples: list[WorkoutMetricSample] = Field(default_factory=list, exclude=True)
 
 

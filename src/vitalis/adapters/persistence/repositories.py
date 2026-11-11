@@ -996,7 +996,7 @@ class HealthRepository:
 
     def band_source_records(self, user_id: str, start: date, end: date, *, as_of: datetime) -> list[dict]:
         from .band_sources import read_band_sources
-        return read_band_sources(self.db, user_id, start, end, as_of=as_of)
+        return read_band_sources(self.db, user_id, start, end, as_of=as_of, include_activity_details=False)
 
     def save_naps(self, user_id: str, day: date, naps: list, *, fetched_at=None) -> int:
         from .sleep_supplements import save_naps
@@ -1815,6 +1815,17 @@ class HealthRepository:
         from .record_evidence import bind_record_evidence
 
         data = bind_record_evidence(self, workout, existing.data if existing else None, stream="workouts")
+        for observation in data.get("vendor_summary_metrics", {}).values():
+            if isinstance(observation, dict):
+                observation["source"] = workout.source
+                observation["observed_at"] = data.get("started_at")
+                observation["fetched_at"] = data.get("fetched_at")
+                observation["source_record_id"] = data.get("source_record_id")
+        for name in ("vendor_training_plan", "vendor_personal_bests", "vendor_multisport"):
+            if data.get(name):
+                data[name].update(source=workout.source, observed_at=data.get("started_at"),
+                    fetched_at=data.get("fetched_at"), source_record_id=data.get("source_record_id"),
+                    source_scope="workout_summary", time_basis="activity_day")
         rpe = workout.session_rpe
         if rpe is not None and rpe.source_scope == "workout_summary":
             previous_data = (existing.data or {}).get("session_rpe") if existing else None

@@ -16,6 +16,7 @@ class WellnessStream:
 
 WELLNESS_STREAMS = (
     WellnessStream("all_day_stress", "user", "all_day_stress", None, "wellness/all_day_stress"),
+    WellnessStream("single_stress", "user", "single_stress", None, "wellness/single_stress"),
     WellnessStream("respiratory_rate", "v2", "RespiratoryRate", "real_data", "wellness/respiratory_rate"),
     WellnessStream("hrv_rmssd", "v2", "HRVRMSSD", "real_data", "wellness/hrv_rmssd"),
     WellnessStream("lactate_threshold", "v2", "LactateThreshold", "summary", "wellness/lactate_threshold"),

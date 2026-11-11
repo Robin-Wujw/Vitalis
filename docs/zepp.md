@@ -71,9 +71,34 @@ Idempotency-Key: <new-or-reused-key>
 
 ## 补充数据与可取性
 
-2026-11-10 对照 zepp-mcp `904cc301d63a64da6f633dd8a75b2a612e67240a`、ZeppBridge `a6a805dce7fba941af544e36d251c6d6026a1a21`，并从已授权服务器做只读 GET 核查。已确认可取得睡眠时间组件和 REM、训练毫秒时长与高精度距离、DailyHealth 目标、本人历史体重与 exertion 厂商负荷。体重 endpoint 使用 `members/-1/weightRecords`，fromTime/toTime 为秒；返回仍按 memberId 再过滤。同步计划 `zepp-sync-v8`、解析器 `zepp-parser-v5`；请求目录由 `streams.py` 同时供单次取数和持久任务使用。
+查询基准为 [zepp-mcp 固定提交](https://github.com/DhavalBhimani44/zepp-mcp/tree/904cc301d63a64da6f633dd8a75b2a612e67240a) 和 [ZeppBridge](https://github.com/lingcang728/ZeppBridge/tree/a6a805dce7fba941af544e36d251c6d6026a1a21)。2026-11-10 已从授权服务器核查睡眠时间组件、REM、训练毫秒时长、高精度距离、DailyHealth 目标、本人历史体重与 exertion 厂商负荷；这不代表所有数据都出现在本人账号。体重 endpoint 使用 `members/-1/weightRecords`，fromTime/toTime 为秒；返回仍按 memberId 再过滤。当前同步计划 `zepp-sync-v9`、解析器 `zepp-parser-v6`；请求目录由 `streams.py` 同时供单次取数和持久任务使用。
 
-Charge stress/insight 和 readiness watch_score 存在非空原始内容，但编码语义尚未验证，先保留加密原文，不对外伪造分数。分钟步数的两种记录宽度尚未与日总量对账通过；Food、Emotion、血压、恢复心率等接口在本次窗口为空或不支持，不能因为 MCP 定义了工具就认定账号能取得。AFib 的 255 等占位值继续排除。
+Charge stress/insight 和 readiness watch_score_data 有非空原始内容，但编码语义尚未验证，保留加密原文；readiness watch_score 的可解释字段单独标准化。三字节分钟活动仅在 1,440 槽位、时区、整日及活动时段总量同时核对后开放步数，kind/intensity 字节不命名为活动类型；八字节或对账失败的形状保持 unverified。本人分钟步数仍需实际对账，不能用合成通过代替。Food、Emotion、血压、恢复心率等可通过有界原始 GET 探查，账号是否有记录、厂商是否支持与原文能否解码分别处理。AFib 的 255 等占位值继续排除。
+
+### 与 14 个 MCP 工具的映射
+
+`GET /api/sources/zepp/schema` 是机器可读的完整目录，包含 14 个工具映射、运动代码、流编码/单位、圈段列、字段资格和已知限制；参数以生成的 [API 参考](../skills/vitalis/references/api.md)为准。
+
+| MCP 工具 | Vitalis HTTP 查询（省略 `/api`） |
+| --- | --- |
+| daily_summary | `/health/daily-summary`，日期范围、小时/分钟步数、原始活动模式码 |
+| heart_rate | `/health/heart-rate`，指定日、均值/极值、分钟覆盖和保留空槽的分钟序列 |
+| sleep | `/health/sleep`，主睡眠、午睡、阶段、在床时间、睡眠窗呼吸/HRV，以及保留独立来源的同日报告日期 readiness/ODI；同日关联不冒充睡眠窗采样 |
+| list_workouts | `/workouts`，运动/类型/家族/来源过滤，limit/offset 分页 |
+| workout_detail | `/workouts/{id}/sections`，summary/laps/splits/streams/gps 显式选读 |
+| body_composition | `/health/body-composition`，本人记录、BMI一致性及所有可选体成分 |
+| training_thresholds | `/health/training-thresholds`，事件历史与独立训练估值、VO₂max/负荷历史 |
+| health_metrics | `/health/summary/{category}`，9 类健康指标、日统计、趋势与可选样本 |
+| workout_stats | `/workouts/statistics`，任意范围、周/月/年/运动分组、20 类趋势与范围纪录 |
+| period_summary | `/health/period-summary`，活动/睡眠/运动/恢复独立状态与覆盖 |
+| profile | `/sources/zepp/profile`，Zepp 身体档案及允许公开的设备/固件字段 |
+| describe_schema | `/sources/zepp/schema` |
+| raw_request | `POST /sources/zepp/raw-requests` 后读取返回的 result_url |
+| auth_status | `/health/token-status`，凭据元数据与最近验证状态，不返回令牌 |
+
+同步新增 single_stress、PAI 全部分区及最新上传版本、呼吸分钟、体成分、profile 和设备元信息。体成分 community_schema 不等于本人设备验证；muscleRate 与 oneFootMeasureTime 不猜单位，BMI 不一致时保留 vendor_bmi。游泳 SWOLF、泳姿/长度、跳绳、跑姿、厂商计划进度和 PB 单独保留来源资格。区间最快值是该区间纪录，不冒充终身 PB；不同运动的配速不平均。
+
+标准查询需要 read scope，读取本地保存值。数据缺失返回 no_data，功能存在不保证账号有数据；统计窗口和覆盖只承诺已保存记录。原始请求与原文读取另需 source_raw：固定已认证区域主机、仅 GET、本人路径用 `users/me`，拒绝主机/身份/凭证覆盖，展开 JSON 最多 2 MiB。任务使用现有 SyncAttempt、幂等键、worker 租约与账号 fencing，HTTP 路由不直接联网。原文加密保存，输出递归移除凭据字段；超预算413、失败502、待完成202。`/raw-records` 先列元信息，再按ID读取；opaque 流保持 raw_unverified。Hermes 当前令牌没有 source_raw。
 
 同版 APK 的公开资源 `goal_fatbure_daily` / `goal_set_fatbure_tip` 将目标称为“每日燃脂时间目标”，说明它与燃脂心率区间内的时间有关，不能当全部活动或训练总时长。DailyHealth 的 `totalBurningDuration` 现独立保存为 `vendor_burning_minutes`，与 `burningDurationGoal` 对照；新解析保留实际匹配的源字段。旧日级 `active_minutes` 若没有明确 `activeMinutes` 来源，报告分析暂不采用，原文和历史记录保留供审计；不得把只含 DailyHealth 的回放直接应用到真实用户的整个日期窗口。剩余历史修正边界见[来源修复计划](plan/daily-metric-provenance-repair.md)。
 

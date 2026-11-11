@@ -5,6 +5,7 @@ import sqlite3
 import pytest
 
 from vitalis.workout_audit import audit_workouts
+from vitalis.domain import WORKOUT_DETAIL_SCHEMA_VERSION
 
 
 def _workout(db, user, started, family, detail=None, *, source="zepp", vendor_type_id=None):
@@ -28,7 +29,7 @@ def test_workout_audit_is_user_scoped_read_only_and_does_not_claim_coverage(tmp_
             "CREATE TABLE workouts (user_id TEXT, source TEXT, started_at TEXT, data TEXT, detail TEXT, detail_synced INTEGER)"
         )
         _workout(db, "owner", "2026-09-22 16:30:00", "strength", {
-            "schema_version": "5.1",
+            "schema_version": WORKOUT_DETAIL_SCHEMA_VERSION,
             "strength_sets": [
                 {"source": "lap_62", "vendor_exercise_code": 64, "exercise_name": "引体向上"},
                 {"source": "lap_62", "vendor_exercise_code": 999999},
@@ -42,11 +43,11 @@ def test_workout_audit_is_user_scoped_read_only_and_does_not_claim_coverage(tmp_
         })
         _workout(db, "owner", "2026-09-24 04:00:00", "aerobic")
         _workout(db, "owner", "2026-09-25 04:00:00", "aerobic", {
-            "schema_version": "5.1",
+            "schema_version": WORKOUT_DETAIL_SCHEMA_VERSION,
             "strength_sets": [{"source": "lap_62", "vendor_exercise_code": 1111}],
         }, vendor_type_id=9)
         _workout(db, "other", "2026-09-22 16:30:00", "strength", {
-            "schema_version": "5.1",
+            "schema_version": WORKOUT_DETAIL_SCHEMA_VERSION,
             "strength_sets": [{"source": "lap_62", "vendor_exercise_code": 1234}],
         })
     before = database.read_bytes()

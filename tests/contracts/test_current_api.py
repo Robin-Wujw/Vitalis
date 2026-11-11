@@ -61,13 +61,13 @@ def test_feedback_post_delegates_transaction_to_application_action():
 
 
 def test_current_health_reads_delegate_to_health_query_not_health_routes():
-    for function in (
-        current.get_data_status,
-        current.list_workouts,
-        current.get_workout,
+    for function, service in (
+        (current.get_data_status, "get_health_query()"),
+        (current.list_workouts, "get_workout_statistics()"),
+        (current.get_workout, "get_health_query()"),
     ):
         source = inspect.getsource(function)
-        assert "get_health_query()" in source
+        assert service in source
         assert "health_data_health" not in source
         assert "health_workouts" not in source
         assert "health_workout_detail" not in source

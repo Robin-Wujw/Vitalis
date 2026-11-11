@@ -211,6 +211,37 @@ def get_health_query() -> HealthQuery:
     )
 
 
+def get_workout_statistics():
+    from vitalis.application.workout_statistics import WorkoutStatistics
+    from vitalis.adapters.zepp.parsers.workout_extras import workout_detail_catalog
+    return WorkoutStatistics(SqlHealthReader(database.SessionLocal), detail_catalog=workout_detail_catalog())
+
+
+def get_health_analytics():
+    from vitalis.application.health_analytics import HealthAnalytics
+    return HealthAnalytics(SqlHealthReader(database.SessionLocal), timezone_name=settings.timezone)
+
+
+def get_vendor_query():
+    from vitalis.application.vendor_query import VendorQuery
+    return VendorQuery(SqlHealthReader(database.SessionLocal))
+
+
+def get_zepp_schema():
+    from dataclasses import asdict
+    from vitalis.application.zepp_capabilities import schema
+    from vitalis.adapters.zepp.sport_types import load_sport_catalog
+    from vitalis.adapters.zepp.streams import WELLNESS_STREAMS
+    from vitalis.adapters.zepp.parsers.workout_extras import SUMMARY_METRICS
+    sports = load_sport_catalog()
+    return schema(sports={"cloud": {code: asdict(mode) for code, mode in sports.cloud_modes.items()},
+        "device": {code: asdict(mode) for code, mode in sports.device_modes.items()}, "revision": sports.catalog_revision},
+        wellness={spec.label: {"stream": spec.health_stream, "event_type": spec.event_type,
+            "sub_type": spec.sub_type, "normalization": "raw_only" if spec.raw_only else "typed"} for spec in WELLNESS_STREAMS},
+        workout={**get_workout_statistics().catalog(), "summary_fields": {name: {"source_field": spec[0],
+            "unit": spec[1], "scale": spec[4]} for name, spec in SUMMARY_METRICS.items()}})
+
+
 def list_delivery_alerts(user_id: str, *, limit: int = 100, status: str | None = None) -> list[dict]:
     """Return sanitized internal alerts through the composition root."""
     with database.session_scope() as db:

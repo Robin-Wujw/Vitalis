@@ -50,6 +50,11 @@ class SyncJobService:
 
     @staticmethod
     def _validate(command: SyncJobCommand) -> None:
+        if command.raw_request is not None:
+            from .vendor_request import validate_raw_request
+            validate_raw_request(command.raw_request)
+            if command.streams is not None or command.detail_only or command.workout_only or command.detail_backfill:
+                raise SyncJobInvalid("raw GET jobs cannot be combined with synchronization modes")
         if command.streams is not None and (
             not isinstance(command.streams, tuple) or not 1 <= len(command.streams) <= 32
             or any(not isinstance(item, str) or not 1 <= len(item) <= 64 for item in command.streams)

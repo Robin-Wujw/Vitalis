@@ -94,6 +94,17 @@ class AccessToken(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class SourceSnapshot(Base):
+    """Sanitized latest vendor metadata, separate from the user's confirmed profile."""
+    __tablename__ = "source_snapshots"
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    source: Mapped[str] = mapped_column(String(32), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32), primary_key=True)
+    data: Mapped[dict] = mapped_column(JSON, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    source_record_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
 class Device(Base):
     __tablename__ = "devices"
 

@@ -142,7 +142,7 @@ def test_raw_health_routes_use_application_query_boundary():
     for forbidden in ("HealthRepository", "session_scope", "metric_sample_rows"):
         assert forbidden not in health
     assert "return get_health_query().data_status(user_id)" in current
-    assert "return get_health_query().list_workouts(" in current
+    assert "return get_workout_statistics().list_workouts(" in current
     assert "health_data_health(" not in current
     assert "health_workouts(" not in current
     assert "health_workout_detail(" not in current

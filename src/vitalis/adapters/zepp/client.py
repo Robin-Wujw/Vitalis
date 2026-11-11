@@ -120,7 +120,7 @@ LEGACY_SPORTS = (
     "trail", "hiking", "strength", "elliptical", "rowing", "yoga", "climb",
 )
 SPORTS = ["run"]
-WORKOUT_AGGREGATE_PLAN_VERSION = "zepp-sync-v8"
+WORKOUT_AGGREGATE_PLAN_VERSION = "zepp-sync-v9"
 
 
 ZeppErrorKind = Literal[
@@ -380,6 +380,44 @@ class ZeppAPIClient:
         self._client.close()
 
     # ---- 数据接口 ----
+    def fetch_profile(self) -> dict:
+        return self.fetch_raw({"path": "/huami.health.getUserInfo.json", "params": {}})
+
+    def fetch_raw(self, request: dict) -> dict | list:
+        """A bounded authenticated GET; callers cannot override host or identity."""
+        import json
+        from vitalis.application.vendor_request import MAX_RAW_BYTES, validate_raw_request
+        request = validate_raw_request(request)
+        path = request["path"].replace("/users/me/", f"/users/{self.user_id}/")
+        if request["path"].startswith("/v2/users/me/"):
+            path = request["path"]
+        payload = self._get(path, {**request["params"], "userid": self.user_id}, max_response_bytes=MAX_RAW_BYTES)
+        if isinstance(payload, SpoolPayload):
+            spool = payload
+            try:
+                with spool.open() as handle:
+                    payload = json.load(handle)
+            finally:
+                spool.cleanup()
+        if isinstance(payload, list):
+            return payload
+        if not isinstance(payload, dict):
+            raise ZeppAuthError("Zepp response must be a JSON object or list", kind="vendor_response")
+        code = payload.get("code")
+        status = payload.get("status")
+        failed = (
+            type(code) is bool
+            or code is not None and code not in (0, 1, 200, "0", "1", "200", "0000", "ok", "success")
+            or payload.get("success") is False
+            or isinstance(status, str) and status.lower() in {"error", "failed", "failure"}
+            or isinstance(status, (int, float)) and status >= 400
+            or any(payload.get(key) not in (None, "", False, 0, "0", {})
+                   for key in ("error", "errorCode", "error_code", "errCode", "err_code"))
+        )
+        if failed:
+            raise ZeppAuthError("Zepp rejected the read request", kind="vendor_response")
+        return payload
+
     def fetch_devices(self) -> dict:
         return self._get(
             API_DEVICES.format(user_id=self.user_id),
@@ -715,6 +753,14 @@ class MockZeppClient:
 
     def fetch_devices(self) -> dict:
         return {"items": [{"displayName": "Mock wearable", "macAddress": "02:00:00:00:00:01"}]}
+
+    def fetch_profile(self) -> dict:
+        return {"code": 0, "data": {"height": 170, "weight_float": 65}}
+
+    def fetch_raw(self, request: dict) -> dict:
+        from vitalis.application.vendor_request import validate_raw_request
+        validate_raw_request(request)
+        return {"code": 0, "items": []}
 
     def fetch_weight_records(self, from_seconds: int, to_seconds: int, limit: int = 300) -> dict:
         return {"items": []}

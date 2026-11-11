@@ -67,11 +67,11 @@ UV_PROJECT_ENVIRONMENT=<candidate-venv> uv run --locked --extra dev python -m py
 
 测试进程使用隔离配置，不载入生产凭据或生产数据库；生产开关的组合以显式合成参数重现。
 
-### 图表候选的 schema 差异
+### 当前候选的 schema 差异
 
-图表与多设备候选使用 `2026-11-vendor-report-sources` schema：增加 `sleep_supplements`、`readiness_revisions`、`band_source_records` 和 `chart_*` 显式输入表，设备目录增加 `aliases` JSON字段；`metric_samples` 与 `daily_metrics` 只新增可空的来源字段、资格、观测/修订/获取时间及 journal 引用，并新增 `contributing_device_id` 保留融合/择优结果的贡献设备而不当作整流身份。现有记录和表不删除。以候选 ORM metadata 和部署库实际结构核对 DDL，先在隔离合成库验证，再按加表加字段路径应用；反向 DDL 只撤销本次新增结构，操作前确认尚无需保留的新输入。
+MCP 查询候选使用 `2026-11-zepp-query-parity` schema。相对已部署 `2026-11-vendor-report-sources` 新增 `source_snapshots`（清洗后的 Zepp profile/devices、获取时间和原文引用）与 `pai_revisions`（每来源每日整条PAI上传版本，防止撤回字段复活）。体成分与压力使用现有事实表，运动详情与活动扩展使用现有 JSON。保留现库，按加表路径执行，不做破坏性迁移或数据库备份；反向 DDL 删除本次新表并改回 revision。候选验收需证明其余表列未变化，不删除健康历史。元信息不覆盖本人确认的 profile，不改变报告内容。
 
-日报/周报/月报合同分别为 21.0/12.0/8.0，分析版本23.0、解析版本zepp-parser-v5；旧版本报告不自动冒充已按App结果生成的新快照。只在来源修正和输入范围核对后排分析；尤其不要把旧 `wtlSum` 混口径值直接当正确日负荷重算。刷新需重读 band 的独立融合标记及压力 App 日输出，避免旧错误设备标签与新账户scope并存重复；SEC_HR和ACTIVE_ORIGIN_DATA归档需完成索引、下载、解析和按来源覆盖核对，不把索引当样本。实际验收与剩余边界见[图表验证计划](plan/report-chart-validation.md)。生产 DDL、来源刷新和服务切换只在候选隔离验收及明确部署授权后执行；私密预览使用通知抑制上下文，不额外发送。
+日报/周报/月报合同分别为 21.0/12.0/8.0，分析版本23.0、解析版本zepp-parser-v6；旧版本报告不自动冒充已按App结果生成的新快照。只在来源修正和输入范围核对后排分析；尤其不要把旧 `wtlSum` 混口径值直接当正确日负荷重算。刷新需重读 band 的独立融合标记及压力 App 日输出，避免旧错误设备标签与新账户scope并存重复；SEC_HR和ACTIVE_ORIGIN_DATA归档需完成索引、下载、解析和按来源覆盖核对，不把索引当样本。实际验收与剩余边界见[图表验证计划](plan/report-chart-validation.md)。生产 DDL、来源刷新和服务切换只在候选隔离验收及明确部署授权后执行；私密预览使用通知抑制上下文，不额外发送。
 
 ## 3. 停止服务；破坏性迁移才备份
 
@@ -99,7 +99,7 @@ sha256sum /var/backups/vitalis/vitalis-<old_sha>-<timestamp>.sqlite
 比较候选代码与实际运行 release 的模型/schema，再验证现库的 schema；不能只依据 checkout HEAD 或本次某个源码文件判断。
 
 1. **无 schema 变化**：保留当前数据库，不备份、不迁移、不删除，通过只读 schema 检查。
-2. **只加表或加字段**：不备份。不停服务，先用 SQLite 在线备份 API 把现库拷一份到 `/var/tmp`（约 1.6 GB 时 30 秒），在副本上执行本次明确的 DDL，用候选代码跑 `check_schema` 和真实样例；切换时停服务，对现库在一个事务里执行同一组 DDL、检查涉及表的完整性和外键，再用候选代码 `check_schema`。DDL 用服务用户执行（例如 `systemd-run --uid=vitalis -p EnvironmentFile=…`），免得 root 创建的 WAL/SHM 让服务写不了库。同时写好反向 DDL（删新表、`ALTER TABLE … DROP COLUMN` 删新列、改回 schema revision）备回滚用：旧版本的 schema 检查是严格的，不回退会拒绝启动，新表新列里已写入的数据随回滚丢弃。不建立通用旧版兼容链，验收后删除副本。
+2. **只加表或加字段**：不备份。不停服务，先用 SQLite 在线备份 API 把现库拷一份到 `/var/tmp`（约 1.6 GB 时 30 秒），在副本上执行本次明确的 DDL，用候选代码跑 `check_schema` 和真实样例。若变更严格限于新增空表，既有表、列、索引和数据完全不变，而磁盘不足以复制全库，可从现库只读导出完整 schema 与 revision 构建结构副本；必须逐项核对既有结构、验证正反向 DDL 和新表外键，并在生产切换后通过 API 核对真实记录。该例外不适用于修改既有表或搬迁数据。切换时停服务，对现库在一个事务里执行同一组 DDL、检查涉及表的完整性和外键，再用候选代码 `check_schema`。DDL 用服务用户执行（例如 `systemd-run --uid=vitalis -p EnvironmentFile=…`），免得 root 创建的 WAL/SHM 让服务写不了库。同时写好反向 DDL（删新表、`ALTER TABLE … DROP COLUMN` 删新列、改回 schema revision）备回滚用：旧版本的 schema 检查是严格的，不回退会拒绝启动，新表新列里已写入的数据随回滚丢弃。不建立通用旧版兼容链，验收后删除副本。
 3. **确实需要破坏性迁移**：停写并备份旧库，建立当前 schema 候选库，进行明确、可审计的一次性导出/导入。验证 schema、完整性、外键、必要记录保留和合成 API/worker smoke 后切换数据库配置，启动服务并完成第 6 节验收。
 
 破坏性迁移验收成功后，删除已被替代的旧工作数据库及其 WAL/SHM 文件；迁移前的备份按第 7 节一并删除。

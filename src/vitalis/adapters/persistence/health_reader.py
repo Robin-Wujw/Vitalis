@@ -40,8 +40,68 @@ class SqlHealthReader(HealthReader):
         from .band_sources import read_band_sources
 
         with self._session_factory() as db:
-            rows = read_band_sources(db, user_id, start, end, as_of=as_of)
-            return tuple(row for row in rows if row["kind"] == "sleep")
+            return tuple(read_band_sources(db, user_id, start, end, as_of=as_of,
+                                          include_activity_details=False, kind="sleep"))
+
+    def activity_records(self, user_id: str, start: date, end: date, *, as_of: datetime) -> tuple[dict, ...]:
+        from .band_sources import read_band_sources
+        with self._session_factory() as db:
+            return tuple(read_band_sources(db, user_id, start, end, as_of=as_of, kind="activity"))
+
+    def source_snapshot(self, user_id: str, kind: str) -> dict | None:
+        with self._session_factory() as db:
+            row = db.get(orm.SourceSnapshot, (user_id, "zepp", kind))
+            return {"data": deepcopy(row.data), "fetched_at": row.fetched_at,
+                    "source_record_id": row.source_record_id, "source": row.source} if row else None
+
+    def nap_records(self, user_id: str, start: date, end: date, *, as_of: datetime) -> tuple[dict, ...]:
+        from .band_sources import read_band_sources
+        with self._session_factory() as db:
+            return tuple(read_band_sources(db, user_id, start, end, as_of=as_of,
+                                          include_activity_details=False, kind="naps"))
+
+    def raw_source_records(self, user_id: str, stream: str, start: date, end: date, limit: int) -> tuple[dict, ...]:
+        from .source_journal import SourceJournalRecord as Raw, SourceJournalRepository as Journal
+        from sqlalchemy.orm import load_only
+        from vitalis.time import local_day_utc_bounds
+        from vitalis.config import settings
+        lower = local_day_utc_bounds(start, settings.timezone)[0].replace(tzinfo=None)
+        upper = local_day_utc_bounds(end, settings.timezone)[1].replace(tzinfo=None)
+        with self._session_factory() as db:
+            rows = db.execute(select(Raw).options(load_only(*(getattr(Raw, column.key)
+                for column in Raw.__table__.columns if column.key != "encrypted_payload"))).where(
+                Raw.user_id == user_id, Raw.source == "zepp", Raw.stream == stream,
+                Raw.observed_start < upper,
+                (Raw.observed_end > lower) | (Raw.observed_end.is_(None) & (Raw.observed_start >= lower)))
+                .order_by(Raw.fetched_at.desc(), Raw.id).limit(limit)).scalars()
+            return tuple(Journal.metadata(row) for row in rows)
+
+    def raw_source_record(self, user_id: str, record_id: str) -> dict | None:
+        from .source_journal import SourceJournalRecord as Raw, SourceJournalRepository as Journal
+        from vitalis.application.vendor_request import MAX_RAW_BYTES, public_raw_payload
+        with self._session_factory() as db:
+            row = db.execute(select(Raw).where(Raw.id == record_id, Raw.user_id == user_id)).scalar_one_or_none()
+            if row is None:
+                return None
+            if row.payload_bytes > MAX_RAW_BYTES or row.payload_format != "json":
+                raise ValueError("raw JSON response exceeds the public read budget")
+            return {**Journal.metadata(row), "qualification": "raw_unverified",
+                    "payload": public_raw_payload(Journal(db).read_payload(row.id, user_id=user_id))}
+
+    def raw_job_result(self, user_id: str, job_id: str) -> dict | None:
+        from .source_journal import SourceJournalRecord as Raw
+        with self._session_factory() as db:
+            attempt = db.execute(select(orm.SyncAttempt).where(orm.SyncAttempt.id == job_id,
+                orm.SyncAttempt.user_id == user_id)).scalar_one_or_none()
+            if attempt is None or not (attempt.options or {}).get("raw_request"):
+                return None
+            chunks = db.execute(select(orm.SyncChunk.id).where(orm.SyncChunk.attempt_id == job_id)).scalars().all()
+            row_id = db.execute(select(Raw.id).where(Raw.user_id == user_id,
+                Raw.record_id.in_([f"raw_request:{chunk}" for chunk in chunks]))
+                .order_by(Raw.fetched_at.desc()).limit(1)).scalar_one_or_none()
+            status = attempt.status
+        return {"job_id": job_id, "status": status,
+                "result": self.raw_source_record(user_id, row_id) if row_id else None}
 
     def sync_stream_states(self, user_id: str) -> tuple[HealthStreamStateRead, ...]:
         with self._session_factory() as db:
@@ -204,13 +264,6 @@ class SqlHealthReader(HealthReader):
                 for row in rows
             )
 
-    def workouts(
-        self, user_id: str, start: date, end: date, limit: int
-    ) -> tuple[HealthWorkoutRead, ...]:
-        with self._session_factory() as db:
-            rows = HealthRepository(db).workouts(user_id, start, end, limit)
-            return tuple(_workout_read(row) for row in rows)
-
     def strength_review_workouts(
         self, user_id: str, start: date, end: date, limit: int,
         *, timezone_name: str,
@@ -237,6 +290,33 @@ class SqlHealthReader(HealthReader):
                 )
                 for row in rows
             )
+
+    def workout_statistics_workouts(
+        self, user_id: str, start: date, end: date, limit: int,
+        *, timezone_name: str,
+    ) -> tuple[HealthWorkoutRead, ...]:
+        """Project summaries and small set fields; never load GPS or sample streams."""
+        from vitalis.time import local_day_utc_bounds
+
+        start_at, _ = local_day_utc_bounds(start, timezone_name)
+        _, end_at = local_day_utc_bounds(end, timezone_name)
+        with self._session_factory() as db:
+            rows = db.execute(select(
+                orm.Workout.source, orm.Workout.workout_id, orm.Workout.data, orm.Workout.detail_synced,
+                orm.Workout.detail["strength_sets"].label("strength_sets"),
+                orm.Workout.detail["fetched_at"].label("detail_fetched_at"),
+                orm.Workout.detail["schema_version"].label("detail_schema_version"),
+            ).where(
+                orm.Workout.user_id == user_id,
+                orm.Workout.started_at >= start_at.replace(tzinfo=None),
+                orm.Workout.started_at < end_at.replace(tzinfo=None),
+            ).order_by(orm.Workout.started_at.desc(), orm.Workout.source, orm.Workout.workout_id).limit(limit))
+            return tuple(HealthWorkoutRead(
+                source=row.source, workout_id=row.workout_id, data=deepcopy(row.data),
+                detail={"strength_sets": row.strength_sets or [], "fetched_at": row.detail_fetched_at,
+                        "schema_version": row.detail_schema_version} if row.detail_synced else None,
+                detail_synced=bool(row.detail_synced),
+            ) for row in rows)
 
     def workout_detail(
         self, user_id: str, workout_id: str, source: str,

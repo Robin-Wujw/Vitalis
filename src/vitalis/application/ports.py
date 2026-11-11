@@ -164,6 +164,18 @@ class HealthReader(Protocol):
 
     def sleep_records(self, user_id: str, start: date, end: date, *, as_of: datetime) -> tuple[dict, ...]: ...
 
+    def activity_records(self, user_id: str, start: date, end: date, *, as_of: datetime) -> tuple[dict, ...]: ...
+
+    def nap_records(self, user_id: str, start: date, end: date, *, as_of: datetime) -> tuple[dict, ...]: ...
+
+    def source_snapshot(self, user_id: str, kind: str) -> dict | None: ...
+
+    def raw_source_records(self, user_id: str, stream: str, start: date, end: date, limit: int) -> tuple[dict, ...]: ...
+
+    def raw_source_record(self, user_id: str, record_id: str) -> dict | None: ...
+
+    def raw_job_result(self, user_id: str, job_id: str) -> dict | None: ...
+
     def wake_days(self, user_id: str, start: date, end: date) -> list[WakeDay]: ...
 
     def latest_sync_attempt(
@@ -196,11 +208,12 @@ class HealthReader(Protocol):
         self, user_id: str, stream: str, start: date, end: date, limit: int
     ) -> tuple[HealthDenseFileRead, ...]: ...
 
-    def workouts(
-        self, user_id: str, start: date, end: date, limit: int
+    def strength_review_workouts(
+        self, user_id: str, start: date, end: date, limit: int,
+        *, timezone_name: str,
     ) -> tuple[HealthWorkoutRead, ...]: ...
 
-    def strength_review_workouts(
+    def workout_statistics_workouts(
         self, user_id: str, start: date, end: date, limit: int,
         *, timezone_name: str,
     ) -> tuple[HealthWorkoutRead, ...]: ...
@@ -317,6 +330,7 @@ class SyncJobCommand:
     detail_refresh_before: str | None = None
     execution_context: dict | None = None
     streams: tuple[str, ...] | None = None
+    raw_request: dict | None = None
 
 
 @dataclass(frozen=True)

@@ -28,7 +28,6 @@ from vitalis.domain import (
     Workout,
     WorkoutRpe,
     WorkoutDetail,
-    WorkoutLap,
     WorkoutMetricSample,
     WorkoutPause,
     StrengthSetObservation,
@@ -133,6 +132,7 @@ class ZeppParser:
             sleep_scope, sleep_device = self._band_provenance(item, summary, sleep=True)
             if sleep.get("ed") and sleep.get("st"):
                 st_val, ed_val = sleep.get("st"), sleep.get("ed")
+                st_dt = ed_dt = None
                 # 真实数据 st/ed 可能是时间戳（int）或 HH:MM 字符串
                 if isinstance(st_val, (int, float)) and isinstance(ed_val, (int, float)):
                     st_dt = datetime.fromtimestamp(st_val, tz=timezone.utc)
@@ -179,6 +179,8 @@ class ZeppParser:
                         sleep_score=int(sleep["ss"]) if sleep.get("ss") is not None else None,
                         bedtime=bedtime,
                         wake_time=wake_time,
+                        sleep_started_at=st_dt,
+                        sleep_ended_at=ed_dt,
                         stages=self._sleep_stage_slices(
                             day, summary, sleep, st_val, ed_val, timezone_name
                         ),
@@ -460,7 +462,7 @@ class ZeppParser:
                     it, ("heartrate_setting_type", "heartRateSettingType"), 0, 20
                 ),
                 heart_rate_zone_boundaries_bpm=self._heart_rate_zone_boundaries(it),
-                **workout_supplements(it),
+                **workout_supplements(it, training_family=mode.family),
             ))
         return workouts
 
@@ -489,14 +491,9 @@ class ZeppParser:
         samples = ZeppParser._workout_heart_rate_samples(
             workout_id, start, end, data.get("heart_rate")
         )
-        series_specs = (
-            ("speed", "speed", "m/s", 1.0, 0.0, 20.0),
-            ("equivPace", "equivalent_pace", "s/km", 1.0, 60.0, 3600.0),
-            ("currentDistance", "distance", "m", 0.01, 0.0, 1_000_000.0),
-            ("time_delta_altitude", "altitude", "m", 0.1, -1000.0, 10_000.0),
-            ("power_meter", "running_power", "W", 1.0, 0.0, 5000.0),
-        )
-        for vendor_field, metric, unit, scale, minimum, maximum in series_specs:
+        from .parsers.workout_extras import ABSOLUTE_STREAM_SPECS
+
+        for vendor_field, metric, unit, scale, minimum, maximum in ABSOLUTE_STREAM_SPECS:
             samples.extend(ZeppParser._absolute_workout_series(
                 workout_id,
                 start,
@@ -523,14 +520,19 @@ class ZeppParser:
         strength_sets = ZeppParser._strength_sets(data.get("strengthSets"))
         if not strength_sets and training_family == "strength":
             strength_sets = ZeppParser._strength_lap_sets(data.get("lap"))
+        from .parsers.workout_extras import detail_extras, lap_rows
+
+        laps = lap_rows(data.get("lap"))
+        extras = detail_extras(data, laps)
         return WorkoutDetail(
             workout_id=workout_id,
             metrics_present=sorted(counts),
             metric_sample_counts=dict(sorted(counts.items())),
-            laps=ZeppParser._workout_laps(data.get("lap")),
+            laps=laps,
             pauses=ZeppParser._workout_pauses(data.get("pause")),
             strength_sets=strength_sets,
             samples=samples,
+            **extras,
         )
 
     @staticmethod
@@ -815,29 +817,6 @@ class ZeppParser:
         if len(values) != 6 or any(left >= right for left, right in zip(values, values[1:])):
             return []
         return values
-
-    @staticmethod
-    def _workout_laps(encoded: object) -> list[WorkoutLap]:
-        if not isinstance(encoded, str) or not encoded:
-            return []
-        output = []
-        for part in encoded.split(";"):
-            fields = part.split(",")
-            if len(fields) < 3:
-                continue
-            try:
-                index = int(fields[0])
-                duration = int(float(fields[1]))
-                distance = float(fields[2])
-            except ValueError:
-                continue
-            if index >= 0 and duration >= 0 and distance >= 0:
-                output.append(WorkoutLap(
-                    index=index,
-                    duration_seconds=duration,
-                    distance_meters=distance,
-                ))
-        return output
 
     @staticmethod
     def _workout_pauses(encoded: object) -> list[WorkoutPause]:
@@ -1327,6 +1306,12 @@ class ZeppParser:
             if not isinstance(item, dict) or item.get("eventType") != "readiness":
                 continue
             value = item.get("value")
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except ValueError:
+                    continue
+                item = {**item, "value": value}
             if not isinstance(value, dict):
                 continue
             anchor = ZeppParser._parse_datetime_value(value.get("timestamp"))
@@ -1382,6 +1367,9 @@ class ZeppParser:
             ("afib_readiness", "afibScore", "score", 1.0, 0.0, 100.0),
             ("skin_temp_delta", "skinTempCalibrated", "C", 0.01, -2.0, 2.0),
             ("skin_temp_baseline_delta", "skinTempBaseLine", "C", 0.01, -2.0, 2.0),
+            ("skin_temperature_offset_raw", "skinTempCalibrated", "vendor_raw", 1, -1e6, 1e6),
+            ("skin_temperature_baseline_raw", "skinTempBaseLine", "vendor_raw", 1, -1e6, 1e6),
+            ("readiness_status", "status", "vendor_code", 1, 0, 254),
             ("sleep_hrv", "sleepHRV", "ms", 1.0, 1.0, 400.0),
             ("sleep_rhr", "sleepRHR", "bpm", 1.0, 20.0, 250.0),
             ("hrv_baseline", "hrvBaseline", "ms", 1.0, 1.0, 400.0),
@@ -1405,7 +1393,7 @@ class ZeppParser:
                         metric=metric, timestamp=timestamp, value=reading, unit=unit,
                         source_scope=source_scope,
                         device_id=device_id, source_field=source_field,
-                        qualification="vendor_reference",
+                        qualification="vendor_unit_unverified" if unit == "vendor_raw" else "vendor_reference",
                         revision_at=ZeppParser._utc(revision) if revision else None,
                     ))
         return output
@@ -1584,6 +1572,30 @@ class ZeppParser:
         return all(recognized_item(item) for item in items)
 
     @staticmethod
+    def latest_pai_records(raw: dict, timezone_name: str | None = None) -> list[dict]:
+        """Select whole PAI uploads, including revisions withdrawing every value."""
+        from vitalis.time import local_day
+
+        latest = {}
+        for item in ZeppParser._items(raw):
+            if not isinstance(item, dict):
+                continue
+            timestamp = ZeppParser._parse_datetime_value(item.get("time") or item.get("timestamp"))
+            day = local_day(timestamp, timezone_name) if timestamp else ZeppParser._metric_date(item, None)
+            if day is None:
+                continue
+            scope, device = ZeppParser._provenance(item)
+            revision = ZeppParser._parse_datetime_value(item.get("uploadTimestamp"))
+            rank = ZeppParser._utc(revision) if revision else datetime.min.replace(tzinfo=timezone.utc)
+            tie = json.dumps(item, sort_keys=True, ensure_ascii=False, default=str)
+            key = (day, scope, device or "")
+            if key not in latest or (rank, tie) > latest[key][:2]:
+                latest[key] = (rank, tie, {"day": day, "source_scope": scope, "device_id": device,
+                    "observed_at": ZeppParser._utc(timestamp) if timestamp else None,
+                    "revision_at": ZeppParser._utc(revision) if revision else None, "data": item})
+        return [latest[key][2] for key in sorted(latest)]
+
+    @staticmethod
     def parse_wellness(raw: dict, source_key: str, *, timezone_name: str | None = None) -> tuple[list[DailyMetric], list[MetricSample]]:
         """Parse the optional wellness shapes verified by ZeppBridge."""
         label = source_key.split(":")[1] if source_key.startswith("wellness:") else ""
@@ -1593,6 +1605,15 @@ class ZeppParser:
 
         if label == "weight":
             samples.extend(weight_samples(items))
+        elif label == "single_stress":
+            for item in items:
+                timestamp = ZeppParser._parse_datetime_value(item.get("timestamp"))
+                reading = ZeppParser._bounded_float(item, ("value",), 1, 100)
+                if timestamp is not None and reading is not None:
+                    scope, device = ZeppParser._provenance(item)
+                    samples.append(MetricSample(metric="single_stress", timestamp=timestamp,
+                        value=reading, unit="score", source_scope=scope, device_id=device,
+                        source_field="single_stress.value", qualification="vendor_recorded"))
         elif label == "exertion":
             daily.extend(exertion_metrics(items, timezone_name))
         elif label in {"charge_stress", "charge_insights", "readiness_raw"}:
@@ -1612,6 +1633,14 @@ class ZeppParser:
                     continue
                 if readings:
                     source_scope, device_id = ZeppParser._provenance(value, item)
+                    anchor = ZeppParser._parse_datetime_value(item.get("timestamp"))
+                    if anchor is not None:
+                        for minute, reading in enumerate(base64.b64decode(encoded)[:1440]):
+                            if 4 <= reading <= 60:
+                                samples.append(MetricSample(metric="respiratory_rate",
+                                    timestamp=anchor + timedelta(minutes=minute), value=reading, unit="brpm",
+                                    source_scope=source_scope, device_id=device_id,
+                                    source_field="RespiratoryRate.measurements", qualification="vendor_recorded"))
                     for metric, reading in (
                         ("respiratory_rate", round(sum(readings) / len(readings), 1)),
                         ("respiratory_rate_min", min(readings)),
@@ -1674,9 +1703,13 @@ class ZeppParser:
                             source_scope=source_scope, device_id=device_id,
                         ))
                     continue
-                try:
-                    extra = json.loads(item.get("extra", "{}"))
-                except (TypeError, json.JSONDecodeError):
+                extra = item.get("extra")
+                if isinstance(extra, str):
+                    try:
+                        extra = json.loads(extra)
+                    except json.JSONDecodeError:
+                        continue
+                if not isinstance(extra, dict):
                     continue
                 reading = ZeppParser._first_number(extra, ("spo2", "value"))
                 timestamp = ZeppParser._parse_datetime_value(extra.get("timestamp") or item.get("timestamp"))
@@ -1685,7 +1718,12 @@ class ZeppParser:
                     samples.append(MetricSample(
                         metric="spo2", timestamp=timestamp, value=reading, unit="%",
                         source_scope=source_scope, device_id=device_id,
+                        source_field="extra.spo2", qualification="vendor_recorded",
                     ))
+                    if type(extra.get("isAuto")) is bool:
+                        samples.append(MetricSample(metric="spo2_automatic", timestamp=timestamp,
+                            value=int(extra["isAuto"]), unit="boolean", source_scope=source_scope,
+                            device_id=device_id, source_field="extra.isAuto", qualification="vendor_reported"))
                 apnea = ZeppParser._first_number(extra, ("spo2_decrease", "spo2Decrease"))
                 if subtype == "osa_event" and apnea is not None and 50 <= apnea <= 100 and timestamp:
                     source_scope, device_id = ZeppParser._provenance(extra, item)
@@ -1694,26 +1732,26 @@ class ZeppParser:
                         source_scope=source_scope, device_id=device_id,
                     ))
         elif label == "pai":
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                day = ZeppParser._metric_date(item, None)
-                if not day:
-                    continue
-                for metric, keys, unit in (
-                    ("pai_daily", ("dailyPai",), "pai"),
-                    ("pai_low_zone", ("lowZonePai",), "pai"),
-                    ("pai_medium_zone", ("mediumZonePai",), "pai"),
-                    ("pai_high_zone", ("highZonePai",), "pai"),
-                    ("device_max_hr", ("maxHr",), "bpm"),
-                    ("device_resting_hr", ("restHr",), "bpm"),
-                ):
-                    reading = ZeppParser._first_number(item, keys)
+            specs = [("pai_daily", "dailyPai", "pai", 0, 10000),
+                     ("pai_total", "totalPai", "pai", 0, 10000),
+                     ("device_max_hr", "maxHr", "bpm", 20, 250),
+                     ("device_resting_hr", "restHr", "bpm", 20, 250)]
+            for zone in ("low", "medium", "high"):
+                specs.extend([(f"pai_{zone}_zone", f"{zone}ZonePai", "pai", 0, 10000),
+                              (f"pai_{zone}_zone_minutes", f"{zone}ZoneMinutes", "min", 0, 1440),
+                              (f"pai_{zone}_zone_lower_limit", f"{zone}ZoneLowerLimit", "bpm", 20, 250)])
+            for record in ZeppParser.latest_pai_records(raw, timezone_name):
+                day, source_scope, device_id = record["day"], record["source_scope"], record["device_id"]
+                item, timestamp, revision = record["data"], record["observed_at"], record["revision_at"]
+                for metric, field, unit, minimum, maximum in specs:
+                    reading = number(item.get(field), minimum, maximum)
                     if reading is not None:
-                        source_scope, device_id = ZeppParser._provenance(item)
                         daily.append(DailyMetric(
                             date=day, metric=metric, value=reading, unit=unit,
-                            source_scope=source_scope, device_id=device_id,
+                            source_scope=source_scope, device_id=device_id or None,
+                            source_field=field, qualification="vendor_reference",
+                            observed_at=ZeppParser._utc(timestamp) if timestamp else None,
+                            revision_at=ZeppParser._utc(revision) if revision else None,
                         ))
         elif label == "all_day_stress":
             for item in items:

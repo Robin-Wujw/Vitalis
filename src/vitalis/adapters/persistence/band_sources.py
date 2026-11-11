@@ -1,7 +1,7 @@
 """Per-device band facts for source comparison; never overwrite another route."""
 from datetime import date,datetime,timezone
 from uuid import uuid4
-from sqlalchemy import Date,DateTime,ForeignKey,Index,JSON,String,select
+from sqlalchemy import Date,DateTime,ForeignKey,Index,JSON,String,cast,func,select,type_coerce
 from sqlalchemy.orm import Mapped,mapped_column
 from .database import Base
 
@@ -42,10 +42,25 @@ def save_band_source(repo,user_id,day,kind,payload,*,fetched_at=None):
     return 1
 
 
-def read_band_sources(db,user_id,start,end,*,as_of):
+def read_band_sources(db,user_id,start,end,*,as_of,include_activity_details=True,kind=None):
     cutoff=as_of.astimezone(timezone.utc).replace(tzinfo=None) if as_of.tzinfo else as_of
-    rows=db.execute(select(BandSourceRecord).where(BandSourceRecord.user_id==user_id,BandSourceRecord.date.between(start,end),
-        BandSourceRecord.fetched_at<=cutoff).order_by(BandSourceRecord.fetched_at,BandSourceRecord.id)).scalars()
+    data=BandSourceRecord.data
+    if not include_activity_details:
+        # Drop the minute arrays in SQL: charts and profile construction only
+        # need the compact daily facts, while explicit source API reads keep them.
+        if db.get_bind().dialect.name == 'postgresql':
+            from sqlalchemy.dialects.postgresql import JSONB
+            data=cast(data,JSONB).op('-')('band_activity')
+        else:
+            data=type_coerce(func.json_remove(data,'$.band_activity'),JSON)
+    query=select(BandSourceRecord.date,BandSourceRecord.kind,BandSourceRecord.source,
+        BandSourceRecord.source_scope,BandSourceRecord.device_id,data.label('data'),
+        BandSourceRecord.fetched_at,BandSourceRecord.source_record_id).where(
+        BandSourceRecord.user_id==user_id,BandSourceRecord.date.between(start,end),
+        BandSourceRecord.fetched_at<=cutoff).order_by(BandSourceRecord.fetched_at,BandSourceRecord.id)
+    if kind is not None:
+        query=query.where(BandSourceRecord.kind==kind)
+    rows=db.execute(query)
     selected={}
     for row in rows:
         selected[(row.date,row.kind,row.source,row.source_scope,row.device_id)]={'date':row.date,'kind':row.kind,

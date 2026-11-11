@@ -322,7 +322,7 @@ def request(method: str, path: str, token: str, body: dict | None = None,
     origin = api_origin()
     url = origin + "/api/" + path
     if params:
-        url += "?" + urllib.parse.urlencode(params)
+        url += "?" + urllib.parse.urlencode(params, doseq=True)
     headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
     data = None
     if body is not None:
@@ -532,9 +532,12 @@ def run(args: argparse.Namespace):
         params = {}
         for entry in args.param:
             name, sep, value = entry.partition("=")
-            if not sep or not name or name in params:
+            if not sep or not name or (name in params and name != "include"):
                 raise ClientError("invalid_arguments")
-            params[name] = value
+            if name == "include":
+                params.setdefault(name, []).append(value)
+            else:
+                params[name] = value
         body = feedback_body() if args.method in {"POST", "PUT", "PATCH"} else None
         if args.key_file and args.method == "GET":
             raise ClientError("invalid_arguments")

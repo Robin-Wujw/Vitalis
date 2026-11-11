@@ -36,7 +36,26 @@ description: Retrieve Vitalis facts, use bounded deterministic coaching tools, c
 
 `status` 查同步覆盖，`job ID` 查任务；`report` 支持 daily/morning/evening/weekly/monthly/weekly-briefing/monthly-briefing。`--view` 是公开 blocks，`--state` 是新鲜度、last-good、任务与下一步，两者互斥。`query` 只用客户端白名单，按需组合 `trends`、`training-responses` 等相关读取。查询不会启动同步或分析。`status=error`、401/403、网络故障和 `status=snapshot_missing` 分别处理；后者仅表示指定日期无报告，不能自动改日期或编造结果。
 
-默认“最近”取近 28 天；跑步比较前 28 天。日期按用户本地语境，部署默认 `Asia/Shanghai`，API 或用户给出不同口径时保留差异，只有实质歧义才澄清。本月至今取本地月初至截止日：`workouts --from YYYY-MM-01 --to YYYY-MM-DD --limit 500`，配合 `status`。普通列表达到 limit 可能截断，可缩小窗口续查，同一天仍达到上限就说明完整性未知；未达上限也不能据此证明同步覆盖完整。默认 monthly 是上一完整月，rolling 是近 28 日，阶段回顾不是完整月报。需要量化时使用对应确定性工具的有界结果，不把局部记录当整月全量；产品目标指标不是训练月统计。
+默认“最近”取近 28 天；跑步比较前 28 天。日期按用户本地语境，部署默认 `Asia/Shanghai`，API 或用户给出不同口径时保留差异，只有实质歧义才澄清。本月至今取本地月初至截止日，用下节区间统计；需要场次时读 `/workouts` 并沿 `next_offset` 分页，保留 `coverage.truncated` 的截断提示。读完分页也不能据此证明同步覆盖完整。默认 monthly 是上一完整月，rolling 是近 28 日，不是完整月报；产品目标指标不是训练月统计。
+
+## 按 MCP 能力查询已保存数据
+
+用 `request GET <路径> --param from=YYYY-MM-DD --param to=YYYY-MM-DD`；路径省略 `/api/`。先选一个与问题最相关的接口，已有数据足够就回答，不遍历全部目录：
+
+| 问题 | 路径与参数 |
+| --- | --- |
+| 任意区间总体回顾 | `health/period-summary`，各部分与来源分别给窗口、样本和覆盖。 |
+| 运动量、区间纪录、游泳或跑姿趋势 | `workouts/statistics`，`sport`/`family` 过滤，`group_by=week|month|year|sport|sport_family|none`；`metric` 从 `workouts/catalog` 选。 |
+| 运动圈段、分段、轨迹 | `workouts/ID/sections`，`source=zepp`；按需重复 `--param include=summary --param include=laps`，另有 splits/streams/gps。GPS 可能是未解码原文。 |
+| 日活动及小时步数 | `health/daily-summary`，按需 `include_hourly=true`；分钟最多 31 天，用 `include_minutes=true`。 |
+| 某日心率、区间睡眠 | `health/heart-rate --param day=YYYY-MM-DD`，按需 `include_series=true`；`health/sleep` 返回完整睡眠、午睡及睡眠窗呼吸/HRV。 |
+| HRV、压力、血氧、PAI、Charge、准备度、每日目标 | `health/summary/CATEGORY`，类别为 hrv/stress/spo2/pai/body_charge/readiness/daily_goals/resting_heart_rate/respiratory_rate；按需 include_samples=true。 |
+| 体重体脂、乳酸阈值 | `health/body-composition`、`health/training-thresholds`。 |
+| Zepp 档案、设备固件、能力范围 | `sources/zepp/profile`、`sources/zepp/schema`；与本人确认的 `query profile` 分开。 |
+
+`no_data` 表示本地窗口没有记录，不代表没功能、没发生或零值。先结合 `status` 的取数状态解释；指标目录不是本人数据证明。不同来源、设备、单位、资格保持分组，samples_truncated 仅截样本展示，coverage_scope 只承诺已保存观测。厂商皮温原值、muscleRate、GPS 编码等不猜单位；目标中的 vendor_burning_minutes 是 Zepp 燃脂时间，不是全天运动时长。
+
+原始厂商 GET 是 `POST sources/zepp/raw-requests` 加持久 key，JSON path/params 从标准输入传入，再读返回 result_url；仅专门授予 `source_raw` 的客户端使用。Hermes 当前无此权限，不试探原始接口、不用它替代 coach 操作；原文可读也不等于已解码或可做健康判断。
 
 ## 报告与新增数据
 

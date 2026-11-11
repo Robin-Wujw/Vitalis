@@ -240,6 +240,11 @@ def list_workouts(
     from_date: date | None = Query(None, alias="from"),
     to_date: date | None = Query(None, alias="to"),
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    sport: str | None = Query(None, max_length=128),
+    family: str | None = Query(None, max_length=64),
+    workout_type: str | None = Query(None, alias="type", max_length=64),
+    source: str | None = Query(None, max_length=32),
     include_strength_details: bool = Query(False, description="Include saved strength sets; requires limit 1..20"),
     user_id: str = Depends(require_user_id),
 ) -> dict:
@@ -249,9 +254,12 @@ def list_workouts(
     start = from_date or (end - timedelta(days=27))
     if start > end:
         start, end = end, start
-    return get_health_query().list_workouts(
-        user_id, start, end, limit, include_strength_details=include_strength_details,
-    )
+    from vitalis.bootstrap import get_workout_statistics
+    from vitalis.config import settings
+    return get_workout_statistics().list_workouts(user_id, start=start, end=end,
+        timezone_name=settings.timezone, limit=limit, offset=offset, sport=sport,
+        family=family, workout_type=workout_type, source=source,
+        include_strength_details=include_strength_details)
 
 
 @router.get("/workouts/{workout_id}", operation_id="get_workout")

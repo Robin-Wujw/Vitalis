@@ -154,7 +154,7 @@ def test_weight_does_not_calculate_or_trust_inconsistent_bmi():
     payload = {"items": [{"memberId": -1, "generatedTime": int(START.timestamp()),
         "summary": {"weight": 72, "height": 180, "bmi": 90, "muscleRate": 32}}]}
     _, samples = ZeppParser.parse_wellness(payload, "wellness:weight:weight:synthetic")
-    assert {m.metric for m in samples} == {"weight", "height"}
+    assert {m.metric for m in samples} == {"weight", "height", "vendor_bmi", "muscle_rate"}
 
 
 def test_vendor_exertion_keeps_signed_balance_and_vendor_units():

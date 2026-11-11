@@ -411,27 +411,6 @@ class HealthQuery:
             ),
         }
 
-    def list_workouts(
-        self, user_id: str, start: date, end: date, limit: int,
-        *, include_strength_details: bool = False,
-    ) -> dict:
-        """Optionally expose saved sets without loading per-workout sample streams."""
-        if include_strength_details and not 1 <= limit <= 20:
-            raise ValueError("strength detail limit must be between 1 and 20")
-        return {
-            "user_id": user_id,
-            "workouts": [
-                {
-                    **row.data,
-                    "source": row.source,
-                    "workout_id": row.workout_id,
-                    "detail_available": row.detail_synced,
-                    **({"strength_details": _strength_details(row)} if include_strength_details else {}),
-                }
-                for row in self._reader.workouts(user_id, start, end, limit)
-            ],
-        }
-
     def workout_detail(
         self, user_id: str, workout_id: str, source: str,
         *, include_samples: bool = False,
@@ -443,6 +422,9 @@ class HealthQuery:
             return None
         row, samples = result
         detail = dict(row.detail or {})
+        # Large encoded/location sections require the explicit sections endpoint.
+        detail.pop("gps", None)
+        detail.pop("vendor_streams", None)
         if not include_samples:
             detail.pop("samples", None)
         if include_samples and samples:

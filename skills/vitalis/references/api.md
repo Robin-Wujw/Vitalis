@@ -28,24 +28,30 @@ The complete service contract remains available from `GET /openapi.json`.
 | `create_feedback` | POST | `/api/feedback` | - | 201, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `create_product_goal` | POST | `/api/product/goals` | Idempotency-Key | 201, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `create_sync_job` | POST | `/api/sync-jobs` | Idempotency-Key | 202, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `create_zepp_raw_request` | POST | `/api/sources/zepp/raw-requests` | Idempotency-Key | 202, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `delete_chart_annotation` | DELETE | `/api/chart-inputs/annotations/{annotation_id}` | Idempotency-Key | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `events_api_intelligence_events_get` | GET | `/api/intelligence/events` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `explain_api_intelligence_explain_get` | GET | `/api/intelligence/explain` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `export_report` | GET | `/api/reports/{kind}/export` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_activity_review_queue` | GET | `/api/chart-inputs/activity-reviews` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_activity_rules` | GET | `/api/chart-inputs/activity-rules` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_body_composition` | GET | `/api/health/body-composition` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_chart_annotations` | GET | `/api/chart-inputs/annotations` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_chart_input_snapshot` | GET | `/api/chart-inputs/snapshot` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_charts` | GET | `/api/charts` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_coach_policy` | GET | `/api/coach/policy` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_daily_activity_summary` | GET | `/api/health/daily-summary` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_data_status` | GET | `/api/data-status` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_external_strength_workout` | GET | `/api/chart-inputs/external-workouts/{external_id}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_external_strength_workouts` | GET | `/api/chart-inputs/external-workouts` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_health_catalog` | GET | `/api/health/catalog` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_health_daily_metrics` | GET | `/api/health/daily-metrics` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_health_metric_series` | GET | `/api/health/metrics/{metric}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_health_metric_summary` | GET | `/api/health/summary/{category}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_heart_rate_summary` | GET | `/api/health/heart-rate` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_hevy_link_candidates` | GET | `/api/chart-inputs/external-workouts/{external_id}/candidates` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_job` | GET | `/api/jobs/{job_id}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_period_summary` | GET | `/api/health/period-summary` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_product_context` | GET | `/api/product/context` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_product_feedback` | GET | `/api/product/feedback` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_product_goals` | GET | `/api/product/goals` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
@@ -61,13 +67,23 @@ The complete service contract remains available from `GET /openapi.json`.
 | `get_research_review` | GET | `/api/intelligence/research/{kind}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_running_analysis` | GET | `/api/intelligence/running` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_sleep_records` | GET | `/api/health/sleep-records` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_sleep_summary` | GET | `/api/health/sleep` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_strength_review` | GET | `/api/coach/strength-review` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_training_thresholds` | GET | `/api/health/training-thresholds` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_wake_review` | GET | `/api/health/wake-review` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `get_workout` | GET | `/api/workouts/{workout_id}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_workout_catalog` | GET | `/api/workouts/catalog` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_workout_sections` | GET | `/api/workouts/{workout_id}/sections` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_workout_statistics` | GET | `/api/workouts/statistics` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_zepp_profile` | GET | `/api/sources/zepp/profile` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_zepp_raw_record` | GET | `/api/sources/zepp/raw-records/{record_id}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_zepp_raw_result` | GET | `/api/sources/zepp/raw-requests/{job_id}` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `get_zepp_schema` | GET | `/api/sources/zepp/schema` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `import_hevy_csv` | POST | `/api/chart-inputs/hevy-imports` | Idempotency-Key | 201, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `link_hevy_workout` | POST | `/api/chart-inputs/external-workouts/{external_id}/link` | Idempotency-Key | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `list_feedback` | GET | `/api/feedback` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `list_workouts` | GET | `/api/workouts` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
+| `list_zepp_raw_records` | GET | `/api/sources/zepp/raw-records` | - | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `map_hevy_strength_sets` | PATCH | `/api/chart-inputs/external-workouts/{external_id}/sets` | Idempotency-Key | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `patch_chart_annotation` | PATCH | `/api/chart-inputs/annotations/{annotation_id}` | Idempotency-Key | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
 | `patch_product_goal` | PATCH | `/api/product/goals/{goal_id}` | Idempotency-Key | 200, 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504 |
@@ -821,6 +837,78 @@ Create Sync Job
 }
 ```
 
+### create_zepp_raw_request
+
+`POST /api/sources/zepp/raw-requests`
+
+Create Raw Request
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| Idempotency-Key | header | yes | {"maxLength": 128, "minLength": 16, "title": "Idempotency-Key", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+
+#### Request body (required: yes)
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/RawRequest"
+      }
+    }
+  },
+  "required": true
+}
+```
+
+#### Response 202
+
+- 202: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {}
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
 ### delete_chart_annotation
 
 `DELETE /api/chart-inputs/annotations/{annotation_id}`
@@ -1229,6 +1317,68 @@ None.
 }
 ```
 
+### get_body_composition
+
+`GET /api/health/body-composition`
+
+Body Composition
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| from | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "From"} |  |
+| to | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "To"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {}
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
 ### get_chart_annotations
 
 `GET /api/chart-inputs/annotations`
@@ -1465,6 +1615,70 @@ None.
         "title": "Response Get Coach Policy",
         "type": "object"
       }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_daily_activity_summary
+
+`GET /api/health/daily-summary`
+
+Daily Summary
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| from | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "From"} |  |
+| include_hourly | query | no | {"default": false, "title": "Include Hourly", "type": "boolean"} |  |
+| include_minutes | query | no | {"default": false, "title": "Include Minutes", "type": "boolean"} |  |
+| to | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "To"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {}
     }
   }
 }
@@ -1900,6 +2114,132 @@ None.
 }
 ```
 
+### get_health_metric_summary
+
+`GET /api/health/summary/{category}`
+
+Metric Summary
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| category | path | yes | {"enum": ["readiness", "hrv", "resting_heart_rate", "respiratory_rate", "stress", "spo2", "pai", "body_charge", "daily_goals"], "title": "Category", "type": "string"} |  |
+| from | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "From"} |  |
+| include_samples | query | no | {"default": false, "title": "Include Samples", "type": "boolean"} |  |
+| to | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "To"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {}
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_heart_rate_summary
+
+`GET /api/health/heart-rate`
+
+Heart Rate
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| day | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "Day"} |  |
+| include_series | query | no | {"default": false, "title": "Include Series", "type": "boolean"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {}
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
 ### get_hevy_link_candidates
 
 `GET /api/chart-inputs/external-workouts/{external_id}/candidates`
@@ -1998,6 +2338,68 @@ None.
         "title": "Response Get Job",
         "type": "object"
       }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_period_summary
+
+`GET /api/health/period-summary`
+
+Period Summary
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| from | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "From"} |  |
+| to | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "To"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {}
     }
   }
 }
@@ -3038,6 +3440,68 @@ None.
 }
 ```
 
+### get_sleep_summary
+
+`GET /api/health/sleep`
+
+Sleep
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| from | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "From"} |  |
+| to | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "To"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {}
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
 ### get_strength_review
 
 `GET /api/coach/strength-review`
@@ -3071,6 +3535,68 @@ None.
         "title": "Response Get Strength Review",
         "type": "object"
       }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_training_thresholds
+
+`GET /api/health/training-thresholds`
+
+Thresholds
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| from | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "From"} |  |
+| to | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "To"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {}
     }
   }
 }
@@ -3204,6 +3730,440 @@ None.
         "title": "Response Get Workout",
         "type": "object"
       }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_workout_catalog
+
+`GET /api/workouts/catalog`
+
+Catalog
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {}
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_workout_sections
+
+`GET /api/workouts/{workout_id}/sections`
+
+Sections
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| workout_id | path | yes | {"title": "Workout Id", "type": "string"} |  |
+| include | query | no | {"anyOf": [{"items": {"enum": ["summary", "laps", "splits", "streams", "gps"], "type": "string"}, "type": "array"}, {"type": "null"}], "title": "Include"} |  |
+| source | query | yes | {"maxLength": 32, "minLength": 1, "title": "Source", "type": "string"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {}
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_workout_statistics
+
+`GET /api/workouts/statistics`
+
+Statistics
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| family | query | no | {"anyOf": [{"maxLength": 64, "type": "string"}, {"type": "null"}], "title": "Family"} |  |
+| from | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "From"} |  |
+| group_by | query | no | {"default": "month", "enum": ["week", "month", "year", "sport", "family", "sport_family", "none"], "title": "Group By", "type": "string"} |  |
+| metric | query | no | {"anyOf": [{"enum": ["distance", "moving_time", "pace", "swim_pace", "avg_heart_rate", "max_heart_rate", "cadence", "exercise_load", "aerobic_training_effect", "vo2_max", "calories", "swolf", "strokes", "distance_per_stroke", "stride_length", "ground_contact_time", "vertical_oscillation", "power", "elevation_gain", "total_reps"], "type": "string"}, {"type": "null"}], "title": "Metric"} |  |
+| source | query | no | {"anyOf": [{"maxLength": 32, "type": "string"}, {"type": "null"}], "title": "Source"} |  |
+| sport | query | no | {"anyOf": [{"maxLength": 128, "type": "string"}, {"type": "null"}], "title": "Sport"} |  |
+| to | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "To"} |  |
+| type | query | no | {"anyOf": [{"maxLength": 64, "type": "string"}, {"type": "null"}], "title": "Type"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {}
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_zepp_profile
+
+`GET /api/sources/zepp/profile`
+
+Profile
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| include_devices | query | no | {"default": true, "title": "Include Devices", "type": "boolean"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {}
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_zepp_raw_record
+
+`GET /api/sources/zepp/raw-records/{record_id}`
+
+Raw Record
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| record_id | path | yes | {"title": "Record Id", "type": "string"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {}
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_zepp_raw_result
+
+`GET /api/sources/zepp/raw-requests/{job_id}`
+
+Raw Result
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| job_id | path | yes | {"title": "Job Id", "type": "string"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {}
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### get_zepp_schema
+
+`GET /api/sources/zepp/schema`
+
+Schema
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {}
     }
   }
 }
@@ -3475,10 +4435,15 @@ List Workouts
 | --- | --- | --- | --- | --- |
 | Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
 | X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| family | query | no | {"anyOf": [{"maxLength": 64, "type": "string"}, {"type": "null"}], "title": "Family"} |  |
 | from | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "From"} |  |
 | include_strength_details | query | no | {"default": false, "description": "Include saved strength sets; requires limit 1..20", "title": "Include Strength Details", "type": "boolean"} | Include saved strength sets; requires limit 1..20 |
 | limit | query | no | {"default": 100, "maximum": 500, "minimum": 1, "title": "Limit", "type": "integer"} |  |
+| offset | query | no | {"default": 0, "minimum": 0, "title": "Offset", "type": "integer"} |  |
+| source | query | no | {"anyOf": [{"maxLength": 32, "type": "string"}, {"type": "null"}], "title": "Source"} |  |
+| sport | query | no | {"anyOf": [{"maxLength": 128, "type": "string"}, {"type": "null"}], "title": "Sport"} |  |
 | to | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "To"} |  |
+| type | query | no | {"anyOf": [{"maxLength": 64, "type": "string"}, {"type": "null"}], "title": "Type"} |  |
 
 #### Request body
 
@@ -3497,6 +4462,70 @@ None.
         "title": "Response List Workouts",
         "type": "object"
       }
+    }
+  }
+}
+```
+
+#### Response 400, 401, 403, 404, 405, 409, 410, 413, 422, 429, 500, 502, 503, 504
+
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 405: Method Not Allowed
+- 409: Conflict
+- 410: Gone
+- 413: Content Too Large
+- 422: Unprocessable Content
+- 429: Too Many Requests
+- 500: Internal Server Error
+- 502: Bad Gateway
+- 503: Service Unavailable
+- 504: Gateway Timeout
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/APIError"
+      }
+    }
+  }
+}
+```
+
+### list_zepp_raw_records
+
+`GET /api/sources/zepp/raw-records`
+
+Raw Records
+
+#### Parameters
+
+| Name | In | Required | Schema (type / default / enum / constraints) | Description |
+| --- | --- | --- | --- | --- |
+| Authorization | header | no | {"default": "", "title": "Authorization", "type": "string"} |  |
+| X-User-Id | header | no | {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-User-Id"} |  |
+| from | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "From"} |  |
+| limit | query | no | {"default": 50, "maximum": 100, "minimum": 1, "title": "Limit", "type": "integer"} |  |
+| stream | query | yes | {"maxLength": 96, "minLength": 1, "title": "Stream", "type": "string"} |  |
+| to | query | no | {"anyOf": [{"format": "date", "type": "string"}, {"type": "null"}], "title": "To"} |  |
+
+#### Request body
+
+None.
+
+#### Response 200
+
+- 200: Successful Response
+
+```json
+{
+  "content": {
+    "application/json": {
+      "schema": {}
     }
   }
 }
@@ -15723,6 +16752,32 @@ Each reachable component is rendered once; `$ref` values name the headings below
   ],
   "title": "QualityStatus",
   "type": "string"
+}
+```
+
+### #/components/schemas/RawRequest
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "params": {
+      "additionalProperties": true,
+      "title": "Params",
+      "type": "object"
+    },
+    "path": {
+      "maxLength": 512,
+      "minLength": 2,
+      "title": "Path",
+      "type": "string"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "title": "RawRequest",
+  "type": "object"
 }
 ```
 

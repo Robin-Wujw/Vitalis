@@ -13,6 +13,10 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "skills" / "vitalis" / "references" / "api.md"
 BASE_OPERATIONS = frozenset({
+    "get_daily_activity_summary", "get_heart_rate_summary", "get_sleep_summary", "get_body_composition",
+    "get_training_thresholds", "get_health_metric_summary", "get_period_summary", "get_zepp_profile",
+    "get_zepp_schema", "get_workout_catalog", "get_workout_statistics", "get_workout_sections",
+    "create_zepp_raw_request", "get_zepp_raw_result", "list_zepp_raw_records", "get_zepp_raw_record",
     "get_health_catalog", "get_sleep_records", "export_report", "get_wake_review", "get_research_review",
     "get_health_metric_series", "get_health_daily_metrics",
     "get_data_status", "get_report", "get_public_report_view", "get_report_state", "create_analysis_run", "get_job",

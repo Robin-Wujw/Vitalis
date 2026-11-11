@@ -248,6 +248,63 @@ def test_fixture_repeat_and_parser_revision_reuse_raw_journal(sessions, offline)
         assert db.scalars(select(orm.NotificationDelivery)).all() == []
 
 
+def test_replay_rebuilds_pai_revisions_and_selected_vendor_snapshots(sessions, offline):
+    fixture = _fixture()
+    fixture["dataset_id"] = "synthetic-pai-profile-reentry"
+    base = dict(observed_start=START.isoformat(), observed_end=END.isoformat())
+    fixture["records"] = [
+        dict(base, stream="wellness", record_id="wellness:pai:user:synthetic", fetched_at=FETCHED.isoformat(),
+             payload={"items": [{"time": START.timestamp() * 1000,
+                 "uploadTimestamp": FETCHED.timestamp() * 1000, "dailyPai": 12, "totalPai": 72}]}),
+        dict(base, stream="devices", record_id="device_inventory",
+             fetched_at=(FETCHED + timedelta(minutes=5)).isoformat(),
+             payload={"items": [{"deviceSource": "SYNTHETICWATCH", "firmwareVersion": "1.0"}]}),
+        dict(base, stream="profile", record_id="profile",
+             fetched_at=(FETCHED + timedelta(minutes=10)).isoformat(), payload={"data": {"height": 180}}),
+        dict(base, stream="profile", record_id="profile",
+             fetched_at=(FETCHED + timedelta(minutes=20)).isoformat(), payload={"data": {"height": 181}}),
+    ]
+    owner = "fixture-pai-profile"
+    first = replay_fixture(fixture, owner, session_factory=sessions)
+    second = replay_fixture(fixture, owner, parser_version="synthetic-next-parser", session_factory=sessions)
+    assert first.run_id != second.run_id and not second.reused
+    with sessions() as db:
+        facts = {row.metric: row.value for row in HealthRepository(db).daily_metrics(owner, DAY, DAY)}
+        assert facts["pai_daily"] == 12 and facts["pai_total"] == 72
+        snapshots = db.scalars(select(orm.SourceSnapshot).where(orm.SourceSnapshot.user_id == owner)).all()
+        assert {row.kind for row in snapshots} == {"devices", "profile"}
+        assert next(row for row in snapshots if row.kind == "profile").data["height_cm"] == 181
+        assert all(row.source_record_id and row.fetched_at <= FETCHED.replace(tzinfo=None) + timedelta(minutes=20)
+                   for row in snapshots)
+    earlier = deepcopy(fixture)
+    earlier["as_of"] = (FETCHED + timedelta(minutes=15)).isoformat()
+    replay_fixture(earlier, owner, session_factory=sessions)
+    with sessions() as db:
+        assert db.get(orm.SourceSnapshot, (owner, "zepp", "profile")).data["height_cm"] == 180
+    earliest = deepcopy(fixture)
+    earliest["as_of"] = FETCHED.isoformat()
+    replay_fixture(earliest, owner, session_factory=sessions)
+    with sessions() as db:
+        assert db.scalars(select(orm.SourceSnapshot).where(orm.SourceSnapshot.user_id == owner)).all() == []
+        assert {row.metric for row in HealthRepository(db).daily_metrics(owner, DAY, DAY)} == {"pai_daily", "pai_total"}
+
+
+def test_replay_retains_raw_requests_without_normalizing_or_fetching(sessions, offline):
+    fixture = _fixture()
+    fixture["dataset_id"] = "synthetic-raw-replay"
+    fixture["records"] = [dict(stream="raw_request", record_id="raw_request:synthetic-chunk",
+        observed_start=START.isoformat(), observed_end=END.isoformat(), fetched_at=FETCHED.isoformat(),
+        payload={"items": [{"unverified": 42}]})]
+    result = replay_fixture(fixture, "fixture-raw", session_factory=sessions)
+    assert result.records_replayed == 1 and result.records_written == 0
+    with sessions() as db:
+        run = db.get(SourceReplayRun, result.run_id)
+        assert run.outcomes[0]["parse_status"] == "retained_raw"
+        assert db.scalars(select(orm.DailyMetric).where(orm.DailyMetric.user_id == "fixture-raw")).all() == []
+        journal = db.scalars(select(SourceJournalRecord).where(SourceJournalRecord.user_id == "fixture-raw")).one()
+        assert SourceJournalRepository(db).read_payload(journal.id, user_id="fixture-raw") == {"items": [{"unverified": 42}]}
+
+
 def test_late_data_is_excluded_by_fetch_as_of_and_replay_can_restore_old_projection(sessions, offline):
     fixture = _fixture()
     early = deepcopy(fixture)

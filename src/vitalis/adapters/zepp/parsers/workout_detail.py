@@ -11,7 +11,6 @@ from typing import Iterator, Literal
 
 from vitalis.domain import (
     WorkoutDetail,
-    WorkoutLap,
     WorkoutMetricSample,
     WorkoutPause,
 )
@@ -29,6 +28,7 @@ from ..workout_streaming import (
     WorkoutStreamLimitError,
     scan_workout_payload,
 )
+from .workout_extras import ABSOLUTE_STREAM_SPECS, detail_extras, lap_rows
 
 
 ParseStatus = Literal["recognized", "empty", "unrecognized"]
@@ -104,7 +104,7 @@ def parse_workout_detail(
     if detail is None:
         return ParseResult("unrecognized", diagnostics=("invalid_trackid",))
 
-    if detail.samples or detail.laps or detail.pauses or detail.strength_sets:
+    if detail.samples or detail.laps or detail.pauses or detail.strength_sets or detail.splits or detail.gps:
         return ParseResult("recognized", detail=detail)
 
     if unknown_envelope:
@@ -198,7 +198,7 @@ def parse_workout_detail_stream(
 
     if detail is None:
         return ParseResult("unrecognized", diagnostics=("invalid_trackid",))
-    if detail.samples or detail.laps or detail.pauses or detail.strength_sets:
+    if detail.samples or detail.laps or detail.pauses or detail.strength_sets or detail.splits or detail.gps:
         return ParseResult("recognized", detail=detail)
     if unknown_envelope:
         return ParseResult("unrecognized", diagnostics=("unknown_envelope",))
@@ -259,13 +259,7 @@ def _normalize_stream_detail(data: dict[str, object], context: ParseContext) -> 
 
     samples: list[WorkoutMetricSample] = []
     samples.extend(_stream_heart_rate(workout_id, start, end, data.get("heart_rate")))
-    for field, metric, unit, scale, minimum, maximum in (
-        ("speed", "speed", "m/s", 1.0, 0.0, 20.0),
-        ("equivPace", "equivalent_pace", "s/km", 1.0, 60.0, 3600.0),
-        ("currentDistance", "distance", "m", 0.01, 0.0, 1_000_000.0),
-        ("time_delta_altitude", "altitude", "m", 0.1, -1000.0, 10_000.0),
-        ("power_meter", "running_power", "W", 1.0, 0.0, 5000.0),
-    ):
+    for field, metric, unit, scale, minimum, maximum in ABSOLUTE_STREAM_SPECS:
         samples.extend(_stream_absolute(
             workout_id, start, data.get(field), metric, unit, scale, minimum, maximum
         ))
@@ -287,14 +281,17 @@ def _normalize_stream_detail(data: dict[str, object], context: ParseContext) -> 
     counts: dict[str, int] = {}
     for sample in samples:
         counts[sample.metric] = counts.get(sample.metric, 0) + 1
+    laps = lap_rows(data.get("lap"))
+    extras = detail_extras(data, laps)
     return WorkoutDetail(
         workout_id=workout_id,
         metrics_present=sorted(counts),
         metric_sample_counts=dict(sorted(counts.items())),
-        laps=_stream_laps(data.get("lap")),
+        laps=laps,
         pauses=_stream_pauses(data.get("pause")),
         strength_sets=strength_sets,
         samples=samples,
+        **extras,
     )
 
 
@@ -410,23 +407,6 @@ def _stream_posture(workout_id, start, encoded):
                     workout_id=workout_id, timestamp=start + timedelta(seconds=elapsed),
                     metric=metric, value=round(float(value), 2), unit=unit,
                 ))
-    return output
-
-
-def _stream_laps(encoded):
-    output = []
-    for part in _stream_parts(encoded):
-        if not part:
-            continue
-        fields = part.split(",")
-        if len(fields) < 3:
-            continue
-        try:
-            index, duration, distance = int(fields[0]), int(float(fields[1])), float(fields[2])
-        except (TypeError, ValueError):
-            continue
-        if index >= 0 and duration >= 0 and distance >= 0:
-            output.append(WorkoutLap(index=index, duration_seconds=duration, distance_meters=distance))
     return output
 
 

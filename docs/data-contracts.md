@@ -2,7 +2,7 @@
 
 [文档中心](README.md) | [当前架构](architecture.md) | [Zepp](zepp.md) | [报告与渠道](reports.md)
 
-本页说明进入分析和对外报告的事实资格。字段的完整类型和版本以[领域模型](../src/vitalis/domain/models.py)、[分析合同](../src/vitalis/intelligence/contracts.py)和运行服务 `/openapi.json` 为准。当前源码为日报 schema `21.0`、周报 `12.0`、月报 `8.0`、intelligence `23.0`、decision policy `12.0`、parser `zepp-parser-v5`、数据库 revision `2026-11-vendor-report-sources`；生产版本以运行服务为准。
+本页说明进入分析和对外报告的事实资格。字段的完整类型和版本以[领域模型](../src/vitalis/domain/models.py)、[分析合同](../src/vitalis/intelligence/contracts.py)和运行服务 `/openapi.json` 为准。当前源码为日报 schema `21.0`、周报 `12.0`、月报 `8.0`、intelligence `23.0`、decision policy `12.0`、parser `zepp-parser-v6`、数据库 revision `2026-11-zepp-query-parity`；生产版本以运行服务为准。
 
 ## 事实与来源
 

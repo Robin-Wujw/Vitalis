@@ -41,7 +41,9 @@ Zepp / mock
 
 `intelligence/recorded_context.py` 是补充观测汇总的唯一计算入口，结果随日报和周报保存。`report_recorded_context.py` 只组织这些已保存字段的文字；API 的公开 view 与完整报告保留同一来源、日期和资格，Hermes 不再自行计算目标达成或补充指标趋势。
 
-Bearer 令牌在库中只保存摘要，绑定本地用户和 `read`、`analyze`、`sync`、`feedback`、`manage` scope；`X-User-Id` 不能单独认证。厂商凭据与令牌加密密钥分离保存。API 默认回环监听，公网部署需要 TLS、网关和来源配置。配对码、浏览器链接令牌、同步 attempt 和通知状态都不是健康观测。
+Bearer 令牌在库中只保存摘要，绑定本地用户和 `read`、`analyze`、`sync`、`feedback`、`manage`、`coach`、`source_raw` scope；`X-User-Id` 不能单独认证。`source_raw` 单独保护原始厂商 GET 任务和原文读取，不隐含于 read/sync/coach。厂商凭据与令牌加密密钥分离保存。API 默认回环监听，公网部署需要 TLS、网关和来源配置。配对码、浏览器链接令牌、同步 attempt 和通知状态都不是健康观测。
+
+`HealthAnalytics` 与 `WorkoutStatistics` 读取 `HealthReader` 的 detached 值，将描述统计交给 intelligence；HTTP/Skill 不计算个人趋势。运动列表和统计共用范围、过滤与读取上限；默认详情不包含 GPS 或大段原始流，显式 sections 才读取。来源/设备/单位/source_field/qualification 分组不互相抵消。`source_snapshots` 保存已清洗 Zepp profile/device 元信息，独立于本人确认的 profile；原始 GET 使用现有 SyncAttempt 单 chunk、worker 租约和加密 journal，没有第二任务引擎。查询不触发同步，raw 内容也不参与报告或训练决策。
 
 来源、scope、设备、单位和观测时间随事实保存。写入事实、显式反馈和纠错时，在同一个事务记录带日期、信号域和输入 revision 的持久分析任务；依赖窗口内的已有目标与合资格的当前目标会重新排队；同步写入的数据只重排今天和之前 7 天的目标（`ANALYSIS_REFRESH_DAYS`），180 天首次回填不会把半年的历史分析逐块重算一遍，用户自己的反馈和纠错仍重算对应日期。分析用例将 detached 数据集交给确定性引擎，发布时在用户写锁下检查相关范围的输入游标和配置摘要，避免旧计算覆盖新结果。历史重算只保存历史快照，不回退当前事件状态。
 

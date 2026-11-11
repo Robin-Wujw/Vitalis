@@ -359,6 +359,11 @@ class ZeppSyncCoordinator:
         options: dict[str, Any],
         timezone_name: str | None = None,
     ) -> list[dict[str, Any]]:
+        if options.get("raw_request") is not None:
+            from vitalis.application.vendor_request import validate_raw_request
+            request = validate_raw_request(options["raw_request"])
+            return [self._spec("raw_request", "explicit", window,
+                health_stream="raw_request", operation="fetch_raw", params=request)]
         if options.get("workout_only") is True:
             return self._workout_specs(window)
         timezone_name = timezone_name or self._configured_timezone()
@@ -484,6 +489,10 @@ class ZeppSyncCoordinator:
             "devices", "inventory", window, health_stream="devices", ordinal=ordinal,
             allow_unavailable=True, operation="fetch_devices", params={},
         ))
+        manifest.append(self._spec(
+            "profile", "profile", window, health_stream="profile", ordinal=ordinal + 1,
+            allow_unavailable=True, operation="fetch_profile", params={},
+        ))
         return manifest
 
     def create_attempt(
@@ -500,6 +509,12 @@ class ZeppSyncCoordinator:
         repository: HealthRepository | None = None,
     ) -> orm.SyncAttempt | None:
         options = dict(options or {})
+        if options.get("raw_request") is not None:
+            from vitalis.application.vendor_request import validate_raw_request
+            options["raw_request"] = validate_raw_request(options["raw_request"])
+            if trigger != "manual" or any(options.get(key) for key in ("streams", "workout_only", "detail_only", "sleep_only", "detail_backfill")):
+                raise ZeppAuthError("raw requests require a standalone manual job", kind="invalid_request")
+            options["decode_dense_files"] = False
         mode = self._source_mode()
         if options.get("source_mode", mode) != mode:
             raise ZeppAuthError("同步请求来源模式与连接器不一致", kind="invalid_request")
@@ -720,6 +735,11 @@ class ZeppSyncCoordinator:
                 self._clear_client_request_budget(connector)
 
         try:
+            if operation in {"fetch_raw", "fetch_profile"}:
+                payload = call("fetch_raw", params) if operation == "fetch_raw" else call("fetch_profile")
+                stream = "raw_request" if operation == "fetch_raw" else "profile"
+                key = f"raw_request:{chunk['id']}" if operation == "fetch_raw" else "profile"
+                return _ChunkResult(FetchedRecord(RawRecord(stream, key, start, end, payload, "unverified")), 1)
             if operation == "fetch_devices":
                 payload = call("fetch_devices")
                 return _ChunkResult(FetchedRecord(RawRecord(
@@ -1148,6 +1168,9 @@ class ZeppSyncCoordinator:
                 journal = stage_sync_record(repo, user, result.record, None, fetched_at=fetched_at)
                 if journal is not None:
                     db.info["active_source_record_id"] = journal.id
+                from vitalis.adapters.persistence.source_snapshots import save_source_snapshot
+                from vitalis.adapters.zepp.parsers.identity import devices as public_devices
+                save_source_snapshot(repo, user.id, "devices", {"devices": public_devices(result.record.raw.payload)}, fetched_at=fetched_at)
                 for device in devices:
                     device.user_id = attempt["user_id"]
                     repo.upsert_device(
@@ -2004,6 +2027,8 @@ class ZeppSyncJobAdapter:
         }
         if command.streams is not None:
             create_kwargs["streams"] = list(command.streams)
+        if command.raw_request is not None:
+            create_kwargs["raw_request"] = dict(command.raw_request)
         if command.execution_context is not None:
             create_kwargs["execution_context"] = dict(command.execution_context)
         if window is not None:

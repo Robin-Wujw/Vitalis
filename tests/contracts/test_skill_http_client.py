@@ -20,6 +20,16 @@ SKILL = ROOT / "skills" / "vitalis"
 TOKEN = "synthetic-private-bearer"
 
 
+def test_generic_request_can_select_multiple_workout_sections(installed):
+    with mock_api() as (base, calls, responses):
+        responses[("GET", "/api/workouts/run-1/sections")] = [(200, {"state": "ready"}, {})]
+        code, result = invoke(installed, base, "request", "GET", "workouts/run-1/sections",
+            "--param", "source=zepp", "--param", "include=summary", "--param", "include=laps")
+    assert code == 0, result
+    query = parse_qs(urlsplit(calls[0][1]).query)
+    assert query["include"] == ["summary", "laps"]
+
+
 @pytest.fixture
 def installed(tmp_path):
     bundle = tmp_path / "detached" / "vitalis"

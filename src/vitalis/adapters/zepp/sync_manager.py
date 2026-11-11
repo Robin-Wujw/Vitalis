@@ -563,6 +563,12 @@ class SyncManager:
         try:
             detail_result: ParseResult | None = None
             parts = record.raw.source_key.split(":")
+            if record.raw.stream == "raw_request":
+                report.parse_status = "retained_raw"
+                report.write_status = "success"
+                report.capability = "unverified"
+                report.parsed_at = report.written_at = datetime.now(timezone.utc)
+                return report
             if record.raw.stream == "wellness" and len(parts) > 1 and parts[1] in RAW_ONLY_WELLNESS and ZeppParser._items(record.raw.payload):
                 report.parse_status = "retained_raw"
                 report.write_status = "not_run"
@@ -828,7 +834,14 @@ class SyncManager:
         sleep_dates = [] if sleep_dates is None else sleep_dates
         heart_rate_seen_until = {} if heart_rate_seen_until is None else heart_rate_seen_until
 
-        if stream == "sleep":
+        if stream == "profile":
+            from vitalis.adapters.zepp.parsers.identity import profile
+            from vitalis.adapters.persistence.source_snapshots import save_source_snapshot
+            data = profile(payload)
+            if data:
+                parsed = 1
+                written = save_source_snapshot(repo, user.id, "profile", data)
+        elif stream == "sleep":
             # Preserve each source before the legacy daily projection selects
             # one record. Two devices on the same date must not erase each other.
             save_source = getattr(repo, "save_band_source", None)
@@ -839,7 +852,11 @@ class SyncManager:
                     for kind, records in (("sleep", item_sleeps), ("activity", item_activities)):
                         for day, value in records.items():
                             value.user_id = user.id
-                            written += save_source(user.id, day, kind, value.model_dump(mode="json"))
+                            data = value.model_dump(mode="json")
+                            if kind == "activity":
+                                from vitalis.adapters.zepp.parsers.activity import band_activity
+                                data["band_activity"] = band_activity(item, parser._base64_summary(item) or {})
+                            written += save_source(user.id, day, kind, data)
                     for day, naps in parser.parse_band_naps(single, timezone_name=getattr(self.fetcher, "timezone_name", None)).items():
                         scope, device_id = parser._band_provenance(item, parser._base64_summary(item) or {}, sleep=True)
                         written += save_source(user.id, day, "naps", {"source": "zepp", "source_scope": scope,
@@ -997,7 +1014,15 @@ class SyncManager:
                 metric.user_id = user.id
             for sample in samples:
                 sample.user_id = user.id
-            written = repo.save_daily_metrics(metrics) + repo.save_metric_samples(samples)
+            if record.raw.source_key.startswith("wellness:pai:"):
+                from vitalis.adapters.persistence.pai_revisions import replace_pai
+
+                revisions = parser.latest_pai_records(payload, getattr(self.fetcher, "timezone_name", None))
+                parsed += len(revisions)
+                written = replace_pai(repo, user.id, revisions, metrics)
+            else:
+                written = repo.save_daily_metrics(metrics)
+            written += repo.save_metric_samples(samples)
 
         elif stream == "dense_files":
             index_stream = self._dense_index_stream(record)

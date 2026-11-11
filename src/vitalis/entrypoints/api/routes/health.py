@@ -2,7 +2,6 @@
 
 from datetime import date, datetime, timedelta, timezone
 from typing import Literal
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -39,11 +38,6 @@ def health_wake_review(
     if not 0 <= (to_date - from_date).days <= 30:
         raise HTTPException(status_code=422, detail="晨报核查窗口必须为 1–31 天")
     return get_health_query().wake_review(user_id, from_date, to_date)
-
-
-def health_data_health(user_id: str = Depends(require_user_id)) -> dict:
-    """Explain the latest Zepp fetch and durable attempt progress."""
-    return get_health_query().data_status(user_id)
 
 
 @router.get("/token-status")
@@ -189,30 +183,6 @@ def health_dense_file_coverage(
     }
 
 
-def health_workouts(
-    from_date: date = Query(..., alias="from"),
-    to_date: date = Query(..., alias="to"),
-    limit: int = Query(100, ge=1, le=500),
-    user_id: str = Depends(require_user_id),
-) -> dict:
-    if from_date > to_date:
-        from_date, to_date = to_date, from_date
-    return get_health_query().list_workouts(user_id, from_date, to_date, limit)
-
-
-def health_workout_detail(
-    workout_id: str,
-    source: str = Query(..., min_length=1, max_length=32),
-    user_id: str = Depends(require_user_id),
-) -> dict:
-    result = get_health_query().workout_detail(
-        user_id, workout_id, source, include_samples=True,
-    )
-    if result is None:
-        raise HTTPException(status_code=404, detail="运动记录不存在")
-    return result
-
-
 def _utc_datetime(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
@@ -221,15 +191,3 @@ def _utc_datetime(value: datetime) -> datetime:
 
 def _iso_utc(value: datetime) -> str:
     return _utc_datetime(value).isoformat().replace("+00:00", "Z")
-
-
-def _next_auto_sync() -> str:
-    from vitalis.config import settings
-    now = datetime.now(ZoneInfo(settings.timezone))
-    candidate = now.replace(
-        hour=settings.sync_cron_hour, minute=settings.sync_cron_minute,
-        second=0, microsecond=0,
-    )
-    if candidate <= now:
-        candidate += timedelta(days=1)
-    return candidate.isoformat()

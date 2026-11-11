@@ -545,6 +545,11 @@ class TestSyncManager:
             "laps": [],
             "pauses": [],
             "strength_sets": [],
+            "available_fields": ["heart_rate", "time", "trackid"],
+            "gps": {},
+            "splits": {},
+            "swimming": {},
+            "vendor_streams": {},
         }
         assert [sample.metric for sample in samples] == ["heart_rate"] * 4
         assert [sample.value for sample in samples] == [80, 80, 82, 81]

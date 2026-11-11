@@ -44,7 +44,9 @@ Hermes 只授予 `read+coach+feedback`，不授予 `sync`、`analyze` 或 `manag
 
 当前红旗先处理，不等待工具；没有红旗不附急救模板。真正影响风险的缺失安全问题在相关高风险具体安排之前问，其他情况按已知条件完成适中计划，不在长方案末尾才问安全，也不重复问已知状态。反馈需明确记录意图；资料、推荐完成或事件确认还需权限，本 Hermes 无 manage。有效服务器 grant 内的数据操作不反复征求授权，普通讨论不新增权限。草案不自动保存或接受；服务器日常报告和 PushPlus 仍由确定性引擎独立运行，对话内容不回流为报告事实。
 
-“最近”默认近 28 天；本月至今是本地月初到截止日，以 `workouts --from YYYY-MM-01 --to YYYY-MM-DD --limit 500` 和 `status` 查范围与覆盖。普通列表达到 limit 可能截断，可缩小窗口续查；同日仍达上限则完整性未知，未达上限也不证明同步覆盖完整。默认 monthly 是上一完整月，不能替代本月。需要量化就用对应确定性工具，只按实际返回范围解释，局部记录不冒充整月统计。具体训练步骤读完整日报，解释系统依据用 `query explain`，context 标题不能替代步骤。
+“最近”默认近 28 天；本月至今是本地月初到截止日，使用 `GET /api/workouts/statistics` 或 `/api/health/period-summary` 的明确 `from`/`to`，结合 `status` 查同步覆盖。需要场次时沿 `/api/workouts` 返回的 `next_offset` 分页；统计最多读取 10,000 场，触顶标记 partial，已保存记录完整不等于云端历史完整。默认 monthly 是上一完整月，不能替代本月。具体选读见运行时 Skill，完整工具映射由 `/api/sources/zepp/schema` 返回，接口参数由生成的 API 参考维护。具体训练步骤读完整日报，解释系统依据用 `query explain`，context 标题不能替代步骤。
+
+Zepp 档案/设备、体成分、睡眠窗、分钟心率、健康分组统计、训练阈值与所有 20 类运动趋势均使用 HTTP 已保存事实查询。Hermes 继续只有 `read+coach+feedback`；原始请求和原始档案正文另需 `source_raw`，不会因增加 API 自动扩大现有令牌。专门客户端的原始请求也复用同步任务、账号 fencing 和加密 journal，HTTP 路由不直接联网。`retained_raw`、无数据和实际解码是不同状态。
 
 ### 力量容量与已完成训练评价
 

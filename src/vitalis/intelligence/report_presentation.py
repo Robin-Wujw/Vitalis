@@ -546,16 +546,12 @@ def _generic_facts(workout: dict[str, Any]) -> list[str]:
 
 
 def _workout_seconds(value: Any) -> str | None:
-    """Format saved seconds with one decimal and carry across minute boundaries."""
+    """Format saved seconds as minutes plus seconds, preserving tenths."""
     if (numeric := _number(value)) is None or not isfinite(numeric) or numeric < 0:
         return None
     ticks = round(numeric * 10)
-    hours, remaining = divmod(ticks, 36000)
-    minutes, remaining = divmod(remaining, 600)
-    seconds = f"{remaining / 10:g} 秒"
-    if hours:
-        return f"{hours} 小时 {minutes} 分 {seconds}"
-    return f"{minutes} 分 {seconds}" if minutes else seconds
+    minutes, remaining = divmod(ticks, 600)
+    return f"{minutes} 分 {remaining / 10:g} 秒"
 
 
 def _set_from_item(item: dict[str, Any], order: int) -> dict[str, Any]:

@@ -83,11 +83,11 @@ def test_strength_timing_distinguishes_set_rest_from_timer_pause(paused):
     payload["features"]["training"]["recent_workouts"] = [workout]
     before = deepcopy(payload)
     facts = daily_presentation(payload)["training"][0]["facts"]
-    assert "全程时间 1 小时 2 分 3.5 秒" in facts
-    moving = "1 小时 2 分 3.5 秒" if not paused else "1 小时 1 分 1.5 秒"
+    assert "全程时间 62 分 3.5 秒" in facts
+    moving = "62 分 3.5 秒" if not paused else "61 分 1.5 秒"
     assert f"运动计时（含组间休息） {moving}" in facts
     assert "组间休息 45 分 0.1 秒" in facts
-    pause = "0 秒" if not paused else "1 分 2 秒"
+    pause = "0 分 0 秒" if not paused else "1 分 2 秒"
     assert f"计时暂停（不含组间休息） {pause}" in facts
     assert payload == before
 
@@ -100,7 +100,7 @@ def test_strength_missing_timing_stays_unknown_and_fraction_rounding_carries():
     }
     payload["features"]["training"]["recent_workouts"] = [workout]
     facts = daily_presentation(payload)["training"][0]["facts"]
-    assert facts == ["全程时间 1 小时 0 分 0 秒"]
+    assert facts == ["全程时间 60 分 0 秒"]
 
 
 def test_morning_metrics_are_stable_and_hrv_is_optional():

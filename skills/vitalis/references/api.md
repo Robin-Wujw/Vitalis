@@ -27359,6 +27359,18 @@ Each reachable component is rendered once; `$ref` values name the headings below
       "title": "Recognition Source Label",
       "type": "string"
     },
+    "rest_between_sets": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Rest Between Sets"
+    },
     "session_rpe": {
       "anyOf": [
         {

@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from datetime import date, datetime
+from math import isfinite
 from typing import Any
 
 from .period_activity import comparison_gate
@@ -509,12 +510,21 @@ def _running_facts(session: dict[str, Any]) -> list[str]:
 
 def _generic_facts(workout: dict[str, Any]) -> list[str]:
     facts = []
+    strength = workout.get("training_family") == "strength"
     for key, label in (("elapsed_time_seconds", "全程时间"), ("moving_time_seconds", "运动时间"),
                        ("paused_time_seconds", "暂停")):
         if workout.get("type") == "running" and key != "elapsed_time_seconds":
             continue
-        if (shown := number(workout.get(key))) is not None:
+        if strength:
+            label = {"moving_time_seconds": "运动计时（含组间休息）",
+                     "paused_time_seconds": "计时暂停（不含组间休息）"}.get(key, label)
+            if (shown := _workout_seconds(workout.get(key))) is not None:
+                facts.append(f"{label} {shown}")
+        elif (shown := number(workout.get(key))) is not None:
             facts.append(f"{label} {shown} 秒")
+    if strength and isinstance(rest := workout.get("rest_between_sets"), dict):
+        if (shown := _workout_seconds(rest.get("value"))) is not None:
+            facts.append(f"组间休息 {shown}")
     effort = workout.get("session_rpe") or {}
     if isinstance(effort, dict) and (rating := number(effort.get("value"))) is not None:
         source = (
@@ -533,6 +543,19 @@ def _generic_facts(workout: dict[str, Any]) -> list[str]:
     if calories is not None:
         facts.append(f"本次训练估算热量 {calories} 千卡")
     return facts
+
+
+def _workout_seconds(value: Any) -> str | None:
+    """Format saved seconds with one decimal and carry across minute boundaries."""
+    if (numeric := _number(value)) is None or not isfinite(numeric) or numeric < 0:
+        return None
+    ticks = round(numeric * 10)
+    hours, remaining = divmod(ticks, 36000)
+    minutes, remaining = divmod(remaining, 600)
+    seconds = f"{remaining / 10:g} 秒"
+    if hours:
+        return f"{hours} 小时 {minutes} 分 {seconds}"
+    return f"{minutes} 分 {seconds}" if minutes else seconds
 
 
 def _set_from_item(item: dict[str, Any], order: int) -> dict[str, Any]:

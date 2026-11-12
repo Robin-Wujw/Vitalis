@@ -4,7 +4,7 @@ from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from math import log
+from math import isfinite, log
 from statistics import median
 
 from .activity import workout_calories_kcal, workout_distance_km
@@ -77,6 +77,27 @@ FAMILY_LABELS = {
     "mixed": "混合体能",
     "skill": "技巧与休闲",
 }
+
+
+def _strength_rest_between_sets(data: dict, source: str | None) -> dict | None:
+    """Keep the vendor's set-rest observation separate from timer pauses."""
+    if data.get("training_family") != "strength" or source != "zepp":
+        return None
+    evidence = (data.get("vendor_summary_metrics") or {}).get("rest_between_sets_seconds")
+    if not isinstance(evidence, dict) or any(evidence.get(key) != expected for key, expected in (
+        ("source", source), ("source_scope", "workout_summary"), ("unit", "s"),
+        ("source_field", "restTimeBetweenGroupsWithMillis"),
+        ("qualification", "vendor_reported"), ("time_basis", "activity_day"),
+    )):
+        return None
+    value = evidence.get("value")
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value) or value < 0:
+        return None
+    for field in ("moving_time_seconds", "elapsed_time_seconds"):
+        duration = data.get(field)
+        if duration is not None and value > duration:
+            return None
+    return dict(evidence)
 
 
 @dataclass(frozen=True)
@@ -1156,6 +1177,7 @@ class TrainingAnalyzer:
                     "moving_time_seconds", "paused_time_seconds", "elapsed_time_seconds",
                     "fetched_at", "source_record_id",
                 )},
+                rest_between_sets=_strength_rest_between_sets(data, workout.get("source")),
                 vendor_load=(
                     float(data["load"]) if data.get("load") is not None else None
                 ),

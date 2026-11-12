@@ -466,6 +466,63 @@ def test_training_preserves_recent_workout_types_and_details():
     assert training.recent_workouts[1].heart_rate_max_bpm == 173
 
 
+@pytest.mark.parametrize("rest", [0, 2700.125])
+def test_strength_rest_keeps_vendor_provenance_without_changing_timer_times(rest):
+    from copy import deepcopy
+
+    raw = _profile()
+    evidence = {
+        "value": rest, "unit": "s", "source": "zepp", "source_scope": "workout_summary",
+        "source_field": "restTimeBetweenGroupsWithMillis", "qualification": "vendor_reported",
+        "time_basis": "activity_day", "observed_at": "2026-08-28T10:00:00Z",
+        "fetched_at": "2026-08-28T12:00:00Z", "source_record_id": "synthetic-journal",
+    }
+    raw.workouts = [{"local_day": TARGET, "source": "zepp", "data": {
+        "type": "strength", "training_family": "strength", "duration": 62,
+        "elapsed_time_seconds": 3723.456, "moving_time_seconds": 3661.456,
+        "paused_time_seconds": 62, "vendor_summary_metrics": {"rest_between_sets_seconds": evidence},
+    }}]
+    before = deepcopy(raw)
+    workout = TrainingAnalyzer().analyze(raw, {}).recent_workouts[0]
+    assert workout.rest_between_sets == evidence
+    assert workout.elapsed_time_seconds == 3723.456
+    assert workout.moving_time_seconds == 3661.456
+    assert workout.paused_time_seconds == 62
+    assert raw == before
+
+
+@pytest.mark.parametrize("changes", [
+    {"value": None}, {"value": True}, {"value": -1}, {"value": float("nan")},
+    {"value": float("inf")}, {"value": 4000}, {"unit": "ms"},
+    {"source": "other"}, {"source_field": "pauseTimeWithMillis"},
+    {"qualification": "vendor_unit_unverified"},
+])
+def test_strength_rest_rejects_unqualified_or_conflicting_summary(changes):
+    evidence = {"value": 600, "unit": "s", "source": "zepp",
+        "source_scope": "workout_summary", "source_field": "restTimeBetweenGroupsWithMillis",
+        "qualification": "vendor_reported", "time_basis": "activity_day", **changes}
+    raw = _profile()
+    raw.workouts = [{"local_day": TARGET, "source": "zepp", "data": {
+        "type": "strength", "training_family": "strength", "duration": 60,
+        "moving_time_seconds": 3600, "vendor_summary_metrics": {"rest_between_sets_seconds": evidence},
+    }}]
+    assert TrainingAnalyzer().analyze(raw, {}).recent_workouts[0].rest_between_sets is None
+
+
+@pytest.mark.parametrize("rest", [None, 4000])
+def test_strength_rest_missing_or_exceeding_elapsed_is_not_published(rest):
+    raw = _profile()
+    evidence = {"value": rest, "unit": "s", "source": "zepp",
+        "source_scope": "workout_summary", "source_field": "restTimeBetweenGroupsWithMillis",
+        "qualification": "vendor_reported", "time_basis": "activity_day"}
+    raw.workouts = [{"local_day": TARGET, "source": "zepp", "data": {
+        "type": "strength", "training_family": "strength", "duration": 60,
+        "moving_time_seconds": None, "elapsed_time_seconds": 3600,
+        "vendor_summary_metrics": {} if rest is None else {"rest_between_sets_seconds": evidence},
+    }}]
+    assert TrainingAnalyzer().analyze(raw, {}).recent_workouts[0].rest_between_sets is None
+
+
 def test_decision_returns_primary_running_and_optional_strength_plan():
     raw = _with_genuinely_low_recent_load(
         _profile(hrv_today=62, rhr_today=50, sleep_today=510, load_today=0)

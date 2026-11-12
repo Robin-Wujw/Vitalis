@@ -483,6 +483,11 @@ def _registry() -> dict[str, SignalDefinition]:
             update={"visible_channels": ("evening", "hermes", "api") if metric.endswith("time_seconds") else ("hermes", "api"), "aggregation_basis": "workout",
                 "coverage_rule": SignalCoverageRule(expected_days=1,
                     baseline_window_days=0, baseline_minimum_days=0)}))
+    entries.append(_definition("rest_between_sets_seconds", "s", "activity_day", (
+        "workout.vendor_summary_metrics.rest_between_sets_seconds", "restTimeBetweenGroupsWithMillis",
+    )).model_copy(update={"visible_channels": ("evening", "hermes", "api"),
+        "aggregation_basis": "workout", "coverage_rule": SignalCoverageRule(
+            expected_days=1, baseline_window_days=0, baseline_minimum_days=0)}))
     return {entry.normalized_metric: entry for entry in entries}
 
 

@@ -700,6 +700,7 @@ class WorkoutFeature(BaseModel):
     moving_time_seconds: float | None = Field(default=None, ge=0)
     paused_time_seconds: float | None = Field(default=None, ge=0)
     elapsed_time_seconds: float | None = Field(default=None, ge=0)
+    rest_between_sets: dict[str, Any] | None = None
     fetched_at: datetime | None = None
     source_record_id: str | None = None
     type: str

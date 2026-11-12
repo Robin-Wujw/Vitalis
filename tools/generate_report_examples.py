@@ -92,6 +92,13 @@ def _render_examples(day: date):
                 duration=duration, distance_km=distance, vendor_reported_sets=sets,
                 elapsed_time_seconds=duration*60, moving_time_seconds=duration*60-30,
                 paused_time_seconds=30, fetched_at=cutoff,
+                vendor_summary_metrics={"rest_between_sets_seconds": {
+                    "value": 600.125, "raw_value": 600125, "unit": "s", "source": "zepp",
+                    "source_scope": "workout_summary", "source_field": "restTimeBetweenGroupsWithMillis",
+                    "qualification": "vendor_reported", "time_basis": "activity_day",
+                    "observed_at": datetime.combine(day, clock, ZoneInfo(settings.timezone)).astimezone(timezone.utc).isoformat(),
+                    "fetched_at": cutoff.isoformat(), "source_record_id": "synthetic-set-rest",
+                }} if kind == WorkoutType.STRENGTH else {},
                 observed_fields=["duration"] + (["distance_km"] if distance is not None else []),
             ))
     cutoff = datetime.combine(day, time(21, 20), ZoneInfo(settings.timezone)).astimezone(timezone.utc)

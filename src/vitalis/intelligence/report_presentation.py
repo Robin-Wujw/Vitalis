@@ -515,7 +515,10 @@ def _generic_facts(workout: dict[str, Any]) -> list[str]:
                        ("paused_time_seconds", "暂停")):
         if workout.get("type") == "running" and key != "elapsed_time_seconds":
             continue
-        if strength:
+        format_as_minutes_seconds = strength or (
+            workout.get("type") == "running" and key == "elapsed_time_seconds"
+        )
+        if format_as_minutes_seconds:
             label = {"moving_time_seconds": "运动计时（含组间休息）",
                      "paused_time_seconds": "计时暂停（不含组间休息）"}.get(key, label)
             if (shown := _workout_seconds(workout.get(key))) is not None:

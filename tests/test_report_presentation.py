@@ -103,6 +103,19 @@ def test_strength_missing_timing_stays_unknown_and_fraction_rounding_carries():
     assert facts == ["全程时间 60 分 0 秒"]
 
 
+def test_running_elapsed_time_is_displayed_as_minutes_and_seconds():
+    payload = _daily()
+    payload["features"]["training"]["recent_workouts"] = [{
+        "date": payload["date"], "source": "zepp", "workout_id": "running-timing",
+        "type": "running", "training_family": "aerobic", "duration_minutes": 115,
+        "elapsed_time_seconds": 6900.112, "moving_time_seconds": 6900.112,
+        "paused_time_seconds": 0,
+    }]
+    facts = daily_presentation(payload)["training"][0]["facts"]
+    assert "全程时间 115 分 0.1 秒" in facts
+    assert "运动时间" not in " ".join(facts)
+
+
 def test_morning_metrics_are_stable_and_hrv_is_optional():
     result = daily_presentation(_daily(), morning=True)
     assert [item["key"] for item in result["metrics"]] == ["sleep", "rhr", "hrv"]

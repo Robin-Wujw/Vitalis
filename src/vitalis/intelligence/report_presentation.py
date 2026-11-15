@@ -515,12 +515,11 @@ def _generic_facts(workout: dict[str, Any]) -> list[str]:
                        ("paused_time_seconds", "暂停")):
         if workout.get("type") == "running" and key != "elapsed_time_seconds":
             continue
-        format_as_minutes_seconds = strength or (
-            workout.get("type") == "running" and key == "elapsed_time_seconds"
-        )
+        format_as_minutes_seconds = True
         if format_as_minutes_seconds:
-            label = {"moving_time_seconds": "运动计时（含组间休息）",
-                     "paused_time_seconds": "计时暂停（不含组间休息）"}.get(key, label)
+            if strength:
+                label = {"moving_time_seconds": "运动计时（含组间休息）",
+                         "paused_time_seconds": "计时暂停（不含组间休息）"}.get(key, label)
             if (shown := _workout_seconds(workout.get(key))) is not None:
                 facts.append(f"{label} {shown}")
         elif (shown := number(workout.get(key))) is not None:

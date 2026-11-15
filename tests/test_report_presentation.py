@@ -116,6 +116,20 @@ def test_running_elapsed_time_is_displayed_as_minutes_and_seconds():
     assert "运动时间" not in " ".join(facts)
 
 
+def test_generic_training_timing_uses_the_same_hour_carry_format():
+    payload = _daily()
+    payload["features"]["training"]["recent_workouts"] = [{
+        "date": payload["date"], "source": "zepp", "workout_id": "cycling-timing",
+        "type": "cycling", "training_family": "aerobic", "duration_minutes": 62,
+        "elapsed_time_seconds": 3723.456, "moving_time_seconds": 3661.456,
+        "paused_time_seconds": 62,
+    }]
+    facts = daily_presentation(payload)["training"][0]["facts"]
+    assert "全程时间 1 小时 2 分 3.5 秒" in facts
+    assert "运动时间 1 小时 1 分 1.5 秒" in facts
+    assert "暂停 1 分 2 秒" in facts
+
+
 def test_morning_metrics_are_stable_and_hrv_is_optional():
     result = daily_presentation(_daily(), morning=True)
     assert [item["key"] for item in result["metrics"]] == ["sleep", "rhr", "hrv"]

@@ -413,6 +413,7 @@ def test_weekly_duration_facts_use_hours_and_records_wording():
     training_text = " ".join(training.facts)
 
     assert "睡眠记录 7 晚，平均 7 小时 8 分钟；前一期平均 6 小时 45 分钟" in sleep_text
+    assert "睡眠 HRV记录 7 晚" in sleep_text
     assert "训练时长 3 小时 30 分钟" in training_text
     assert "跑步 3 次、23.40 公里、2 小时 22 分钟" in training_text
     assert "力量：1 小时 8 分钟" in training_text
@@ -663,8 +664,8 @@ def test_monthly_facts_show_denominators_units_and_recorded_subtotals():
     assert "本期记录 18/28 晚" in sleep_line
     assert "前期记录 3/28 晚" in sleep_line
     assert "两期均值变化" not in sleep_line
-    assert "本期记录 18/28 天，中位数 69 毫秒" in hrv_line
-    assert "前期记录 3/28 天，中位数 60 毫秒" in hrv_line
+    assert "本期记录 18/28 晚，中位数 69 毫秒" in hrv_line
+    assert "前期记录 3/28 晚，中位数 60 毫秒" in hrv_line
     assert "两期中位数变化" not in hrv_line
     assert any("已记录训练场次 20 次" in line for line in training.facts)
     assert any("已记录小计" in line and "步" in line for line in training.facts)
@@ -709,7 +710,7 @@ def test_monthly_shows_zero_prior_coverage_without_inventing_comparisons():
     recovery = next(section for section in MonthlyBriefingEngine().build(payload).sections if section.key == "sleep_recovery")
 
     assert "前期记录 0/28 晚" in recovery.facts[0]
-    assert "前期记录 0/28 天" in recovery.facts[1]
+    assert "前期记录 0/28 晚" in recovery.facts[1]
     assert all("变化 12%" not in line for line in recovery.facts)
 
 

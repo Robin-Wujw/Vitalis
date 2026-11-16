@@ -14,6 +14,7 @@ from .contracts import (
     TimelineItem,
     TrainingResponseProfile,
 )
+from .report_formatting import minutes_text
 
 
 class TimelineRepository(Protocol):
@@ -99,7 +100,7 @@ class HealthTimelineEngine:
                 type="workout",
                 date=workout_day,
                 title=f"完成训练：{data.get('sport_mode_label') or '未知运动'}",
-                summary=f"{int(data.get('duration') or 0)} 分钟",
+                summary=minutes_text(int(data.get('duration') or 0)) or "时长未记录",
                 references={
                     "workout_source": workout.source,
                     "workout_id": workout.workout_id,

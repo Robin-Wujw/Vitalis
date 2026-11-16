@@ -46,6 +46,24 @@ def test_sleep_week_comparison_uses_daily_values_and_same_source_gate():
     assert item.previous_average is None and item.change is None
 
 
+def test_sleep_timing_context_exposes_vendor_inputs_and_calculation_method():
+    raw = RawDailyProfile(user_id="test", day=DAY, as_of=NOW)
+    raw.series["sleep_latency_minutes"] = [point("sleep_latency_minutes", 12)]
+    raw.series["out_of_bed_delay_minutes"] = [point("out_of_bed_delay_minutes", 5)]
+    raw.series["time_in_bed_minutes"] = [point("time_in_bed_minutes", 480)]
+    raw.series["sleep_efficiency_percent"] = [point("sleep_efficiency_percent", 87.5, unit="%")]
+
+    facts = {item.metric: item for item in build_recorded_context(raw, DAY).metrics}
+    assert facts["sleep_latency_minutes"].calculation_method == "vendor_is"
+    assert facts["sleep_latency_minutes"].calculation_source_fields == ["slp.is"]
+    assert facts["out_of_bed_delay_minutes"].calculation_method == "vendor_lb"
+    assert facts["time_in_bed_minutes"].calculation_method == "verified_sleep_window"
+    assert facts["time_in_bed_minutes"].calculation_source_fields == [
+        "slp.st", "slp.ed", "slp.is", "slp.lb", "slp.obt", "slp.ebt"
+    ]
+    assert facts["sleep_efficiency_percent"].calculation_method == "sleep_duration_divided_by_time_in_bed"
+
+
 def test_goal_is_not_a_measurement_and_unknown_or_incomplete_is_not_failure():
     raw = RawDailyProfile(user_id="test", day=DAY, as_of=NOW,
         report_context={"target_day_complete": False})

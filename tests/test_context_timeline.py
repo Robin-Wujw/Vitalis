@@ -51,7 +51,7 @@ def test_timeline_projects_typed_summaries_without_raw_samples():
             sport_mode_label="户外跑",
             training_family="aerobic",
             training_family_label="有氧训练",
-            duration=40,
+            duration=420,
             load=60,
         ))
     first = get_intelligence_command().analyze(user_id, TARGET)
@@ -85,6 +85,8 @@ def test_timeline_projects_typed_summaries_without_raw_samples():
     assert "metric_samples" not in encoded
     assert "workout_samples" not in encoded
     assert "response_days" not in encoded
+    workout_items = [item for item in timeline.items if item.type == "workout"]
+    assert workout_items and workout_items[0].summary == "7 小时"
 
     later = get_intelligence_query().timeline(
         user_id, TARGET - timedelta(days=6), TARGET + timedelta(days=1)

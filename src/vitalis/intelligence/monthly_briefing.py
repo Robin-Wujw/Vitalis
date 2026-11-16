@@ -159,12 +159,13 @@ class MonthlyBriefingEngine:
                 label += f"（{source} {indices[metric]}）"
             current_days = stream.get("available_days")
             previous_days = stream.get("previous_available_days")
+            noun = "晚" if metric in {"sleep_hrv", "sleep_rhr"} else "天"
             current_count = f"{number(current_days, 0)}/{period_days}" if current_days is not None else "未记录"
-            text = f"{label}：本期记录 {current_count} 天，中位数 {value_with_unit(stream.get('median'), stream.get('unit')) or '未记录'}"
+            text = f"{label}：本期记录 {current_count} {noun}，中位数 {value_with_unit(stream.get('median'), stream.get('unit')) or '未记录'}"
             if previous_days is not None:
-                text += f"；前期记录 {number(previous_days, 0)}/{previous_period_days} 天"
+                text += f"；前期记录 {number(previous_days, 0)}/{previous_period_days} {noun}"
             elif stream.get("previous_median") is not None:
-                text += "；前期记录天数未记录"
+                text += f"；前期记录{noun}数未记录"
             if stream.get("previous_median") is not None:
                 text += f"，中位数 {value_with_unit(stream['previous_median'], stream.get('unit'))}"
             if (stream.get("change_percent") is not None

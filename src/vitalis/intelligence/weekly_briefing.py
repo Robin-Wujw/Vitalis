@@ -113,14 +113,16 @@ class WeeklyBriefingEngine:
         hrv = recovery.get("hrv_median_ms")
         if hrv is not None:
             label = recovery.get("hrv_metric_label") or metric_label(recovery.get("hrv_metric"))
-            text = f"{label}记录 {recovery.get('hrv_available_days', 0)} 天，中位数 {number(hrv)} 毫秒"
+            noun = "晚" if recovery.get("hrv_metric") == "sleep_hrv" else "天"
+            text = f"{label}记录 {recovery.get('hrv_available_days', 0)} {noun}，中位数 {number(hrv)} 毫秒"
             if recovery.get("hrv_previous_median_ms") is not None:
                 text += f"；前一期 {number(recovery['hrv_previous_median_ms'])} 毫秒"
             if recovery.get("hrv_change_percent") is not None:
                 text += f"，变化 {percent(recovery['hrv_change_percent'])}"
             fact_lines.append(text + "。")
         if recovery.get("rhr_median_bpm") is not None:
-            text = f"静息心率记录 {recovery.get('rhr_available_days', 0)} 天，中位数 {number(recovery['rhr_median_bpm'])} 次/分钟"
+            noun = "晚" if recovery.get("rhr_metric") == "sleep_rhr" else "天"
+            text = f"静息心率记录 {recovery.get('rhr_available_days', 0)} {noun}，中位数 {number(recovery['rhr_median_bpm'])} 次/分钟"
             if recovery.get("rhr_previous_median_bpm") is not None:
                 text += f"；前一期 {number(recovery['rhr_previous_median_bpm'])} 次/分钟"
             if recovery.get("rhr_change_percent") is not None:

@@ -59,14 +59,14 @@
         "media_type": "text/markdown",
         "template": "markdown",
         "renderer_version": "8.0",
-        "content_sha256": "b99c7164515696ce9ff9e73ed1345341ada0b661dc8b2f909c49383017cdc1ee"
+        "content_sha256": "506367301b94df2475c91c65a1a04cd768be9981114b688f8b078323a647c397"
       },
       "html": {
         "title": "Vitalis 周报 · 本周睡眠与训练结构",
         "media_type": "text/html",
         "template": "html",
         "renderer_version": "8.0",
-        "content_sha256": "1bc0b48f5c118dc33b5d9b5de66647df4d6749449cf9da5d92ee391e14824608"
+        "content_sha256": "34b203a7a86b45d186ee0f329766083a1bfc132815dd88921596f937024cc50a"
       }
     },
     "monthly": {
@@ -75,14 +75,14 @@
         "media_type": "text/markdown",
         "template": "markdown",
         "renderer_version": "8.0",
-        "content_sha256": "0672330c8ed40e1f8778f390e763523665505787f6afb6d253cc4bddf36133a2"
+        "content_sha256": "de292bcb423e0f54bd9eb15577500bd9fb2c0f80b15f6944959de85af56090fa"
       },
       "html": {
         "title": "Vitalis 月报 · 本月睡眠与训练结构",
         "media_type": "text/html",
         "template": "html",
         "renderer_version": "8.0",
-        "content_sha256": "8c910e5b2739b740d570e0adf42d74f37854f9c679a90508e0b9b10f897e9d6d"
+        "content_sha256": "235d3ea485db9905d4f7bd4d82c442faddcff5ec961002defcd07ecc6bcf867b"
       }
     },
     "insufficient-data": {

@@ -13,6 +13,18 @@ SLEEP_METRICS = {
     "sleep_latency_minutes": "min", "out_of_bed_delay_minutes": "min",
     "time_in_bed_minutes": "min", "sleep_efficiency_percent": "%",
 }
+SLEEP_CALCULATIONS = {
+    "sleep_latency_minutes": ("vendor_is", ["slp.is"]),
+    "out_of_bed_delay_minutes": ("vendor_lb", ["slp.lb"]),
+    "time_in_bed_minutes": (
+        "verified_sleep_window",
+        ["slp.st", "slp.ed", "slp.is", "slp.lb", "slp.obt", "slp.ebt"],
+    ),
+    "sleep_efficiency_percent": (
+        "sleep_duration_divided_by_time_in_bed",
+        ["sleep.sleep_duration", "slp.st", "slp.ed", "slp.is", "slp.lb", "slp.obt", "slp.ebt"],
+    ),
+}
 BODY_METRICS = {"weight": "kg", "height": "cm", "bmi": "kg/m2"}
 VENDOR_METRICS = {f"vendor_{key}": "vendor_load"
                   for key in ("atl", "ctl", "tsb", "atl_total", "ctl_total", "tsb_total")}
@@ -107,7 +119,9 @@ def build_recorded_context(raw: RawDailyProfile, start: date) -> RecordedContext
                 date_basis="sleep_day" if metric in SLEEP_METRICS else "calendar_day" if metric in BODY_METRICS else "activity_day",
                 period_start=first, period_end=end, available_days=len(daily), sample_count=len(points),
                 coverage_ratio=len(daily)/((end-first).days+1), latest_value=latest.value, latest_day=latest.day,
-                latest_observed_at=latest.observed_at, latest_fetched_at=latest.fetched_at, source_field=latest.source_field)
+                latest_observed_at=latest.observed_at, latest_fetched_at=latest.fetched_at, source_field=latest.source_field,
+                calculation_method=SLEEP_CALCULATIONS.get(metric, (None, []))[0],
+                calculation_source_fields=SLEEP_CALCULATIONS.get(metric, (None, []))[1])
             if metric in SLEEP_METRICS:
                 item.average = round(mean(point.value for point in daily.values()), 2)
                 if days > 1:

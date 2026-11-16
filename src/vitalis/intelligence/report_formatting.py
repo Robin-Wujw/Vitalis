@@ -35,7 +35,12 @@ def percent(value: Any) -> str | None:
 
 
 def value_with_unit(value: Any, unit: str | None, digits: int = 1) -> str | None:
-    shown = minutes_text(value) if unit in {"min", "minutes"} else number(value, digits)
+    if unit in {"min", "minutes"}:
+        # ``minutes_text`` already includes the appropriate unit after carrying
+        # values of an hour or more.  Appending ``分钟`` here produced output
+        # such as ``7 小时 6 分钟 分钟`` in period reports.
+        return minutes_text(value)
+    shown = number(value, digits)
     if shown is None:
         return None
     labels = {

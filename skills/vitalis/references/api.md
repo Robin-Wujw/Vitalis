@@ -17314,6 +17314,26 @@ Each reachable component is rendered once; `$ref` values name the headings below
       ],
       "title": "Average"
     },
+    "calculation_method": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "For derived facts, the stable method used from the saved source fields; null for direct observations.",
+      "title": "Calculation Method"
+    },
+    "calculation_source_fields": {
+      "description": "Vendor/source fields required by calculation_method, when the value is derived.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Calculation Source Fields",
+      "type": "array"
+    },
     "change": {
       "anyOf": [
         {

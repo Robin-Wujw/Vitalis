@@ -147,6 +147,23 @@ def test_weekly_public_context_uses_saved_average_and_keeps_comparison_metadata(
     assert fact["previous_available_days"] == 6 and fact["change"] == -4
 
 
+def test_public_view_retains_sleep_timing_calculation_metadata():
+    raw = _raw()
+    raw.series = {"time_in_bed_minutes": [_point("time_in_bed_minutes", 480)]}
+    context = build_recorded_context(raw, DAY).model_dump(mode="json")
+    from tests.test_public_reports import _daily
+
+    payload = _daily()
+    payload["features"]["recorded_context"] = context
+    public = to_public_report_view(payload, "daily")
+    sleep = next(block for block in public.blocks if block.section_id == "sleep")
+    fact = next(item for item in sleep.facts if item["metric"] == "time_in_bed_minutes")
+    assert fact["calculation_method"] == "verified_sleep_window"
+    assert fact["calculation_source_fields"] == [
+        "slp.st", "slp.ed", "slp.is", "slp.lb", "slp.obt", "slp.ebt"
+    ]
+
+
 @pytest.mark.parametrize("kind", ["morning", "daily", "evening", "weekly"])
 @pytest.mark.parametrize("target", ["markdown", "html"])
 def test_vendor_load_stays_queryable_without_cluttering_readable_reports(kind, target):

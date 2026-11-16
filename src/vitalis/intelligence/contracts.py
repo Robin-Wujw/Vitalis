@@ -1325,6 +1325,14 @@ class RecordedMetric(BaseModel):
     latest_observed_at: datetime | date
     latest_fetched_at: datetime | None = None
     source_field: str | None = None
+    calculation_method: str | None = Field(
+        default=None,
+        description="For derived facts, the stable method used from the saved source fields; null for direct observations.",
+    )
+    calculation_source_fields: list[str] = Field(
+        default_factory=list,
+        description="Vendor/source fields required by calculation_method, when the value is derived.",
+    )
     average: float | None = None
     reference_start: date | None = None
     reference_end: date | None = None

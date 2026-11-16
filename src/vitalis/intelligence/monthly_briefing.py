@@ -8,7 +8,7 @@ from typing import Any
 from .contracts import ReportBriefing
 from .period_activity import comparison_gate
 from .report_presentation import internal_sections, period_presentation
-from .report_formatting import as_of_line, coverage_text, energy_label, metric_label, number, payload_of, percent, running_class_label, unique, value_with_unit
+from .report_formatting import as_of_line, coverage_text, energy_label, metric_label, minutes_text, number, payload_of, percent, running_class_label, unique, value_with_unit
 
 
 _ACTIVITY_UNIT_LABELS = {
@@ -33,6 +33,9 @@ def _activity_metric_value(metric: dict[str, Any], value: Any) -> str | None:
     if shown is None:
         return None
     raw_unit = metric.get("unit")
+    if raw_unit in {"min", "minutes"}:
+        duration = minutes_text(value)
+        return duration if duration is not None else shown
     unit = _ACTIVITY_UNIT_LABELS.get(raw_unit, raw_unit or "单位未提供")
     return f"{shown} {unit}" if unit else shown
 
@@ -105,7 +108,7 @@ class MonthlyBriefingEngine:
         facts = [coverage_text(training.get("coverage_status"), training.get("record_days"), training.get("unknown_days"), period_days)]
         quality = payload.get("data_quality") or {}
         if quality.get("sleep_days"):
-            facts.append(f"睡眠记录 {quality['sleep_days']}/{period_days} 天。")
+            facts.append(f"睡眠记录 {quality['sleep_days']}/{period_days} 晚。")
         as_of = as_of_line(payload.get("report_context") or {})
         if as_of:
             facts.append(as_of)
@@ -126,15 +129,15 @@ class MonthlyBriefingEngine:
         if sleep.get("available_days") is not None:
             current_days = sleep["available_days"]
             previous_days = sleep.get("previous_available_days")
-            text = f"睡眠：本期有效 {number(current_days, 0)}/{period_days} 天"
+            text = f"睡眠：本期记录 {number(current_days, 0)}/{period_days} 晚"
             if sleep.get("average_minutes") is not None:
-                text += f"，平均 {number(sleep['average_minutes'], 0)} 分钟/晚"
+                text += f"，平均 {minutes_text(sleep['average_minutes'])}/晚"
             if previous_days is not None:
-                text += f"；前期有效 {number(previous_days, 0)}/{previous_period_days} 天"
+                text += f"；前期记录 {number(previous_days, 0)}/{previous_period_days} 晚"
             elif sleep.get("previous_average_minutes") is not None:
-                text += "；前期有效天数未记录"
+                text += "；前期记录晚数未记录"
             if sleep.get("previous_average_minutes") is not None:
-                text += f"，平均 {number(sleep['previous_average_minutes'], 0)} 分钟/晚"
+                text += f"，平均 {minutes_text(sleep['previous_average_minutes'])}/晚"
             if (sleep.get("change_percent") is not None
                     and sleep.get("average_minutes") is not None
                     and sleep.get("previous_average_minutes") is not None
@@ -157,11 +160,11 @@ class MonthlyBriefingEngine:
             current_days = stream.get("available_days")
             previous_days = stream.get("previous_available_days")
             current_count = f"{number(current_days, 0)}/{period_days}" if current_days is not None else "未记录"
-            text = f"{label}：本期有效 {current_count} 天，中位数 {value_with_unit(stream.get('median'), stream.get('unit')) or '未记录'}"
+            text = f"{label}：本期记录 {current_count} 天，中位数 {value_with_unit(stream.get('median'), stream.get('unit')) or '未记录'}"
             if previous_days is not None:
-                text += f"；前期有效 {number(previous_days, 0)}/{previous_period_days} 天"
+                text += f"；前期记录 {number(previous_days, 0)}/{previous_period_days} 天"
             elif stream.get("previous_median") is not None:
-                text += "；前期有效天数未记录"
+                text += "；前期记录天数未记录"
             if stream.get("previous_median") is not None:
                 text += f"，中位数 {value_with_unit(stream['previous_median'], stream.get('unit'))}"
             if (stream.get("change_percent") is not None
@@ -201,19 +204,22 @@ class MonthlyBriefingEngine:
         for key, label, unit in (("workout_count", "训练场次", "次"), ("duration_minutes", "训练时长", "分钟"), ("vendor_load", "设备训练负荷指数", ""), ("aerobic_minutes", "有氧时长", "分钟"), ("strength_sessions", "力量场次", "次")):
             if training.get(key) is not None:
                 name = f"已记录{label}" if partial else label
-                lines.append(f"{name} {number(training[key])} {unit}。" if unit else f"{name} {number(training[key])}。")
+                if unit == "分钟":
+                    lines.append(f"{name} {minutes_text(training[key])}。")
+                else:
+                    lines.append(f"{name} {number(training[key])} {unit}。" if unit else f"{name} {number(training[key])}。")
         if training.get("running_sessions") is not None:
             run = f"{'已记录' if partial else ''}跑步 {number(training['running_sessions'], 0)} 次"
             if training.get("running_distance_km") is not None:
                 run += f"、{number(training['running_distance_km'], 2)} 公里"
             if training.get("running_duration_minutes") is not None:
-                run += f"、{number(training['running_duration_minutes'], 0)} 分钟"
+                run += f"、{minutes_text(training['running_duration_minutes'])}"
             if training.get("running_classification_counts"):
                 run += "；本次分析的课型 " + "、".join(f"{running_class_label(k)} {v} 次" for k, v in training["running_classification_counts"].items())
             lines.append(run + "。")
         strength = []
         if training.get("strength_duration_minutes") is not None:
-            strength.append(f"{number(training['strength_duration_minutes'], 0)} 分钟")
+            strength.append(minutes_text(training['strength_duration_minutes']) or "时长未记录")
         if training.get("strength_explicit_sessions") is not None:
             strength.append(f"明确明细 {number(training['strength_explicit_sessions'], 0)} 场")
         if training.get("strength_sets") is not None:
@@ -221,7 +227,7 @@ class MonthlyBriefingEngine:
         if strength:
             lines.append(("已记录力量：" if partial else "力量：") + "；".join(strength) + "。")
         if training.get("vendor_reported_sets") is not None:
-            lines.append(f"设备已记录组数小计 {number(training['vendor_reported_sets'], 0)} 组，来自 {number(training.get('vendor_sets_sessions', 0), 0)} 场有组数记录的力量训练；不等同于逐组动作明细。")
+            lines.append(f"设备已记录组数小计 {number(training['vendor_reported_sets'], 0)} 组，来自 {number(training.get('vendor_sets_sessions', 0), 0)} 场有组数记录的力量训练。")
         if training.get("workout_calories_kcal") is not None:
             lines.append(f"已记录训练热量小计 {number(training['workout_calories_kcal'])} 千卡，来自 {number(training.get('workout_calories_sessions', 0), 0)} 场有热量记录。")
         metrics = activity.get("metrics") or []
@@ -238,7 +244,7 @@ class MonthlyBriefingEngine:
         if activity.get("active_minutes") is not None and not any(
             item.get("metric") == "active_minutes" and item.get("total") is not None for item in metrics
         ):
-            lines.append(f"已记录活动时长小计 {number(activity['active_minutes'], 0)} 分钟（有效天数未单独统计）。")
+            lines.append(f"已记录活动时长小计 {minutes_text(activity['active_minutes'])}（记录天数未单独统计）。")
         limitations = []
         counts = Counter((item.get("metric"), item.get("role")) for item in metrics)
         indices: Counter[tuple[str | None, str | None]] = Counter()

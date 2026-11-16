@@ -400,6 +400,26 @@ def test_complete_fixture_has_real_plan_and_sufficient_period_data():
     assert weekly["facts"]["sleep"]["average_minutes"] is not None
 
 
+def test_weekly_duration_facts_use_hours_and_records_wording():
+    payload = synthetic_period_fixture("weekly", "complete")
+    payload["facts"]["training"].update({
+        "vendor_reported_sets": 24,
+        "vendor_sets_sessions": 2,
+    })
+    report = WeeklyBriefingEngine().build(payload)
+    sleep = next(section for section in report.sections if section.key == "sleep_recovery")
+    training = next(section for section in report.sections if section.key == "training")
+    sleep_text = " ".join(sleep.facts)
+    training_text = " ".join(training.facts)
+
+    assert "睡眠记录 7 晚，平均 7 小时 8 分钟；前一期平均 6 小时 45 分钟" in sleep_text
+    assert "训练时长 3 小时 30 分钟" in training_text
+    assert "跑步 3 次、23.40 公里、2 小时 22 分钟" in training_text
+    assert "力量：1 小时 8 分钟" in training_text
+    assert "设备记录组数合计 24 组，来自 2 场有组数记录的力量训练。" in training_text
+    assert "不等同于已取得逐组动作明细" not in training_text
+
+
 def test_missing_fixture_has_no_fake_values_or_rest_claims():
     daily = synthetic_daily_fixture("missing")
     period = synthetic_period_fixture("monthly", "missing")
@@ -582,7 +602,7 @@ def test_period_activity_metrics_render_human_units_without_raw_metric_names(per
     total_prefix = "本期" if period == "weekly" else "已记录小计"
     assert f"{total_prefix} 58,000 步" in internal and "日均 8,285.7 步" in internal
     assert f"{total_prefix} 42.5 公里" in internal and "日均 6.1 公里" in internal
-    assert f"{total_prefix} 330 分钟" in internal and "日均 47.1 分钟" in internal
+    assert f"{total_prefix} 5 小时 30 分钟" in internal and "日均 47 分钟" in internal
     calories_total = f"{total_prefix} 2,800 千卡"
     assert calories_total in internal and "日均 400 千卡" in internal
     assert "vendor_internal_activity" not in internal
@@ -640,11 +660,11 @@ def test_monthly_facts_show_denominators_units_and_recorded_subtotals():
     sleep_line = recovery.facts[0]
     hrv_line = recovery.facts[1]
 
-    assert "本期有效 18/28 天" in sleep_line
-    assert "前期有效 3/28 天" in sleep_line
+    assert "本期记录 18/28 晚" in sleep_line
+    assert "前期记录 3/28 晚" in sleep_line
     assert "两期均值变化" not in sleep_line
-    assert "本期有效 18/28 天，中位数 69 毫秒" in hrv_line
-    assert "前期有效 3/28 天，中位数 60 毫秒" in hrv_line
+    assert "本期记录 18/28 天，中位数 69 毫秒" in hrv_line
+    assert "前期记录 3/28 天，中位数 60 毫秒" in hrv_line
     assert "两期中位数变化" not in hrv_line
     assert any("已记录训练场次 20 次" in line for line in training.facts)
     assert any("已记录小计" in line and "步" in line for line in training.facts)
@@ -676,7 +696,7 @@ def test_monthly_missing_previous_sleep_coverage_does_not_claim_change():
     report = MonthlyBriefingEngine().build(payload)
     sleep_line = next(section for section in report.sections if section.key == "sleep_recovery").facts[0]
 
-    assert "前期有效 0/28 天" in sleep_line
+    assert "前期记录 0/28 晚" in sleep_line
     assert "两期均值变化" not in sleep_line
 
 
@@ -688,8 +708,8 @@ def test_monthly_shows_zero_prior_coverage_without_inventing_comparisons():
     stream.update({"previous_available_days": 0, "previous_median": None, "change_percent": 12})
     recovery = next(section for section in MonthlyBriefingEngine().build(payload).sections if section.key == "sleep_recovery")
 
-    assert "前期有效 0/28 天" in recovery.facts[0]
-    assert "前期有效 0/28 天" in recovery.facts[1]
+    assert "前期记录 0/28 晚" in recovery.facts[0]
+    assert "前期记录 0/28 天" in recovery.facts[1]
     assert all("变化 12%" not in line for line in recovery.facts)
 
 
@@ -700,7 +720,7 @@ def test_monthly_activity_fallback_keeps_metrics_missing_from_a_partial_list():
     facts = next(section for section in MonthlyBriefingEngine().build(payload).sections if section.key == "training_activity").facts
 
     assert any("日常步数" in item and "232,000 步" in item for item in facts)
-    assert any("活动时长小计 1,320 分钟" in item for item in facts)
+    assert any("活动时长小计 22 小时" in item for item in facts)
     assert any("11,200 千卡" in item for item in facts)
 
 

@@ -161,7 +161,7 @@ def recommend_focus(raw, sessions):
     if recent_lower_back:
         result.reasons.append('近两天腰背已有较多主要参与组，腿部训练可能重叠用力，本次先不列为首选。')
     if long_run:
-        result.reasons.append('近两天有至少 60 分钟跑步，腿部不列为本次首选；跑步不折算力量组数。')
+        result.reasons.append('近两天有至少 1 小时跑步，腿部不列为本次首选；跑步不折算力量组数。')
     if not recent_complete:
         result.reasons.append('近期有未核实日期或缺明细场次；保留已知训练顺序和可用历史，不把缺失当休息。')
     result.reasons.append('肌群组数按动作关系估算；未记录不适仍可给候选，训练前按实际状态调整，不凭间隔认定恢复。')

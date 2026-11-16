@@ -35,7 +35,7 @@ def percent(value: Any) -> str | None:
 
 
 def value_with_unit(value: Any, unit: str | None, digits: int = 1) -> str | None:
-    shown = number(value, digits)
+    shown = minutes_text(value) if unit in {"min", "minutes"} else number(value, digits)
     if shown is None:
         return None
     labels = {
@@ -62,6 +62,23 @@ def minutes_text(value: Any) -> str | None:
     if hours:
         return f"{hours} 小时"
     return f"{minutes} 分钟"
+
+
+def duration_range_text(value: Any) -> str | None:
+    """Format a minute range with hour carry while keeping short ranges compact."""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    low, high = value
+    if any(not isinstance(item, (int, float)) or isinstance(item, bool) for item in (low, high)):
+        return None
+    low_text, high_text = minutes_text(low), minutes_text(high)
+    if low_text is None or high_text is None:
+        return None
+    if float(low) < 60 and float(high) < 60:
+        low_number, high_number = number(low, 0), number(high, 0)
+        if low_number is not None and high_number is not None:
+            return f"{low_number if low_number == high_number else low_number + '–' + high_number} 分钟"
+    return low_text if low_text == high_text else f"{low_text}–{high_text}"
 
 
 def range_text(value: Any, unit: str) -> str | None:

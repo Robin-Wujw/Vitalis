@@ -16,6 +16,7 @@ from .chart_contracts import (
     Chart, ChartBand, ChartBandPoint, ChartBundle, ChartInterval, ChartPoint,
     ChartReference, ChartRegion, ChartSeries, ChartSourceSummary,
 )
+from .report_formatting import minutes_text
 from .profile import RawDailyProfile, SeriesPoint
 
 UTC = timezone.utc
@@ -208,7 +209,7 @@ def _sleep(raw: RawDailyProfile, start: date, end: date) -> Chart | None:
             continue
         duration = _number(row.get("sleep_duration"))
         score = _number(row.get("sleep_score"))
-        summary.append(f"{day} 主睡眠" + (f" {duration:g} 分钟" if duration is not None else "") +
+        summary.append(f"{day} 主睡眠" + (f" {minutes_text(duration)}" if duration is not None else "") +
                        (f" · Zepp 评分 {score:g}" if score is not None else ""))
         source_summaries.append(ChartSourceSummary(text=summary[-1],source=row.get('source','zepp'),
             source_scope=row.get('source_scope','unknown'),device_id=row.get('device_id')))
@@ -231,7 +232,7 @@ def _sleep(raw: RawDailyProfile, start: date, end: date) -> Chart | None:
                 source_scope=nap_record.get('source_scope','unknown'),device_id=nap_record.get('device_id')))
         for nap in sessions:
             duration = _number(_get(nap, "sleep_minutes"))
-            summary.append(f"{day} 午睡" + (f" {duration:g} 分钟" if duration is not None else "时长资格未知"))
+            summary.append(f"{day} 午睡" + (f" {minutes_text(duration)}" if duration is not None else "时长资格未知"))
             source_summaries.append(ChartSourceSummary(text=summary[-1],source=_get(nap,'source','zepp'),
                 source_scope=_get(nap,'source_scope','unknown'),device_id=_get(nap,'device_id'),
                 observed_at=_datetime(_get(nap,'started_at'))))

@@ -4,6 +4,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 
 from .contracts import ConfidenceBand, WeeklyFacts, WeeklyRecommendation
+from .report_formatting import minutes_text
 from .running import RunningAnalyzer
 from .strength import MUSCLE_LABELS, StrengthAnalyzer
 
@@ -195,7 +196,7 @@ def _running_coaching(raw, start, analysis, blocked, strength_sessions):
         types[session.classification_label] += 1
     reasons = [(
         f"{start:%m-%d} 至 {raw.day:%m-%d}：跑步 {analysis.sessions_7d} 次，"
-        f"已记录 {analysis.duration_minutes_7d} 分钟。"
+        f"已记录 {minutes_text(analysis.duration_minutes_7d)}。"
     )]
     if analysis.distance_km_7d is not None:
         reasons.append(f"已记录跑步距离 {analysis.distance_km_7d:.1f} 公里。")
@@ -207,7 +208,7 @@ def _running_coaching(raw, start, analysis, blocked, strength_sessions):
     summary = f"本周跑步 {analysis.sessions_7d} 次"
     if analysis.distance_km_7d is not None:
         summary += f"，共 {analysis.distance_km_7d:.1f} 公里"
-    summary += f"{'、' if analysis.distance_km_7d is not None else '，共 '}{analysis.duration_minutes_7d} 分钟。"
+    summary += f"{'、' if analysis.distance_km_7d is not None else '，共 '}{minutes_text(analysis.duration_minutes_7d)}。"
     if blocked or truncated:
         action = summary
         if truncated:

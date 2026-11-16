@@ -519,7 +519,7 @@ def test_strength_highlights_drop_technical_gaps_and_keep_next_focus_and_safety(
     strength["next_focus_candidates"] = ["PULL"]
     strength["recent_sessions"] = [{
         "date": "2026-10-07", "limitations": [
-            "缺少逐组动作明细，仅保留已记录训练摘要。",
+            "逐组动作明细未记录。",
             "当前云详情未返回明确动作组；App 中的修正内容尚未在已读取字段中取得。",
             "心率或圈段结构不足，未估计工作段和休息段。",
             "缺少逐组记录，未估算容量或肌群组数。"],

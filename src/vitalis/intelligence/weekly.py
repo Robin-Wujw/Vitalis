@@ -42,6 +42,7 @@ from .report_periods import (
 from .trend import TrendEngine
 from .weekly_coaching import build_weekly_coaching
 from .recorded_context import build_recorded_context
+from .report_formatting import minutes_text
 
 PERIOD_DAYS = 7
 MIN_COMPARISON_DAYS = comparison_gate(PERIOD_DAYS)
@@ -98,7 +99,7 @@ class WeeklyProfileEngine:
         comparison_days = MIN_COMPARISON_DAYS
         if sleep.available_days < comparison_days:
             limitations.append(
-                f"本周睡眠有效天数不足 {comparison_days} 天。"
+                f"本周睡眠记录晚数不足 {comparison_days} 晚。"
             )
         if recovery.hrv_median_ms is None:
             limitations.append("本周缺少可比较的设备级 HRV 趋势。")
@@ -598,7 +599,7 @@ def _recommend(
             code="IMPROVE_SLEEP_DURATION",
             title="补足睡眠",
             action="已记录的睡眠平均不足 7 小时，下周先保证每晚至少 7 小时，训练先不加量。",
-            reasons=[f"本周平均睡眠 {facts.sleep.average_minutes:.0f} 分钟。"],
+            reasons=[f"本周平均睡眠 {minutes_text(facts.sleep.average_minutes)}。"],
         ))
     effort = facts.training.session_rpe_summary
     average_rpe = effort.average_rpe if effort else None

@@ -14,6 +14,7 @@ from typing import Any
 from .period_activity import comparison_gate
 from .readiness import DISPLAY_NORM, readiness_label
 from .report_formatting import (
+    duration_range_text,
     energy_label,
     metric_label,
     minutes_text,
@@ -492,9 +493,14 @@ def _pace_text(value: Any) -> str | None:
 def _running_facts(session: dict[str, Any]) -> list[str]:
     facts = []
     for key, label, unit, digits in (("moving_duration_minutes", "实际运动", "分钟", 1), ("distance_km", "距离", "公里", 2)):
-        shown = number(session.get(key), digits)
-        if shown is not None:
-            facts.append(f"{label} {shown} {unit}")
+        if key == "moving_duration_minutes":
+            shown = minutes_text(session.get(key))
+            if shown is not None:
+                facts.append(f"{label} {shown}")
+        else:
+            shown = number(session.get(key), digits)
+            if shown is not None:
+                facts.append(f"{label} {shown} {unit}")
     pace = _pace_text(session.get("average_pace_seconds_per_km"))
     if pace:
         label = {"moving": "运动配速", "elapsed": "全程平均配速（含暂停）", "sample_median": "采样速度折算配速"}.get(session.get("pace_basis"), "平均配速")
@@ -794,7 +800,7 @@ def _plan_suggestion(session: dict[str, Any], *, include_safety: bool) -> str | 
     if not title:
         return None
     parts = [str(title)]
-    duration = _range_text(session.get("total_duration_minutes"), "分钟")
+    duration = duration_range_text(session.get("total_duration_minutes"))
     if duration:
         parts.append(duration)
     if session.get("intensity_label"):
@@ -863,7 +869,7 @@ def daily_coaching_sections(payload: Any) -> list[dict[str, Any]]:
                 parts.append(f"{sets} 组")
             if step.get("repetitions"):
                 parts.append(str(step["repetitions"]))
-            duration = _range_text(step.get("duration_minutes"), "分钟")
+            duration = duration_range_text(step.get("duration_minutes"))
             if duration:
                 parts.append(duration)
             rest = _range_text(step.get("rest_seconds"), "秒")
@@ -902,7 +908,9 @@ def _weekly_load_lines(payload: dict[str, Any], *, morning: bool) -> list[str]:
         today = f"今天的份额约 {number(weekly['today_target_load'], 0)}"
         primary = (((payload.get("decision") or {}).get("action_plan") or {}).get("primary_session") or {})
         if _integer(weekly.get("today_minutes")) is not None and primary.get("session_type") == "RUNNING":
-            today += f"（跑步约 {weekly['today_minutes']} 分钟）"
+            today_duration = minutes_text(weekly["today_minutes"])
+            if today_duration:
+                today += f"（跑步约 {today_duration}）"
         lines.append(today + f"；本周还剩 {number(remaining, 0)}，计划分 {weekly.get('sessions_left')} 次完成")
     elif not morning and remaining:
         later_days = max(0, (_integer(weekly.get("days_left")) or 0) - 1)
@@ -1190,7 +1198,9 @@ def daily_display_sections(payload: Any, *, facts_only: bool = False) -> list[di
         if key == "active_minutes" and value is not None and workout_duration is not None and value < workout_duration:
             continue
         if value is not None:
-            activity_facts.append(f"{label} {number(value, digits)} {unit}")
+            shown = minutes_text(value) if key == "active_minutes" else number(value, digits)
+            if shown is not None:
+                activity_facts.append(f"{label} {shown}" if key == "active_minutes" else f"{label} {shown} {unit}")
     for item in activity.get("energy") or []:
         if item.get("role") == "workout":
             continue

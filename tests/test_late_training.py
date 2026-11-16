@@ -111,7 +111,7 @@ def test_updated_training_notice_preserves_new_value_without_claiming_a_new_sess
         [_workout()], [_workout(duration_minutes=60)],
     )
     text = render_report(MorningBriefingEngine().build_payload(payload)).content
-    assert "较昨晚晚报更新力量训练 60 分钟" in text
+    assert "较昨晚晚报更新力量训练 1 小时" in text
     assert "补入力量训练" not in text
 
 

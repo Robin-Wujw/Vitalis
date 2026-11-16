@@ -53,7 +53,7 @@ def test_vendor_count_is_not_explicit_exercise_detail_and_supersedes_estimated_b
     text = "\n".join(value for section in report.sections for value in section.facts)
     assert "设备记录 12 组" in text
     assert "21 个工作段" not in text
-    assert "逐组动作" in text and "尚未取得" in text
+    assert "力量动作明细未记录。" in text
     period = period_training_details(raw, day, day)
     assert period["vendor_reported_sets"] == 12
     assert period["vendor_sets_sessions"] == 1

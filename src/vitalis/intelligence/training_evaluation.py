@@ -7,6 +7,7 @@ clearance to train or proof of adaptation from a single session.
 """
 
 from .contracts import TrainingEvaluation
+from .report_formatting import duration_range_text, minutes_text
 
 
 def review_strength(session, *, target=None):
@@ -38,7 +39,7 @@ def review_strength(session, *, target=None):
 
 
 def review_running(session, *, target=None, workout=None):
-    observations = [f"完成跑步 {session.duration_minutes} 分钟。"]
+    observations = [f"完成跑步 {minutes_text(session.duration_minutes)}。"]
     suggestions = []
     if session.confidence.value in {"MODERATE", "HIGH"}:
         observations.append(f"训练结构推测为{session.classification_label}，未将其视为事先目标。")
@@ -65,7 +66,9 @@ def review_running(session, *, target=None, workout=None):
         duration = target['session'].get('total_duration_minutes')
         if duration:
             low, high = duration
-            review.observations.append(f"明确关联的训练前计划为 {low}–{high} 分钟；实际 {session.duration_minutes} 分钟。")
+            planned = duration_range_text(duration)
+            actual = minutes_text(session.duration_minutes)
+            review.observations.append(f"明确关联的训练前计划为 {planned}；实际 {actual}。")
         review.limitations = ["已关联训练前计划；评分曲线尚待留出验证，暂不发布总分。"]
         if workout:
             from .training_scoring import candidate_grade, score_running

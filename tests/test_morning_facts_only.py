@@ -420,8 +420,8 @@ def test_facts_only_keeps_vendor_scores_separate_from_observed_hrv_trend():
     report = MorningBriefingEngine().build_payload(daily, {"facts_only": True})
     facts = next(section for section in report["sections"] if section["key"] == "recovery")["facts"]
 
-    assert any("近 7 日同源 睡眠 HRV：中位数 66 毫秒（有效 5 天）" in item for item in facts)
-    assert any("此前 7 日同源 睡眠 HRV：中位数 61 毫秒（有效 4 天）" in item for item in facts)
+    assert any("近 7 日同源 睡眠 HRV：中位数 66 毫秒（记录 5 天）" in item for item in facts)
+    assert any("此前 7 日同源 睡眠 HRV：中位数 61 毫秒（记录 4 天）" in item for item in facts)
     assert "设备准备度评分 82/100（厂商参考值）" in facts
     assert "设备准备度（身体）80/100（厂商参考值）" in facts
     assert "UNSAFE-RECOVERY-CONCLUSION" not in repr(report)

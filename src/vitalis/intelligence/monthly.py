@@ -43,6 +43,7 @@ from .report_periods import (
     resolve_month_period,
 )
 from .trend import METRIC_LABELS, TrendEngine, stream_daily_values
+from .report_formatting import minutes_text
 
 
 PERIOD_DAYS = 28
@@ -117,7 +118,7 @@ class MonthlyProfileEngine:
         comparison_days = comparison_gate(period_days, selected_mode)
         if sleep.available_days < comparison_days:
             limitations.append(
-                f"本期睡眠有效天数不足 {comparison_days}/{period_days} 天。"
+                f"本期睡眠记录晚数不足 {comparison_days}/{period_days} 晚。"
             )
         if not recovery.streams:
             limitations.append("本期缺少可比较的设备级 HRV 或静息心率流。")
@@ -469,11 +470,11 @@ def _quality(
     limitations = []
     if facts.sleep.available_days < sufficient_gate:
         limitations.append(
-            f"睡眠有效天数不足 {sufficient_gate}/{period_days} 天。"
+            f"睡眠记录晚数不足 {sufficient_gate}/{period_days} 晚。"
         )
     if hrv_days < sufficient_gate:
         limitations.append(
-            f"同一设备 HRV 有效天数不足 {sufficient_gate}/{period_days} 天。"
+            f"同一设备 HRV 记录天数不足 {sufficient_gate}/{period_days} 天。"
         )
     return MonthlyDataQuality(
         status=status,
@@ -605,7 +606,7 @@ def _recommend(
             code="MONTHLY_IMPROVE_SLEEP",
             title="提高平均睡眠时长",
             action="下一个周期优先把平均睡眠提高到每晚至少 7 小时。",
-            reasons=[f"本期平均睡眠 {facts.sleep.average_minutes:.0f} 分钟。"],
+            reasons=[f"本期平均睡眠 {minutes_text(facts.sleep.average_minutes)}。"],
         ))
     if not output:
         output.append(WeeklyRecommendation(

@@ -453,7 +453,7 @@ class StrengthAnalyzer:
         limitations = []
         if not explicit:
             if not observed_sets:
-                limitations.append("缺少逐组动作明细，仅保留已记录训练摘要。")
+                limitations.append("逐组动作明细未记录。")
             mapped_observed = any(
                 item.source == "lap_62"
                 and item.exercise_name

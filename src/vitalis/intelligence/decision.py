@@ -35,6 +35,7 @@ from .localization import (
     LIMITATION_LABELS,
     labels,
 )
+from .report_formatting import minutes_text
 
 
 ROLE_LABELS = {"PRIMARY": "主要训练", "OPTIONAL": "可选训练"}
@@ -493,7 +494,7 @@ class DecisionEngine:
         if not preferences.available_weekdays:
             gates.append("未设置每周可训练日，只规划今天，不生成固定周历。")
         if preferences.max_session_minutes is None:
-            gates.append("未设置单次可用时长，采用 60 分钟以内的保守剂量。")
+            gates.append("未设置单次可用时长，采用 1 小时以内的保守剂量。")
         if preferences.running_experience is None:
             gates.append("未设置跑步经验，不安排高风险速度或最大努力测试。")
         if preferences.strength_experience is None:
@@ -749,7 +750,7 @@ class DecisionEngine:
         elif recent_hard:
             reasons.append("近 72 小时已有质量跑或长跑，本次因此降低刺激。")
         if latest:
-            detail = f"最近一次跑步为{latest.classification_label}，{latest.duration_minutes} 分钟"
+            detail = f"最近一次跑步为{latest.classification_label}，{minutes_text(latest.duration_minutes)}"
             if latest.average_pace_seconds_per_km is not None:
                 pace_seconds = int(round(latest.average_pace_seconds_per_km))
                 detail += f"，平均配速 {pace_seconds // 60}:{pace_seconds % 60:02d}/公里"
@@ -791,7 +792,7 @@ class DecisionEngine:
             title = "长距离轻松跑"
             focus = "在近期个人时长基础上小幅延长，全程保持低强度"
             steps = self._continuous_run_steps(duration, "长距离轻松跑", self._easy_zone(threshold), latest)
-            reasons.append(f"近期跑步时长中位数约 {typical} 分钟，且近两周没有长跑。")
+            reasons.append(f"近期跑步时长中位数约 {minutes_text(typical)}，且近两周没有长跑。")
         elif experienced and established and intensity == "moderate" and latest and latest.classification in {"RECOVERY_RUN", "EASY_RUN"}:
             duration = self._duration_around(preferences, typical, 0.9, 1.1, 30, 55)
             planned_intensity = "moderate"
@@ -1025,10 +1026,7 @@ class DecisionEngine:
             reasons.append("近期没有可复用的已确认动作，训练分化证据不足，仅安排保守动作模式。")
             latest_strength = sessions[0] if sessions else None
             if latest_strength and latest_strength.vendor_reported_sets is not None:
-                reasons.append(
-                    f"最近一次设备记录 {latest_strength.vendor_reported_sets} 组，但未取得逐组动作和剂量；"
-                    "本次不按总组数照搬训练。"
-                )
+                reasons.append(f"最近一次设备记录 {latest_strength.vendor_reported_sets} 组；本次不按总组数照搬训练。")
         if lower_conflict:
             reasons.append("近期跑步或下肢负担较高，已降低力量训练剂量并避开下肢重点。")
         if adjusted:

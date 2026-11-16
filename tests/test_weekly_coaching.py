@@ -207,7 +207,7 @@ def test_running_coaching_uses_easy_effort_and_does_not_invent_quality_training(
     assert "不新增快跑" in item.action
     assert "练腿" in item.action and "休息" in item.action
     assert "2 次" in " ".join(item.reasons)
-    assert "60 分钟" in " ".join(item.reasons)
+    assert "1 小时" in " ".join(item.reasons)
     assert "配速" not in item.action
 
 
@@ -326,7 +326,7 @@ def test_running_summary_is_readable_and_does_not_expose_classification_audit():
     report = WeeklyBriefingEngine().build(_build(raw))
     advice = "\n".join(report.suggestions)
 
-    assert "16.0 公里" in advice and "60 分钟" in advice
+    assert "16.0 公里" in advice and "1 小时" in advice
     assert "16.039" not in advice and " km" not in advice
     assert "已分析课型" not in advice and "质量课" not in advice
     assert "10-05 至 10-11" not in advice

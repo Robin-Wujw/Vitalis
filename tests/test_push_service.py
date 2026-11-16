@@ -208,7 +208,7 @@ def test_morning_renders_all_hard_safety_conditions():
     assert "疼痛时停止" in text and "症状加重时寻求评估" in text and "动作失控时停止" in text
     assert message.extras["suggestions"] == [
         "主要安排：轻松跑 · 30–45 分钟 · 低强度 · 疼痛时停止。 · 症状加重时寻求评估。",
-        "可选安排：拉类力量训练 · 40–60 分钟 · 中等强度 · 动作失控时停止。",
+        "可选安排：拉类力量训练 · 40 分钟–1 小时 · 中等强度 · 动作失控时停止。",
         "可分开完成，至少间隔 6 小时",
     ]
 
@@ -288,7 +288,7 @@ def test_evening_strength_detail_gap_is_explicit_and_work_bouts_are_not_sets():
     message = _sent(lambda service: service.push_daily_profile("test-user", payload, period="evening"))
     text = _visible_text(message.body)
     training_section = next(section for section in message.extras["sections"] if section["key"] == "training")
-    assert any("逐组动作、重复次数和重量" in item for item in training_section["facts"])
+    assert "力量动作明细未记录。" in training_section["facts"]
     assert any("工作段不能替代明确组数" in item for item in training_section["limitations"])
     assert "逐组动作、重复次数和重量" not in text
 

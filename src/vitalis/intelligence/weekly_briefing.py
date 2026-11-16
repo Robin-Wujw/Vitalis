@@ -9,6 +9,7 @@ from .report_formatting import (
     coverage_text,
     energy_label,
     metric_label,
+    minutes_text,
     number,
     payload_of,
     percent,
@@ -40,6 +41,9 @@ def _activity_metric_value(metric: dict[str, Any], value: Any) -> str | None:
     if shown is None:
         return None
     raw_unit = metric.get("unit")
+    if raw_unit in {"min", "minutes"}:
+        duration = minutes_text(value)
+        return duration if duration is not None else shown
     unit = _ACTIVITY_UNIT_LABELS.get(raw_unit, raw_unit or "单位未提供")
     return f"{shown} {unit}" if unit else shown
 
@@ -98,25 +102,25 @@ class WeeklyBriefingEngine:
         recovery = facts.get("recovery") or {}
         fact_lines = []
         if sleep.get("available_days") is not None:
-            text = f"睡眠有效 {number(sleep['available_days'], 0)} 天"
+            text = f"睡眠记录 {number(sleep['available_days'], 0)} 晚"
             if sleep.get("average_minutes") is not None:
-                text += f"，平均 {number(sleep['average_minutes'], 0)} 分钟"
+                text += f"，平均 {minutes_text(sleep['average_minutes'])}"
             if sleep.get("previous_average_minutes") is not None:
-                text += f"；前一期平均 {number(sleep['previous_average_minutes'], 0)} 分钟"
+                text += f"；前一期平均 {minutes_text(sleep['previous_average_minutes'])}"
             if sleep.get("change_percent") is not None:
                 text += f"，变化 {percent(sleep['change_percent'])}"
             fact_lines.append(text + "。")
         hrv = recovery.get("hrv_median_ms")
         if hrv is not None:
             label = recovery.get("hrv_metric_label") or metric_label(recovery.get("hrv_metric"))
-            text = f"{label}有效 {recovery.get('hrv_available_days', 0)} 天，中位数 {number(hrv)} 毫秒"
+            text = f"{label}记录 {recovery.get('hrv_available_days', 0)} 天，中位数 {number(hrv)} 毫秒"
             if recovery.get("hrv_previous_median_ms") is not None:
                 text += f"；前一期 {number(recovery['hrv_previous_median_ms'])} 毫秒"
             if recovery.get("hrv_change_percent") is not None:
                 text += f"，变化 {percent(recovery['hrv_change_percent'])}"
             fact_lines.append(text + "。")
         if recovery.get("rhr_median_bpm") is not None:
-            text = f"静息心率有效 {recovery.get('rhr_available_days', 0)} 天，中位数 {number(recovery['rhr_median_bpm'])} 次/分钟"
+            text = f"静息心率记录 {recovery.get('rhr_available_days', 0)} 天，中位数 {number(recovery['rhr_median_bpm'])} 次/分钟"
             if recovery.get("rhr_previous_median_bpm") is not None:
                 text += f"；前一期 {number(recovery['rhr_previous_median_bpm'])} 次/分钟"
             if recovery.get("rhr_change_percent") is not None:
@@ -161,14 +165,17 @@ class WeeklyBriefingEngine:
         lines = []
         for key, label, unit in (("workout_count", "训练场次", "次"), ("duration_minutes", "训练时长", "分钟"), ("vendor_load", "设备训练负荷", ""), ("aerobic_minutes", "有氧时长", "分钟"), ("strength_sessions", "力量场次", "次")):
             if training.get(key) is not None:
-                lines.append(f"{label} {number(training[key])} {unit}。" if unit else f"{label} {number(training[key])}。")
+                if unit == "分钟":
+                    lines.append(f"{label} {minutes_text(training[key])}。")
+                else:
+                    lines.append(f"{label} {number(training[key])} {unit}。" if unit else f"{label} {number(training[key])}。")
         details = training
         if details.get("running_sessions") is not None:
             run = f"跑步 {number(details['running_sessions'], 0)} 次"
             if details.get("running_distance_km") is not None:
                 run += f"、{number(details['running_distance_km'], 2)} 公里"
             if details.get("running_duration_minutes") is not None:
-                run += f"、{number(details['running_duration_minutes'], 0)} 分钟"
+                run += f"、{minutes_text(details['running_duration_minutes'])}"
             if details.get("running_classification_counts"):
                 run += "；本次分析的课型 " + "、".join(
                     f"{running_class_label(k)} {v} 次"
@@ -178,14 +185,14 @@ class WeeklyBriefingEngine:
         if details.get("strength_duration_minutes") is not None or details.get("strength_explicit_sessions") is not None:
             strength = []
             if details.get("strength_duration_minutes") is not None:
-                strength.append(f"{number(details['strength_duration_minutes'], 0)} 分钟")
+                strength.append(minutes_text(details['strength_duration_minutes']) or "时长未记录")
             if details.get("strength_explicit_sessions") is not None:
                 strength.append(f"明确明细 {number(details['strength_explicit_sessions'], 0)} 场")
             if details.get("strength_sets") is not None:
                 strength.append(f"明确组数 {number(details['strength_sets'], 0)} 组")
             lines.append("力量：" + "；".join(strength) + "。")
         if details.get("vendor_reported_sets") is not None:
-            lines.append(f"设备记录组数合计 {number(details['vendor_reported_sets'], 0)} 组，来自 {number(details.get('vendor_sets_sessions', 0), 0)} 场有组数记录的力量训练；不等同于已取得逐组动作明细。")
+            lines.append(f"设备记录组数合计 {number(details['vendor_reported_sets'], 0)} 组，来自 {number(details.get('vendor_sets_sessions', 0), 0)} 场有组数记录的力量训练。")
         if details.get("workout_calories_kcal") is not None:
             lines.append(f"训练热量 {number(details['workout_calories_kcal'])} 千卡，来自 {number(details.get('workout_calories_sessions', 0), 0)} 场有热量记录。")
         effort = training.get("session_rpe_summary") or {}
@@ -232,7 +239,7 @@ class WeeklyBriefingEngine:
         feedback = facts.get("feedback") or {}
         lines = []
         if activity.get("available_days") is not None:
-            text = f"活动有效 {number(activity['available_days'], 0)} 天"
+            text = f"活动记录 {number(activity['available_days'], 0)} 天"
             if activity.get("total_steps") is not None:
                 text += f"；累计步数 {number(activity['total_steps'], 0)}"
             if activity.get("average_steps") is not None:
@@ -240,7 +247,7 @@ class WeeklyBriefingEngine:
             if activity.get("steps_change_percent") is not None:
                 text += f"；日均变化 {percent(activity['steps_change_percent'])}"
             if activity.get("active_minutes") is not None:
-                text += f"；活动分钟 {number(activity['active_minutes'], 0)}"
+                text += f"；活动时长 {minutes_text(activity['active_minutes'])}"
             lines.append(text + "。")
         limitations = []
         for metric in activity.get("metrics") or []:
@@ -256,7 +263,7 @@ class WeeklyBriefingEngine:
                 text += f"，日均 {average}"
             if metric.get("change_percent") is not None:
                 text += f"，均值变化 {percent(metric['change_percent'])}"
-            text += f"；本期有效日 {metric.get('available_days', 0)}，完整日 {metric.get('complete_days', 0)}；前期有效日 {metric.get('previous_available_days', 0)}，完整日 {metric.get('previous_complete_days', 0)}。"
+            text += f"；本期记录日 {metric.get('available_days', 0)}，完整日 {metric.get('complete_days', 0)}；前期记录日 {metric.get('previous_available_days', 0)}，完整日 {metric.get('previous_complete_days', 0)}。"
             lines.append(text)
             limitations.extend(metric.get("limitations") or [])
         if feedback.get("response_count", 0):

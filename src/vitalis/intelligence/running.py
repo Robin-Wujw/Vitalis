@@ -766,7 +766,7 @@ class RunningAnalyzer:
             ]
         if historical_durations and duration >= 60 and duration >= median(historical_durations) * 1.3:
             return "LONG_RUN", ConfidenceBand.MODERATE, [
-                "时长至少 60 分钟，且明显长于此前个人跑步时长中位数。"
+                "时长至少 1 小时，且明显长于此前个人跑步时长中位数。"
             ]
         if zones and duration >= 20 and threshold_share >= 35:
             return "TEMPO_RUN", ConfidenceBand.HIGH, [

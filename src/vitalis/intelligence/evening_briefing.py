@@ -138,7 +138,7 @@ class EveningBriefingEngine:
             if workout.get("started_at"):
                 bits.append(f"开始 {timestamp_text(workout['started_at'], timezone_name, short=True)}")
             if not same_duration and workout.get("duration_minutes") is not None:
-                bits.append(f"{number(workout['duration_minutes'], 0)} 分钟")
+                bits.append(minutes_text(workout["duration_minutes"]))
             if workout.get("training_family") != "strength" and not same_distance and workout.get("distance_km") is not None:
                 bits.append(f"{number(workout['distance_km'], 2)} 公里")
             if workout.get("calories_kcal") is not None:
@@ -169,7 +169,7 @@ class EveningBriefingEngine:
                     elif key == "distance_km":
                         value = f"{number(value, digits)} 公里"
                     else:
-                        value = f"{number(value, digits)} 分钟"
+                        value = minutes_text(value)
                     bits.append(f"{label} {value}")
             facts.append("跑步专项：" + "；".join(bits) + "。")
             zones = self._zones(session.get("heart_rate_zones"))
@@ -184,7 +184,7 @@ class EveningBriefingEngine:
             known_focus = session.get("focus") not in {None, "UNKNOWN"} and bool(explicit)
             bits = [session.get("focus_label", "力量训练") if known_focus else "力量训练"]
             if session.get("duration_minutes") is not None:
-                bits.append(f"{number(session['duration_minutes'], 0)} 分钟")
+                bits.append(minutes_text(session["duration_minutes"]))
             if explicit and session.get("total_sets") is not None:
                 bits.append(f"明确动作合计 {number(session['total_sets'], 0)} 组")
             elif session.get("vendor_reported_sets") is not None:
@@ -206,7 +206,7 @@ class EveningBriefingEngine:
             elif explicit:
                 facts.extend(self._exercise_lines(explicit))
             else:
-                facts.append("力量动作明细：逐组动作、重复次数和重量尚未取得；设备总组数也不能还原这些明细。")
+                facts.append("力量动作明细未记录。")
         if not facts:
             facts.append("当天没有已记录的正式训练场次；这不等同于已确认休息日。")
         limitations = []
@@ -362,7 +362,10 @@ class EveningBriefingEngine:
                 contradictory_active_minutes = True
                 continue
             if value is not None:
-                facts.append(f"{label} {number(value, digits)} {unit}" + self._metric_baseline(metric) + "。")
+                shown = minutes_text(value) if key == "active_minutes" else number(value, digits)
+                if shown is not None:
+                    suffix = "" if key == "active_minutes" else f" {unit}"
+                    facts.append(f"{label} {shown}{suffix}" + self._metric_baseline(metric) + "。")
                 direction = (metric.get("deviation") or {}).get("direction")
                 if direction in {"above", "below"}:
                     relation = "高于" if direction == "above" else "低于"
@@ -489,7 +492,7 @@ class EveningBriefingEngine:
             interpretation.append("需要留意的信号：" + "；".join(recovery["negative_signal_labels"]) + "。")
         burden = []
         if training.get("today_duration_minutes") is not None:
-            burden.append(f"训练时长 {number(training['today_duration_minutes'], 0)} 分钟")
+            burden.append(f"训练时长 {minutes_text(training['today_duration_minutes'])}")
         if training.get("today_load") is not None:
             burden.append(f"设备训练负荷指数 {number(training['today_load'])}")
         if burden:

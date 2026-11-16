@@ -90,7 +90,7 @@ def test_sleep_hypnogram_keeps_nap_and_unknown_separate():
     chart = next(c for c in bundle.charts if c.key == "sleep")
     assert {i.category for i in chart.intervals} == {"deep", "unknown"}
     assert any("午睡" in i.label for i in chart.intervals)
-    assert "420" in " ".join(chart.summary)
+    assert "7 小时" in " ".join(chart.summary)
 
 
 def test_chart_cutoff_excludes_future_samples_and_annotations():

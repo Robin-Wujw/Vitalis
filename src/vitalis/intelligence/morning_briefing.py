@@ -15,6 +15,7 @@ from .report_formatting import (
     baseline_text,
     clock_text,
     date_text,
+    duration_range_text,
     energy_label,
     metric_label,
     minutes_text,
@@ -185,7 +186,11 @@ class MorningBriefingEngine:
                 metric.get("observed_at"), day, timezone_name
             ):
                 continue
-            value = value_with_unit(metric.get("value"), metric.get("unit"), 0 if key == "steps" else 1)
+            value = (
+                minutes_text(metric.get("value"))
+                if key == "active_minutes"
+                else value_with_unit(metric.get("value"), metric.get("unit"), 0 if key == "steps" else 1)
+            )
             if value is not None:
                 facts.append(f"{label} {value}")
         energies = [
@@ -293,7 +298,7 @@ class MorningBriefingEngine:
                 parts.append(f"开始 {timestamp_text(item['started_at'], context.get('timezone'), short=True)}")
             duration = item.get("duration_minutes")
             if isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration > 0:
-                parts.append(f"时长 {number(duration, 0)} 分钟")
+                parts.append(f"时长 {minutes_text(duration)}")
             if item.get("training_family") != "strength" and item.get("distance_km") is not None:
                 parts.append(f"距离 {number(item['distance_km'], 2)} 公里")
             if item.get("calories_kcal") is not None:
@@ -328,7 +333,7 @@ class MorningBriefingEngine:
                     workout = update.get("workout") or {}
                     label = workout.get("sport_mode_label") or workout.get("type_label") or "训练"
                     duration = workout.get("duration_minutes")
-                    dose = f" {number(duration, 0)} 分钟" if isinstance(duration, (int, float)) and duration > 0 else ""
+                    dose = f" {minutes_text(duration)}" if isinstance(duration, (int, float)) and duration > 0 else ""
                     verb = "补入" if update.get("change") == "added" else "更新"
                     notices.append(f"较昨晚晚报{verb}{label}{dose}，已纳入本次分析。")
                 workouts = notices + workouts
@@ -423,9 +428,9 @@ class MorningBriefingEngine:
             if hrv.get("deviation"):
                 output.append(f"{metric_label(preferred)}：{baseline_text(hrv['deviation'])}。")
             if hrv.get("recent_7d_median_ms") is not None and hrv.get("recent_7d_days"):
-                output.append(f"近 7 日同源 {metric_label(preferred)}：中位数 {number(hrv['recent_7d_median_ms'])} 毫秒（有效 {number(hrv['recent_7d_days'], 0)} 天）")
+                output.append(f"近 7 日同源 {metric_label(preferred)}：中位数 {number(hrv['recent_7d_median_ms'])} 毫秒（记录 {number(hrv['recent_7d_days'], 0)} 天）")
             if hrv.get("previous_7d_median_ms") is not None and hrv.get("previous_7d_days"):
-                output.append(f"此前 7 日同源 {metric_label(preferred)}：中位数 {number(hrv['previous_7d_median_ms'])} 毫秒（有效 {number(hrv['previous_7d_days'], 0)} 天）")
+                output.append(f"此前 7 日同源 {metric_label(preferred)}：中位数 {number(hrv['previous_7d_median_ms'])} 毫秒（记录 {number(hrv['previous_7d_days'], 0)} 天）")
         else:
             output.append("睡眠 HRV 未取得可用读数")
         if isinstance(hrv.get("rhr_bpm"), (int, float)) and not isinstance(hrv.get("rhr_bpm"), bool):
@@ -513,14 +518,14 @@ class MorningBriefingEngine:
     @staticmethod
     def _session_facts(session: dict[str, Any]) -> list[str]:
         lines = []
-        duration = range_text(session.get("total_duration_minutes"), "分钟")
+        duration = duration_range_text(session.get("total_duration_minutes"))
         if duration:
             lines.append(f"建议时长：{duration}")
         if session.get("intensity_label"):
             lines.append(f"强度：{session['intensity_label']}")
         for step in session.get("steps") or []:
             dose = []
-            duration = range_text(step.get("duration_minutes"), "分钟")
+            duration = duration_range_text(step.get("duration_minutes"))
             sets = number(step.get("sets"), 0)
             repetitions = repetitions_text(step.get("repetitions"))
             weight = number(step.get("load_kg"))

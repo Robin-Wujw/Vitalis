@@ -173,6 +173,12 @@ def test_scoped_writes_reserve_final_readback_and_use_the_real_feedback_date_fie
     assert "未回读成功不能说已核对" in text
 
 
+def test_pending_analysis_never_relabels_old_report_values_as_new_source():
+    text = _read("skills/vitalis/SKILL.md")
+    assert "未直接读取新源记录时，不把旧报告的数值称为最新源数据" in text
+    assert "只确认用户自述或同步状态显示源已到" in text
+
+
 def test_delivery_status_and_equivalence_answers_do_not_invent_extra_results():
     text = _read("skills/vitalis/SKILL.md")
     assert "投递状态读 `request GET deliveries --param limit=100`" in text

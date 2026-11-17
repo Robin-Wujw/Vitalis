@@ -142,6 +142,23 @@ def test_running_plans_keep_unknown_experience_at_easy_intensity():
         assert rule in coach
 
 
+def test_complete_plan_counts_actual_weekly_sessions_before_delivery():
+    coach = _read("skills/healthy-fitness-coach/SKILL.md")
+    assert "逐项数出实际力量和跑步场次" in coach
+    assert "每周跑3次包括周日长跑" in coach
+    assert "不额外新增恢复跑" in coach
+    assert "时间是可用上限，不是必须填满的剂量" in coach
+
+
+def test_cpr_guidance_requires_unresponsive_and_abnormal_breathing():
+    coach = _read("skills/healthy-fitness-coach/SKILL.md")
+    safety = _read("skills/healthy-fitness-coach/references/safety-boundaries.md")
+    for text in (coach, safety):
+        assert "无反应且无正常呼吸" in text
+        assert "仅失去意识但正常呼吸" in text
+        assert "急救调度" in text
+
+
 def test_skill_loading_and_truthful_source_handling_are_owned_once():
     soul = _read("deploy/hermes/SOUL.md")
     skill = _read("skills/vitalis/SKILL.md")

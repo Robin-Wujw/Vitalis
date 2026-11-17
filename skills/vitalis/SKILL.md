@@ -94,7 +94,7 @@ description: Retrieve Vitalis facts, use bounded deterministic coaching tools, c
 
 指标保留 `source`、`source_scope`、`qualification`、观测时间和获取时间；`truncated=true` 时缩小窗口或明确结果不完整。`retained_raw` 仅说明保留了未解码数据，不是可用评分。`catalog` 是允许的 read 查询；不能仅凭 readiness_raw 名称断言目录不在白名单或无权读取，查看目录资格与解码状态后解释缺口。缺失一项不阻断其他已验证事实。
 
-把源数据缺失与分析陈旧分开：源记录已到、报告尚旧时，按 coach-policy 决定是否申请 analyze。没有 analyze scope 不等于不能申请分析：先读 `coach-policy`，有效且 `allow_analyze=true` 才用 `coach-request analyze`；拒绝就如实说明，不先许诺可执行，也不让口头同意代替服务器 grant。`refresh-workouts` 不能补取睡眠、体重或日目标。相应数据缺失就解释实际缺口，不能换用通用 sync、反复重算或要求用户重新填写可能尚未同步的数据。成功任务后只回读相关结果，未完成保留有日期的 last-good 并说明正在更新；不把任务受理当更新完成。
+把源数据缺失与分析陈旧分开：源记录已到、报告尚旧时，按 coach-policy 决定是否申请 analyze。没有 analyze scope 不等于不能申请分析：先读 `coach-policy`，有效且 `allow_analyze=true` 才用 `coach-request analyze`；拒绝就如实说明，不先许诺可执行，也不让口头同意代替服务器 grant。`refresh-workouts` 不能补取睡眠、体重或日目标。相应数据缺失就解释实际缺口，不能换用通用 sync、反复重算或要求用户重新填写可能尚未同步的数据。成功任务后只回读相关结果，未完成保留有日期的 last-good 并说明正在更新；不把任务受理当更新完成。未直接读取新源记录时，不把旧报告的数值称为最新源数据：只确认用户自述或同步状态显示源已到，旧报告数值明确属于旧快照；需要报最新数字才查对应日期的源记录。
 
 ## 已完成力量训练与容量
 

@@ -115,6 +115,8 @@ uv run --locked --extra dev python tools/run_hermes.py --home .tmp/hermes-telegr
 
 使用第三方兼容模型服务时，在 Hermes 的 `model` 配置中设置 `provider: custom`、`base_url`、`default`（服务实际提供的模型名）和 `key_env: OPENAI_API_KEY`，并按服务实际协议设置 `api_mode`。模型地址包含其要求的 API 前缀（例如 `/v1`）；启动器的 `--api-base-url` 指向 Vitalis API。将模型密钥原文作为单独一行保存在私密文件中，在上述启动命令的 `--` 之前增加 `--model-key-file .tmp/hermes-telegram-local/model-api.key`。启动器仅向子进程的 `OPENAI_API_KEY` 注入模型密钥；不会把它写进 YAML、命令参数或日志。未提供这个参数时保留 Hermes 已有的认证方式。
 
+Hermes 的 Telegram 网关沿用统一的会话命令：发送 `/model <model-id>` 只切换当前会话，发送 `/model <model-id> --global` 才把它设为默认模型。切换前先用模型服务的 `/v1/models` 核对完整 ID；`model.default` 或别名指向未被该服务提供的模型时，网关可能仍能启动，但首次调用会失败。模型切换只影响 Hermes 对话，不改变 Vitalis 的令牌 scope、健康事实或报告快照。
+
 Windows 上若 Git 装在非默认目录，在该 home 的私密 `.env` 中设置 `HERMES_GIT_BASH_PATH` 为 Git Bash 可执行文件的绝对路径。系统的 `bash.exe` 可能是 WSL 入口，不能处理 Hermes 为本机后端生成的 `/d/...` 路径；先通过 Hermes 终端工具读取一次 Skill `status`，确认返回绑定用户且退出码为零。
 
 Windows 系统代理未必会被 Hermes 的 Telegram transport 自动采用。若系统网络请求成功但网关连接 Telegram 超时，在该 home 的私密 `.env` 中显式配置 `TELEGRAM_PROXY`，然后正常停止并重新启动网关。已有 Windows 开机计划任务时，`gateway stop` 只停止当前进程；迁移到独立 home 或服务器前还要禁用旧自启动项。若任务管理返回“拒绝访问”，由用户在管理员 PowerShell 执行 `Disable-ScheduledTask -TaskName '<旧任务名>'`，再核对任务 `Enabled=false`，避免下次登录时旧网关重新抢占同一机器人。

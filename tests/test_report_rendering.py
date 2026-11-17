@@ -104,6 +104,33 @@ def test_briefing_duration_stays_one_value_instead_of_becoming_label_text():
     assert '睡眠时长 7 小时 15 分钟' in markdown
 
 
+@pytest.mark.parametrize("kind", ["daily", "evening"])
+@pytest.mark.parametrize("moving_minutes, shown", [
+    (47.9, "47.9 分钟"),
+    (60.1, "1 小时 0.1 分钟"),
+    (61.5, "1 小时 1.5 分钟"),
+    (119.9, "1 小时 59.9 分钟"),
+    (120.1, "2 小时 0.1 分钟"),
+])
+def test_recorded_running_duration_stays_one_html_value(kind, moving_minutes, shown):
+    from tests.test_report_content import synthetic_daily_fixture
+    from vitalis.intelligence.evening_briefing import EveningBriefingEngine
+
+    daily = synthetic_daily_fixture()
+    training = daily["features"]["training"]
+    duration = int(moving_minutes) + 2
+    training["today_duration_minutes"] = duration
+    training["recent_workouts"][0]["duration_minutes"] = duration
+    session = training["running"]["recent_sessions"][0]
+    session["duration_minutes"] = duration
+    session["moving_duration_minutes"] = moving_minutes
+    document = EveningBriefingEngine().build(daily) if kind == "evening" else daily
+
+    html = render_report(document, "html").content
+    assert re.search(r'>实际运动</span>\s*<span[^>]*>' + re.escape(shown) + r'</span>', html)
+    assert f"实际运动 {shown}" in render_report(document, "markdown").content
+
+
 def test_missing_optional_hrv_and_no_training_do_not_create_empty_sections():
     report = render_report(_briefing(training=[]))
     assert "## 力量训练" not in report.content

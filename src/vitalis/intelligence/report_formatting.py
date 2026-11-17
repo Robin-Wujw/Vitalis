@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from math import isfinite
 from typing import Any
 import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -67,6 +68,23 @@ def minutes_text(value: Any) -> str | None:
     if hours:
         return f"{hours} 小时"
     return f"{minutes} 分钟"
+
+
+def minutes_precise_text(value: Any) -> str | None:
+    """Format recorded minute values without discarding their tenth-minute precision."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or not isfinite(float(value)):
+        return None
+    rounded = round(float(value), 1)
+    if rounded.is_integer():
+        return minutes_text(int(rounded))
+    if rounded < 60:
+        return f"{number(rounded, 1)} 分钟"
+    hours, minutes = divmod(rounded, 60)
+    hour_text = number(hours, 0)
+    minute_text = number(minutes, 1)
+    if hour_text is None or minute_text is None:
+        return None
+    return f"{hour_text} 小时 {minute_text} 分钟"
 
 
 def duration_range_text(value: Any) -> str | None:

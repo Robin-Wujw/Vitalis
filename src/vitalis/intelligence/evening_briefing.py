@@ -9,6 +9,7 @@ from .report_formatting import (
     date_text,
     energy_label,
     metric_label,
+    minutes_precise_text,
     minutes_text,
     number,
     observed_exercise_name,
@@ -169,7 +170,7 @@ class EveningBriefingEngine:
                     elif key == "distance_km":
                         value = f"{number(value, digits)} 公里"
                     else:
-                        value = minutes_text(value)
+                        value = minutes_precise_text(value)
                     bits.append(f"{label} {value}")
             facts.append("跑步专项：" + "；".join(bits) + "。")
             zones = self._zones(session.get("heart_rate_zones"))

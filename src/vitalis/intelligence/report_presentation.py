@@ -17,6 +17,7 @@ from .report_formatting import (
     duration_range_text,
     energy_label,
     metric_label,
+    minutes_precise_text,
     minutes_text,
     number,
     payload_of,
@@ -494,7 +495,7 @@ def _running_facts(session: dict[str, Any]) -> list[str]:
     facts = []
     for key, label, unit, digits in (("moving_duration_minutes", "实际运动", "分钟", 1), ("distance_km", "距离", "公里", 2)):
         if key == "moving_duration_minutes":
-            shown = minutes_text(session.get(key))
+            shown = minutes_precise_text(session.get(key))
             if shown is not None:
                 facts.append(f"{label} {shown}")
         else:

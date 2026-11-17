@@ -142,6 +142,44 @@ def test_human_report_answers_keep_vendor_load_details_opt_in():
     assert "普通晨报、日报、晚报、周报回顾" in integration
 
 
+def test_report_output_gate_keeps_returned_metadata_out_of_unsolicited_answers():
+    text = _read("skills/vitalis/SKILL.md")
+    section = text.split("## 报告与新增数据", 1)[1].split("\n## ", 1)[0]
+    for rule in (
+        "最终正文删除主动展开的 ATL/CTL/TSB 及其数值",
+        "免责声明都不是展示例外",
+        "不套用一般成人睡眠时长门槛",
+        "用户明确询问一般标准时",
+        "每轮引用合成个人事实都保留",
+    ):
+        assert rule in section
+
+
+def test_nominal_volume_output_never_sums_incompatible_groups():
+    text = _read("skills/vitalis/SKILL.md")
+    section = text.split("## 已完成力量训练与容量", 1)[1].split("\n## ", 1)[0]
+    assert "不提供跨组总容量或至少合计" in section
+    assert "同一来源、单位、器械和计重口径分组内" in section
+    assert "工具返回的组次名义量及可比差值仍可报告" in section
+    assert "先报合计再附口径免责声明" in section
+    assert "缺次数不能判为偏弱或退步" in section
+
+
+def test_scoped_writes_reserve_final_readback_and_use_the_real_feedback_date_field():
+    text = _read("skills/vitalis/SKILL.md")
+    assert '`{"date":"YYYY-MM-DD","physical_fatigue":4}`' in text
+    assert "日期键是 `date`，不是 `calendar_day`" in text
+    assert "为最终回读保留调用预算" in text
+    assert "未回读成功不能说已核对" in text
+
+
+def test_delivery_status_and_equivalence_answers_do_not_invent_extra_results():
+    text = _read("skills/vitalis/SKILL.md")
+    assert "投递状态读 `request GET deliveries --param limit=100`" in text
+    assert "报告存在不证明已发送或已收到" in text
+    assert "不将多个场次等效再平均成新的中心值" in text
+
+
 @pytest.mark.parametrize(("argv", "path", "params"), [
     (["workouts", "--from", "2026-02-01", "--to", "2026-02-18", "--limit", "500"],
      "workouts", {"from": "2026-02-01", "to": "2026-02-18", "limit": 500}),

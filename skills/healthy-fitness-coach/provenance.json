@@ -20,7 +20,7 @@
     "training-principles": {
       "local_path": "references/training-principles.md",
       "adaptation_notes": "Condensed domains, general population activity guidance, technique and progression concepts. Vitalis-local additions distinguish completed nominal volume from physiological tolerance, support complete conversational schedules and use recorded loads as adjustable starting points. These additions are local policy, not claims from the pinned upstream. Excluded programming lines 21–33 compiler contracts and automatic execution.",
-      "local_additions": ["completed-volume interpretation and deterministic tool routing", "complete conversational plans using recorded loads", "day-by-day leg-training and long-run consistency check"],
+      "local_additions": ["completed-volume interpretation and deterministic tool routing", "complete conversational plans using recorded loads", "easy-running plans when training experience or prior quality-workout basis is unknown", "day-by-day leg-training and long-run consistency check"],
       "sources": [
         {"path": "healthy-fitness-coach/references/training-domains.md", "line_ranges": [[1, 90]], "url": "https://github.com/Surge-Dan/healthy-fitness-coach-skill/blob/d4471a86b2edc8dedd2d86ad115476f9edd43a5a/healthy-fitness-coach/references/training-domains.md"},
         {"path": "healthy-fitness-coach/references/programming.md", "line_ranges": [[3, 20], [34, 86]], "url": "https://github.com/Surge-Dan/healthy-fitness-coach-skill/blob/d4471a86b2edc8dedd2d86ad115476f9edd43a5a/healthy-fitness-coach/references/programming.md"}

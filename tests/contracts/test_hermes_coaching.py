@@ -132,6 +132,16 @@ def test_running_snapshot_and_research_keep_their_qualifications():
         assert rule in skill
 
 
+def test_running_plans_keep_unknown_experience_at_easy_intensity():
+    coach = _read("skills/healthy-fitness-coach/SKILL.md")
+    for rule in (
+        "训练经验未知", "只有轻松跑记录", "不新增节奏跑、阈值跑或高强度间歇",
+        "跑步频率和配速改善不等于已有质量课基础",
+        "按能完整交谈的轻松强度完成计划",
+    ):
+        assert rule in coach
+
+
 def test_skill_loading_and_truthful_source_handling_are_owned_once():
     soul = _read("deploy/hermes/SOUL.md")
     skill = _read("skills/vitalis/SKILL.md")

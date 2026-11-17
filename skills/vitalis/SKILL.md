@@ -34,6 +34,8 @@ description: Retrieve Vitalis facts, use bounded deterministic coaching tools, c
 | 近期跑步、比赛距离等效 | 使用跑步节的快照与 `race-equivalence`，不要把情景当实际预测。 |
 | 主观感觉与明确记录 | 讨论感受不写入；明确要求记录才用 `feedback`，不替用户猜评分。 |
 
+投递状态读 `request GET deliveries --param limit=100`，在返回列表中核对目标日期、报告类型、status 和 failure_code；报告存在不证明已发送或已收到，`uncertain` 不当 accepted/delivered，也不自动重发。
+
 `status` 查同步覆盖，`job ID` 查任务；`report` 支持 daily/morning/evening/weekly/monthly/weekly-briefing/monthly-briefing。`--view` 是公开 blocks，`--state` 是新鲜度、last-good、任务与下一步，两者互斥。`query` 只用客户端白名单，按需组合 `trends`、`training-responses` 等相关读取。查询不会启动同步或分析。`status=error`、401/403、网络故障和 `status=snapshot_missing` 分别处理；后者仅表示指定日期无报告，不能自动改日期或编造结果。
 
 默认“最近”取近 28 天；跑步比较前 28 天。日期按用户本地语境，部署默认 `Asia/Shanghai`，API 或用户给出不同口径时保留差异，只有实质歧义才澄清。本月至今取本地月初至截止日，用下节区间统计；需要场次时读 `/workouts` 并沿 `next_offset` 分页，保留 `coverage.truncated` 的截断提示。读完分页也不能据此证明同步覆盖完整。默认 monthly 是上一完整月，rolling 是近 28 日，不是完整月报；产品目标指标不是训练月统计。
@@ -78,13 +80,13 @@ description: Retrieve Vitalis facts, use bounded deterministic coaching tools, c
 
 问目标或步数、热量、活动完成情况，第一次取数必须是 `report daily --day YYYY-MM-DD --view`（需要审计则完整日报）。报告已包含 recorded_context 或公开事实中的目标与实际，就直接采用，不再逐项查询 metrics；只有回答确实需要且报告缺失的字段才补查。
 
-交付个人报告回答前检查：没有已保存个人参照就不添“正常、偏高、偏慢”等评价；“单个指标不能说明不能练”也不能改写为“可以练”。Zepp TSB 只复述厂商记录及决策资格，不从符号解释近期负荷高于基线、疲劳或适应。拒绝操作时只给实际支持的 API/CLI 下一步或所缺 scope；不得描述尚未确认的 UI，不说“去 Vitalis 应用内手动触发/更新”，不虚构策略开关、管理界面或产品入口。
+交付个人报告回答前逐项检查最终正文：未被明确询问厂商负荷时，最终正文删除主动展开的 ATL/CTL/TSB 及其数值；API 已返回、放在“设备参考”一行或附免责声明都不是展示例外。每轮引用合成个人事实都保留开头的“合成演示数据”，不能因上轮已说明而省略。没有已保存个人参照就不添“正常、偏高、偏慢”等评价；“单个指标不能说明不能练”也不能改写为“可以练”。Zepp TSB 只复述厂商记录及决策资格，不从符号解释近期负荷高于基线、疲劳或适应。拒绝操作时只给实际支持的 API/CLI 下一步或所缺 scope；不得描述尚未确认的 UI，不说“去 Vitalis 应用内手动触发/更新”，不虚构策略开关、管理界面或产品入口。
 
 按问题补查最小范围，`catalog` 只解释支持的字段与资格，不证明当前账户有该数据；实际是否可用看记录、`status` 覆盖和截止时刻。报告采用核实的 Zepp 账户结果；原始 API 返回多个来源时核对 `source_scope=user_fused` 与具体资格，设备或未知记录可单独回答，但不能补成账户报告事实。
 
 | 需要补查什么 | API 读取与解释 |
 | --- | --- |
-| 睡眠时序 | `sleep-records --from D --to D` 用醒来所属 `sleep_day`。`sleep_latency_minutes` 是入床至入睡，`out_of_bed_delay_minutes` 是醒来至离床，`time_in_bed_minutes` 是在床时长，`sleep_efficiency_percent` 是已计算效率；入床不等于入睡，醒来不等于离床。字段缺失保留未知，不从分期图估值或诊断失眠。报告 API 的 `available_days` 是有合格记录的不同睡眠晚数，不是质量评分；`calculation_method`/`calculation_source_fields` 可核对派生公式和 Zepp 原字段。原始 `*_minutes` 保持分钟单位，报告展示达到一小时会进位为小时＋分钟。回答个人记录只引用已保存个人参照；没有参照就报数字，不自行补“10～20 分钟正常”、效率高低或精度提升的评价。 |
+| 睡眠时序 | `sleep-records --from D --to D` 用醒来所属 `sleep_day`。`sleep_latency_minutes` 是入床至入睡，`out_of_bed_delay_minutes` 是醒来至离床，`time_in_bed_minutes` 是在床时长，`sleep_efficiency_percent` 是已计算效率；入床不等于入睡，醒来不等于离床。字段缺失保留未知，不从分期图估值或诊断失眠。报告 API 的 `available_days` 是有合格记录的不同睡眠晚数，不是质量评分；`calculation_method`/`calculation_source_fields` 可核对派生公式和 Zepp 原字段。原始 `*_minutes` 保持分钟单位，报告展示达到一小时会进位为小时＋分钟。回答个人记录只引用已保存个人参照；没有参照就报数字，不自行补“10～20 分钟正常”、效率高低或精度提升的评价。不套用一般成人睡眠时长门槛给这次记录追加“达标/正常”判断；用户明确询问一般标准时可单独解释，但不冒充个人参照或新的恢复判断。 |
 | 活动目标 | `metrics step_goal --daily --from D --to D`；同样支持 `calorie_goal`、`active_minutes_goal`，日期为 `activity_day`。`active_minutes_goal` 是 Zepp 燃脂时间目标，只与 `vendor_burning_minutes`（原字段 `totalBurningDuration`）对照：按设备心率区间记录，不等于训练总时长，也不证明实际减脂；不能拿 `active_minutes` 或训练分钟替代。这些是设备设置目标，热量目标不是实际消耗，更不是饮食预算；进度优先读报告已保存的同日实测对照，目标存在不代表已完成。日内只说已记录与目标，不由当天时刻判断进度偏慢或提前判定失败。 |
 | 明确追问厂商负荷 | 已读报告有对应事实就复用；确需补查时用 `metrics vendor_atl --daily --from D1 --to D2`，按问题换 `vendor_ctl`、`vendor_tsb`。先用人话说明：负荷是设备对活动量的估计，不是重量或卡路里；Zepp App 定义 ATL 为近 7 天活动量加权平均、CTL 为近 42 天加权平均、TSB 为 CTL−ATL。解释个人数值时保留 Zepp 来源、记录日期、`vendor_load` 单位和原始负值；加权细节及 `_total` 与统计选项的映射仍未核实，不能由正负推断个人疲劳或训练许可。不相加每日 ATL/CTL/TSB，不拿 TSB 或 Charge 当 Vitalis 恢复分数和加量许可，不解释成“疲劳大于适应”“轻度负值”；今天怎么练仍取已保存 Vitalis 决策与明确限制。 |
 | 体重记录 | `metrics weight --from <带时区时间戳> --to <带时区时间戳>`，默认 raw，例 `2026-02-01T00:00:00+08:00`。不加 `--daily`；同样可查 height/bmi。说清测量日期与单位，不把旧测量当今天体重；只有两次记录时只描述两个时点，不称持续趋势、减脂或增肌，也不推算饮食热量。 |
@@ -99,7 +101,7 @@ description: Retrieve Vitalis facts, use bounded deterministic coaching tools, c
 健身语境的“容量”默认指已完成训练量，不是最大耐受量。先计算已知部分并回答，再简短指出影响结果的缺项；不要先问用户最大能承受多少，也不要求先确认所有动作或计重方式。
 
 - 调用 `strength-review --from YYYY-MM-DD --to YYYY-MM-DD --limit 100`，范围和 limit 有界（1～100）；它以 `read` scope 调用 `GET /coach/strength-review`。application/intelligence 层执行确定性算术，不写入、不排任务、不触发同步或分析。先近 28 天，指定场次则包含该日及必要的此前历史；只按实际返回范围作答。
-- 返回每场、每动作的已记录组次与名义“重量 × 次数”。未知计重方式仍可计算记录数字的名义量，但单独分组；不同单位、计重方式、器械和来源不能混成一个物理总负荷，不擅自乘二或解释为有效肌肉受力。自重动作报告组数和次数，不能记为零负荷或随意补体重。缺数的部分保持未知，已知部分照常给出。
+- 返回每场、每动作的已记录组次与名义“重量 × 次数”。未知计重方式仍可计算记录数字的名义量，但单独分组；不同单位、计重方式、器械和来源不能混成一个物理总负荷，不擅自乘二或解释为有效肌肉受力。同一来源、单位、器械和计重口径分组内，工具返回的组次名义量及可比差值仍可报告；不兼容分组的最终答案不提供跨组总容量或至少合计，不先报合计再附口径免责声明。例如未知计重卧推 600 kg·次与器械下拉已知部分 920 kg·次应分别报告，不能合成 1520 kg·次。自重动作报告组数和次数，不能记为零负荷或随意补体重。缺数的部分保持未知，已知部分照常给出；缺次数不能判为偏弱或退步，也不把已知部分称为整场真实下限。
 - 此前同动作比较按工具返回的可比条件解释，保留口径与覆盖；未知或冲突的分组不能证明进步。名义容量不是生理容量、最大耐受量、恢复或增肌评分。默认采用记录中的动作名称和负重，结合已知训练目标给整体判断与具体组间观察，用户问调整时再给 1～2 条下次建议；不把整场 RPE 当每组 RIR，不由时长断言休息过久或编造动作先后。
 - 只有需要详细组次时才用 `workouts --from YYYY-MM-DD --to YYYY-MM-DD --strength-details --limit 20`，不能与 `--limit 500` 组合。逐条查看 `strength_details.state`（available/missing/not_applicable）与 `strength_details.strength_sets`。单次 `workouts --id ID --source SOURCE` 读取 `detail.strength_sets`；需要轨迹才用 `--samples`。普通摘要 `strength_sets=[]` 和 `detail_available=true` 都不能证明动作组是否完整，一次缺失不能推广为全部缺失。
 - 报告与详情不一致时核对各自日期和已保存内容，不把报告反写成事实，不让用户重填可能已在云端的数据。缺记录先按“缺数据先查”节查授权。普通训练回顾不附恢复审计，不为下次结构建议另查当日日报；确有当前安全或恢复问题才补相关查询。
@@ -108,7 +110,7 @@ description: Retrieve Vitalis facts, use bounded deterministic coaching tools, c
 
 `query running --day YYYY-MM-DD [--include-research]` 是纯快照读取，返回 state/context/trends。默认近 28 天对比前 28 天，不必追问窗口；结合训练结构、同类型、用力、心率、配速、耐力与覆盖解释已保存比较，不把原始中位配速当作体能进步。配速用 min:ss/km，允许有来源的单位换算。`recorded_effort` 保留 session_rpe 的值、来源和场次；`classification_basis=inferred_not_user_goal` 表示 tempo 等分类来自推断，不是实测努力或比赛资格。分类与 RPE/本人自述冲突时先对照场次、区间和来源，不让分类压过自述。回答进步问题时选最能支持判断的 2～3 条证据，每项限制放在对应证据旁一次说清，答完不重复总结。不把已跑距离概括成能力上限（例如“目前能跑 5～6 公里”）；漂移缺失若不影响已作出的判断就不另起段补充。用户未问如何训练或记录时，不附通用训练或记录建议；明确风险仍须及时处理。
 
-问半马等目标距离时，先读最近成绩，查看较长跑与 10 km 等记录，选择有代表性的一场，不挑异常最快值。用 `race-equivalence --id ID --source SOURCE --target-km 21.0975 [--effort-basis scenario|user_reported_maximal]` 调用 `GET /coach/race-equivalence`（read）。它读取保存记录做确定性换算、不写入：优先精确 elapsed，没有时用 rounded duration；Riegel 指数 1.06 给等效用时，1.04/1.10 给参数敏感性范围。默认 scenario，可对普通轻松跑直给条件情景：“如果这代表全力表现且耐力支持，等效约……”。用户明确该场是全力比赛/测试时才用 user_reported_maximal，本轮声明不是反馈保存。情景等效不等于实际预测，敏感性范围不是个人置信区间；没有依据的个人置信度、真实比赛目标和生理能力保持未知，不虚构。局部缺口只影响对应解读，不因为 CS 未验证就拒绝条件换算。
+问半马等目标距离时，先读最近成绩，查看较长跑与 10 km 等记录，选择有代表性的一场，不挑异常最快值。用 `race-equivalence --id ID --source SOURCE --target-km 21.0975 [--effort-basis scenario|user_reported_maximal]` 调用 `GET /coach/race-equivalence`（read）。它读取保存记录做确定性换算、不写入：优先精确 elapsed，没有时用 rounded duration；Riegel 指数 1.06 给等效用时，1.04/1.10 给参数敏感性范围。默认 scenario，可对普通轻松跑直给条件情景：“如果这代表全力表现且耐力支持，等效约……”。用户明确该场是全力比赛/测试时才用 user_reported_maximal，本轮声明不是反馈保存。情景等效不等于实际预测，敏感性范围不是个人置信区间；不将多个场次等效再平均成新的中心值或综合范围，分别报告工具结果及其原场次。没有依据的个人置信度、真实比赛目标和生理能力保持未知，不虚构。局部缺口只影响对应解读，不因为 CS 未验证就拒绝条件换算。
 
 CS、fixedHR、durability 已有研究模型，但仍是 shadow_only / unvalidated，不是正式评分或已验证预测；不能说系统没有模型。仅显式 `--include-research` 时读取研究内容，不为得到分数重跑失败模型，也不让研究候选控制训练强度。
 
@@ -117,12 +119,12 @@ CS、fixedHR、durability 已有研究模型，但仍是 shadow_only / unvalidat
 - 先读相关报告状态、训练详情和覆盖，已有结果足够就回答。`coach-policy` 是 `GET /coach/policy` 的纯读取（read），含 enabled、expires_at、revision、max_requests_per_hour、max_inflight、allow_refresh、allow_analyze、today、timezone 与有效授权。需要核对操作资格时直接 GET，不问“要不要我查 policy”，也不先许诺能执行。策略来自服务器拥有的文件，缺失或无效默认拒绝；模型不读写策略文件、不创建影子授权。有效 grant 内不反复征求同一授权，用户口头要求也不能绕过服务端拒绝。
 - Hermes 仅持有 `read+coach+feedback`，没有 sync/analyze/manage scope。主动 POST 只用 `coach-request refresh-workouts --day YYYY-MM-DD --key-file <私密持久路径>` 或 `coach-request analyze --day YYYY-MM-DD --key-file <私密持久路径>`。只有今天或昨天实际缺失的源数据才 refresh：一个服务时区的明确日历日、Zepp 训练、至多 4 条明细，不是指定单场；不得扩大用户只许单场的范围。陈旧或缺失的已保存分析可按授权 analyze 最近 28 天；已有动作组、缺标签、未来观察或失败模型不能靠反复操作解决。
 - 服务器默认根预算 3 次/小时、最多 1 个 inflight，分析 lookback 28 天，以 policy 为准；这是根请求预算，不是 CPU 或子任务数量预算。新请求受理时检查授权，过期或撤销不取消已入队任务。每个用户问题最多 2 个根操作、总共最多 3 次 job 查询；同日期同目的不重复提交，refresh 已产生所需分析时不另补 analyze。
-- 403、429、网络错误或需登录就停止，不回退到宽权限 sync/analyze 或扩大回填；不换日期或 key 绕限。响应不确定保留同一 key 文件和相同请求，恢复时复用，不自动重试写入。受理不是完成，成功后回读；未完成也先回答已取得部分。
+- 403、429、网络错误或需登录就停止，不回退到宽权限 sync/analyze 或扩大回填；不换日期或 key 绕限。响应不确定保留同一 key 文件和相同请求，恢复时复用，不自动重试写入。受理不是完成，成功后回读；为最终回读保留调用预算，已知命令不反复读取整份 API 参考、帮助或同一旧报告。任务成功后直接回读对应报告或训练明细并核对日期和版本；未回读成功不能说已核对，未完成也先回答已取得部分。
 - 静默上下文传给本次运行和子任务：本链路不得 enqueue、rearm、repoint 待投递报告，不修改既有投递指向；仍可保存源数据与分析。独立定时未来报告可以使用新事实，不是永远冻结报告。明确反馈仍可触发正常分析及其投递，不承诺所有写操作静默。
 
 ## 明确意图与写入
 
-讨论、建议、说累、赞同、发送/打开/沉默都不是记录授权；总结、比较或“分析一下”不新增权限。用户明确要求记录才执行 `feedback --key-file <私密持久路径>`，JSON 从标准输入传入，日期取用户本地 calendar_day，至少一项实际输入：feeling_score/physical_fatigue/mental_state/muscle_soreness 为 1～5 整数，notes 最多 500 字；session_rpe 为 1～10，并同时关联已完成的 workout_id 与 workout_source。不猜评分，范围建议不是已完成 repetitions，`12 / 10 / 8` 不能改成 `3 × 10`。成功后用 `query feedback --start YYYY-MM-DD --end YYYY-MM-DD` 核对；反馈已创建影响范围分析，无需补发 analyze。
+讨论、建议、说累、赞同、发送/打开/沉默都不是记录授权；总结、比较或“分析一下”不新增权限。用户明确要求记录才执行 `feedback --key-file <私密持久路径>`，JSON 从标准输入传入，日期取用户本地 calendar_day，至少一项实际输入：feeling_score/physical_fatigue/mental_state/muscle_soreness 为 1～5 整数，notes 最多 500 字；session_rpe 为 1～10，并同时关联已完成的 workout_id 与 workout_source。不猜评分，范围建议不是已完成 repetitions，`12 / 10 / 8` 不能改成 `3 × 10`。单项身体疲劳的正文示例为 `{"date":"YYYY-MM-DD","physical_fatigue":4}`，日期键是 `date`，不是 `calendar_day`；不要额外填 null 或推测字段。成功后用 `query feedback --start YYYY-MM-DD --end YYYY-MM-DD` 核对，再回复记录结果；反馈已创建影响范围分析，无需补发 analyze。
 
 只要求记录疲劳但未给评分时，仅补问 physical_fatigue 的 1～5 分，不同时索取整体感觉、精神和酸痛；用户只希望保存原话时可记录其明确提供的 notes，不把文字转换成猜测分数。
 
